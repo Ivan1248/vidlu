@@ -1,0 +1,50 @@
+def parse_dataset_config_old(config: str):
+    """
+    Arguments:
+        config: Dataset configuration, e.g. "cifar train val",' +
+         '"cityscapes(remove_hood=True) trainval test", "inaturalist all all".'
+    """
+    parse_options = lambda o: eval(f'dict{o or "()"}')
+
+    one_ds_regex = re.compile(r'((\w+)(\([^\)]*\))?) (\w+) (\w+)')
+    two_ds_regex = re.compile(' '.join([r'(\w+)(\([^\)]*\))?\.(\w+)'] * 2))
+
+    m = one_ds_regex.match(config)
+    if m:
+        name, options, *subsets = m.groups()[1:]
+        ds = get_dataset_subsets(name, **parse_options(options))
+        return tuple(getattr(ds, x) for x in subsets)
+    else:
+        m = two_ds_regex.match(config)
+        if not m:
+            raise ValueError("Invalid configuration string.")
+        p = m.groups()[1:]
+        return tuple(
+            getattr(get_dataset_subsets(n, **parse_options(o)), s) for n, o, s in [p[:3], p[3:]])
+
+
+
+
+def parse_dataset_config(config: str):
+    def error(msg=""):
+        raise ValueError(f'Invalid configuration string. {msg} ')
+
+    config = config.strip(' ,') + ','
+    single_ds_regex = re.compile(r'((\w+)(\([^\)]*\))?((?:\s+\w+)+)\s*,\s*)')
+    single_ds_configs = [x[0] for x in single_ds_regex.findall(config)]
+    reconstructed_config = ''.join(single_ds_configs)
+    if reconstructed_config != config:
+        error(f'Got "{config}", reconstructed as "{reconstructed_config}".')
+
+    datasets = []
+    for single_ds_config in single_ds_configs:
+        m = single_ds_regex.match(single_ds_config)
+        if not m:
+            error()
+        name, options, subsets = m.groups()[1:]
+        options = eval(f'dict{options or "()"}')
+        subsets = subsets.split()
+        ds = get_dataset_subsets(name, **eval(f'dict{options or "()"}'))
+        datasets += [getattr(ds, x) for x in subsets]
+
+    return datasets
