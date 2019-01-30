@@ -1,5 +1,5 @@
 from .datasets import *
-from .. import DatasetSet
+from .. import PartedDataset
 from argparse import Namespace
 
 
@@ -54,4 +54,4 @@ class DatasetFactory:
         else:
             load = lambda s: info.cls(*path_args, s, **{**info.kwargs, **kwargs})
         splits = getattr(info.cls, 'splits', _default_splits)
-        return DatasetSet({s: load(s) for s in subsets}, splits)
+        return PartedDataset({s: load(s) for s in subsets}, splits)

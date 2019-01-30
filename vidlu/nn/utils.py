@@ -22,7 +22,8 @@ def get_submodule(root_module: nn.Module, path: str) -> nn.Module:
     for other attributes (e.g. Parameters) too.
     Arguments:
         root_module (Module): a module.
-        path (Tensor): a string with module names relative to `root_module`
+        path (Tensor): a string with the name of the module module relative to
+        `root_module`
     """
     for name in [tryable(int, default_value=n)(n) for n in path.split('.')]:
         if isinstance(name, str):
@@ -32,32 +33,31 @@ def get_submodule(root_module: nn.Module, path: str) -> nn.Module:
     return root_module
 
 
-def get_forward_func_with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
+def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
     """
     Creates a function extending `root_module.forward` so that a pair containing
     th output of `root_module.forward` as well as well as a list of intermediate
     outputs as defined in `submodule_paths`.
     Arguments:
         root_module (Module): a module.
-        submodule_paths (List[str]): a list of module names relative to
-        `root_module`.
+        submodule_paths (List[str]): a list of names (relative to `root_module`)
+        of modules the outputs of which you want to get.
     """
     submodules = [get_submodule(root_module, p) for p in submodule_paths]
 
     def forward(*args):
+        outputs = [None] * len(submodule_paths)
+
         def create_hook(idx):
             def hook(module, input, output):
                 outputs[idx] = output
 
             return hook
 
-        outputs = [None] * len(submodule_paths)
-        handles = []
-        for i, m in enumerate(submodules):
-            handles.append(m.register_forward_hook(create_hook(i)))
-        output = root_module.forward(*args)
+        handles = [m.register_forward_hook(create_hook(i)) for i, m in enumerate(submodules)]
+        output = root_module(*args)
         for h in handles:
             h.remove()
-        return output, list(outputs)
+        return output, list(zip(submodule_paths, outputs))
 
     return forward

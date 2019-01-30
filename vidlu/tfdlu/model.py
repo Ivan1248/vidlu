@@ -1,4 +1,3 @@
-import abc
 import datetime
 import os
 from functools import reduce
@@ -10,7 +9,7 @@ from tqdm import tqdm
 from ..data import DataLoader
 from ..ioutils import file, console
 
-from .modeldef import ModelDef
+from tfdlu.modeldef import ModelDef
 
 
 class Model(object):

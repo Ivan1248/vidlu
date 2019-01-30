@@ -1,9 +1,11 @@
+import pytest
+
 import torch
 from torch import nn
 import numpy as np
 
 from vidlu.nn import Module, Func, Conv, Linear, BatchNorm
-from vidlu.utils.collections import NamespaceDict
+from vidlu.utils.collections import NameDict
 
 torch.no_grad()
 
@@ -23,9 +25,9 @@ class TestModule:
                 super().__init__()
 
         m1 = TModule(1, 2, 3, c='spam')
-        assert m1.args == NamespaceDict(args=(1, 2, 3), kwargs={'c': 'spam'})
+        assert m1.args == NameDict(args=(1, 2, 3), kwargs={'c': 'spam'})
         m2 = TModule2(1, 2, c='unladen', swallow=8)
-        assert m2.args == NamespaceDict(a=1, args=(2,), c='unladen', d=6, kwargs={'swallow': 8})
+        assert m2.args == NameDict(a=1, args=(2,), c='unladen', d=6, kwargs={'swallow': 8})
 
 
 class TestLambda:

@@ -1,16 +1,9 @@
 from collections.abc import Mapping
 import inspect
+from collections import defaultdict
 import select
 import sys
 import platform
-
-# Empty type - representing an unassigned variable ###################################################
-
-Empty = inspect.Parameter.empty
-
-
-def is_none_or_empty(value):
-    return value is None or value is Empty
 
 
 # Inspection #######################################################################################
@@ -47,6 +40,64 @@ def locals_from_first_initializer():
         del frame
 
 
+# Slicing ##########################################################################################
+
+def slice_len(s, sequence_length):
+    # stackoverflow.com/questions/36188429/retrieve-length-of-slice-from-slice-object-in-python
+    start, stop, step = s.indices(sequence_length)
+    return max(0, (stop - start + (step - (1 if step > 0 else -1))) // step)
+
+
+# Dictionary-like trees ############################################################################
+
+def tree_to_paths(tree) -> list:
+    return [[([k] + p, v) for p, v in tree_to_paths(v)] if isinstance(v, type(tree)) else [([k], v)]
+            for k, v in tree.items()]
+
+
+def copy_tree(tree):
+    tree_type = type(tree)
+    return tree_type(**{k: v.copy() if isinstance(v, tree_type) else v for k, v in tree.items()})
+
+
+def paths_to_tree(path_value_pairs, tree_type):
+    class Leaf:  # used to encode leaves to distinguish lists from
+        def __init__(self, item):
+            self.item = item
+
+    subtrees = defaultdict(list)
+    for path, value in path_value_pairs:
+        if len(path) > 1:
+            subtrees[path[0]] += [(path[1:], value)]
+        else:
+            subtrees[path[0]] = Leaf(value)
+    return tree_type({k: v.item if type(v) is Leaf else paths_to_tree(v, tree_type)
+                      for k, v in subtrees.items()})
+
+
+def number_of_leaves(tree: Mapping, tree_type):
+    return sum(
+        number_of_leaves(v, tree_type) if isinstance(v, tree_type) else 1 for k, v in tree.items())
+
+
+# Event ############################################################################################
+
+class Event:
+    def __init__(self):
+        self.handlers = []
+
+    def add_handler(self, handler):
+        self.handlers.append(handler)
+        return handler  # for usage as decorator
+
+    def remove_handler(self, handler):
+        self.handlers.remove(handler)
+
+    def __call__(self, *args, **kwargs):
+        for h in self.handlers:
+            h(*args, **kwargs)
+
+
 # Console ##########################################################################################
 
 def try_get_input(impatient=False):
@@ -66,38 +117,3 @@ def try_get_input(impatient=False):
     if impatient and not input_available():
         return None
     return input()
-
-
-# Slicing ##########################################################################################
-
-def slice_len(s, sequence_length):
-    # stackoverflow.com/questions/36188429/retrieve-length-of-slice-from-slice-object-in-python
-    start, stop, step = s.indices(sequence_length)
-    return max(0, (stop - start + (step - (1 if step > 0 else -1))) // step)
-
-
-# Dictionary trees #################################################################################
-
-def tree_to_paths(tree: Mapping) -> list:
-    paths = []
-    for k, v in tree.items():
-        paths += [([k] + p, v) for p, v in tree_to_paths(v)] if isinstance(v, Mapping) \
-            else [([k], v)]
-    return paths
-
-
-def number_of_leaves(tree: Mapping):
-    n = 0
-    for k, v in tree.items():
-        n += number_of_leaves(v) if isinstance(v, Mapping) else 1
-    return n
-
-
-# Dict map, filter #################################################################################
-
-def dict_map(func, dict_):
-    return {k: func(v) for k, v in dict_.items()}
-
-
-def dict_filter(func, dict_):
-    return {k: v for k, v in dict_.items() if func(v)}

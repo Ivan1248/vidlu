@@ -7,8 +7,9 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.utils.collections import NamespaceDict
+from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import locals_from_first_initializer
+from vidlu.utils.func import params
 from .utils import get_submodule
 
 
@@ -22,7 +23,7 @@ class Module(nn.Module, ABC):
         args = locals_from_first_initializer()
         for x in ['self', '__class__']:
             args.pop(x, None)
-        self.args = NamespaceDict(args)
+        self.args = NameDict(args)
         self._built = False
 
     def __call__(self, *args, **kwargs):
@@ -68,9 +69,11 @@ class Module(nn.Module, ABC):
         return True
 
 
-def _to_single_sequential_init_arg(self, *args, **kwargs):
+def _to_sequential_init_args(*args, **kwargs):
     if len(kwargs) > 0:
-        assert len(args) == 0
+        if len(args) > 0:
+            raise ValueError(
+                "If keyword arguments are supplied, no positional arguments are allowed.")
         args = [kwargs]
     if len(args) == 1 and isinstance(args[0], dict):
         args = [OrderedDict(args[0])]
@@ -86,11 +89,11 @@ class Sequential(nn.Sequential):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*_to_single_sequential_init_arg(*args, **kwargs))
+        super().__init__(*_to_sequential_init_args(*args, **kwargs))
 
     def __getitem__(self, idx):
         try:
-            if type(idx) is slice and any(isinstance(i, str) for i in [idx.start, idx.stop]):
+            if isinstance(idx, slice) and any(isinstance(i, str) for i in [idx.start, idx.stop]):
                 children_names = list(zip(*self.named_children()))
                 start, stop = idx.start, idx.stop
                 if isinstance(start, str):
@@ -100,7 +103,20 @@ class Sequential(nn.Sequential):
                 idx = slice(start, stop, idx.step)
         except ValueError:
             raise KeyError(f"Invalid index: {idx}.")
+        if isinstance(idx, slice):
+            return Sequential(dict(list(self._modules.items())[idx]))
+        elif isinstance(idx, str):
+            return getattr(self, idx)
         return super().__getitem__(idx)
+
+    def add_module(self, *args, **kwargs):
+        if len(args) == 2 and len(kwargs) == 0:
+            super().add_module(*args)
+        elif len(args) == 0 and len(kwargs) == 1:
+            super().add_module(**next(kwargs.items()))
+        else:
+            raise ValueError(
+                "Either a pair of positional arguments or single keyword argument can be accepted.")
 
     def index(self, key):
         return list(zip(*self.named_children())).index(key)
@@ -113,17 +129,20 @@ class ModuleDict(nn.ModuleDict, ABC):
 
 
 def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.Module:
-    if args[in_channels_name] is None:
+    if in_channels_name in args and args[in_channels_name] is None:
         args[in_channels_name] = input.shape[1]
     layer_func = nn.__getattribute__(f"{name}{len(input.shape) - 2}d")
-    assert len(inspect.signature(layer_func).parameters) == len(args)
+    for k, v in params(layer_func).items():
+        if k not in args:
+            raise ValueError(f"Missing argument: {k}.")
     return layer_func(**args)
 
 
 def _get_conv_padding(padding_type, kernel_size, dilation):
     assert all(k % 2 == 1
                for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size))
-    assert padding_type in ('half', 'full')
+    if padding_type not in ('half', 'full'):
+        raise ValueError(f"Invalid padding_type value {padding_type}.")
 
     def get_padding(k, d):
         k_ = 1 + (k - 1) * d
@@ -170,10 +189,10 @@ class MaxPool(Module):
 
 
 class AvgPool(Module):
-    def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
-                 ceil_mode=False):
+    def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
+                 count_include_pad=True):
         super().__init__()
-        self._padding = _get_conv_padding(padding, kernel_size, dilation) \
+        self._padding = _get_conv_padding(padding, kernel_size, dilation=1) \
             if isinstance(padding, str) else padding
         self.orig = None
 

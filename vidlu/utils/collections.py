@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 
 
-class NamespaceDict(Mapping):
+class NameDict(Mapping):
     def __init__(self, *args, **kwargs):
         assert len(args) <= 1
         if len(args) == 1:
@@ -14,7 +14,7 @@ class NamespaceDict(Mapping):
         return f"{type(self).__name__}({', '.join(arg_strings)})"
 
     def __eq__(self, other):
-        if not isinstance(other, NamespaceDict):
+        if not isinstance(other, NameDict):
             return NotImplemented
         return vars(self) == vars(other)
 

@@ -14,7 +14,7 @@ class PartSplit:
         self.ratio = ratio
 
 
-class DatasetSet:
+class PartedDataset:
     def __init__(self,
                  part_to_ds: Dict[str, Dataset],
                  part_to_split: Dict[str, Tuple[Tuple[str, str], float]] = None):
@@ -52,7 +52,6 @@ class DatasetSet:
 
         while any(map(generate_parts, parts)):
             pass
-        assert all(x in parts for x in chain(part_to_ds, part_to_split))
         self._part_to_ds = part_to_ds
 
     def __getitem__(self, item):
@@ -65,7 +64,7 @@ class DatasetSet:
         return self[item]
 
     def with_transform(self, transform):
-        return DatasetSetWithTransform(self, transform)
+        return PartedDatasetWithTransform(self, transform)
 
     def keys(self):
         return self._part_to_getter.keys()
@@ -75,7 +74,7 @@ class DatasetSet:
             yield k, self[k]
 
 
-class DatasetSetWithTransform:
+class PartedDatasetWithTransform:
     def __init__(self, dataset_splits, transform):
         self.dss = dataset_splits
         self.get = lru_cache()(lambda item: transform(self.parted_dataset.__getitem__(item)))

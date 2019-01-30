@@ -57,10 +57,7 @@ def numpy_collate(batch):
         raise TypeError(type(elem))
 
 
-# Dataloader ###################################################################
-
-
 # DataLoader class with collate function suporting Record examples
 
 class DataLoader(torch.utils.data.DataLoader):
-    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, collate_fn=default_collate)
+    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True, collate_fn=default_collate)

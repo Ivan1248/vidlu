@@ -4,7 +4,7 @@ from collections.abc import Sequence
 import numpy as np
 import torch
 
-from vidlu.data import Record, Dataset, DatasetSet
+from vidlu.data import Record, Dataset, PartedDataset
 
 
 class TestData:
@@ -116,9 +116,9 @@ class TestData:
         for subsets in [["trainval", "test"], ["train", "val", "test"], ["all"]]:
             subset_to_getter = {name: Dataset(name=name, data=range(i * 10))
                                 for i, name in enumerate(subsets)}
-            dss = DatasetSet(subset_to_getter, part_to_split)
-            assert len(dss.trainval) == len(dss.train) + len(dss.val)
-            assert all(a == b for a, b in zip(dss.trainval, dss.train + dss.val))
-            assert len(dss.all) == len(dss.trainval) + len(dss.test)
-            assert all(a == b for a, b in zip(dss.all, dss.trainval + dss.test))
-            assert len(dss.valtest) == len(dss.all) - len(dss.train)
+            pds = PartedDataset(subset_to_getter, part_to_split)
+            assert len(pds.trainval) == len(pds.train) + len(pds.val)
+            assert all(a == b for a, b in zip(pds.trainval, pds.train + pds.val))
+            assert len(pds.all) == len(pds.trainval) + len(pds.test)
+            assert all(a == b for a, b in zip(pds.all, pds.trainval + pds.test))
+            assert len(pds.valtest) == len(pds.all) - len(pds.train)

@@ -10,13 +10,7 @@ import numpy as np
 
 from vidlu.data import Dataset
 from vidlu import data
-from vidlu.data.datasets import DatasetFactory
 from vidlu.utils.image.data_augmentation import random_fliplr_with_label, augment_cifar
-from . import dirs
-
-# Datasets #########################################################################################
-
-get_dataset_set = DatasetFactory(dirs.DATASETS)
 
 
 # Normalization ####################################################################################
@@ -68,29 +62,18 @@ class LazyNormalizer:
         return ((x - self.mean) / self.std).astype(np.float32)
 
 
-# Caching ##########################################################################################
-
-def example_byte_size(example):
-    # assuming img will be float32 after normalization
-    img, lab = example
-    return img.astype(np.float32).nbytes + np.array(lab).nbytes
-
-
 # Cached dataset with normalized inputs ############################################################
 
-def get_cached_dataset_set_with_normalized_inputs(ds_id, **options):
-    print("Setting up data preprocessing...")
-    dss = get_dataset_set(ds_id, **options)
-    normalizer = LazyNormalizer(dss.trainval, dirs.CACHE)
+def cache_data_and_normalize_inputs(data, cache_dir):
+    normalizer = LazyNormalizer(data.trainval, cache_dir)
 
     def transform(ds):
         ds = ds.map(normalizer.normalize, 0)
-        if ds_id not in ['inaturalist18']:
-            ds = ds.cache_hdd_only(f"{dirs.CACHE}/datasets")
+        if data.trainval.name not in ['INaturalist2018']:
+            ds = ds.cache_hdd_only(f"{cache_dir}/datasets")
         return ds
 
-    print("Setting up data caching on HDD...")
-    return dss.with_transform(transform)
+    return data.with_transform(transform)
 
 
 def clear_dataset_hdd_cache(ds):

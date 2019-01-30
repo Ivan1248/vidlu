@@ -1,7 +1,7 @@
 import numpy as np
 
 from vidlu.data.datasets import DatasetFactory
-from vidlu import dirs
+from scripts import dirs
 
 
 class TestData:

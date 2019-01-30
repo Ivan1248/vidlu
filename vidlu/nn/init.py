@@ -1,8 +1,8 @@
 from torch import nn
-from .components import ResUnit
+from vidlu.nn import components
 
 
-def resnet(module, nonlinearity='relu', zero_init_residual=True):
+def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
     # from torchvision/models/resnet.py
     for m in module.modules():
         if isinstance(m, nn.Conv2d):
@@ -14,11 +14,11 @@ def resnet(module, nonlinearity='relu', zero_init_residual=True):
             nn.init.constant_(m.bias, 0)
     if zero_init_residual:
         for m in module.modules():
-            if isinstance(m, ResUnit):
-                nn.init.constant_(m.block.post_norm.weight, 0)
+            if isinstance(m, components.ResGroups):
+                nn.init.constant_(m.post_norm.orig.weight, 0)
 
 
-def densenet(module, nonlinearity='relu'):
+def kaiming_densenet(module, nonlinearity='relu'):
     # from torchvision/models/densenet.py
     for m in module.modules():
         if isinstance(m, nn.Conv2d):

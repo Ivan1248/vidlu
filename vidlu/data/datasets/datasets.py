@@ -6,15 +6,15 @@ import PIL.Image as pimg
 import numpy as np
 from skimage.transform import resize
 from scipy.io import loadmat
+from skimage.filters import gaussian as gblur
+import torchvision.datasets as dset
 
 from .. import Dataset, Record
 
 from vidlu.utils.image.shape import pad_to_shape, crop
 from pathlib import Path
 
-from skimage.filters import gaussian as gblur
-
-import torchvision.datasets as dset
+from ._cityscapes_labels import labels as cslabels
 
 
 # Helper functions
@@ -30,6 +30,9 @@ def _load_image(path, force_rgb=True):
 def _make_example(*args, **kwargs):
     return Record(*args, **kwargs)  # or dict(r.items()) or tuple(r.values())
 
+def _check_subsets(dataset_class, subset):
+    if subset not in dataset_class.subsets:
+        raise ValueError(f"Invalid subset name for {dataset_class.__name__}.")
 
 # Artificial datasets ##############################################################################
 
@@ -99,7 +102,7 @@ class SVHNDataset(Dataset):
     subsets = ['trainval', 'test']
 
     def __init__(self, data_dir, subset='trainval'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         ss = 'train' if subset == 'trainval' else subset
         data = loadmat(ss + '_32x32.mat')
         self.x, self.y = data['X'], np.remainder(data['y'], 10)
@@ -116,7 +119,7 @@ class Cifar10Dataset(Dataset):
     subsets = ['trainval', 'test']
 
     def __init__(self, data_dir, subset='trainval'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
 
         ss = 'train' if subset == 'trainval' else subset
@@ -156,7 +159,7 @@ class Cifar100Dataset(Dataset):
     subsets = ['trainval', 'test']
 
     def __init__(self, data_dir, subset='trainval'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
 
         ss = 'train' if subset == 'trainval' else subset
 
@@ -185,9 +188,9 @@ class DescribableTexturesDataset(Dataset):
     subsets = ['trainval', 'test']
 
     def __init__(self, data_dir, subset='trainval'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         ss = 'train' if subset == 'trainval' else subset
-        assert False, "DescribableTexturesDataset not implemented"
+        raise NotImplementedError("DescribableTexturesDataset not implemented")
         for _ in range(10):
             print("WARNING: DescribableTexturesDataset not completely implemented.")
         super().__init__(subset=subset, info=dict(class_count=47),
@@ -207,7 +210,7 @@ class MozgaloRVCDataset(Dataset):
 
     def __init__(self, data_dir, subset='trainval', remove_bottom_proportion=0.0,
                  downsampling_factor=1):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
 
         ss = 'train' if subset == 'trainval' else subset
         data_dir = Path(data_dir)
@@ -221,7 +224,6 @@ class MozgaloRVCDataset(Dataset):
         self._image_list = [p.relative_to(self._subset_dir) for p in self._subset_dir.glob('/*/*')]
 
         class_names = sorted([p.name for p in train_dir.iterdir()])
-        assert len(class_names) == 25
 
         modifiers = []
         if remove_bottom_proportion:
@@ -256,7 +258,7 @@ class TinyImageNetDataset(Dataset):
     subsets = ['train', 'val', 'test']
 
     def __init__(self, data_dir, subset='trainval'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
 
         with open(data_dir / "wnids.txt") as fs:
@@ -297,7 +299,7 @@ class INaturalist2018Dataset(Dataset):
     subsets = ['train', 'val', 'test']
 
     def __init__(self, data_dir, subset='train', superspecies='all'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
         self._data_dir = data_dir
 
@@ -379,7 +381,7 @@ class CamVidDataset(Dataset):
     subsets = ['train', 'val', 'test']
 
     def __init__(self, data_dir, subset='train'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
 
         lines = Path(f'{data_dir}/{subset}.txt').read_text().splitlines()
         self._img_lab_list = [
@@ -429,10 +431,9 @@ class CityscapesFineDataset(Dataset):
     subsets = ['train', 'val', 'test']  # 'test' labels are invalid
 
     def __init__(self, data_dir, subset='train', downsampling_factor=1, remove_hood=False):
-        assert subset in self.__class__.subsets
-
-        assert downsampling_factor >= 1
-        from ._cityscapes_labels import labels as cslabels
+        _check_subsets(self.__class__, subset)
+        if downsampling_factor <= 1:
+            raise ValueError("downsampling_factor must be greater or equal to 1.")
 
         self._downsampling_factor = downsampling_factor
         self._shape = np.array([1024, 2048]) // downsampling_factor
@@ -494,10 +495,9 @@ class WildDashDataset(Dataset):
     splits = dict(all=(('val', 'bench'), None), both=(('val', 'bench'), None))
 
     def __init__(self, data_dir, subset='val', downsampling_factor=1):
-        assert subset in self.__class__.subsets
-
-        assert downsampling_factor >= 1
-        from ._cityscapes_labels import labels as cslabels
+        _check_subsets(self.__class__, subset)
+        if downsampling_factor <= 1:
+            raise ValueError("downsampling_factor must be greater or equal to 1.")
 
         self._subset = subset
 
@@ -588,7 +588,7 @@ class VOC2012SegmentationDataset(Dataset):
     subsets = ['train', 'val', 'trainval', 'test']
 
     def __init__(self, data_dir, subset='train'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
 
         sets_dir = data_dir / 'ImageSets/Segmentation'
@@ -654,7 +654,7 @@ class ISUNDataset(Dataset):
     subsets = ['train', 'val', 'test']
 
     def __init__(self, data_dir, subset='train'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         self._images_dir = f'{data_dir}/images'
         subset = {'train': 'training', 'val': 'validation', 'test': 'testing'}[subset]
 
@@ -679,7 +679,7 @@ class LSUNDataset(Dataset):
     subsets = ['test']
 
     def __init__(self, data_dir, subset='train'):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
 
         self._subset_dir = f'{data_dir}/{subset}'
         self._image_names = [
@@ -744,7 +744,7 @@ class LSUNDatasetNew(Dataset):
     subsets = ['train', 'val', 'test']
 
     def __init__(self, db_path, subset, categories=None):
-        assert subset in self.__class__.subsets
+        _check_subsets(self.__class__, subset)
         categories = categories or ['bedroom', 'bridge', 'church_outdoor', 'classroom',
                                     'conference_room', 'dining_room', 'kitchen',
                                     'living_room', 'restaurant', 'tower']

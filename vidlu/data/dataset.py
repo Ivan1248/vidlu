@@ -6,14 +6,14 @@ from collections.abc import Sequence
 from typing import Union, Callable
 import shutil
 from collections import Counter
-from functools import partial
+from functools import partial, wraps
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
 from .record import Record
-from .misc import default_collate
+from .misc import default_collate, DataLoader
 
 from vidlu.utils.misc import slice_len
 
