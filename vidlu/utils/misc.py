@@ -1,18 +1,21 @@
-from collections.abc import Mapping
 import inspect
-from collections import defaultdict
 import select
 import sys
 import platform
+import os
+import hashlib
+import urllib.request
+
+from tqdm import tqdm
 
 
 # Inspection #######################################################################################
 
-def locals_from_first_initializer():
+def clean_locals_from_first_initializer():
     """
     Returns arguments of the constructor of a subclass if `super().__init__()`
     is the first statement in the subclass' `__init__`. Taken from MagNet
-    (https://github.com/MagNet-DL/magnet/blob/master/magnet/utils/misc.py) and
+    (https://github.components/MagNet-DL/magnet/blob/master/magnet/utils/misc.py) and
     modified. Originally `magnet.utils.misc.caller_locals`.
     """
     frame = inspect.currentframe().f_back.f_back
@@ -40,44 +43,29 @@ def locals_from_first_initializer():
         del frame
 
 
+def clean_locals():
+    locals_ = inspect.currentframe().f_back.f_locals
+    locals_.pop('self', None)
+    locals_.pop('__class__', None)
+    return locals_
+
+
+def find_frame_in_call_stack(frame_predicate, start_frame=None):
+    frame = start_frame or inspect.currentframe().f_back.f_back
+    try:
+        while not frame_predicate(frame):
+            frame = frame.f_back
+        return frame
+    finally:
+        del frame
+
+
 # Slicing ##########################################################################################
 
 def slice_len(s, sequence_length):
-    # stackoverflow.com/questions/36188429/retrieve-length-of-slice-from-slice-object-in-python
+    # stackoverflow.components/questions/36188429/retrieve-length-of-slice-from-slice-object-in-python
     start, stop, step = s.indices(sequence_length)
     return max(0, (stop - start + (step - (1 if step > 0 else -1))) // step)
-
-
-# Dictionary-like trees ############################################################################
-
-def tree_to_paths(tree) -> list:
-    return [[([k] + p, v) for p, v in tree_to_paths(v)] if isinstance(v, type(tree)) else [([k], v)]
-            for k, v in tree.items()]
-
-
-def copy_tree(tree):
-    tree_type = type(tree)
-    return tree_type(**{k: v.copy() if isinstance(v, tree_type) else v for k, v in tree.items()})
-
-
-def paths_to_tree(path_value_pairs, tree_type):
-    class Leaf:  # used to encode leaves to distinguish lists from
-        def __init__(self, item):
-            self.item = item
-
-    subtrees = defaultdict(list)
-    for path, value in path_value_pairs:
-        if len(path) > 1:
-            subtrees[path[0]] += [(path[1:], value)]
-        else:
-            subtrees[path[0]] = Leaf(value)
-    return tree_type({k: v.item if type(v) is Leaf else paths_to_tree(v, tree_type)
-                      for k, v in subtrees.items()})
-
-
-def number_of_leaves(tree: Mapping, tree_type):
-    return sum(
-        number_of_leaves(v, tree_type) if isinstance(v, tree_type) else 1 for k, v in tree.items())
 
 
 # Event ############################################################################################
@@ -93,6 +81,13 @@ class Event:
     def remove_handler(self, handler):
         self.handlers.remove(handler)
 
+    def handler(self):
+        def decorator(f):
+            self.add_handler(f)
+            return f
+
+        return decorator
+
     def __call__(self, *args, **kwargs):
         for h in self.handlers:
             h(*args, **kwargs)
@@ -100,11 +95,10 @@ class Event:
 
 # Console ##########################################################################################
 
-def try_get_input(impatient=False):
+def try_input():
     """
-    Returns a line from standard input.
-    :param impatient: If set to True and no input is available, None is returned
-        instead of waiting for input.
+    Returns `None` if the standard input is empty. Otherwise it returns a line
+    like `input` does.
     """
 
     def input_available():
@@ -114,6 +108,45 @@ def try_get_input(impatient=False):
         else:
             return select.select([sys.stdin], [], [], 0)[0]
 
-    if impatient and not input_available():
-        return None
-    return input()
+    return input() if input_available() else None
+
+
+# Dict #############################################################################################
+
+def get_key(dict_, value):
+    for k, v in dict_.items():
+        if v is value:
+            return k
+    raise ValueError("the dictionary doens't ontain the value")
+
+
+# Downloading ######################################################################################
+
+def check_integrity(fpath, md5):
+    # from torchvision.datasets.utils
+    if not os.path.isfile(fpath):
+        return False
+    md5o = hashlib.md5()
+    with open(fpath, 'rb') as f:
+        # read in 1MB chunks
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            md5o.update(chunk)
+    md5c = md5o.hexdigest()
+    if md5c != md5:
+        return False
+    return True
+
+
+class _DownloadProgressBar(tqdm):
+    def update_to(self, b=1, bsize=1, tsize=None):
+        if tsize is not None:
+            self.total = tsize
+        self.update(b * bsize - self.n)
+
+
+def download(url, output_path, md5=None):
+    if md5 is not None and os.path.isfile(output_path) and check_integrity(output_path, md5):
+        print(f'Using downloaded and verified file: {output_path}')
+    with _DownloadProgressBar(unit='B', unit_scale=True,
+                              miniters=1, desc="Downloading " + url.split('/')[-1]) as t:
+        urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)

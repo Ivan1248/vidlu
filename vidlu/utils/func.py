@@ -1,12 +1,21 @@
 import inspect
 from inspect import signature
 from functools import partialmethod, partial, reduce, wraps
+from toolz import valmap
 
 from .collections import NameDict
-from .misc import tree_to_paths
+from vidlu.utils.tree import tree_to_paths
 
 
 # Wrappers #########################################################################################
+
+def pipable(func):
+    def wrapper(x):
+        func(x)
+        return x
+
+    return wrapper
+
 
 class hard_partial(partial):
     """
@@ -34,17 +43,6 @@ def tryable(func, default_value):
             return default_value
 
     return try_
-
-
-# composition ######################################################################################
-
-def chain(funcs):
-    def chain_(x):
-        for f in funcs:
-            x = f(x)
-        return x
-
-    return chain_
 
 
 # ArgTree, argtree_partial #########################################################################
@@ -95,9 +93,9 @@ def argtree_partial(func, *args, **kwargs):
 
 
 def argtree_hard_partial(func, *args, **kwargs):
-    if len(args) + int(len(kwargs) > 0) != 1:
+    if len(args) + int(len(kwargs) > 0) > 1:
         raise ValueError("The arguments should be either a single positional argument " +
-                         "or one or more keyword arguments.")
+                         "or 0 or more keyword arguments.")
     tree = args[0] if len(args) == 1 else kwargs
     for k, v in list(tree.items()):
         if isinstance(v, ArgTree):
@@ -122,14 +120,40 @@ def argtree_partialmethod(func, *args, **kwargs):
 
 # find_empty_args ##################################################################################
 
-def find_empty_args(func):
-    incar = []  # list of lists of string (list of paths)
+def params_deep_flat(func):
+    args = []  # list of lists of string (list of paths)
+    for k, v in params(func).items():
+        if callable(v):
+            args += [[k] + x for x in params_deep(v)]
+        else:
+            args.append([k])
+    return args
+
+
+def params_deep(func):
+    return ArgTree({k: params_deep(v) if callable(v) else v for k, v in params(func).items()})
+
+
+def find_empty_params_tree(func):
+    tree = dict()
+    for k, v in params(func).items():
+        if callable(v):
+            subtree = find_empty_params_tree(v)
+            if len(subtree) > 0:
+                tree[k] = subtree
+        elif v is Empty:
+            tree[k] = v
+    return ArgTree(tree)
+
+
+def find_empty_params_deep(func):
+    args = []  # list of lists of string (list of paths)
     for k, v in params(func).items():
         if v is Empty:
-            incar.append([k])
+            args.append([k])
         elif callable(v):
-            incar += [[k] + x for x in find_empty_args(v)]
-    return incar
+            args += [[k] + x for x in find_empty_params_deep(v)]
+    return args
 
 
 # parameters/arguments #############################################################################
@@ -146,6 +170,9 @@ def default_args(func) -> NameDict:
 
 
 def params(func) -> NameDict:
+    if type(func).__name__ == 'DataLoader' or isinstance(func, partial) and type(
+            func.func).__name__ == 'DataLoader':
+        pass
     return NameDict(**{k: v.default for k, v in signature(func).parameters.items()})
 
 
@@ -182,12 +209,16 @@ def dot_default_args(func):
 
 # Dict map, filter #################################################################################
 
-def dict_map(func, dict_):
-    return {k: func(v) for k, v in dict_.items()}
+def valmap(func, d, factory=dict):
+    return factory(**{k: func(v) for k, v in d.items()})
 
 
-def dict_filter(func, dict_):
-    return {k: v for k, v in dict_.items() if func(v)}
+def keymap(func, d, factory=dict):
+    return factory(**{func(k): v for k, v in d.items()})
+
+
+def keyfilter(func, d, factory=dict):
+    return factory(**{k: v for k, v in d.items() if func(k)})
 
 
 # Empty and Full - representing an unassigned variable #############################################
@@ -196,5 +227,5 @@ def dict_filter(func, dict_):
 Empty = inspect.Parameter.empty  # unassigned parameter that should be assigned
 
 
-class Full:  # placeholder to mark parameters that shouldn't be assigned / are reserved
+class Reserved:  # placeholder to mark parameters that shouldn't be assigned / are reserved
     pass

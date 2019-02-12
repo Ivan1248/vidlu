@@ -64,7 +64,7 @@ class Viewer:
         self.name = name
 
     def display(self, dataset, mapping=lambda x: x):
-        #mpl.use('wxAgg')
+        # mpl.use('wxAgg')
 
         i = 0
 
@@ -94,7 +94,7 @@ class Viewer:
         images = get_images(0)
         subplot_count = len(images)
 
-        nrows = int(subplot_count**0.5)
+        nrows = int(subplot_count ** 0.5)
         ncols = int(subplot_count // nrows + 0.5)
 
         fig, axes = plt.subplots(nrows, ncols)
@@ -131,7 +131,6 @@ def view_predictions_2(dataset, infer=None, save_dir=None):
     colors = [np.zeros(3)] + list(map(np.array, colors))  # unknown black
 
     def get_frame(datapoint):
-
         def process(pred):
             if np.issubdtype(pred.dtype, np.floating):
                 return pred
@@ -188,8 +187,9 @@ def view_predictions(dataset, infer=None, save_dir=None):
             def _get_class_representative():
                 cr = get_class_representative(pred)
                 return black if cr is None else scale01(cr)
-            pred_img = _get_class_representative() if classification \
-                  else fuse_images(img_scal, pred_disp)
+
+            pred_img = (_get_class_representative() if classification
+                        else fuse_images(img_scal, pred_disp))
             comp_arr.append([pred_img, pred_disp])
 
         add_prediction(lab)
@@ -225,8 +225,8 @@ def view_predictions(dataset, infer=None, save_dir=None):
 
 
 def plot_curves(curves):
-    #plt.yticks(np.arange(0, 0.51, 0.05))
-    #axes.set_xlim([0, 200])
+    # plt.yticks(np.arange(0, 0.51, 0.05))
+    # axes.set_xlim([0, 200])
     plt.figure()
     axes = plt.gca()
     axes.set_ylim([0, 1])

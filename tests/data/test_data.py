@@ -64,7 +64,8 @@ class TestData:
 
         mds = ds.map(lambda a: Record(x=a.x, y=a.y ** 0.5), info={**ds.info, 'len': 20})
         assert mds.data == ds and 'len' in mds.info
-        assert len(mds.full_name) > len(ds.full_name) and mds.name[:len(ds.full_name)] == ds.full_name
+        assert len(mds.full_name) > len(ds.full_name) and mds.name[
+                                                          :len(ds.full_name)] == ds.full_name
         for x, y in mds:
             assert y == (x ** 2) ** 0.5
 
@@ -117,8 +118,14 @@ class TestData:
             subset_to_getter = {name: Dataset(name=name, data=range(i * 10))
                                 for i, name in enumerate(subsets)}
             pds = PartedDataset(subset_to_getter, part_to_split)
-            assert len(pds.trainval) == len(pds.train) + len(pds.val)
-            assert all(a == b for a, b in zip(pds.trainval, pds.train + pds.val))
-            assert len(pds.all) == len(pds.trainval) + len(pds.test)
-            assert all(a == b for a, b in zip(pds.all, pds.trainval + pds.test))
-            assert len(pds.valtest) == len(pds.all) - len(pds.train)
+
+            def run_tests(pds):
+                assert len(pds.trainval) == len(pds.train) + len(pds.val)
+                assert all(a == b for a, b in zip(pds.trainval, pds.train + pds.val))
+                assert len(pds.all) == len(pds.trainval) + len(pds.test)
+                assert all(a == b for a, b in zip(pds.all, pds.trainval + pds.test))
+                assert len(pds.valtest) == len(pds.all) - len(pds.train)
+
+            run_tests(pds)
+            pds_t = pds.with_transform(lambda x: x)
+            run_tests(pds_t)

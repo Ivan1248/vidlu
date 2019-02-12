@@ -1,8 +1,6 @@
 import argparse
 
-from _context import vidlu
-from functools import partial, partialmethod
-from vidlu.utils.misc import *
+from utils.tree import paths_to_tree
 from vidlu.utils.func import *
 
 # example: python find_empty_args.py vidlu.learning.models.ResNet18
@@ -18,7 +16,7 @@ exec(f"from {namespace_str} import *")
 
 try:
     func = eval(func_str)
-    empty_args = find_empty_args(func)
+    empty_args = find_empty_params_deep(func)
     n = len(empty_args)
     print(f"Found {n} empty argument{'' if n == 1 else 's'} in {func_str}{'.' if n == 0 else ':'}")
     for ea in empty_args:
@@ -30,7 +28,7 @@ except (NameError, AttributeError):
     namespace = eval(namespace_str)
     for x in dir(namespace):
         obj = getattr(namespace, x)
-        if not x.startswith('_') and callable(obj) and \
-                tryable((lambda: obj.__module__ == namespace_str), True)():
+        if (not x.startswith('_') and callable(obj)
+                and tryable((lambda: obj.__module__ == namespace_str), True)()):
             print(f"  {x}")
     raise

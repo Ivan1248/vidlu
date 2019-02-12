@@ -10,7 +10,7 @@ from functools import partialmethod
 from .record import Record
 
 
-# Serialization #####################################################################
+# Serialization ####################################################################################
 
 def serialize(obj):
     with io.BytesIO() as b:
@@ -24,17 +24,13 @@ def serialized_sizeof(obj):
         return len(b.getbuffer())
 
 
-# Collate #####################################################################
+# Collate ##########################################################################################
 
-def default_collate(batch, array_type="torch"):
+def default_collate(batch, array_type='torch'):
+    collate = torch_collate if array_type == 'torch' else numpy_collate
     if type(batch[0]) is Record:
-        batch = tuple(dict(d.values()) for d in batch)
-    if array_type == "torch":
-        return torch_collate(batch)
-    elif array_type == "numpy":
-        return numpy_collate(batch)
-    else:
-        raise ValueError(f'Invalid array type: "{array_type}"')
+        return Record(collate(tuple(dict(d.items()) for d in batch)))
+    return collate(batch)
 
 
 def numpy_collate(batch):
@@ -60,4 +56,5 @@ def numpy_collate(batch):
 # DataLoader class with collate function suporting Record examples
 
 class DataLoader(torch.utils.data.DataLoader):
-    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True, collate_fn=default_collate)
+    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True,
+                             collate_fn=default_collate)

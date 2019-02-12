@@ -1,6 +1,7 @@
 from itertools import chain
 from typing import Dict, Tuple
 from functools import lru_cache
+from vidlu.utils.func import valmap
 
 from .dataset import Dataset
 
@@ -14,49 +15,50 @@ class PartSplit:
         self.ratio = ratio
 
 
-class PartedDataset:
-    def __init__(self,
-                 part_to_ds: Dict[str, Dataset],
-                 part_to_split: Dict[str, Tuple[Tuple[str, str], float]] = None):
-        if part_to_split is None:
-            part_to_split = {"all": (("trainval", "test"), 0.8),
-                             "trainval": (("train", "val"), 0.8)}
-        part_to_split = {k: PartSplit(*v) for k, v in
-                         part_to_split.items()}
-        parts = set()
-        parts.update(part_to_ds.keys())
-        for k, ps in part_to_split.items():
-            parts.update(
-                p for p in [k] + list(ps.subparts) for k, ps in part_to_split.items() if
-                p not in parts)
-        part_to_ds = {k: v for k, v in part_to_ds.items()}
+def _generate_parts(part_to_ds: Dict[str, Dataset],
+                    part_to_split: Dict[str, Tuple[Tuple[str, str], float]] = None):
+    part_to_split = {k: PartSplit(*v) for k, v in
+                     part_to_split.items()}
+    parts = set()
+    parts.update(part_to_ds.keys())
+    for k, ps in part_to_split.items():
+        parts.update(
+            p for p in [k] + list(ps.subparts) for k, ps in part_to_split.items() if
+            p not in parts)
+    part_to_ds = {k: v for k, v in part_to_ds.items()}
 
-        def generate_parts(part):
-            if part not in part_to_split:
-                return False
-            if part in part_to_ds:
-                subparts = part_to_split[part].subparts
-                if any(s not in part_to_ds for s in subparts):
-                    if not all(s not in part_to_ds for s in subparts):
-                        raise ValueError("If subparts are provided, either all or none of them " +
-                                         "must be provided. E.g. trainval can be provided either " +
-                                         "without any or with both of {train, val}.")
-                    (s, t), ratio = subparts, part_to_split[part].ratio
-                    part_to_ds[s], part_to_ds[t] = part_to_ds[part].split(ratio=ratio)
-                    return True
-            elif all(s in part_to_ds for s in part_to_split[part].subparts):
-                s, t = (part_to_ds[s] for s in part_to_split[part].subparts)
-                part_to_ds[part] = s + t
-                return True
+    def generate_parts(part):
+        if part not in part_to_split:
             return False
+        if part in part_to_ds:
+            subparts = part_to_split[part].subparts
+            if any(s not in part_to_ds for s in subparts):
+                if not all(s not in part_to_ds for s in subparts):
+                    raise ValueError("If subparts are provided, either all or none of them " +
+                                     "must be provided. E.g. trainval can be provided either " +
+                                     "without any or with both of {train, val}.")
+                (s, t), ratio = subparts, part_to_split[part].ratio
+                part_to_ds[s], part_to_ds[t] = part_to_ds[part].split(ratio=ratio)
+                return True
+        elif all(s in part_to_ds for s in part_to_split[part].subparts):
+            s, t = (part_to_ds[s] for s in part_to_split[part].subparts)
+            part_to_ds[part] = s + t
+            return True
+        return False
 
-        while any(map(generate_parts, parts)):
-            pass
-        self._part_to_ds = part_to_ds
+    while any(map(generate_parts, parts)):  # TODO: optimize
+        pass
+    return part_to_ds
+
+
+class PartedDataset:
+    def __init__(self, part_to_ds, part_to_split=None):
+        self.part_to_ds = (part_to_ds if part_to_split is None
+                           else _generate_parts(part_to_ds, part_to_split))
 
     def __getitem__(self, item):
         try:
-            return self._part_to_ds[item]
+            return self.part_to_ds[item]
         except KeyError:
             raise KeyError(f'The dataset does not have a part called "{item}".')
 
@@ -64,7 +66,7 @@ class PartedDataset:
         return self[item]
 
     def with_transform(self, transform):
-        return PartedDatasetWithTransform(self, transform)
+        return PartedDataset(valmap(transform, self.part_to_ds))
 
     def keys(self):
         return self._part_to_getter.keys()
@@ -72,21 +74,6 @@ class PartedDataset:
     def items(self):
         for k in self.keys():
             yield k, self[k]
-
-
-class PartedDatasetWithTransform:
-    def __init__(self, dataset_splits, transform):
-        self.dss = dataset_splits
-        self.get = lru_cache()(lambda item: transform(self.parted_dataset.__getitem__(item)))
-
-    def __getitem__(self, item):
-        return self.get(item)
-
-    def __getattr__(self, item):
-        return self.get(item)
-
-    def keys(self):
-        return self._dss.keys()
 
 
 """

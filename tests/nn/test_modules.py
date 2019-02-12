@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.nn import Module, Func, Conv, Linear, BatchNorm
+from vidlu.nn import Module, Func, Conv, Linear, BatchNorm, Sequential
 from vidlu.utils.collections import NameDict
 
 torch.no_grad()
@@ -28,6 +28,14 @@ class TestModule:
         assert m1.args == NameDict(args=(1, 2, 3), kwargs={'c': 'spam'})
         m2 = TModule2(1, 2, c='unladen', swallow=8)
         assert m2.args == NameDict(a=1, args=(2,), c='unladen', d=6, kwargs={'swallow': 8})
+
+    def test_scoped_sequential(self):
+        x = torch.ones(4, 522)
+        inner = Sequential(lin1=Linear(8), lin2=Sequential(Linear(5)))
+        m = Sequential(inner=inner)
+        m(x)
+        assert m in [p for p, cname in inner.parents]
+        assert inner in [p for p, cname in inner.lin1.parents]
 
 
 class TestLambda:

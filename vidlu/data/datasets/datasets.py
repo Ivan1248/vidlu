@@ -1,6 +1,10 @@
 import pickle
 import json
 from io import BytesIO
+import tarfile
+import zipfile
+from pathlib import Path
+import shutil
 
 import PIL.Image as pimg
 import numpy as np
@@ -10,9 +14,8 @@ from skimage.filters import gaussian as gblur
 import torchvision.datasets as dset
 
 from .. import Dataset, Record
-
 from vidlu.utils.image.shape import pad_to_shape, crop
-from pathlib import Path
+from vidlu.utils.misc import download
 
 from ._cityscapes_labels import labels as cslabels
 
@@ -30,9 +33,11 @@ def _load_image(path, force_rgb=True):
 def _make_example(*args, **kwargs):
     return Record(*args, **kwargs)  # or dict(r.items()) or tuple(r.values())
 
+
 def _check_subsets(dataset_class, subset):
     if subset not in dataset_class.subsets:
         raise ValueError(f"Invalid subset name for {dataset_class.__name__}.")
+
 
 # Artificial datasets ##############################################################################
 
@@ -118,9 +123,21 @@ class SVHNDataset(Dataset):
 class Cifar10Dataset(Dataset):
     subsets = ['trainval', 'test']
 
+    def download(self, datasets_dir):
+        download_path = datasets_dir / "cifar-10-python.tar.gz"
+        download(url="https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+                 output_path=download_path, md5='c58f30108f718f92721af3b95e74349a')
+        print(f"Extracting dataset to {datasets_dir}")
+        with tarfile.open(download_path, "r:gz") as tar:
+            tar.extractall(path=datasets_dir)
+
     def __init__(self, data_dir, subset='trainval'):
         _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
+
+        if not data_dir.exists():
+            datasets_dir = data_dir.parent
+            self.download(datasets_dir)
 
         ss = 'train' if subset == 'trainval' else subset
 
@@ -337,7 +354,6 @@ class TinyImagesDataset(Dataset):
     subsets = []
 
     def __init__(self, data_dir, exclude_cifar=False, cifar_indexes_file=None):
-
         def load_image(idx):
             with open(f'{data_dir}/tiny_images.bin', "rb") as data_file:
                 data_file.seek(idx * 3072)
@@ -377,11 +393,39 @@ class TinyImagesDataset(Dataset):
 # Semantic segmentation ############################################################################
 
 class CamVidDataset(Dataset):
-    # https://github.com/alexgkendall/SegNet-Tutorial/tree/master/CamVid
     subsets = ['train', 'val', 'test']
+
+    def download(self, datasets_dir):
+        download_path = datasets_dir / "segnet-tutorial.zip"
+        download(url="https://github.com/alexgkendall/SegNet-Tutorial/archive/master.zip",
+                 output_path=download_path)
+        archive = zipfile.ZipFile(download_path)
+        print(f"Extracting dataset to {datasets_dir}")
+        found = False
+        original_path = 'SegNet-Tutorial-master/CamVid/'
+        for filename in archive.namelist():
+            if filename.startswith(original_path):
+                if filename == original_path:
+                    found = True
+                    extracted_path = Path(archive.extract(filename, datasets_dir))
+                archive.extract(filename, datasets_dir)
+        if found and extracted_path.parent.name == 'SegNet-Tutorial-master':
+            shutil.move(str(extracted_path), str(datasets_dir))
+            shutil.rmtree(extracted_path.parent)
+        else:
+            raise FileNotFoundError()
+
+        # extrpath.replace(datasets_dir / "CamVid")
+
+        if not found:
+            raise FileNotFoundError(f"CamVid not found in {download_path}.")
 
     def __init__(self, data_dir, subset='train'):
         _check_subsets(self.__class__, subset)
+
+        if not data_dir.exists():
+            datasets_dir = data_dir.parent
+            self.download(datasets_dir)
 
         lines = Path(f'{data_dir}/{subset}.txt').read_text().splitlines()
         self._img_lab_list = [
@@ -417,7 +461,7 @@ class CamVidDataset(Dataset):
         ip, lp = self._img_lab_list[idx]
 
         def load_label():
-            lab = np.array(_load_image(lp, force_rgb=False).astype(np.int8))
+            lab = np.array(_load_image(lp, force_rgb=False)).astype(np.int8)
             lab[lab == 11] = -1
             return lab
 
@@ -427,7 +471,7 @@ class CamVidDataset(Dataset):
         return len(self._img_lab_list)
 
 
-class CityscapesFineDataset(Dataset):
+class CityscapesDataset(Dataset):
     subsets = ['train', 'val', 'test']  # 'test' labels are invalid
 
     def __init__(self, data_dir, subset='train', downsampling_factor=1, remove_hood=False):
@@ -443,10 +487,10 @@ class CityscapesFineDataset(Dataset):
         LAB_SUFFIX = "_gtFine_labelIds.png"
         self._id_to_label = [(l.id, l.trainId) for l in cslabels]
 
-        self._images_dir = Path(f'{data_dir}/left/leftImg8bit/{subset}')
-        self._labels_dir = Path(f'{data_dir}/fine_annotations/{subset}')
-        self._image_list = [x.relative_to(self._images_dir) for x in self._images_dir.glob('/*/*')]
-        self._label_list = [x[:-len(IMG_SUFFIX)] + LAB_SUFFIX for x in self._image_list]
+        self._images_dir = Path(f'{data_dir}/leftImg8bit/{subset}')
+        self._labels_dir = Path(f'{data_dir}/gtFine/{subset}')
+        self._image_list = [x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]
+        self._label_list = [str(x)[:-len(IMG_SUFFIX)] + LAB_SUFFIX for x in self._image_list]
 
         info = {
             'problem_id': 'semseg',
@@ -456,9 +500,9 @@ class CityscapesFineDataset(Dataset):
         }
         modifiers = []
         if downsampling_factor > 1:
-            modifiers += f"downsample({downsampling_factor})"
+            modifiers += [f"downsample({downsampling_factor})"]
         if remove_hood:
-            modifiers += f"remove_hood"
+            modifiers += [f"remove_hood"]
         super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):

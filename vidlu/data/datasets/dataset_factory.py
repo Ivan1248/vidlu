@@ -8,21 +8,21 @@ def _info(cls, path=None, kwargs=None):
 
 
 _ds_to_info = {
-    'cifar10': _info(Cifar10Dataset, '/cifar-10-batches-py'),
-    'cifar100': _info(Cifar100Dataset, '/cifar-100-python'),
-    'tinyimagenet': _info(TinyImageNetDataset, '/tiny-imagenet-200'),
-    'tinyimages': _info(TinyImagesDataset, '/tiny-images'),
-    'inaturalist2018': _info(INaturalist2018Dataset, '/inaturalist18'),
-    'mozgalorvc': _info(MozgaloRVCDataset, '/mozgalo_robust_ml_challenge',
-                        {"remove_bottom_proportion": 0.5, "downsampling_factor": 4}),
-    'cityscapesseg': _info(CityscapesFineDataset, '/cityscapes',
-                           {"downsampling_factor": 2, "remove_hood": True}),
-    'wilddash': _info(WildDashDataset, '/wilddash', kwargs=dict(downsampling_factor=2)),
-    'camvid': _info(CamVidDataset, '/CamVid'),
-    'voc2012': _info(VOC2012SegmentationDataset, '/VOC2012'),
-    'iccv09': _info(ICCV09Dataset, '/iccv09'),
-    'isun': _info(ISUNDataset, '/iSUN'),
-    'lsun': _info(LSUNDataset, '/LSUN'),
+    'cifar10': _info(Cifar10Dataset, 'cifar-10-batches-py'),
+    'cifar100': _info(Cifar100Dataset, 'cifar-100-python'),
+    'tinyimagenet': _info(TinyImageNetDataset, 'tiny-imagenet-200'),
+    'tinyimages': _info(TinyImagesDataset, 'tiny-images'),
+    'inaturalist2018': _info(INaturalist2018Dataset, 'inaturalist18'),
+    'mozgalorvc': _info(MozgaloRVCDataset, 'mozgalo_robust_ml_challenge',
+                        dict(remove_bottom_proportion=0.5, downsampling_factor=4)),
+    'cityscapes': _info(CityscapesDataset, 'cityscapes',
+                        dict(downsampling_factor=2, remove_hood=True)),
+    'wilddash': _info(WildDashDataset, 'wilddash', kwargs=dict(downsampling_factor=2)),
+    'camvid': _info(CamVidDataset, 'CamVid'),
+    'voc2012': _info(VOC2012SegmentationDataset, 'VOC2012'),
+    'iccv09': _info(ICCV09Dataset, 'iccv09'),
+    'isun': _info(ISUNDataset, 'iSUN'),
+    'lsun': _info(LSUNDataset, 'LSUN'),
     'whitenoise': _info(WhiteNoiseDataset),
     'rademachernoise': _info(RademacherNoiseDataset),
     'hblobs': _info(HBlobsDataset),
@@ -38,7 +38,7 @@ _default_splits = {
 class DatasetFactory:
 
     def __init__(self, datasets_dir):
-        self.datasets_dir = datasets_dir
+        self.datasets_dir = Path(datasets_dir)
 
     def __call__(self, name: str, **kwargs):
         name = name.lower()
@@ -47,7 +47,7 @@ class DatasetFactory:
         except KeyError:
             raise KeyError(f'No dataset has the name "{name}".')
         subsets = info.cls.subsets
-        path_args = [self.datasets_dir + info.path] if info.path else []
+        path_args = [self.datasets_dir / info.path] if info.path else []
         if len(info.cls.subsets) == 0:
             subsets = ['all']
             load = lambda s: info.cls(*path_args, **{**info.kwargs, **kwargs})

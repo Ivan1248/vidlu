@@ -7,10 +7,14 @@ from collections import Sequence
 import inspect
 
 import numpy as np
+import torch
 
-from vidlu.data import Dataset
+from vidlu.data import Dataset, Record
 from vidlu import data
+from vidlu.problem import dataset_to_problem, Problem
 from vidlu.utils.image.data_augmentation import random_fliplr_with_label, augment_cifar
+
+from torchvision.transforms.functional import to_tensor
 
 
 # Normalization ####################################################################################
@@ -22,10 +26,10 @@ def get_input_mean_std(dataset):
 
 
 class LazyNormalizer:
-    def __init__(self, ds, cache_dir=None, max_sample_size=10000):
+    def __init__(self, ds, cache_dir, max_sample_size=10000):
         self.ds = ds
         if len(self.ds) > max_sample_size:
-            self.ds = self.ds.permute().subset(np.arange(max_sample_size))
+            self.ds = self.ds.permute()[:max_sample_size]
 
         self.initialized = multiprocessing.Value('i', 0)
         self.mean, self.std = (multiprocessing.Array('f', x) for x in
@@ -55,25 +59,24 @@ class LazyNormalizer:
         with self.initialized.get_lock():
             if not self.initialized.value:  # lazy
                 self._initialize()
-                print("mean, std = ", np.array(self.mean))
+                print(f'mean = {np.array(self.mean)} std = {np.array(self.std)}')
                 self.initialized.value = True
-        # CAUTION! np.array(self.mean) != np.array(self.mean.value)
-        breakpoint()
+                # CAUTION! np.array(self.mean) != np.array(self.mean.value)
         return ((x - self.mean) / self.std).astype(np.float32)
 
 
 # Cached dataset with normalized inputs ############################################################
 
-def cache_data_and_normalize_inputs(data, cache_dir):
-    normalizer = LazyNormalizer(data.trainval, cache_dir)
+def cache_data_and_normalize_inputs(pds, cache_dir):
+    normalizer = LazyNormalizer(pds.trainval, cache_dir)
 
     def transform(ds):
-        ds = ds.map(normalizer.normalize, 0)
-        if data.trainval.name not in ['INaturalist2018']:
-            ds = ds.cache_hdd_only(f"{cache_dir}/datasets")
+        ds = ds.map(lambda r: Record(x=normalizer.normalize(r.x), y=r.y), func_name='normalize')
+        if pds.trainval.name not in ['INaturalist2018']:
+            ds = ds.cache_hdd(f"{cache_dir}/datasets")
         return ds
 
-    return data.with_transform(transform)
+    return pds.with_transform(transform)
 
 
 def clear_dataset_hdd_cache(ds):
@@ -105,3 +108,16 @@ def get_default_augmentation_func(dataset):
         return random_fliplr_with_label
     else:
         return lambda x: x
+
+
+# Torch ############################################################################################
+
+# TODO
+def to_torch(dataset, device):
+    problem = dataset_to_problem(dataset)
+    if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
+        breakpoint()
+        transform = lambda r: Record(x=torch.from_numpy(r.x), y=torch.from_numpy(r.y))
+    else:
+        raise NotImplementedError()
+    return dataset.map(transform)

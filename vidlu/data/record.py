@@ -46,9 +46,12 @@ class Record(Sequence):  # Sized, Iterable len, iter
         Record(d=2, b=<unevaluated>)
     """
 
-    __slots__ = ("_dict", "_all_evaluated")
+    __slots__ = "_dict"
+
+    instance_count = 0
 
     def __init__(self, *args, **kwargs):
+        Record.instance_count += 1
         if len(args) > 1:
             raise ValueError("All arguments but the first one must be keyword arguments." +
                              "The optional positional argument can only be a Record or Mapping.")
@@ -61,7 +64,6 @@ class Record(Sequence):  # Sized, Iterable len, iter
         if not all(type(k) is str for k in dict_.keys()):
             raise ValueError("Record keys must be strings")
         self._dict = dict_
-        self._all_evaluated = False
 
     def __getattr__(self, key):
         return self[key]
@@ -89,7 +91,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
         return len(self._dict)
 
     def __eq__(self, other):
-        return all(a == b for a, b in zip(self.items(), other.items()))
+        eqs = (a == b for a, b in zip(self.items(), other.items()))
+        return all(e if isinstance(e, bool) else all(e) for e in eqs)
 
     def __getstate__(self):
         return {k: v for k, v in self.items()}
@@ -102,11 +105,12 @@ class Record(Sequence):  # Sized, Iterable len, iter
                             for k in self.keys()])
         return f"Record({fields})"
 
+    def __repr__(self):
+        return str(self)
+
     def evaluate(self):
-        if not self._all_evaluated:
-            for k in self.keys():
-                _ = self[k]
-            self._all_evaluated = True
+        for k in self.keys():
+            _ = self[k]
 
     def is_evaluated(self, key):
         return not isinstance(self._dict[key], _LazyField)

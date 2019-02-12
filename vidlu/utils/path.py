@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def find_in_ancestor(path, ancestor_sibling_path):
@@ -12,3 +13,8 @@ def find_in_ancestor(path, ancestor_sibling_path):
         if candidate.exists():
             return candidate
     raise FileNotFoundError("No ancestor sibling found")
+
+
+def to_valid_path(path):
+    path = str(path).strip().replace('"', "'")
+    return Path(re.sub(r'(?u)[^-\w.(){}[\]+=\'\\/]', '_', path))

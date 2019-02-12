@@ -1,8 +1,10 @@
 import argparse
 
-from scripts import dirs
+from _context import vidlu
 from vidlu.data.datasets import DatasetFactory
 from vidlu.data_utils import cache_data_and_normalize_inputs, clear_dataset_hdd_cache
+
+import dirs
 
 # python clear_cache.py <dsid>
 

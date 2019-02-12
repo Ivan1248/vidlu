@@ -1,11 +1,14 @@
+import warnings
+from pathlib import Path
+
 from vidlu.utils import path
 
 
 def _find(path_end):
     try:
-        return path.find_in_ancestor(__file__, path_end)
+        return Path(path.find_in_ancestor(__file__, path_end))
     except FileNotFoundError:
-        print(f"dirs.py: WARNING: Cannot find {path_end}.")
+        warnings.warn(f'Cannot find directory "{path_end}".')
         return None
 
 

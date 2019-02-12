@@ -1,21 +1,20 @@
 import itertools
 import os
 import pickle
-import secrets
 from collections.abc import Sequence
 from typing import Union, Callable
 import shutil
 from collections import Counter
-from functools import partial, wraps
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
 from .record import Record
-from .misc import default_collate, DataLoader
+from .misc import default_collate, serialize
 
 from vidlu.utils.misc import slice_len
+from vidlu.utils.collections import NameDict
 
 
 # Helpers ######################################################################
@@ -41,31 +40,33 @@ class Dataset(Sequence):
     from {0 .. len(self)-1}.
     """
     __slots__ = ("name", "subset", "modifiers", "info", "data")
-    _instance_counts = Counter()
+    _instance_count = 0
 
     def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
                  info: dict = None, data=None):
         assert not hasattr(self, 'name') and not hasattr(self, 'info')
         self.name = name or getattr(data, 'name', None)
         if self.name is None:
-            cname = self.__class__.__name__
-            Dataset._instance_counts[cname] += 1
-            self.name = cname + str(Dataset._instance_counts[cname])
+            if type(self) is Dataset:
+                self.name = 'Dataset' + str(Dataset._instance_count)
+                Dataset._instance_count += 1
+            cname = type(self).__name__
+            self.name = cname[:-len('Dataset')] if cname.endswith('Dataset') else cname
         self.subset = subset or getattr(data, 'subset', None)
         self.modifiers = list(getattr(data, 'modifiers', []))
         if modifiers:
             self.modifiers += [modifiers] if isinstance(modifiers, str) else modifiers
-        self.info = info or getattr(data, 'info', dict())
+        self.info = NameDict(info or getattr(data, 'info', dict()))
         self.data = data
 
     @property
     def full_name(self):
-        id = self.name
+        fn = self.name
         if self.subset:
-            id += '-' + self.subset
+            fn += '-' + self.subset
         if len(self.modifiers) > 0:
-            id += '.' + '.'.join(self.modifiers)
-        return id
+            fn += '.' + '.'.join(self.modifiers)
+        return fn
 
     def __getitem__(self, idx, *args):
         def element_fancy_index(d, key):
@@ -90,9 +91,7 @@ class Dataset(Sequence):
             d = self.get_example(idx)
             return d if filter_fields is None else filter_fields(d)
         if filter_fields is not None:
-            name = ds.name[:-1] + ', '.join(args) + ']'
-            ds = ds.map(filter_fields)
-            ds.name = name
+            ds = ds.map(filter_fields, func_name=ds.modifiers.pop()[:-1] + ', '.join(args) + ']')
         return ds
 
     def __len__(self):  # This can be overridden
@@ -153,7 +152,7 @@ class Dataset(Sequence):
         datasets = [self] + list(other)
         info = kwargs.pop('info', {k: v for k, v in datasets[0].info.items()
                                    if all(d.info.get(k, None) == v for d in datasets[1:])})
-        name = f"join[" + ",".join(x.name for x in datasets) + "]"
+        name = f"join[" + ",".join(x.full_name for x in datasets) + "]"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
 
     def random(self, length=None, replace=False, seed=53, **kwargs):
@@ -163,7 +162,7 @@ class Dataset(Sequence):
         return ZipDataset([self] + list(other), **kwargs)
 
     def _print(self, *args, **kwargs):
-        print(*args, f"({self.name})", **kwargs)
+        print(*args, f"({self.full_name})", **kwargs)
 
 
 # Dataset wrappers and proxies
@@ -295,8 +294,8 @@ class HDDCacheDataset(Dataset):
         os.makedirs(self.cache_dir, exist_ok=True)
         for i in range(6):
             ii = i * len(dataset) // 6
-            if dataset[ii] != self[ii]:
-                print(f"Cache of the dataset {self.name} inconsistent." +
+            if serialize(dataset[ii]) != serialize(self[ii]):
+                print(f"Cache of the dataset {self.full_name} inconsistent." +
                       "Deleting old and creating new cache.")
                 self.delete_cache()
                 os.makedirs(self.cache_dir, exist_ok=False)
@@ -323,7 +322,8 @@ class HDDCacheDataset(Dataset):
 
     def get_example(self, idx):
         if self.separate_fields:  # TODO: improve for small non-lazy fields
-            return Record({f"{k}_": lambda: self._get_example_or_field(idx, k) for k in self.keys})
+            return Record({f"{k}_": (lambda k_: lambda: self._get_example_or_field(idx, k_))(k)
+                           for k in self.keys})
         return self._get_example_or_field(idx)
 
     def delete_cache(self):

@@ -1,4 +1,3 @@
-import functools as ft
 from functools import partial
 
 import torch
@@ -7,9 +6,8 @@ import torch.nn.functional as F
 
 from .modules import (Module, Conv, ConvTranspose, Sequential, MaxPool, BatchNorm, AvgPool, Func,
                       Linear)
-from vidlu.utils.func import (default_args, chain, hard_partial, ArgTree, argtree_partial, params,
-                              Empty)
-from vidlu.utils.func import Full
+from vidlu.utils.func import (default_args, params, Empty, Reserved)
+from vidlu.utils.misc import (clean_locals)
 from vidlu.utils.collections import NameDict
 
 # Default arguments ################################################################################
@@ -39,7 +37,8 @@ class PreactBlock(Sequential):
     # normalization -> activation [-> noise] -> convolution
     def __init__(self, kernel_sizes, widths, noise_locations=[], stride=1,
                  omit_first_preactivation=False, norm_f=_d.norm_f, act_f=_d.act_f,
-                 conv_f=partial(_d.conv_f, kernel_size=Full, out_channels=Full, stride=Full),
+                 conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
+                                stride=Reserved),
                  noise_f=None):
         super().__init__()
         add = self.add_module
@@ -56,7 +55,8 @@ class PostactBlock(Sequential):
     # convolution -> normalization -> activation [-> noise]
     def __init(self, kernel_sizes, widths, noise_locations=(), stride=1, omit_first_norm=False,
                norm_f=_d.norm_f, act_f=_d.act_f,
-               conv_f=partial(_d.conv_f, kernel_size=Full, out_channels=Full, stride=Full),
+               conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
+                              stride=Reserved),
                noise_f=None):
         super().__init__()
         add = self.add_module
@@ -85,31 +85,32 @@ class AffineCoupling(Module):
 
 # heads ############################################################################################
 
-
-def classification_head(class_count):
-    return Sequential(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
-                      logits=Linear(class_count),
-                      probs=nn.Softmax(dim=1))
-
-
-def segmentation_head(class_count, shape):
-    return Sequential(logits=Conv(class_count, kernel_size=1),
-                      upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
-                      probs=nn.Softmax(dim=1))
+class ClassificationHead(Sequential):
+    def __init__(self, class_count):
+        super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
+                         logits=Linear(class_count),
+                         probs=nn.Softmax(dim=1))
 
 
-def regression_head(class_count, shape):
-    return Sequential(logits=Conv(class_count, kernel_size=1),
-                      upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
-                      probs=nn.Softmax(dim=1))
+class SegmentationHead(Sequential):
+    def __init__(self, class_count, shape):
+        super().__init__(logits=Conv(class_count, kernel_size=1),
+                         upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
+                         probs=nn.Softmax(dim=1))
+
+
+class RegressionHead(Sequential):
+    def __init__(self, class_count, shape):
+        super().__init__(logits=Conv(class_count, kernel_size=1),
+                         upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
+                         probs=nn.Softmax(dim=1))
 
 
 # VGG ##############################################################################################
 
-
 class VGGBackbone(Sequential):
     def __init__(self, base_width=64, block_depths=[2, 2, 3, 3, 3],
-                 block_f=partial(PostactBlock, kernel_sizes=Full, widths=Full, norm_f=None),
+                 block_f=partial(PostactBlock, kernel_sizes=Reserved, widths=Reserved, norm_f=None),
                  pool_f=partial(MaxPool, ceil_mode=True)):
         super().__init__()
         add = self.add_module
@@ -149,10 +150,9 @@ class FCNEncoder(Sequential):
 
 
 # ResNet ###########################################################################################
-# TODO: nn.init, zero-init: torchvision/models/resnet.py
 
 class ResUnit(Module):
-    def __init__(self, block_f=partial(PreactBlock, omit_first_preactivation=Full),
+    def __init__(self, block_f=partial(PreactBlock, omit_first_preactivation=Reserved),
                  dim_change='proj'):
         super().__init__()
         assert dim_change in ['pad', 'proj']
@@ -160,20 +160,21 @@ class ResUnit(Module):
         block = block_f(omit_first_preactivation=False)
         self.preact = block[:2]
         self.block = block[2:]
+        del block
         self.shortcut = None
 
     def build(self, x):
         block_args = default_args(self.args.block_f)
         out_width, stride = block_args.widths[-1], block_args.stride
-        if stride == 1 and x.shape[1] != out_width:
+        if stride == 1 and x.shape[1] == out_width:
             self.shortcut = lambda x: x
-            return
-        if self.args.dim_change == 'proj':
-            self.shortcut = Conv(out_width, kernel_size=1, stride=stride, bias=False)
         else:
-            pad = [0] * 5 + [out_width - x.shape[1]]
-            self.shortcut = Sequential(pool=AvgPool(stride, stride),
-                                       pad=Func(partial(F.pad, pad=pad, mode='constant')))
+            if self.args.dim_change == 'proj':
+                self.shortcut = Conv(out_width, kernel_size=1, stride=stride, bias=False)
+            else:
+                pad = [0] * 5 + [out_width - x.shape[1]]
+                self.shortcut = Sequential(pool=AvgPool(stride, stride),
+                                           pad=Func(partial(F.pad, pad=pad, mode='constant')))
 
     def forward(self, x):
         p = self.preact(x)
@@ -182,15 +183,16 @@ class ResUnit(Module):
 
 class ResGroups(Sequential):
     def __init__(self, group_lengths, base_widths,
-                 block_f=partial(default_args(ResUnit).block_f, widths=Full, stride=Full),
+                 block_f=partial(default_args(ResUnit).block_f, widths=Reserved, stride=Reserved),
                  dim_change=default_args(ResUnit).dim_change):
         super().__init__()
         for i, l in enumerate(group_lengths):
             for j in range(l):
-                self.add_module(f'unit{i}{j}', ResUnit(
-                    block_f=partial(block_f, widths=[2 ** i * w for w in base_widths],
-                                    stride=1 + int(i > 0 and j == 0)),
-                    dim_change=dim_change))
+                self.add_module(f'unit{i}_{j}',
+                                ResUnit(block_f=partial(block_f,
+                                                        widths=[2 ** i * w for w in base_widths],
+                                                        stride=1 + int(i > 0 and j == 0)),
+                                        dim_change=dim_change))
         self.add_module('post_norm', default_args(block_f).norm_f())
         self.add_module('post_act', default_args(block_f).act_f())
 
@@ -205,23 +207,26 @@ class ResNetBackbone(Sequential):
             features=ResGroups(group_lengths, [base_width * wf for wf in width_factors], block_f,
                                dim_change))
 
+    def forward(self, x):
+        return super().forward(x)
+
 
 # DenseNet #########################################################################################
-# TODO: nn.init: torchvision/models/densenet.py
 
-class DenseTransition(Module):
-    def __init__(self, compression=0.5, norm_f=_d.norm_f, act_f=_d.act_f, conv_f=_d.conv_f,
-                 noise_f=None, pool_f=AvgPool):
+class DenseTransition(Sequential):
+    def __init__(self, compression=0.5, norm_f=_d.norm_f, act_f=_d.act_f,
+                 conv_f=partial(_d.conv_f, kernel_size=1), noise_f=None,
+                 pool_f=partial(AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
-        self.norm, self.act, self.conv, self.pool = norm_f(), act_f(), None, pool_f(2, 2)
-        self.noise = noise_f() if noise_f else (lambda x: x)
+        self.args = NameDict(clean_locals())
 
     def build(self, x):
-        self.conv = self.args.conv_f(out_channels=round(x.shape[1] * self.args.compression),
-                                     kernel_size=1, bias=False)
-
-    def forward(self, x):
-        return chain([self.norm, self.act, self.conv, self.noise, self.pool])(x)
+        self.add_module(norm=self.args.norm_f())
+        self.add_module(act=self.args.act_f())
+        if self.args.noise_f is not None:
+            self.add_module(noise=self.args.noise_f())
+        self.add_module(conv=self.args.conv_f(out_features=round(x.shape[1] * self.args.compression)))
+        self.add_module(pool=partial(self.args.pool_f, stride=2))
 
 
 class DenseUnit(Module):
