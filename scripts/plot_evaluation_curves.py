@@ -1,8 +1,4 @@
-import os
 import argparse
-import re
-
-import numpy as np
 
 from _context import vidlu
 

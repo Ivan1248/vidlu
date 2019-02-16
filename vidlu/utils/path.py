@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import re
 
@@ -18,3 +19,12 @@ def find_in_ancestor(path, ancestor_sibling_path):
 def to_valid_path(path):
     path = str(path).strip().replace('"', "'")
     return Path(re.sub(r'(?u)[^-\w.(){}[\]+=\'\\/]', '_', path))
+
+
+def get_size(path):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            total_size += os.path.getsize(fp)
+    return total_size

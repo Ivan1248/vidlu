@@ -15,12 +15,12 @@ class State(object):
         self.epoch = 0
         self.output = None
         self.batch = None
+        self.batch_count = None
         self.update(**kwargs)
 
     def update(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
-
 
 
 class Engine(object):
@@ -113,7 +113,8 @@ class Engine(object):
             State: output state
         """
 
-        self.state = State(dataloader=data, max_epochs=max_epochs, metrics={})
+        self.state = State(dataloader=data, max_epochs=max_epochs, metrics={},
+                           batch_count=len(data))
 
         self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
         start_time = time.time()
@@ -124,7 +125,7 @@ class Engine(object):
             time_taken = self._run_once_on_dataset()
             hours, mins, secs = _to_hours_mins_secs(time_taken)
             self._logger.info(
-                f"Epoch {self.state.epoch} completed after {hours:02d}:{mins:02d}:{secs:02d}")
+                f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}")
             if self.should_terminate:
                 break
             self.epoch_completed(self)
@@ -132,6 +133,6 @@ class Engine(object):
         self.completed(self)
         time_taken = time.time() - start_time
         hours, mins, secs = _to_hours_mins_secs(time_taken)
-        self._logger.info(f"Engine run completed after {hours:02d}:{mins:02d}:{secs:02d}")
+        self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")
 
         return self.state

@@ -1,7 +1,9 @@
 import argparse
 
-from utils.tree import paths_to_tree
-from vidlu.utils.func import *
+# noinspection PyUnresolvedReferences
+from _context import vidlu
+from vidlu.utils.tree import paths_to_tree
+from vidlu.utils.func import ArgTree, find_empty_params_deep
 
 # example: python find_empty_args.py vidlu.learning.models.ResNet18
 
@@ -26,9 +28,9 @@ try:
 except (NameError, AttributeError):
     print(f"{namespace_str} contains the following:")
     namespace = eval(namespace_str)
-    for x in dir(namespace):
-        obj = getattr(namespace, x)
-        if (not x.startswith('_') and callable(obj)
-                and tryable((lambda: obj.__module__ == namespace_str), True)()):
-            print(f"  {x}")
+    for obj_name in dir(namespace):
+        obj = getattr(namespace, obj_name)
+        if (not obj_name.startswith('_') and callable(obj)
+                and (not hasattr(obj, '__module__') or obj.__module__ == namespace_str)):
+            print(f"  {obj_name}")
     raise

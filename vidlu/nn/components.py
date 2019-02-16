@@ -14,7 +14,7 @@ from vidlu.utils.collections import NameDict
 
 _d = NameDict(
     norm_f=BatchNorm,
-    act_f=partial(nn.ReLU, inplace=True),
+    act_f=partial(nn.ReLU, inplace=False),  # TODO: Can "inplace=True" cause bugs?
     conv_f=partial(Conv, padding='half', bias=False),
     convt_f=partial(ConvTranspose, bias=False),
 )
@@ -35,33 +35,39 @@ class RootBlock(Sequential):
 
 class PreactBlock(Sequential):
     # normalization -> activation [-> noise] -> convolution
-    def __init__(self, kernel_sizes, widths, noise_locations=[], stride=1,
-                 omit_first_preactivation=False, norm_f=_d.norm_f, act_f=_d.act_f,
+    def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
+                 omit_first_preactivation=False,
+                 norm_f=_d.norm_f, act_f=_d.act_f,
                  conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved),
                  noise_f=None):
         super().__init__()
         add = self.add_module
+        widths = [base_width * wf for wf in width_factors]
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             if i > 0 or not omit_first_preactivation:
                 add(f'norm{i}', norm_f())
                 add(f'act{i}', act_f())
             if i in noise_locations:
                 add(f'noise{i}', noise_f())
-            add(f'conv{i}', conv_f(kernel_size=k, out_channels=w, stride=stride if i == 0 else 1))
+            add(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
+                                          stride=stride if i == 0 else 1))
 
 
 class PostactBlock(Sequential):
     # convolution -> normalization -> activation [-> noise]
-    def __init(self, kernel_sizes, widths, noise_locations=(), stride=1, omit_first_norm=False,
+    def __init(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
+               omit_first_norm=False,
                norm_f=_d.norm_f, act_f=_d.act_f,
                conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
                               stride=Reserved),
                noise_f=None):
         super().__init__()
         add = self.add_module
+        widths = [base_width * wf for wf in width_factors]
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            add(f'conv{i}', conv_f(kernel_size=k, out_channels=w, stride=stride if i == 0 else 1))
+            add(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
+                                          stride=stride if i == 0 else 1))
             if norm_f and i > 0 or not omit_first_norm:
                 add(f'norm{i}', norm_f())
             add(f'act{i}', act_f())
@@ -89,33 +95,34 @@ class ClassificationHead(Sequential):
     def __init__(self, class_count):
         super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
                          logits=Linear(class_count),
-                         probs=nn.Softmax(dim=1))
+                         log_probs=nn.LogSoftmax(dim=1))
 
 
 class SegmentationHead(Sequential):
     def __init__(self, class_count, shape):
         super().__init__(logits=Conv(class_count, kernel_size=1),
                          upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
-                         probs=nn.Softmax(dim=1))
+                         log_probs=nn.LogSoftmax(dim=1))
 
 
 class RegressionHead(Sequential):
     def __init__(self, class_count, shape):
         super().__init__(logits=Conv(class_count, kernel_size=1),
                          upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
-                         probs=nn.Softmax(dim=1))
+                         log_probs=nn.LogSoftmax(dim=1))
 
 
 # VGG ##############################################################################################
 
 class VGGBackbone(Sequential):
-    def __init__(self, base_width=64, block_depths=[2, 2, 3, 3, 3],
+    def __init__(self, base_width=64, block_depths=(2, 2, 3, 3, 3),
                  block_f=partial(PostactBlock, kernel_sizes=Reserved, widths=Reserved, norm_f=None),
                  pool_f=partial(MaxPool, ceil_mode=True)):
         super().__init__()
         add = self.add_module
         for i, d in enumerate(block_depths):
-            add(f'block{i}', block_f(kernel_sizes=[3] * d, widths=[base_width * 2 ** i] * d))
+            add(f'block{i}',
+                Reserved.call(block_f, kernel_sizes=[3] * d, widths=[base_width * 2 ** i] * d))
             add(f'pool{i}', pool_f(kernel_size=2, stride=2))
 
 
@@ -155,9 +162,9 @@ class ResUnit(Module):
     def __init__(self, block_f=partial(PreactBlock, omit_first_preactivation=Reserved),
                  dim_change='proj'):
         super().__init__()
-        assert dim_change in ['pad', 'proj']
-        assert all(params(block_f)[x] is not Empty for x in ['kernel_sizes', 'widths'])
-        block = block_f(omit_first_preactivation=False)
+        if dim_change not in ['pad', 'proj']:
+            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+        block = Reserved.call(block_f, omit_first_preactivation=False)
         self.preact = block[:2]
         self.block = block[2:]
         del block
@@ -165,7 +172,8 @@ class ResUnit(Module):
 
     def build(self, x):
         block_args = default_args(self.args.block_f)
-        out_width, stride = block_args.widths[-1], block_args.stride
+        out_width = block_args.base_width * block_args.width_factors[-1]
+        stride = block_args.stride
         if stride == 1 and x.shape[1] == out_width:
             self.shortcut = lambda x: x
         else:
@@ -182,30 +190,32 @@ class ResUnit(Module):
 
 
 class ResGroups(Sequential):
-    def __init__(self, group_lengths, base_widths,
-                 block_f=partial(default_args(ResUnit).block_f, widths=Reserved, stride=Reserved),
+    def __init__(self, group_lengths, base_width, width_factors,
+                 block_f=partial(default_args(ResUnit).block_f, base_width=Reserved,
+                                 width_factors=Reserved, stride=Reserved),
                  dim_change=default_args(ResUnit).dim_change):
         super().__init__()
         for i, l in enumerate(group_lengths):
             for j in range(l):
                 self.add_module(f'unit{i}_{j}',
-                                ResUnit(block_f=partial(block_f,
-                                                        widths=[2 ** i * w for w in base_widths],
-                                                        stride=1 + int(i > 0 and j == 0)),
+                                ResUnit(block_f=Reserved.partial(block_f,
+                                                                 base_width=base_width * 2 ** i,
+                                                                 width_factors=width_factors,
+                                                                 stride=1 + int(i > 0 and j == 0)),
                                         dim_change=dim_change))
         self.add_module('post_norm', default_args(block_f).norm_f())
         self.add_module('post_act', default_args(block_f).act_f())
 
 
 class ResNetBackbone(Sequential):
-    def __init__(self, base_width=16, small_input=True, group_lengths=[2] * 4,
-                 width_factors=[16] * 2, block_f=default_args(ResGroups).block_f,
+    def __init__(self, base_width=16, small_input=True, group_lengths=(2,) * 4,
+                 width_factors=(1,) * 2, block_f=default_args(ResGroups).block_f,
                  dim_change=default_args(ResGroups).dim_change):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         super().__init__(
             root=RootBlock(base_width, small_input, **norm_act_args),
-            features=ResGroups(group_lengths, [base_width * wf for wf in width_factors], block_f,
-                               dim_change))
+            features=ResGroups(group_lengths, base_width=base_width, width_factors=width_factors,
+                               block_f=block_f, dim_change=dim_change))
 
     def forward(self, x):
         return super().forward(x)
@@ -225,12 +235,13 @@ class DenseTransition(Sequential):
         self.add_module(act=self.args.act_f())
         if self.args.noise_f is not None:
             self.add_module(noise=self.args.noise_f())
-        self.add_module(conv=self.args.conv_f(out_features=round(x.shape[1] * self.args.compression)))
-        self.add_module(pool=partial(self.args.pool_f, stride=2))
+        self.add_module(
+            conv=self.args.conv_f(out_features=round(x.shape[1] * self.args.compression)))
+        self.add_module(pool=Reserved.call(self.args.pool_f, stride=2))
 
 
 class DenseUnit(Module):
-    def __init__(self, block_f=partial(PreactBlock, kernel_sizes=[1, 3], widths=[4 * 12, 12])):
+    def __init__(self, block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
         super().__init__()
         self.block = block_f()
 
@@ -244,24 +255,26 @@ class DenseBlock(Sequential):
 
 
 class DenseSequence(Sequential):
-    def __init__(self, db_lengths=[2] * 4, compression=default_args(DenseTransition).compression,
-                 block_f=default_args(DenseBlock).block_f):
+    def __init__(self, growth_rate, db_lengths,
+                 compression=default_args(DenseTransition).compression,
+                 block_f=partial(default_args(DenseBlock).block_f, base_width=Reserved)):
         super().__init__()
         add = self.add_module
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        for i, l in enumerate(db_lengths):
+        for i, len in enumerate(db_lengths):
             if i > 0:
                 add(f'transition{i - 1}', DenseTransition(compression, **norm_act_args))
-            add(f'dense_block{i}', DenseBlock(l, block_f))
+            add(f'dense_block{i}',
+                DenseBlock(len, block_f=Reserved.partial(block_f, base_width=growth_rate)))
 
 
 class DenseNetBackbone(Sequential):
-    def __init__(self, base_width=12, small_input=True, db_lengths=[2] * 4,
+    def __init__(self, growth_rate=12, small_input=True, db_lengths=(2,) * 4,
                  compression=default_args(DenseSequence).compression,
                  block_f=default_args(DenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        super().__init__(root=RootBlock(2 * base_width, small_input, **norm_act_args),
-                         features=DenseSequence(db_lengths, compression, block_f))
+        super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
+                         features=DenseSequence(growth_rate, db_lengths, compression, block_f))
 
 
 # Experimental #####################################################################################

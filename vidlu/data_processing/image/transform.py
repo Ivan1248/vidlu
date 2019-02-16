@@ -20,10 +20,7 @@ def rotate(image: np.ndarray, angle: float) -> np.ndarray:  # TODO: test
     return cv2.warpAffine(image, M, (cols, rows), flags=cv2.INTER_NEAREST)
 
 
-def transform(image: np.ndarray,
-              rotation_deg: float = 0,
-              scale: float = 1,
-              flip: bool = False):
+def transform(image: np.ndarray, rotation_deg: float = 0, scale: float = 1, flip: bool = False):
     rows, cols = image.shape[0], image.shape[1]
     M = cv2.getRotationMatrix2D((cols / 2, rows / 2), rotation_deg, scale)
     if flip:

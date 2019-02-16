@@ -117,7 +117,7 @@ def get_key(dict_, value):
     for k, v in dict_.items():
         if v is value:
             return k
-    raise ValueError("the dictionary doens't ontain the value")
+    raise ValueError("the dictionary doesn't contain the value")
 
 
 # Downloading ######################################################################################

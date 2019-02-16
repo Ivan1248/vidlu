@@ -14,16 +14,19 @@ from vidlu.utils.collections import NameDict
 from vidlu.utils.torch import prepare_batch
 from vidlu.metrics import FuncMetric
 from vidlu.engine import Engine
+from vidlu.nn.modules import get_device
 
 
 # Runner ###########################################################################################
 
-
 class Evaluator:
-    def __init__(self, model, data_loader_f=partial(DataLoader, batch_size=1, num_workers=2),
-                 metrics={}, prepare_batch=prepare_batch, device=None):
+    def __init__(self, model, loss_f,
+                 data_loader_f=partial(DataLoader, batch_size=1, num_workers=2),
+                 prepare_batch=prepare_batch, device=None):
         super().__init__()
         self.model = model
+        self.loss = loss_f()
+        self.device = device
         self.prepare_batch = partial(prepare_batch, device=device, non_blocking=False)
         self.data_loader_f = data_loader_f
 
@@ -41,10 +44,16 @@ class Evaluator:
         def compute_metric(e):
             e.state.metrics[name] = metric.compute()
 
-        engine.epoch_completed.add_handler(lambda e: compute_metric(e))
+        engine.iteration_completed.add_handler(lambda e: compute_metric(e))
 
     def attach_metric(self, metric, name=None):
         self._attach_metric(metric, name=name, engine=self.evaluation)
+
+    def get_outputs(self, *x):
+        if hasattr(self.model, 'get_outputs'):
+            return self.model.get_outputs(*x)
+        prediction = self.model(*x)
+        return prediction, NameDict(prediction=prediction)
 
     def eval(self, dataset):
         return self.evaluation.run(self.data_loader_f(dataset))
@@ -58,17 +67,15 @@ class Evaluator:
 class Trainer(Evaluator):
     def __init__(self, model, loss_f, weight_decay, optimizer_f, epoch_count,
                  lr_scheduler_f=partial(LambdaLR, lr_lambda=lambda e: 1), batch_size=1,
-                 data_loader_f=default_args(Evaluator).data_loader_f, metrics={},
+                 data_loader_f=default_args(Evaluator).data_loader_f,
                  prepare_batch=prepare_batch, device=None):
-        self.model = model
-        self.loss = loss_f()
+        super().__init__(model, loss_f=loss_f,
+                         data_loader_f=partial(data_loader_f, batch_size=batch_size),
+                         prepare_batch=prepare_batch,
+                         device=get_device(model) if device is None else device)
         self.optimizer = optimizer_f(params=self.model.parameters(), weight_decay=weight_decay)
         self.epoch_count = epoch_count
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
-
-        super().__init__(model, data_loader_f=partial(data_loader_f, batch_size=batch_size),
-                         metrics=dict(loss=FuncMetric(self.loss), **metrics),
-                         prepare_batch=prepare_batch, device=device)
 
         self.training = Engine(lambda e, b: self.train_batch(b))
 
@@ -79,7 +86,7 @@ class Trainer(Evaluator):
         @self.training.epoch_completed.add_handler
         def evaluate(e):
             if self._val_dataset is not None:
-                self.evaluation.run(self.data_loader_f(self.validation_dataset))
+                self.evaluation.run(self.data_loader_f(self._val_dataset))
 
     def attach_metric(self, metric, name=None):
         for eng in [self.training, self.evaluation]:
@@ -87,7 +94,8 @@ class Trainer(Evaluator):
 
     def train(self, dataset, val_dataset=None):
         self._val_dataset = val_dataset
-        return self.training.run(self.data_loader_f(dataset))
+        data_loader = self.data_loader_f(dataset)
+        return self.training.run(data_loader, max_epochs=self.epoch_count)
 
     def train_batch(self, batch):
         raise NotImplementedError()
@@ -100,28 +108,37 @@ class SupervisedTrainer(Trainer):
         self.model.eval()
         with torch.no_grad():
             x, y = self.prepare_batch(batch, device=self.device)
-            y_pred = self.model(x)
-            return NameDict(prediction=y_pred, target=y)
+            prediction, outputs = self.get_outputs(x)
+            loss = self.loss(prediction, y.long())
+            return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
 
     def train_batch(self, batch):
         self.model.train()
         self.optimizer.zero_grad()
-        x, y = self.prepare_batch(batch)
-        from vidlu.nn import with_intermediate_outputs
-        probs = self.model(x)
-        # probs, f1 = with_intermediate_outputs(self.model, ['backbone.root'])(x)
-        # print(f1)
-        loss = self.loss(probs, y.long())
+        x, y = self.prepare_batch(batch, device=self.device)
+        prediction, outputs = self.get_outputs(x)
+        loss = self.loss(prediction, y.long())
         loss.backward()
         # for n, p in self.model.named_parameters():
-        #    print(p.requires_grad, p.grad.abs().mean(), n)
+        #    print(p.requires_grad, p.grad.abs().mean(), p.abs().mean(), n)
         self.optimizer.step()
-        return NameDict(prediction=probs.argmax(1), probs=probs, target=y, loss=loss.item())
+        return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
+
+
+# Classification ###################################################################################
+
+class ClassificationTrainer(SupervisedTrainer):
+    def get_outputs(self, *x):
+        if hasattr(self.model, 'get_outputs'):
+            return self.model.get_outputs(*x)
+        log_probs = self.model(*x)
+        return log_probs, NameDict(prediction=log_probs, log_probs=log_probs, probs=log_probs.exp(),
+                                   hard_prediction=log_probs.argmax(1))
 
 
 # Special
 
-class ResNetCifarTrainer(SupervisedTrainer):
+class ResNetCifarTrainer(ClassificationTrainer):
     # as in www.arxiv.org/abs/1603.05027
     __init__ = partialmethod(
         SupervisedTrainer.__init__,
@@ -129,10 +146,10 @@ class ResNetCifarTrainer(SupervisedTrainer):
         weight_decay=1e-4,
         epoch_count=200,
         lr_scheduler_f=partial(MultiStepLR, milestones=[60, 120, 160], gamma=0.2),
-        batch_size=128)
+        batch_size=32)
 
 
-class ResNetCamVidTrainer(SupervisedTrainer):
+class ResNetCamVidTrainer(ClassificationTrainer):
     # custom
     __init__ = partialmethod(
         SupervisedTrainer.__init__,
@@ -148,7 +165,7 @@ class WRNCifarTrainer(ResNetCifarTrainer):
     __init__ = partialmethod(ResNetCifarTrainer.__init__, weight_decay=5e-4)
 
 
-class DenseNetCifarTrainer(SupervisedTrainer):
+class DenseNetCifarTrainer(ClassificationTrainer):
     # as in www.arxiv.org/abs/1608.06993
     __init__ = partialmethod(
         SupervisedTrainer.__init__,
@@ -156,6 +173,16 @@ class DenseNetCifarTrainer(SupervisedTrainer):
         optimizer_f=default_args(ResNetCifarTrainer).optimizer_f,
         epoch_count=100,
         lr_scheduler_f=partial(MultiStepLR, milestones=[50, 75], gamma=0.1),
+        batch_size=64)
+
+
+class SmallImageClassifierTrainer(ClassificationTrainer):
+    # as in www.arxiv.org/abs/1603.05027
+    __init__ = partialmethod(
+        SupervisedTrainer.__init__,
+        optimizer_f=partial(SGD, lr=1e-2, momentum=0.9),
+        weight_decay=0,
+        epoch_count=50,
         batch_size=64)
 
 
@@ -241,7 +268,7 @@ def get_default_argtree(trainer_class, model, dataset):
     problem = dataset_to_problem(dataset)
     if issubclass(trainer_class, SupervisedTrainer):
         if problem == Problem.CLASSIFICATION:
-            return ArgTree(loss_f=nn.CrossEntropyLoss)
+            return ArgTree(loss_f=nn.NLLLoss)
         elif problem == Problem.SEMANTIC_SEGMENTATION:
-            return ArgTree(loss_f=nn.CrossEntropyLoss)
+            return ArgTree(loss_f=nn.NLLLoss)
     return ArgTree()

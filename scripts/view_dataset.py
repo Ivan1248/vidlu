@@ -3,8 +3,10 @@ import argparse
 from _context import vidlu
 
 from vidlu.data import DatasetFactory
+from vidlu.data.misc import serialized_sizeof
 from vidlu import data_utils
 from vidlu.utils.presentation.visualization import view_predictions
+from vidlu.utils.tree import print_tree
 
 import dirs
 
@@ -23,6 +25,12 @@ args = parser.parse_args()
 pds = DatasetFactory(dirs.DATASETS)(args.ds)
 pds = data_utils.cache_data_and_normalize_inputs(pds, dirs.CACHE)
 ds = pds[args.part]
+
+print("Name:", ds.name)
+print("Info:")
+print_tree(ds.info, depth=1)
+print("Number of examples:", len(ds))
+print(f"Size estimate: {serialized_sizeof(ds[0]) * len(ds) / 2 ** 30:.3f} GiB")
 
 if 'class_count' not in ds.info:
     ds.info['class_count'] = 2

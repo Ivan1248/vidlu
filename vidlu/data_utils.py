@@ -5,24 +5,21 @@ from tqdm import tqdm
 import pickle
 from collections import Sequence
 import inspect
+import warnings
 
 import numpy as np
 import torch
 
-from vidlu.data import Dataset, Record
+from vidlu.data import Dataset, Record, serialized_sizeof
 from vidlu import data
 from vidlu.problem import dataset_to_problem, Problem
-from vidlu.utils.image.data_augmentation import random_fliplr_with_label, augment_cifar
+from vidlu.data_processing.image.random_transforms import random_fliplr_with_label, augment_cifar
+from vidlu.utils import path
 
 from torchvision.transforms.functional import to_tensor
 
 
 # Normalization ####################################################################################
-
-def get_input_mean_std(dataset):
-    ms = np.array([(x.mean((0, 1)), x.std((0, 1))) for x, y in dataset])
-    m, s = ms.mean(0)
-    return m, s
 
 
 class LazyNormalizer:
@@ -33,10 +30,16 @@ class LazyNormalizer:
 
         self.initialized = multiprocessing.Value('i', 0)
         self.mean, self.std = (multiprocessing.Array('f', x) for x in
-                               get_input_mean_std([ds[0], ds[1]]))
+                               self.get_input_mean_std([ds[0], ds[1]]))
 
         self.cache_dir = f"{cache_dir}/lazy-normalizer-cache"
         self.cache_path = f"{self.cache_dir}/{ds.name}.p"
+
+    @staticmethod
+    def get_input_mean_std(dataset):
+        ms = np.array([(x.mean((0, 1)), x.std((0, 1))) for x, y in dataset])
+        m, s = ms.mean(0)
+        return m, s
 
     def _initialize(self):
         mean_std = None
@@ -49,7 +52,7 @@ class LazyNormalizer:
                 os.remove(self.cache_path)
         if mean_std is None:
             print(f"Computing dataset statistics for {self.ds.name}")
-            mean_std = get_input_mean_std(tqdm(self.ds))
+            mean_std = self.get_input_mean_std(tqdm(self.ds))
             os.makedirs(self.cache_dir, exist_ok=True)
             with open(f"{self.cache_path}", 'wb') as cache_file:
                 pickle.dump(mean_std, cache_file, protocol=4)
@@ -67,24 +70,36 @@ class LazyNormalizer:
 
 # Cached dataset with normalized inputs ############################################################
 
-def cache_data_and_normalize_inputs(pds, cache_dir):
-    normalizer = LazyNormalizer(pds.trainval, cache_dir)
+def cache_data_and_normalize_inputs(parted_dataset, cache_dir):
+    normalizer = LazyNormalizer(parted_dataset.trainval, cache_dir)
+    elem_size = serialized_sizeof(parted_dataset.trainval[0])
+    size = elem_size * len(parted_dataset.all)
+    free_space = shutil.disk_usage(cache_dir).free
+    dataset_space_proportion = size / free_space
 
     def transform(ds):
         ds = ds.map(lambda r: Record(x=normalizer.normalize(r.x), y=r.y), func_name='normalize')
-        if pds.trainval.name not in ['INaturalist2018']:
-            ds = ds.cache_hdd(f"{cache_dir}/datasets")
+        ds_cached = ds.cache_hdd(f"{cache_dir}/datasets")
+        is_already_cached = path.get_size(ds_cached.cache_dir) > size * 0.05
+        if is_already_cached or dataset_space_proportion < 0.5:
+            ds = ds_cached
+        else:
+            ds_cached.delete_cache()
+            del ds_cached
+            warnings.warn(f'The dataset {ds.full_name} will not be cached because it is too large.'
+                          + f' Available space: {free_space / 2 ** 30} GiB.'
+                          + f' Data size (subset / all): {elem_size * len(ds)} GiB / {size} GiB.')
         return ds
 
-    return pds.with_transform(transform)
+    return parted_dataset.with_transform(transform)
 
 
 def clear_dataset_hdd_cache(ds):
     if hasattr(ds, 'cache_dir'):
         shutil.rmtree(ds.cache_dir)
         print(f"Deleted {ds.cache_dir}")
-    elif isinstance(ds, data.dataset.MapDataset):  # lazynormalizer
-        cache_path = inspect.getclosurevars(ds._func).nonlocals['f'].__self__.cache_path
+    elif isinstance(ds, data.dataset.MapDataset):  # lazyNormalizer
+        cache_path = inspect.getclosurevars(ds.func).nonlocals['f'].__self__.cache_path
         if os.path.exists(cache_path):
             os.remove(cache_path)
             print(f"Deleted {cache_path}")

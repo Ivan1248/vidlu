@@ -30,6 +30,25 @@ def _subset_hash(indices):
     return hash(tuple(indices)) % 16 ** 5
 
 
+def _split_on_common_prefix(strings):
+    min_len = min(len(s) for s in strings)
+    for i, chars in enumerate(s[:min_len] for s in zip(strings)):
+        c = chars[0]
+        if any(d != c for d in chars[1:]):
+            break
+    else:
+        i += 1
+    return strings[0:i], [s[i:] for s in strings]
+
+
+def _split_on_common_suffix(strings):
+    def reverse(string):
+        return ''.join(reversed(string))
+
+    rsuffix, rprefixes = _split_on_common_prefix([reverse(s) for s in strings])
+    return [reverse(s) for s in rprefixes], reverse(rsuffix)
+
+
 # Dataset ######################################################################
 
 class Dataset(Sequence):
@@ -106,45 +125,70 @@ class Dataset(Sequence):
     def __add__(self, other):
         return self.join(other)
 
-    def get_example(self, idx):  # This can be overriden
+    def get_example(self, idx):  # This can be overridden
         return self.data[idx]
 
     def batch(self, batch_size, **kwargs):  # Element type is tuple
+        """
+        Creates a dataset where elements are grouped in `batch_size`-tuples. The
+        last tuple may be smaller.
+        """
         return BatchDataset(self, batch_size, **kwargs)
 
-    def bootstrap_sample(self, length=None, replace=False, seed=53, **kwargs):
+    def sample(self, length, replace=False, seed=53, **kwargs):
+        """
+        Creates a dataset with randomly chosen elements with or without
+        replacement.
+        """
         return SampleDataset(self, length=length, replace=replace, seed=seed, **kwargs)
 
     def cache(self, max_cache_size=np.inf, directory=None, chunk_size=100, **kwargs):
-        # caches the dataset in RAM (partially or completely)
+        """ Caches the dataset in RAM (partially or completely). """
         if directory is not None:
             return HDDAndRAMCacheDataset(self, directory, chunk_size, **kwargs)
         return CacheDataset(self, max_cache_size, **kwargs)
 
     def cache_hdd(self, directory, separate_fields=True, **kwargs):
+        """
+        Caches the dataset on the hard disk. It can be useful to automatically
+        cache preprocessed data without modifying the original dataset and make
+        data loading faster.
+        """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
 
     def collate(self, collate_func=None, func_name=None, **kwargs):
-        # Usually to be used after batch or zip
+        """ Collates examples of a batch dataset or a zip dataset. """
         return CollateDataset(self, collate_func, func_name=func_name, **kwargs)
 
     def filter(self, func, *, func_name=None, **kwargs):
+        """
+        Creates a dataset containing only the elements for which `func` evaluates
+        to True.
+        """
         indices = np.array([i for i, d in enumerate(self) if func(d)])
         func_name = func_name or f'{_subset_hash(indices):x}'
         return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
 
     def map(self, func, *, func_name=None, **kwargs):
+        """ Creates a dataset withe elements transformed with `func`. """
         return MapDataset(self, func, func_name=func_name, **kwargs)
 
     def permute(self, seed=53, **kwargs):
+        """ Creates a permutation of the dataset. """
         indices = np.random.RandomState(seed=seed).permutation(len(self))
         return SubDataset(self, indices, modifiers="permute({seed})", **kwargs)
 
     def repeat(self, number_of_repeats, **kwargs):
+        """
+        Creates a dataset with `number_of_repeats` times the length of the
+        original dataset so that every `number_of_repeats` an element is
+        repeated.
+        """
         return RepeatDataset(self, number_of_repeats, **kwargs)
 
     def split(self, *, ratio: float = None, position: int = None):
-        assert position or ratio
+        if (ratio is None) == (position is None):
+            raise ValueError("Either ratio or position needs to be specified.")
         pos = position or round(ratio * len(self))
         return self[:pos], self[pos:]
 
@@ -152,10 +196,15 @@ class Dataset(Sequence):
         datasets = [self] + list(other)
         info = kwargs.pop('info', {k: v for k, v in datasets[0].info.items()
                                    if all(d.info.get(k, None) == v for d in datasets[1:])})
-        name = f"join[" + ",".join(x.full_name for x in datasets) + "]"
+        name = f"join(" + ",".join(x.full_name for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
 
     def random(self, length=None, replace=False, seed=53, **kwargs):
+        """
+        A modified dataset where the indexing operator returns a randomly chosen
+        element which doesn't depend on the index.
+        It is not clear why this would be used instead of a sampler.
+        """
         return RandomDataset(self, length=length, seed=seed, **kwargs)
 
     def zip(self, *other, **kwargs):
@@ -168,15 +217,15 @@ class Dataset(Sequence):
 # Dataset wrappers and proxies
 
 class MapDataset(Dataset):
-    __slots__ = ("_func",)
+    __slots__ = ("func",)
 
     def __init__(self, dataset, func=lambda x: x, func_name=None, **kwargs):
         transform = 'map' + ('_' + func_name if func_name else '')
         super().__init__(modifiers=transform, data=dataset, **kwargs)
-        self._func = func
+        self.func = func
 
     def get_example(self, idx):
-        return self._func(self.data[idx])
+        return self.func(self.data[idx])
 
 
 class ZipDataset(Dataset):
@@ -276,7 +325,7 @@ class HDDAndRAMCacheDataset(Dataset):
                 # examples pickled in chunks because of memory constraints
                 for x in tqdm(to_chunks(data)):
                     pickle.dump(x, f, protocol=4)
-        super().__init__(modifier="cache_hdd_ram", info=dataset.info, data=data, **kwargs)
+        super().__init__(modifiers="cache_hdd_ram", info=dataset.info, data=data, **kwargs)
 
 
 class HDDCacheDataset(Dataset):
@@ -369,7 +418,7 @@ class SubrangeDataset(Dataset):
     def get_example(self, idx):
         i = self.start + self.step * idx
         if i < 0 or i >= self.stop:
-            raise IndexError(i)
+            raise IndexError("Index out of range.")
         return self.data[i]
 
     def __len__(self):
@@ -401,11 +450,14 @@ class SampleDataset(Dataset):
             indices = [rand.randint(0, len(dataset)) for _ in range(len(dataset))]
         else:
             indices = rand.permutation(len(dataset))[:length]
+            if length > len(dataset):
+                raise ValueError("A sample without replacement can not be larger"
+                                 + " than the original dataset.")
         self._indices = _compress_indices(indices, len(dataset))
         args = f"{seed}"
         if length is not None:
             args += f",{length}"
-        modifier = f"sample_{'r' if replace else ''}({args})"
+        modifier = f"sample{'_r' if replace else ''}({args})"
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
         self._len = length or len(dataset)
 
@@ -447,7 +499,7 @@ class BatchDataset(Dataset):
 
     def get_example(self, idx):
         if idx < 0 or idx >= self._length:
-            raise IndexError(idx)
+            raise IndexError("Index out of range.")
         batch_size = self._last_batch_size if idx == self._length - 1 else self._batch_size
         i_start = idx * self._batch_size
         return tuple(self.data[i] for i in range(i_start, i_start + batch_size))

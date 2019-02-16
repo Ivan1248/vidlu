@@ -136,7 +136,7 @@ def _stochastic(*superclasses):
 
 def _extended(*superclasses):
     return superclasses
-    #return [_stochastic(_scoped(*superclasses))]
+    # return [_stochastic(_scoped(*superclasses))]
 
 
 # Modified PyTorch Modules #########################################################################
@@ -168,7 +168,7 @@ class Module(*_extended(nn.Module, ABC)):
                 + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
 
     def clone(self):
-        return self.__class__(**self.args)
+        return type(self)(**self.args)
 
     @property
     def device(self):
@@ -602,3 +602,8 @@ def try_get_name_from_call_stack(module, full_name=True):
             return f'{parent_name}.{n}' if full_name and parent_name else n
     breakpoint()
     raise NotImplementedError()
+
+
+def get_device(module):
+    param = next(module.parameters(), None)
+    return None if param is None else param[0].device

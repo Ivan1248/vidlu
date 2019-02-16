@@ -9,7 +9,7 @@ from .dataset import Dataset
 # PartitionedDataset
 
 
-class PartSplit:
+class _PartSplit:
     def __init__(self, subpart_names, ratio):
         self.subparts = subpart_names
         self.ratio = ratio
@@ -17,7 +17,7 @@ class PartSplit:
 
 def _generate_parts(part_to_ds: Dict[str, Dataset],
                     part_to_split: Dict[str, Tuple[Tuple[str, str], float]] = None):
-    part_to_split = {k: PartSplit(*v) for k, v in
+    part_to_split = {k: _PartSplit(*v) for k, v in
                      part_to_split.items()}
     parts = set()
     parts.update(part_to_ds.keys())
@@ -25,7 +25,7 @@ def _generate_parts(part_to_ds: Dict[str, Dataset],
         parts.update(
             p for p in [k] + list(ps.subparts) for k, ps in part_to_split.items() if
             p not in parts)
-    part_to_ds = {k: v for k, v in part_to_ds.items()}
+    part_to_ds = dict(part_to_ds)
 
     def generate_parts(part):
         if part not in part_to_split:
@@ -53,8 +53,10 @@ def _generate_parts(part_to_ds: Dict[str, Dataset],
 
 class PartedDataset:
     def __init__(self, part_to_ds, part_to_split=None):
-        self.part_to_ds = (part_to_ds if part_to_split is None
-                           else _generate_parts(part_to_ds, part_to_split))
+        part_to_split = part_to_split or {}
+        non_top_level_parts = set(s for subsets, ratio in part_to_split.values() for s in subsets)
+        self.top_level_parts = [k for k in part_to_split.keys() if k not in non_top_level_parts]
+        self.part_to_ds = _generate_parts(part_to_ds, part_to_split)
 
     def __getitem__(self, item):
         try:
@@ -73,6 +75,10 @@ class PartedDataset:
 
     def items(self):
         for k in self.keys():
+            yield k, self[k]
+
+    def top_level_items(self):
+        for k in self.top_level_parts:
             yield k, self[k]
 
 

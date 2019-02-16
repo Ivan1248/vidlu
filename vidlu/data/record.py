@@ -30,10 +30,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
         True
         >>> r = Record(a_=lambda: 2+3, b=7)
         Record(a=<unevaluated>, b=7)
-        >>> 5 in r._dict.values()
-        False
-        >>> r.a; print(r, 5 in r._dict.values())
-        Record(a=5, b=7) True
+        >>> r.a; print(r)
+        Record(a=5, b=7)
         >>> a, y = r; print(a, y)
         5 7
         >>> print([(k, v) for k, v in r.items()])
@@ -53,8 +51,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
     def __init__(self, *args, **kwargs):
         Record.instance_count += 1
         if len(args) > 1:
-            raise ValueError("All arguments but the first one must be keyword arguments." +
-                             "The optional positional argument can only be a Record or Mapping.")
+            raise ValueError("All arguments but the first one must be keyword arguments."
+                             + " The optional positional argument can only be a Record or Mapping.")
         if len(args) == 1:
             dict_ = dict(args[0]._dict if isinstance(args[0], Record) else args[0], **kwargs)
         else:
@@ -62,7 +60,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
         dict_ = dict([(k[:-1], _LazyField(v)) if k.endswith('_') else (k, v)
                       for k, v in dict_.items()])
         if not all(type(k) is str for k in dict_.keys()):
-            raise ValueError("Record keys must be strings")
+            raise ValueError("Record keys must be strings.")
         self._dict = dict_
 
     def __getattr__(self, key):
@@ -115,7 +113,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
     def is_evaluated(self, key):
         return not isinstance(self._dict[key], _LazyField)
 
-    def join(self, other, *others, overwrite=False):
+    def join(self, other: 'Record', *others, overwrite=False):
         if len(others) > 0:
             return reduce(lambda a, b: a.join(b, overwrite=overwrite), [self, other, *others])
         if not overwrite and any(a in self.keys() for a in other.keys()):

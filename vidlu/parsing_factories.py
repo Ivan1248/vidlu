@@ -9,7 +9,7 @@ from torchvision.transforms.functional import to_tensor as image_to_tensor
 from vidlu.data import DatasetFactory, DataLoader
 from vidlu.data_utils import cache_data_and_normalize_inputs
 from vidlu.utils.func import (ArgTree, argtree_partial, argtree_hard_partial,
-                              find_empty_params_deep, params_deep, params, Empty, valmap)
+                              find_empty_params_deep, ArgTree, params, Empty, valmap)
 from vidlu.utils.tree import tree_to_paths, print_tree
 
 t = ArgTree  # used in arg/evaluation
@@ -19,8 +19,8 @@ def parse_datasets(datasets_str: str, datasets_dir, cache_dir):
     from vidlu.data import Record
 
     def error(msg=""):
-        raise ValueError(f'Invalid configuration string. {msg} ' + \
-                         'Syntax: "dataset1[([arg1=val1[, ...]])]{subset1[,...]}[, ...]".')
+        raise ValueError(f'Invalid configuration string. {msg}'
+                         + ' Syntax: "dataset1[([arg1=val1[, ...]])]{subset1[,...]}[, ...]".')
 
     pds_factory = DatasetFactory(datasets_dir)
     get_parted_dataset = lambda name, **k: cache_data_and_normalize_inputs(pds_factory(name, **k),
@@ -65,7 +65,7 @@ def print_all_args_message(func):
     #    print('.'.join(p), '=', v)
 
     print(f"Argument tree of the model ({func.func}):")
-    print_tree(params_deep(func), ArgTree, depth=1)
+    print_tree(ArgTree.from_func(func), depth=1)
 
 
 def print_missing_args_message(func):
@@ -128,6 +128,9 @@ def parse_trainer(trainer_str: str, model, dataset, device=None, verbosity=1):
 
     trainer_name, *argtree_arg = (x.strip() for x in trainer_str.strip().split(',', 1))
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) > 0 else ArgTree()
+    if 'optimizer_f' in argtree_arg and 'weight_decay' in argtree_arg.optimizer_f:
+        raise ValueError("weight_decay is allowed to be given as an argument to the trainer,"
+                         + " but not to the optimizer.")
     trainer_class = getattr(trainers, trainer_name)
 
     argtree = trainers.get_default_argtree(trainer_class, model, dataset)

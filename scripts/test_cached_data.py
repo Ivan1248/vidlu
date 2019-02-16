@@ -1,11 +1,8 @@
 import argparse
 
-import numpy as np
 from tqdm import trange
 
 from _context import vidlu
-
-from dl_uncertainty import data_utils
 
 parser = argparse.ArgumentParser()
 parser.add_argument('ds', type=str)

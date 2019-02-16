@@ -9,14 +9,6 @@ from vidlu.utils.tree import tree_to_paths
 
 # Wrappers #########################################################################################
 
-def pipable(func):
-    def wrapper(x):
-        func(x)
-        return x
-
-    return wrapper
-
-
 class hard_partial(partial):
     """
     Like partial, but doesn't allow changing already chosen keyword arguments.
@@ -27,7 +19,7 @@ class hard_partial(partial):
     def __call__(self, *args, **kwargs):
         for k in kwargs.keys():
             if k in self.keywords:
-                raise ValueError(f"Parameter {k} is frozen and can't be overridden.")
+                raise RuntimeError(f"Parameter {k} is frozen and can't be overridden.")
         return partial.__call__(self, *args, **kwargs)
 
 
@@ -63,9 +55,15 @@ class ArgTree(NameDict):
     def copy(self):
         return ArgTree({k: v.copy() if isinstance(v, ArgTree) else v for k, v in self.items()})
 
+    @staticmethod
+    def from_func(func):
+        return ArgTree(
+            {k: ArgTree.from_func(v) if callable(v) and v not in (Empty, Reserved) else v
+             for k, v in params(func).items()})
+
 
 class HardArgTree(ArgTree):
-    pass
+    """ An argtree whose arguments can not be overridden."""
 
 
 class EscapedArgTree:
@@ -77,8 +75,8 @@ class EscapedArgTree:
 
 def argtree_partial(func, *args, **kwargs):
     if len(args) + int(len(kwargs) > 0) != 1:
-        raise ValueError("The arguments should be either a single positional argument " +
-                         "or one or more keyword arguments.")
+        raise ValueError("The arguments should be either a single positional argument"
+                         + " or 1 or more keyword arguments.")
     tree = args[0] if len(args) == 1 else kwargs
     for k, v in list(tree.items()):
         if isinstance(v, HardArgTree):
@@ -94,8 +92,8 @@ def argtree_partial(func, *args, **kwargs):
 
 def argtree_hard_partial(func, *args, **kwargs):
     if len(args) + int(len(kwargs) > 0) > 1:
-        raise ValueError("The arguments should be either a single positional argument " +
-                         "or 0 or more keyword arguments.")
+        raise ValueError("The arguments should be either a single positional argument"
+                         + " or 0 or more keyword arguments.")
     tree = args[0] if len(args) == 1 else kwargs
     for k, v in list(tree.items()):
         if isinstance(v, ArgTree):
@@ -107,8 +105,8 @@ def argtree_hard_partial(func, *args, **kwargs):
 
 def argtree_partialmethod(func, *args, **kwargs):
     if len(args) + int(len(kwargs) > 0) != 1:
-        raise ValueError("The arguments should be either a single positional argument " +
-                         "or one or more keyword arguments.")
+        raise ValueError("The arguments should be either a single positional argument "
+                         + " or 1 or more keyword arguments.")
     tree = args[0] if len(args) == 1 else kwargs
     for k, v in list(tree.items()):
         if isinstance(v, ArgTree):
@@ -118,20 +116,14 @@ def argtree_partialmethod(func, *args, **kwargs):
     return partialmethod(func, **tree)
 
 
-# find_empty_args ##################################################################################
-
-def params_deep_flat(func):
+def params_deep(func):
     args = []  # list of lists of string (list of paths)
     for k, v in params(func).items():
         if callable(v):
-            args += [[k] + x for x in params_deep(v)]
+            args += [[k] + x for x in ArgTree.from_func(v)]
         else:
             args.append([k])
     return args
-
-
-def params_deep(func):
-    return ArgTree({k: params_deep(v) if callable(v) else v for k, v in params(func).items()})
 
 
 def find_empty_params_tree(func):
@@ -221,7 +213,7 @@ def keyfilter(func, d, factory=dict):
     return factory(**{k: v for k, v in d.items() if func(k)})
 
 
-# Empty and Full - representing an unassigned variable #############################################
+# Empty and Reserved - representing an unassigned variable #########################################
 
 
 Empty = inspect.Parameter.empty  # unassigned parameter that should be assigned
@@ -229,3 +221,18 @@ Empty = inspect.Parameter.empty  # unassigned parameter that should be assigned
 
 class Reserved:  # placeholder to mark parameters that shouldn't be assigned / are reserved
     pass
+
+    @staticmethod
+    def partial(func, **kwargs):
+        """ Applies partial to func only if all supplied arguments are Reserved. """
+        for k, v in kwargs.items():
+            if default_args(func)[k] is not Reserved:
+                raise ValueError(
+                    f"The argument {k} should be reserved in order to be assigned a value."
+                    + " The reserved argument might have been overridden with partial.")
+        return partial(func, **kwargs)
+
+    @staticmethod
+    def call(func, **kwargs):
+        """ Calls func only if all supplied arguments are Reserved. """
+        return Reserved.partial(func, **kwargs)()

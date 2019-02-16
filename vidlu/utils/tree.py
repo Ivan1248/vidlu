@@ -50,7 +50,7 @@ def print_tree(tree, tree_type=None, depth=0, indent="  "):
             else:
                 print_tree(v, tree_type, depth + 1, indent)
         else:
-            print(f"{indent * depth}{k}={v}")
+            print(f"{indent * depth}{k}={repr(v)}")
 
 
 def convert_tree(tree, output_tree_type, input_tree_type=None, recurse_sequences=False):

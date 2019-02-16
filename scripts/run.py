@@ -1,7 +1,8 @@
 import argparse
 from pathlib import Path
+import datetime
 
-#import cuda_device_order_pci_bus_id
+import cuda_pci_bus_id_device_order
 import torch
 
 from _context import vidlu
@@ -42,7 +43,7 @@ with indent_print("Arguments:"):
 device = args.device
 if device is None:
     with indent_print("Selecting device..."):
-        device = gpu_utils.get_device()
+        device = torch.device(gpu_utils.get_first_available_device())
 
 # Data #############################################################################################
 
@@ -54,6 +55,7 @@ with indent_print('Initializing data...'):
 with indent_print('Initializing model...'):
     model = parse_model(args.model, dataset=datasets[0], device=args.device,
                         verbosity=args.verbosity)
+    model.to(device=device)
 
 # Trainer ##########################################################################################
 
@@ -63,11 +65,11 @@ with indent_print('Initializing trainer...'):
 
 # Evaluation #######################################################################################
 
-with indent_print('Initializing evaluation metrics...'):
-    metric_fs = parse_metrics(args.evaluation, dataset=datasets[0])
 
-    for m in metric_fs:
-        trainer.attach_metric(m())
+with indent_print('Initializing evaluation metrics...'):
+    metrics = [m() for m in parse_metrics(args.evaluation, dataset=datasets[0])]
+    for m in metrics:
+        trainer.attach_metric(m)
 
 # Learner saving ###################################################################################
 
@@ -75,10 +77,48 @@ learner_name = f"{to_valid_path(args.model)}-{to_valid_path(args.trainer)}"
 print('Learner name:', learner_name)
 learner_path = dirs.SAVED_STATES / Path(to_valid_path(args.data)) / learner_name
 
+
+# Reporting and logging ############################################################################
+
+def eval_str(metrics):
+    return ', '.join([f"{k}={v:.4f}" for k, v in metrics.items()])
+
+
+def log(text: str):
+    timestr = datetime.datetime.now().strftime('%H:%M:%S')
+    text = f"  [{timestr}] {text}"
+    print(text)
+
+
 # Training loop ####################################################################################
 
 print('Starting training:...')
-trainer.training.iteration_completed.add_handler(lambda t: print(t.state.output.loss))
+
+
+@trainer.training.epoch_started.add_handler
+def handle_epoch_start(t):
+    s = t.state
+    print(f"Starting epoch {s.epoch} of {s.max_epochs} ({s.batch_count} iterations per epoch)")
+
+
+@trainer.training.iteration_completed.add_handler
+def handle_iteration(t):
+    s = t.state
+    metric_values = dict()
+    for k, v in s.metrics.items():
+        if isinstance(v, dict):
+            metric_values.update(v)
+        else:
+            metric_values[k] = v
+    if (s.iteration + 1) % (s.batch_count // 5) == 0:
+        with indent_print():
+            epoch_fmt, iter_fmt = f'{len(str(s.max_epochs))}d', f'{len(str(s.batch_count))}d'
+            print(f'{format(s.epoch, epoch_fmt)}.{format(s.iteration % s.batch_count, iter_fmt)}:',
+                  eval_str(metric_values))
+        for m in metrics:
+            m.reset()
+
+
 trainer.train(*datasets)
 
 """

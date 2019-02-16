@@ -5,7 +5,8 @@ from functools import partial, partialmethod
 import torch
 
 from vidlu.nn.modules import Sequential, Module
-from vidlu.nn import components as components
+import vidlu.nn.components as c
+from vidlu.nn.components import (ResNetBackbone, DenseNetBackbone)
 from vidlu.nn import init
 from vidlu.utils.func import (ArgTree, argtree_partial, argtree_partialmethod, Reserved, Empty,
                               default_args)
@@ -14,9 +15,9 @@ from vidlu.problem import Problem, dataset_to_problem
 
 # Backbones ########################################################################################
 
-def resnet_backbone(depth, base_width, small_input,
-                    _f=argtree_partial(components.ResNetBackbone,
-                                       block_f=ArgTree(kernel_sizes=Reserved))):
+def resnet_backbone(depth, base_width=default_args(ResNetBackbone).base_width,
+                    small_input=default_args(ResNetBackbone).small_input,
+                    block_f=partial(default_args(ResNetBackbone).block_f, kernel_sizes=Reserved)):
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'pad')
     bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
@@ -31,16 +32,16 @@ def resnet_backbone(depth, base_width, small_input,
         164: ([18] * 3, bottleneck),  # [1] bw 16
         200: ([3, 24, 36, 3], bottleneck),  # [2] bw 64
     }[depth]
-    return _f(base_width=base_width,
-              small_input=small_input,
-              group_lengths=group_lengths,
-              width_factors=width_factors,
-              block_f=partial(default_args(_f).block_f, kernel_sizes=ksizes),
-              dim_change=dim_change)
+    return ResNetBackbone(base_width=base_width,
+                          small_input=small_input,
+                          group_lengths=group_lengths,
+                          width_factors=width_factors,
+                          block_f=partial(block_f, kernel_sizes=ksizes),
+                          dim_change=dim_change)
 
 
-def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj', dropout=None,
-                         _f=default_args(resnet_backbone)._f):
+def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
+                         block_f=partial(default_args(resnet_backbone).block_f)):
     zagoruyko_depth = depth
 
     group_count, ksizes = 3, [3, 3]
@@ -50,27 +51,17 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj', dr
     assert zagoruyko_depth == depth, \
         f"Invalid depth = {zagoruyko_depth} != {depth} = zagoruyko_depth"
 
-    d = {}
-    if dropout:
-        d['p'] = dropout if type(dropout) in [int, float] else 0.3
-        assert False, "TODO"
-        noise_f = partial(default_args(default_args(_f).block_f).noise_f, **d)
-    else:
-        noise_f = None
-
-    return _f(base_width=16,
-              small_input=small_input,
-              group_lengths=[blocks_per_group] * group_count,
-              width_factors=[width_factor] * 2,
-              block_f=partial(default_args(_f).block_f,
-                              kernel_sizes=ksizes,
-                              noise_locations=[0] if dropout else [],
-                              noise_f=noise_f),
-              dim_change=dim_change)
+    return ResNetBackbone(base_width=16,
+                          small_input=small_input,
+                          group_lengths=[blocks_per_group] * group_count,
+                          width_factors=[width_factor] * 2,
+                          block_f=partial(block_f, kernel_sizes=ksizes),
+                          dim_change=dim_change)
 
 
 def densenet_backbone(depth, small_input, k=12, compression=0.5,
-                      _f=components.DenseNetBackbone):
+                      block_f=partial(default_args(DenseNetBackbone).block_f,
+                                      kernel_sizes=Reserved)):
     # TODO: dropout 0.2
     # dropout if no pds augmentation
     ksizes = [1, 3]
@@ -90,20 +81,19 @@ def densenet_backbone(depth, small_input, k=12, compression=0.5,
             f"invalid depth: (depth-group_count-1) must be divisible by 3"
         blocks_per_group = (depth - db_count - 1) // (db_count * len(ksizes))
         db_lengths = [blocks_per_group] * db_count
-    return _f(base_width=k,
-              small_input=small_input,
-              db_lengths=db_lengths,
-              compression=compression,
-              block_f=partial(default_args(components.DenseNetBackbone).block_f,
-                              kernel_sizes=ksizes))
+    return DenseNetBackbone(growth_rate=k,
+                            small_input=small_input,
+                            db_lengths=db_lengths,
+                            compression=compression,
+                            block_f=partial(block_f, kernel_sizes=ksizes))
 
 
 # Models ###########################################################################################
 
 class Model(Module):
-    def __init__(self, init):
+    def __init__(self, init=None):
         super().__init__()
-        self._init = init
+        self._init = init or (lambda module: None)
 
     def initialize(self, input=None):
         if input is not None:
@@ -126,7 +116,11 @@ class DiscriminativeModel(SeqModel):
         super().__init__(seq=dict(backbone=backbone_f(), head=head_f()), init=init)
 
 
-class ResNet(DiscriminativeModel):
+class ClassificationModel(DiscriminativeModel):
+    pass
+
+
+class ResNet(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
                              backbone_f=partial(resnet_backbone, base_width=64),
                              init=partial(init.kaiming_resnet, module=Reserved))
@@ -136,7 +130,7 @@ class WideResNet(ResNet):
     __init__ = partialmethod(ResNet.__init__, backbone_f=wide_resnet_backbone)
 
 
-class DenseNet(DiscriminativeModel):
+class DenseNet(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
                              backbone_f=partial(densenet_backbone),
                              init=partial(init.kaiming_densenet, module=Reserved))
@@ -152,7 +146,7 @@ class ResNet18(ResNet):
 
 class Autoencoder(Model):
     def __init__(self, encoder_f, decoder_f, init):
-        super().__init__(self, init=init)
+        super().__init__(init=init)
         self.encoder, self.decoder = encoder_f(), decoder_f()
 
     def encode(self, x):
@@ -165,8 +159,8 @@ class Autoencoder(Model):
 # Adversarial autoencoder
 
 class AdversarialAutoencoder(Autoencoder):
-    def __init__(self, encoder_f=components.AAEEncoder, decoder_f=components.AAEDecoder,
-                 discriminator_f=components.AAEDiscriminator,
+    def __init__(self, encoder_f=c.AAEEncoder, decoder_f=c.AAEDecoder,
+                 discriminator_f=c.AAEDiscriminator,
                  prior_rand_f=partial(torch.randn, std=0.3), init=None):
         super().__init__(encoder_f, decoder_f, init)
         self.discriminator = discriminator_f()
@@ -180,12 +174,36 @@ class AdversarialAutoencoder(Autoencoder):
 
 class GAN(Model):
     def __init__(self, generator_f, discriminator_f, z_shape, z_rand_f=torch.randn, init=Empty):
-        super().__init__(self, init=init)
+        super().__init__(init=init)
         self.z_shape, self.z_rand = z_shape, z_rand_f()
         self.generator, self.discriminator = generator_f(), discriminator_f()
 
     def sample_z(self, batch_size):
         self.z_rand(batch_size, *self.z_shape, device=self.device)
+
+
+# Other models #####################################################################################
+
+class SmallImageClassifier(Model):
+    def __init__(self):
+        super().__init__()
+        from torch import nn
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
+
+    def forward(self, x):
+        import torch.nn.functional as F
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return F.log_softmax(x, dim=1)
 
 
 # Default arguments ################################################################################
@@ -195,18 +213,21 @@ def get_default_argtree(model_class, dataset):
     if inspect.isclass(model_class):
         if issubclass(model_class, DiscriminativeModel):
             if problem == Problem.CLASSIFICATION:
-                return ArgTree(head_f=partial(components.ClassificationHead,
+                return ArgTree(head_f=partial(c.ClassificationHead,
                                               class_count=dataset.info.class_count))
             elif problem == Problem.SEMANTIC_SEGMENTATION:
-                return ArgTree(head_f=partial(components.SegmentationHead,
+                return ArgTree(head_f=partial(c.SegmentationHead,
                                               class_count=dataset.info.class_count,
                                               shape=dataset[0].y.shape[1:]))
             elif problem == Problem.DEPTH_REGRESSION:
-                return ArgTree(head_f=partial(components.RegressionHead,
+                return ArgTree(head_f=partial(c.RegressionHead,
                                               shape=dataset[0].y.shape[1:]))
             elif problem == Problem.OTHER:
                 return ArgTree()
         elif issubclass(model_class, Autoencoder):
             return ArgTree()
-    warnings.warn(f"Unknown model type {model_class}")
+    elif model_class.__module__.startswith('torchvision.models'):
+        if problem == Problem.CLASSIFICATION:
+            return ArgTree(num_classes=dataset.info.class_count)
+    warnings.warn(f"get_default_argtree: Unknown model type {model_class}")
     return ArgTree()

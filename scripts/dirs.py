@@ -17,4 +17,3 @@ CACHE = _find('data/cache')
 
 SAVED_STATES = _find('data/states')
 PRETRAINED = _find('data/pretrained_parameters')
-LOGS = _find('data/logs')

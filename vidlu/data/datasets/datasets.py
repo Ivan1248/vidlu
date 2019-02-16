@@ -1,10 +1,10 @@
 import pickle
 import json
-from io import BytesIO
 import tarfile
 import zipfile
 from pathlib import Path
 import shutil
+import warnings
 
 import PIL.Image as pimg
 import numpy as np
@@ -14,7 +14,7 @@ from skimage.filters import gaussian as gblur
 import torchvision.datasets as dset
 
 from .. import Dataset, Record
-from vidlu.utils.image.shape import pad_to_shape, crop
+from vidlu.data_processing.image.shape import pad_to_shape, crop
 from vidlu.utils.misc import download
 
 from ._cityscapes_labels import labels as cslabels
@@ -111,7 +111,7 @@ class SVHNDataset(Dataset):
         ss = 'train' if subset == 'trainval' else subset
         data = loadmat(ss + '_32x32.mat')
         self.x, self.y = data['X'], np.remainder(data['y'], 10)
-        super().__init__(subset=ss, info=dict(class_count=10, problem_id='clf'))
+        super().__init__(subset=ss, info=dict(class_count=10, problem='classification'))
 
     def get_example(self, idx):
         return _make_example(x=self.x[idx], y=self.y[idx])
@@ -123,7 +123,8 @@ class SVHNDataset(Dataset):
 class Cifar10Dataset(Dataset):
     subsets = ['trainval', 'test']
 
-    def download(self, datasets_dir):
+    @staticmethod
+    def download(datasets_dir):
         download_path = datasets_dir / "cifar-10-python.tar.gz"
         download(url="https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
                  output_path=download_path, md5='c58f30108f718f92721af3b95e74349a')
@@ -163,7 +164,7 @@ class Cifar10Dataset(Dataset):
             self.x, self.y = test_x, test_y
         else:
             raise ValueError("The value of subset must be in {'train','test'}.")
-        super().__init__(subset=ss, info=dict(class_count=10, problem_id='clf'))
+        super().__init__(subset=ss, info=dict(class_count=10, problem='classification'))
 
     def get_example(self, idx):
         return _make_example(x=self.x[idx], y=self.y[idx])
@@ -191,7 +192,7 @@ class Cifar100Dataset(Dataset):
         self.x, self.y = train_x, data['fine_labels']
 
         super().__init__(subset=ss,
-                         info=dict(class_count=100, problem_id='clf',
+                         info=dict(class_count=100, problem='classification',
                                    coarse_labels=data['coarse_labels']))
 
     def get_example(self, idx):
@@ -248,7 +249,8 @@ class MozgaloRVCDataset(Dataset):
         if downsampling_factor > 1:
             modifiers += [f"downsample_{downsampling_factor}x"]
         super().__init__(subset=subset, modifiers=modifiers,
-                         info=dict(class_count=25, class_names=class_names, problem_id='clf'))
+                         info=dict(class_count=25, class_names=class_names,
+                                   problem='classification'))
 
     def get_example(self, idx):
         example_name = self._image_list[idx]
@@ -302,7 +304,8 @@ class TinyImageNetDataset(Dataset):
 
         self.name = f"TinyImageNet-{subset}"
         super().__init__(subset=subset,
-                         info=dict(class_count=200, class_names=class_names, problem_id='clf'))
+                         info=dict(class_count=200, class_names=class_names,
+                                   problem='classification'))
 
     def get_example(self, idx):
         img_path, lab = self._examples[idx]
@@ -313,7 +316,11 @@ class TinyImageNetDataset(Dataset):
 
 
 class INaturalist2018Dataset(Dataset):
-    subsets = ['train', 'val', 'test']
+    subsets = 'train', 'val', 'test'
+
+    url = "https://github.com/visipedia/inat_comp"
+    categories = ("http://www.vision.caltech.edu/~gvanhorn/datasets/"
+                  + "inaturalist/fgvc5_competition/categories.json.tar.gz")
 
     def __init__(self, data_dir, subset='train', superspecies='all'):
         _check_subsets(self.__class__, subset)
@@ -328,12 +335,16 @@ class INaturalist2018Dataset(Dataset):
         else:
             self._labels = np.full(shape=len(self._file_names), fill_value=-1)
 
-        with open(data_dir / "categories.json") as fs:
-            categories = json.loads(fs.read())
+        info = dict(class_count=8142, problem='classification')
+        categories_path = data_dir / "categories.json"
+        if categories_path.exists():
+            with open(categories_path) as fs:
+                info['class_to_categories'] = json.loads(fs.read())
+        else:
+            warnings.warn(f"categories.json containing category names is missing from {data_dir}."
+                          + f" It can be obtained from {INaturalist2018Dataset.categories}")
 
-        super().__init__(subset=subset,
-                         info=dict(class_count=8142, class_to_categories=categories,
-                                   problem_id='clf'))
+        super().__init__(subset=subset, info=info)
 
     def get_example(self, idx):
         def load_img():
@@ -378,7 +389,7 @@ class TinyImagesDataset(Dataset):
                 return True if pos != hi and self.cifar_idxs[pos] == x else False
 
             self.in_cifar = binary_search
-        super().__init__(info=dict(id='tinyimages', problem_id='clf'))  # TODO: class_count
+        super().__init__(info=dict(id='tinyimages', problem='classification'))  # TODO: class_count
 
     def get_example(self, idx):
         if self.exclude_cifar:
@@ -395,7 +406,8 @@ class TinyImagesDataset(Dataset):
 class CamVidDataset(Dataset):
     subsets = ['train', 'val', 'test']
 
-    def download(self, datasets_dir):
+    @staticmethod
+    def download(datasets_dir):
         download_path = datasets_dir / "segnet-tutorial.zip"
         download(url="https://github.com/alexgkendall/SegNet-Tutorial/archive/master.zip",
                  output_path=download_path)
@@ -432,29 +444,16 @@ class CamVidDataset(Dataset):
             [f"{data_dir}/{p.replace('/SegNet/CamVid/', '')}" for p in line.split()]
             for line in lines]
 
-        info = {
-            'problem_id':
-                'semseg',
-            'class_count':
-                11,
-            'class_names': [
-                'Sky', 'Building', 'Pole', 'Road', 'Pavement', 'Tree',
-                'SignSymbol', 'Fence', 'Car', 'Pedestrian', 'Bicyclist'
-            ],
-            'class_colors': [
-                (128, 128, 128),
-                (128, 0, 0),
-                (192, 192, 128),
-                (128, 64, 128),
-                (60, 40, 222),
-                (128, 128, 0),
-                (192, 128, 128),
-                (64, 64, 128),
-                (64, 0, 128),
-                (64, 64, 0),
-                (0, 128, 192),
-            ]
-        }
+        info = dict(
+            problem='semseg', class_count=11,
+            class_names=[
+                'Sky', 'Building', 'Pole', 'Road', 'Pavement', 'Tree', 'SignSymbol',
+                'Fence', 'Car',
+                'Pedestrian', 'Bicyclist'],
+            class_colors=[
+                (128, 128, 128), (128, 0, 0), (192, 192, 128), (128, 64, 128), (60, 40, 222),
+                (128, 128, 0), (192, 128, 128), (64, 64, 128), (64, 0, 128), (64, 64, 0),
+                (0, 128, 192)])
         super().__init__(subset=subset, info=info)
 
     def get_example(self, idx):
@@ -493,7 +492,7 @@ class CityscapesDataset(Dataset):
         self._label_list = [str(x)[:-len(IMG_SUFFIX)] + LAB_SUFFIX for x in self._image_list]
 
         info = {
-            'problem_id': 'semseg',
+            'problem': 'semantic_segmentation',
             'class_count': 19,
             'class_names': [l.name for l in cslabels if l.trainId >= 0],
             'class_colors': [l.color for l in cslabels if l.trainId >= 0],
@@ -558,7 +557,7 @@ class WildDashDataset(Dataset):
             for x in self._images_dir.glob(f'/*{self._IMG_SUFFIX}')
         ])
         info = {
-            'problem_id': 'semseg',
+            'problem': 'semantic_segmentation',
             'class_count': 19,
             'class_names': [l.name for l in cslabels if l.trainId >= 0],
             'class_colors': [l.color for l in cslabels if l.trainId >= 0],
@@ -604,7 +603,7 @@ class ICCV09Dataset(Dataset):
         self._image_list = [str(x)[:-4] for x in self._images_dir.iterdir()]
 
         info = {
-            'problem_id': 'semseg',
+            'problem': 'semantic_segmentation',
             'class_count': 8,
             'class_names': ['sky', 'tree', 'road', 'grass', 'water', 'building', 'mountain',
                             'foreground object']
@@ -640,7 +639,7 @@ class VOC2012SegmentationDataset(Dataset):
         self._labels_dir = data_dir / 'SegmentationClass'
         self._image_list = (sets_dir / f'{subset}.txt').read_text().splitlines()
         info = {
-            'problem_id': 'semseg',
+            'problem': 'semantic_segmentation',
             'class_count': 21,
             'class_names': ['background', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus',
                             'car', 'cat', 'chair', 'cow', 'diningtable', 'dog',
@@ -694,7 +693,7 @@ class VOC2012SegmentationDataset(Dataset):
 
 class ISUNDataset(Dataset):
     # https://github.com/matthias-k/pysaliency/blob/master/pysaliency/external_datasets.py
-    # TODO: labels, problem_id
+    # TODO: labels, problem
     subsets = ['train', 'val', 'test']
 
     def __init__(self, data_dir, subset='train'):
@@ -706,7 +705,7 @@ class ISUNDataset(Dataset):
         data = loadmat(data_file)[subset]
         self._image_names = [d[0] for d in data['image'][:, 0]]
 
-        super().__init__(subset=subset, info=dict(problem_id=None))
+        super().__init__(subset=subset, info=dict(problem=None))
 
     def get_example(self, idx):
         return _make_example(
@@ -730,8 +729,7 @@ class LSUNDataset(Dataset):
             os.path.relpath(x, start=self._subset_dir)
             for x in glob.glob(f'{self._subset_dir}/**/*.webp', recursive=True)
         ]
-        self.info = dict(id='LSUN', problem_id=None)
-        self.name = f"LSUN-{subset}"
+        super().__init__(subset=subset, info=dict(id='LSUN', problem=None))
 
     def get_example(self, idx):
         return _make_example(
@@ -740,97 +738,3 @@ class LSUNDataset(Dataset):
 
     def __len__(self):
         return len(self._image_names)
-
-
-class _LSUNClass(Dataset):
-    def __init__(self, db_path):
-        import lmdb
-        self.db_path = db_path
-        self.env = lmdb.open(db_path, max_readers=1, readonly=True, lock=False,
-                             readahead=False, meminit=False)
-        with self.env.begin(write=False) as txn:
-            self.length = txn.stat()['entries']
-        cache_file = Path('_cache_' + db_path.replace('/', '_'))
-        if cache_file.is_file():
-            self.keys = pickle.load(open(cache_file, "rb"))
-        else:
-            with self.env.begin(write=False) as txn:
-                self.keys = [key for key, _ in txn.cursor()]
-            pickle.dump(self.keys, open(cache_file, "wb"))
-
-    def get_example(self, index):
-        img, target = None, None  # TODO: target
-        env = self.env
-        with env.begin(write=False) as txn:
-            imgbuf = txn.get(self.keys[index])
-
-        buf = BytesIO()
-        buf.write(imgbuf)
-        buf.seek(0)
-
-        return _make_example(x_=lambda: np.array(pimg.open(buf).convert('RGB')), y_=target)
-
-    def __len__(self):
-        return self.length
-
-    def __repr__(self):
-        return self.__class__.__name__ + ' (' + self.db_path + ')'
-
-
-class LSUNDatasetNew(Dataset):
-    """
-    `LSUN <http://lsun.cs.princeton.edu>`_ dataset.
-    Args:
-        db_path (string): Root directory for the database files.
-        classes (string or list): One of {'train', 'val', 'test'} or a list of
-            categories to load. e,g. ['bedroom_train', 'church_train'].
-    """
-    subsets = ['train', 'val', 'test']
-
-    def __init__(self, db_path, subset, categories=None):
-        _check_subsets(self.__class__, subset)
-        categories = categories or ['bedroom', 'bridge', 'church_outdoor', 'classroom',
-                                    'conference_room', 'dining_room', 'kitchen',
-                                    'living_room', 'restaurant', 'tower']
-        self.db_path = db_path
-        if subset == 'test':
-            self.classes = [subset]
-        else:
-            self.classes = [c + '_' + subset for c in categories]
-
-        # for each class, create an LSUNClassDataset
-        self.dbs = []
-        for c in self.classes:
-            self.dbs.append(_LSUNClass(
-                db_path=db_path + '/' + c + '_lmdb'))
-
-        self.indices = []
-        self.length = 0
-        for db in self.dbs:
-            self.length += len(db)
-            self.indices.append(self.length)
-
-    def get_example(self, index):
-        """
-        Args:
-            index (int): Index
-        Returns:
-            tuple: Tuple (image, target) where target is the index of the target category.
-        """
-        target = 0
-        sub = 0
-        for ind in self.indices:
-            if index < ind:
-                break
-            target += 1
-            sub = ind
-
-        db = self.dbs[target]
-        index = index - sub
-        return _make_example(x=lambda: db[index][0], y=target)
-
-    def __len__(self):
-        return self.length
-
-    def __repr__(self):
-        return self.__class__.__name__ + ' (' + self.db_path + ')'
