@@ -9,6 +9,17 @@ from vidlu.utils.tree import tree_to_paths
 
 # Wrappers #########################################################################################
 
+def pipe(x, *funcs):
+    for f in funcs:
+        x = funcs[0](x)
+    return x
+
+
+def do(proc, x):
+    proc(x)
+    return x
+
+
 class hard_partial(partial):
     """
     Like partial, but doesn't allow changing already chosen keyword arguments.
@@ -63,7 +74,7 @@ class ArgTree(NameDict):
 
 
 class HardArgTree(ArgTree):
-    """ An argtree whose arguments can not be overridden."""
+    """An argtree whose arguments can not be overridden."""
 
 
 class EscapedArgTree:
@@ -224,7 +235,7 @@ class Reserved:  # placeholder to mark parameters that shouldn't be assigned / a
 
     @staticmethod
     def partial(func, **kwargs):
-        """ Applies partial to func only if all supplied arguments are Reserved. """
+        """Applies partial to func only if all supplied arguments are Reserved."""
         for k, v in kwargs.items():
             if default_args(func)[k] is not Reserved:
                 raise ValueError(
@@ -234,5 +245,5 @@ class Reserved:  # placeholder to mark parameters that shouldn't be assigned / a
 
     @staticmethod
     def call(func, **kwargs):
-        """ Calls func only if all supplied arguments are Reserved. """
+        """Calls func only if all supplied arguments are Reserved."""
         return Reserved.partial(func, **kwargs)()

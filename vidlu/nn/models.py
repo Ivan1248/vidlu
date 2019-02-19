@@ -1,16 +1,12 @@
-import inspect
-import warnings
 from functools import partial, partialmethod
 
 import torch
 
-from vidlu.nn.modules import Sequential, Module
-import vidlu.nn.components as c
-from vidlu.nn.components import (ResNetBackbone, DenseNetBackbone)
-from vidlu.nn import init
-from vidlu.utils.func import (ArgTree, argtree_partial, argtree_partialmethod, Reserved, Empty,
-                              default_args)
-from vidlu.problem import Problem, dataset_to_problem
+from .modules import Sequential, Module
+from . import components as c
+from .components import (ResNetBackbone, DenseNetBackbone)
+from . import init
+from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, default_args)
 
 
 # Backbones ########################################################################################
@@ -204,30 +200,3 @@ class SmallImageClassifier(Model):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return F.log_softmax(x, dim=1)
-
-
-# Default arguments ################################################################################
-
-def get_default_argtree(model_class, dataset):
-    problem = dataset_to_problem(dataset)
-    if inspect.isclass(model_class):
-        if issubclass(model_class, DiscriminativeModel):
-            if problem == Problem.CLASSIFICATION:
-                return ArgTree(head_f=partial(c.ClassificationHead,
-                                              class_count=dataset.info.class_count))
-            elif problem == Problem.SEMANTIC_SEGMENTATION:
-                return ArgTree(head_f=partial(c.SegmentationHead,
-                                              class_count=dataset.info.class_count,
-                                              shape=dataset[0].y.shape[1:]))
-            elif problem == Problem.DEPTH_REGRESSION:
-                return ArgTree(head_f=partial(c.RegressionHead,
-                                              shape=dataset[0].y.shape[1:]))
-            elif problem == Problem.OTHER:
-                return ArgTree()
-        elif issubclass(model_class, Autoencoder):
-            return ArgTree()
-    elif model_class.__module__.startswith('torchvision.models'):
-        if problem == Problem.CLASSIFICATION:
-            return ArgTree(num_classes=dataset.info.class_count)
-    warnings.warn(f"get_default_argtree: Unknown model type {model_class}")
-    return ArgTree()

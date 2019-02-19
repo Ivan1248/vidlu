@@ -12,7 +12,8 @@ import torch
 
 from vidlu.data import Dataset, Record, serialized_sizeof
 from vidlu import data
-from vidlu.problem import dataset_to_problem, Problem
+from vidlu.problem import Problem
+from vidlu.defaults import get_problem
 from vidlu.data_processing.image.random_transforms import random_fliplr_with_label, augment_cifar
 from vidlu.utils import path
 
@@ -94,25 +95,6 @@ def cache_data_and_normalize_inputs(parted_dataset, cache_dir):
     return parted_dataset.with_transform(transform)
 
 
-def clear_dataset_hdd_cache(ds):
-    if hasattr(ds, 'cache_dir'):
-        shutil.rmtree(ds.cache_dir)
-        print(f"Deleted {ds.cache_dir}")
-    elif isinstance(ds, data.dataset.MapDataset):  # lazyNormalizer
-        cache_path = inspect.getclosurevars(ds.func).nonlocals['f'].__self__.cache_path
-        if os.path.exists(cache_path):
-            os.remove(cache_path)
-            print(f"Deleted {cache_path}")
-    for k in dir(ds):
-        a = getattr(ds, k)
-        if isinstance(a, Dataset):
-            clear_dataset_hdd_cache(a)
-        elif isinstance(a, Sequence):
-            for b in a:
-                if isinstance(b, Dataset):
-                    clear_dataset_hdd_cache(b)
-
-
 # Augmentation #####################################################################################
 
 def get_default_augmentation_func(dataset):
@@ -129,7 +111,7 @@ def get_default_augmentation_func(dataset):
 
 # TODO
 def to_torch(dataset, device):
-    problem = dataset_to_problem(dataset)
+    problem = get_problem(dataset)
     if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
         breakpoint()
         transform = lambda r: Record(x=torch.from_numpy(r.x), y=torch.from_numpy(r.y))

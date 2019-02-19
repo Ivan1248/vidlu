@@ -91,8 +91,8 @@ class Engine(object):
         start_time = time.time()
 
         for batch in self.state.dataloader:
-            self.state.batch = batch
             self.state.iteration += 1
+            self.state.batch = batch
             self.iteration_started(self)
             self.state.output = self._process_function(self, batch)
             self.iteration_completed(self)

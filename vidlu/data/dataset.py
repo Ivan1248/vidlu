@@ -143,16 +143,23 @@ class Dataset(Sequence):
         return SampleDataset(self, length=length, replace=replace, seed=seed, **kwargs)
 
     def cache(self, max_cache_size=np.inf, directory=None, chunk_size=100, **kwargs):
-        """ Caches the dataset in RAM (partially or completely). """
+        """Caches the dataset in RAM (partially or completely)."""
         if directory is not None:
             return HDDAndRAMCacheDataset(self, directory, chunk_size, **kwargs)
         return CacheDataset(self, max_cache_size, **kwargs)
 
     def cache_hdd(self, directory, separate_fields=True, **kwargs):
-        """
-        Caches the dataset on the hard disk. It can be useful to automatically
+        """Caches the dataset on the hard disk.
+
+        It can be useful to automatically
         cache preprocessed data without modifying the original dataset and make
         data loading faster.
+
+        Args:
+            directory: The directory in which cached datasets are to be stored.
+            separate_fields: If True, record fileds are saved in separate files,
+                e.g. labels are stored separately from input examples.
+            **kwargs: additional arguments to the Dataset constructor.
         """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
 
@@ -209,6 +216,24 @@ class Dataset(Sequence):
 
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
+
+    def clear_hdd_cache(ds):
+        import inspect
+        if hasattr(ds, 'cache_dir'):
+            shutil.rmtree(ds.cache_dir)
+            print(f"Deleted {ds.cache_dir}")
+        elif isinstance(ds, MapDataset):  # lazyNormalizer
+            cache_path = inspect.getclosurevars(ds.func).nonlocals['f'].__self__.cache_path
+            if os.path.exists(cache_path):
+                os.remove(cache_path)
+                print(f"Deleted {cache_path}")
+        for k, v in vars(ds).items():
+            if isinstance(v, Dataset):
+                v.clear_hdd_cache()
+            elif isinstance(v, Sequence):
+                for w in v:
+                    if isinstance(w, Dataset):
+                        w.clear_hdd_cache()
 
     def _print(self, *args, **kwargs):
         print(*args, f"({self.full_name})", **kwargs)
@@ -270,16 +295,15 @@ class CacheDataset(Dataset):
     def __init__(self, dataset, max_cache_size=np.inf, **kwargs):
         cache_size = min(len(dataset), max_cache_size)
         self._cache_all = cache_size == len(dataset)
-        modifier = "cache"
+        modifier = "cache" if self._cache_all else f"(0..{cache_size - 1})"
+        super().__init__(modifiers=modifier, data=dataset, **kwargs)
         if self._cache_all:
             self._print("Caching whole dataset...")
             self._cached_data = [x for x in tqdm(dataset)]
         else:
-            modifier += f"(0..{cache_size - 1})"
             self._print(
                 f"Caching {cache_size}/{len(dataset)} of the dataset in RAM...")
             self._cached_data = [dataset[i] for i in trange(cache_size)]
-        super().__init__(modifiers=modifier, data=dataset, **kwargs)
 
     def get_example(self, idx):
         cache_hit = self._cache_all or idx < len(self._cached_data)

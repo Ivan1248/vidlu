@@ -5,15 +5,13 @@ from torch import nn
 from torch.optim import SGD
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from ignite import engine
-from ignite.engine import Engine, Events
+from ignite.engine import Engine
 
 from vidlu.data import DataLoader
-from vidlu.utils.misc import Event
-from vidlu.utils.func import argtree_partialmethod, ArgTree, default_args
+from vidlu.utils.func import default_args
 from vidlu.utils.collections import NameDict
 from vidlu.utils.torch import prepare_batch
-from vidlu.metrics import FuncMetric
-from vidlu.engine import Engine
+from vidlu.training.engine import Engine
 from vidlu.nn.modules import get_device
 
 
@@ -31,12 +29,11 @@ class Evaluator:
         self.data_loader_f = data_loader_f
 
         self.evaluation = Engine(lambda e, b: self.eval_batch(b))
-
-    def __getattr__(self, item):
-        return getattr(self.evaluation, item)
+        self.metrics = {}
 
     def _attach_metric(self, metric, name=None, engine=None):
         name = name or type(metric).__name__
+        self.metrics[name] = metric
         engine = engine or self.evaluation
         engine.epoch_started.add_handler(lambda e: metric.reset())
         engine.iteration_completed.add_handler(lambda e: metric.update(e.state.output))
@@ -48,6 +45,19 @@ class Evaluator:
 
     def attach_metric(self, metric, name=None):
         self._attach_metric(metric, name=name, engine=self.evaluation)
+
+    def reset_metrics(self):
+        for m in self.metrics.values():
+            m.reset()
+
+    def get_metrics(self, *, reset=False):
+        metric_evals = dict()
+        for k, m in self.metrics.items():
+            value = m.compute()
+            metric_evals.update(value if isinstance(value, dict) else {k: value.compute()})
+        if reset:
+            self.reset_metrics()
+        return metric_evals
 
     def get_outputs(self, *x):
         if hasattr(self.model, 'get_outputs'):
@@ -79,21 +89,13 @@ class Trainer(Evaluator):
 
         self.training = Engine(lambda e, b: self.train_batch(b))
 
-        self._val_dataset = None
-
         self.training.epoch_started.add_handler(lambda e: self.lr_scheduler.step)
-
-        @self.training.epoch_completed.add_handler
-        def evaluate(e):
-            if self._val_dataset is not None:
-                self.evaluation.run(self.data_loader_f(self._val_dataset))
 
     def attach_metric(self, metric, name=None):
         for eng in [self.training, self.evaluation]:
             super()._attach_metric(metric, name=name, engine=eng)
 
-    def train(self, dataset, val_dataset=None):
-        self._val_dataset = val_dataset
+    def train(self, dataset):
         data_loader = self.data_loader_f(dataset)
         return self.training.run(data_loader, max_epochs=self.epoch_count)
 
@@ -108,6 +110,17 @@ class SupervisedTrainer(Trainer):
         self.model.eval()
         with torch.no_grad():
             x, y = self.prepare_batch(batch, device=self.device)
+
+            prediction, outputs = self.get_outputs(x)
+            #print('.')
+            #on_cuda = True
+            #with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
+            #    prediction, outputs = self.get_outputs(x)
+            #if on_cuda:
+            #    torch.cuda.synchronize()
+            #print(prof.key_averages().table('cuda_time_total'))
+            #exit()
+
             prediction, outputs = self.get_outputs(x)
             loss = self.loss(prediction, y.long())
             return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
@@ -116,11 +129,11 @@ class SupervisedTrainer(Trainer):
         self.model.train()
         self.optimizer.zero_grad()
         x, y = self.prepare_batch(batch, device=self.device)
+
         prediction, outputs = self.get_outputs(x)
+
         loss = self.loss(prediction, y.long())
         loss.backward()
-        # for n, p in self.model.named_parameters():
-        #    print(p.requires_grad, p.grad.abs().mean(), p.abs().mean(), n)
         self.optimizer.step()
         return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
 
@@ -146,7 +159,7 @@ class ResNetCifarTrainer(ClassificationTrainer):
         weight_decay=1e-4,
         epoch_count=200,
         lr_scheduler_f=partial(MultiStepLR, milestones=[60, 120, 160], gamma=0.2),
-        batch_size=32)
+        batch_size=128)
 
 
 class ResNetCamVidTrainer(ClassificationTrainer):
@@ -219,8 +232,8 @@ class GANTrainer(Trainer):
         return torch.zeros(batch_size, device=self.model.device)
 
     def train_batch(self, batch):
-        self.model.train()
         """ Copied from ignite/examples/gan/dcgan and modified"""
+        self.model.train()
         real = self.prepare_batch(batch)[0]
         batch_size = real.shape[0]
         real_labels = self._get_real_labels(batch_size)
@@ -258,17 +271,3 @@ class GANTrainer(Trainer):
 
         return NameDict(errD=(errD_real + errD_fake).item(), errG=errG.item(), D_real=D_real,
                         D_fake1=D_fake1, D_fake2=D_fake2)
-
-
-# Default arguments ################################################################################
-
-def get_default_argtree(trainer_class, model, dataset):
-    from vidlu.problem import Problem, dataset_to_problem
-
-    problem = dataset_to_problem(dataset)
-    if issubclass(trainer_class, SupervisedTrainer):
-        if problem == Problem.CLASSIFICATION:
-            return ArgTree(loss_f=nn.NLLLoss)
-        elif problem == Problem.SEMANTIC_SEGMENTATION:
-            return ArgTree(loss_f=nn.NLLLoss)
-    return ArgTree()

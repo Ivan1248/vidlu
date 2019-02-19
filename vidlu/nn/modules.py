@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from argparse import Namespace
 from collections import OrderedDict
 from collections.abc import Sequence
 from functools import reduce
@@ -9,7 +10,7 @@ import torch.functional as F
 import numpy as np
 
 from vidlu.utils.collections import NameDict
-from vidlu.utils.misc import clean_locals_from_first_initializer, find_frame_in_call_stack, get_key
+from vidlu.utils.misc import class_initializer_locals_c, find_frame_in_call_stack
 from vidlu.utils.func import params, tryable
 
 
@@ -146,7 +147,7 @@ class Module(*_extended(nn.Module, ABC)):
 
     def __init__(self):
         super().__init__()
-        args = clean_locals_from_first_initializer()
+        args = class_initializer_locals_c()
         for x in ['self', '__class__']:
             args.pop(x, None)
         self.args = NameDict(args)
@@ -176,8 +177,8 @@ class Module(*_extended(nn.Module, ABC)):
         return None if param is None else param[0].device
 
     def load_state_dict(self, state_dict_or_path, strict=True):
-        """ Handle a path being given instead of a file. (preferred since it
-        automatically maps to the correct device). Taken from MagNet. """
+        """Handle a path being given instead of a file. (preferred since it
+        automatically maps to the correct device). Taken from MagNet."""
         from pathlib import Path
         sd = state_dict_or_path
         if isinstance(sd, (str, Path)):
@@ -239,7 +240,7 @@ class Sequential(*_extended(nn.Sequential)):
     def __getitem__(self, idx):
         try:
             if isinstance(idx, slice) and any(isinstance(i, str) for i in [idx.start, idx.stop]):
-                children_names = list(zip(*self.named_children()))
+                children_names = list(zip(*self.named_children()))[0]
                 start, stop = idx.start, idx.stop
                 if isinstance(start, str):
                     start = children_names.index(start)
@@ -256,6 +257,11 @@ class Sequential(*_extended(nn.Sequential)):
 
     def index(self, key):
         return list(zip(*self.named_children())).index(key)
+
+    # def forward(self, *x):
+    #    y=super().forward(*x)
+    #    print(try_get_name_from_call_stack(self), y.shape)
+    #    return y
 
 
 class EModuleDict(nn.ModuleDict):
@@ -294,52 +300,52 @@ def _get_conv_padding(padding_type, kernel_size, dilation):
         return get_padding(kernel_size, dilation)
 
 
-class Conv(Module):
+class WrappedModule(Module):
+    def __init__(self, orig=None):
+        super().__init__()
+        self.orig = orig
+
+    def forward(self, x):
+        return self.orig(x)
+
+    def __repr__(self):
+        return "W " + repr(self.orig)
+
+
+class Conv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
                  bias=True, in_channels=None):
-        padding = (_get_conv_padding(padding, kernel_size, dilation)
-                   if isinstance(padding, str) else padding)
         super().__init__()
-        self.orig = None
+        self.args.padding = (_get_conv_padding(padding, kernel_size, dilation)
+                             if isinstance(padding, str) else padding)
 
     def build(self, x):
         self.orig = _dimensional_build("Conv", x, self.args)
 
-    def forward(self, x):
-        return self.orig(x)
 
-
-class MaxPool(Module):
+class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
                  ceil_mode=False):
         super().__init__()
-        self._padding = (_get_conv_padding(padding, kernel_size, dilation)
-                         if isinstance(padding, str) else padding)
-        self.orig = None
+        self.args.padding = (_get_conv_padding(padding, kernel_size, dilation)
+                             if isinstance(padding, str) else padding)
 
     def build(self, x):
         self.orig = _dimensional_build("MaxPool", x, self.args)
 
-    def forward(self, x):
-        return self.orig(x)
 
-
-class AvgPool(Module):
+class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
                  count_include_pad=True):
         super().__init__()
-        self._padding = (_get_conv_padding(padding, kernel_size, dilation=1)
-                         if isinstance(padding, str) else padding)
-        self.orig = None
+        self.args.padding = (_get_conv_padding(padding, kernel_size, dilation=1)
+                             if isinstance(padding, str) else padding)
 
     def build(self, x):
         self.orig = _dimensional_build("AvgPool", x, self.args)
 
-    def forward(self, x):
-        return self.orig(x)
 
-
-class ConvTranspose(Module):
+class ConvTranspose(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, output_padding=1, groups=1,
                  bias=True, dilation=1, in_channels=None):
         super().__init__()
@@ -348,14 +354,10 @@ class ConvTranspose(Module):
     def build(self, x):
         self.orig = _dimensional_build("ConvTranspose", x, self.args)
 
-    def forward(self, x):
-        return self.orig(x)
 
-
-class Linear(Module):
+class Linear(WrappedModule):
     def __init__(self, out_features: int, bias=True, in_features=None):
         super().__init__()
-        self.orig = None
 
     def build(self, x):
         self.args.in_features = self.args.in_features or np.prod(x.shape[1:])
@@ -364,10 +366,10 @@ class Linear(Module):
     def forward(self, x):
         if len(x.shape) != 2:
             x = x.view(x.size(0), -1)
-        return self.orig(x)
+        return super().forward(x)
 
 
-class BatchNorm(Module):
+class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
                  num_features=None):
         super().__init__()
@@ -375,9 +377,6 @@ class BatchNorm(Module):
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
-
-    def forward(self, x):
-        return self.orig(x)
 
 
 '''
@@ -437,7 +436,7 @@ def parameter_count(module):
         else:
             non_trainable += n
 
-    return trainable, non_trainable
+    return Namespace(trainable=trainable, non_trainable=non_trainable)
 
 
 def get_submodule(root_module, path: str):
@@ -588,20 +587,23 @@ def get_calling_module(module, start_frame=None):
             return isinstance(locals_['self'], nn.Module) and self_ is not module
 
     frame = find_frame_in_call_stack(predicate, start_frame)
+    if frame is None:
+        return None, None
     caller = frame.f_locals['self']
     return caller, frame
 
 
-def try_get_name_from_call_stack(module, full_name=True):
-    parent, frame = get_calling_module(module)
+def try_get_name_from_call_stack(module, start_frame=None, full_name=True):
+    parent, frame = get_calling_module(module, start_frame=start_frame)
     if parent is None:
         return ''
     for n, c in parent.named_children():
         if c is module:
-            parent_name = try_get_name_from_call_stack(parent, frame.f_back)
-            return f'{parent_name}.{n}' if full_name and parent_name else n
-    breakpoint()
-    raise NotImplementedError()
+            if not full_name:
+                return n
+            parent_name = try_get_name_from_call_stack(parent, start_frame=frame.f_back)
+            return f'{parent_name}.{n}'
+    return '???'
 
 
 def get_device(module):

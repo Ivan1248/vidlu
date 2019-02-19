@@ -2,6 +2,7 @@ import subprocess
 import xmltodict
 from argparse import Namespace
 import os
+import time
 
 import numpy as np
 
@@ -12,7 +13,7 @@ def nvidia_smi():
     return xmltodict.parse(xml_output)['nvidia_smi_log']
 
 
-def get_gpu_statuses():
+def get_gpu_statuses(measurement_count=1, measuring_interval=1.0):
     if "CUDA_DEVICE_ORDER" not in os.environ or os.environ["CUDA_DEVICE_ORDER"] != "PCI_BUS_ID":
         raise RuntimeError("CUDA device order does not correspond to nvidia-smi's device order.")
 
@@ -23,6 +24,19 @@ def get_gpu_statuses():
         if not isinstance(processes, list):
             processes = [processes]
         return [Namespace(**p) for p in processes]
+
+    if measurement_count > 1:
+        measuring_period = measuring_interval / measurement_count
+        samples = [get_gpu_statuses()]
+        for _ in range(measurement_count - 1):
+            time.sleep(measuring_period)
+            samples.append(get_gpu_statuses())
+        mem_total = samples[0].mem_total
+        mem_used = max(s.mem_used for s in samples[0].mem_total)
+        return Namespace(name=samples[-1].name,
+                         gpu_util=sum(s.gpu_util for s in samples) / len(samples),
+                         mem_total=mem_total, mem_used=mem_used, mem_free=mem_total - mem_used,
+                         processes=samples[-1].processes)
 
     return [Namespace(name=gpu['product_name'],
                       gpu_util=float(gpu['utilization']['gpu_util'].split()[0]) / 100,
@@ -49,8 +63,9 @@ def get_first_available_cuda_gpu(max_gpu_util, min_mem_free, no_processes=True):
     return best_idx, statuses, availabilities
 
 
-def get_first_available_device(max_gpu_util=0.1, min_mem_free=4000):
-    device_idx, statuses, availabilities = get_first_available_cuda_gpu(max_gpu_util, min_mem_free)
+def get_first_available_device(max_gpu_util=0.2, min_mem_free=4000, no_processes=True):
+    device_idx, statuses, availabilities = get_first_available_cuda_gpu(max_gpu_util, min_mem_free,
+                                                                        no_processes=no_processes)
     if device_idx is None:
         print(f"Selected device: CPU.")
         return 'cpu'

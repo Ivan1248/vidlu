@@ -8,14 +8,15 @@ import warnings
 
 import PIL.Image as pimg
 import numpy as np
-from skimage.transform import resize
+# from skimage.transform import resize
 from scipy.io import loadmat
-from skimage.filters import gaussian as gblur
 import torchvision.datasets as dset
+import torchvision.transforms.functional as tvtf
 
 from .. import Dataset, Record
-from vidlu.data_processing.image.shape import pad_to_shape, crop
+# from vidlu.data_processing.image.shape import pad_to_shape, crop
 from vidlu.utils.misc import download
+from vidlu.data_processing.image import npimg
 
 from ._cityscapes_labels import labels as cslabels
 
@@ -25,13 +26,17 @@ from ._cityscapes_labels import labels as cslabels
 
 def _load_image(path, force_rgb=True):
     img = pimg.open(path)
-    if force_rgb:
+    if force_rgb and img.mode != 'RGB':
         img = img.convert('RGB')
     return img
 
 
-def _make_example(*args, **kwargs):
-    return Record(*args, **kwargs)  # or dict(r.items()) or tuple(r.values())
+def _rescale(img, factor, interpolation=pimg.BILINEAR):
+    return tvtf.resize(img, [round(x * factor) for x in img.size], interpolation=interpolation)
+
+
+def _make_record(**kwargs):
+    return Record(**kwargs)
 
 
 def _check_subsets(dataset_class, subset):
@@ -50,7 +55,7 @@ class WhiteNoiseDataset(Dataset):
     def __init__(self, distribution='normal', example_shape=(32, 32), size=1000, seed=53):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.random_integers(_max_int32, size=(size))
+        self._seeds = self._rand.random_integers(_max_int32, size=(size,))
         if distribution not in ('normal', 'uniform'):
             raise ValueError('Distribution not in {"normal", "uniform"}')
         self._distribution = distribution
@@ -60,10 +65,10 @@ class WhiteNoiseDataset(Dataset):
     def get_example(self, idx):
         self._rand.seed(self._seeds[idx])
         if self._distribution == 'normal':
-            return _make_example(x=self._rand.randn(*self._shape))
+            return _make_record(x=self._rand.randn(*self._shape))
         elif self._distribution == 'uniform':
             d = 12 ** 0.5 / 2
-            return _make_example(x=self._rand.uniform(-d, d, self._shape))
+            return _make_record(x=self._rand.uniform(-d, d, self._shape))
 
 
 class RademacherNoiseDataset(Dataset):
@@ -73,13 +78,13 @@ class RademacherNoiseDataset(Dataset):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.random_integers(_max_int32, size=(size))
+        self._seeds = self._rand.random_integers(_max_int32, size=(size,))
         super().__init__(name=f'RademacherNoise{example_shape}', subset=f'{seed}-{size}',
                          data=self._seeds)
 
         def get_example(self, idx):
             self._rand.seed(self._seeds[idx])
-            return _make_example(x=self._rand.binomial(n=1, p=0.5, size=self._shape))
+            return _make_record(x=self._rand.binomial(n=1, p=0.5, size=self._shape))
 
 
 class HBlobsDataset(Dataset):
@@ -89,16 +94,17 @@ class HBlobsDataset(Dataset):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.random_integers(_max_int32, size=(size))
+        self._seeds = self._rand.random_integers(_max_int32, size=(size,))
         self._sigma = sigma or 1.5 * example_shape[0] / 32
         super().__init__(name=f'HBlobs({example_shape})', subset=f'{seed}-{size}', data=self._seeds)
 
     def get_example(self, idx):
+        from skimage.filters import gaussian
         self._rand.seed(self._seeds[idx])
         x = self._rand.binomial(n=1, p=0.7, size=self._shape)
-        x = gblur(np.float32(x), sigma=self._sigma, multichannel=False)
+        x = gaussian(np.float32(x), sigma=self._sigma, multichannel=False)
         x[x < 0.75] = 0
-        return _make_example(x=x)
+        return _make_record(x=x)
 
 
 # Classification ###################################################################################
@@ -114,7 +120,7 @@ class SVHNDataset(Dataset):
         super().__init__(subset=ss, info=dict(class_count=10, problem='classification'))
 
     def get_example(self, idx):
-        return _make_example(x=self.x[idx], y=self.y[idx])
+        return _make_record(x=self.x[idx], y=self.y[idx])
 
     def __len__(self):
         return len(self.x)
@@ -167,7 +173,7 @@ class Cifar10Dataset(Dataset):
         super().__init__(subset=ss, info=dict(class_count=10, problem='classification'))
 
     def get_example(self, idx):
-        return _make_example(x=self.x[idx], y=self.y[idx])
+        return _make_record(x=self.x[idx], y=self.y[idx])
 
     def __len__(self):
         return len(self.x)
@@ -196,7 +202,7 @@ class Cifar100Dataset(Dataset):
                                    coarse_labels=data['coarse_labels']))
 
     def get_example(self, idx):
-        return _make_example(x=self.x[idx], y=self.y[idx])
+        return _make_record(x=self.x[idx], y=self.y[idx])
 
     def __len__(self):
         return len(self.x)
@@ -217,60 +223,10 @@ class DescribableTexturesDataset(Dataset):
 
     def get_example(self, idx):
         x, y = self.data[idx]
-        return _make_example(x=np.array(x), y=y)
+        return _make_record(x=np.array(x), y=y)
 
     def __len__(self):
         return len(self.data)
-
-
-class MozgaloRVCDataset(Dataset):
-    subsets = ['trainval']
-
-    def __init__(self, data_dir, subset='trainval', remove_bottom_proportion=0.0,
-                 downsampling_factor=1):
-        _check_subsets(self.__class__, subset)
-
-        ss = 'train' if subset == 'trainval' else subset
-        data_dir = Path(data_dir)
-
-        self._shape = [1104, 600]
-        self._remove_bottom_proportion = remove_bottom_proportion
-        self._downsampling_factor = downsampling_factor
-        train_dir = data_dir / 'train'
-        self._subset_dir = data_dir / ss
-        subset_class_names = sorted([p.name for p in self._subset_dir.iterdir()])
-        self._image_list = [p.relative_to(self._subset_dir) for p in self._subset_dir.glob('/*/*')]
-
-        class_names = sorted([p.name for p in train_dir.iterdir()])
-
-        modifiers = []
-        if remove_bottom_proportion:
-            modifiers += [f"remove_bottom_{remove_bottom_proportion:0.2f}"]
-        if downsampling_factor > 1:
-            modifiers += [f"downsample_{downsampling_factor}x"]
-        super().__init__(subset=subset, modifiers=modifiers,
-                         info=dict(class_count=25, class_names=class_names,
-                                   problem='classification'))
-
-    def get_example(self, idx):
-        example_name = self._image_list[idx]
-
-        def load_image():
-            img = np.array(_load_image(f"{self._subset_dir}/{example_name}"))
-            img = pad_to_shape(crop(img, self._shape), self._shape)
-            if self._remove_bottom_proportion > 0:
-                a = int(img.shape[0] * (1 - self._remove_bottom_proportion))
-                img = img[:a, :, :]
-            if self._downsampling_factor > 1:
-                h, w = (round(x / self._downsampling_factor) for x in img.shape[:2])
-                img = resize(img, (h, w))  # , anti_aliasing=True)
-            return img
-
-        lab_str = example_name.parent
-        return _make_example(x_=load_image, y=self.info['class_names'].index(lab_str))
-
-    def __len__(self):
-        return len(self._image_list)
 
 
 class TinyImageNetDataset(Dataset):
@@ -309,7 +265,7 @@ class TinyImageNetDataset(Dataset):
 
     def get_example(self, idx):
         img_path, lab = self._examples[idx]
-        return _make_example(x_=lambda: np.array(_load_image(img_path)), y=lab)
+        return _make_record(x_=lambda: np.array(_load_image(img_path)), y=lab)
 
     def __len__(self):
         return len(self._examples)
@@ -322,10 +278,12 @@ class INaturalist2018Dataset(Dataset):
     categories = ("http://www.vision.caltech.edu/~gvanhorn/datasets/"
                   + "inaturalist/fgvc5_competition/categories.json.tar.gz")
 
-    def __init__(self, data_dir, subset='train', superspecies='all'):
+    def __init__(self, data_dir, subset='train', superspecies='all', downsampling_factor=1):
         _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
         self._data_dir = data_dir
+
+        self._downsampling_factor = downsampling_factor
 
         with open(f"{data_dir}/{subset}2018.json") as fs:
             info = json.loads(fs.read())
@@ -349,11 +307,12 @@ class INaturalist2018Dataset(Dataset):
     def get_example(self, idx):
         def load_img():
             img_path = self._data_dir / self._file_names[idx]
-            img = pimg.open(img_path).convert('RGB')
-            img = img.resize(np.array(img.size) // 4, pimg.BILINEAR)
-            return pad_to_shape(np.array(img), [200, 200])
+            img = _load_image(img_path)
+            img = _rescale(img, 1 / self._downsampling_factor)
+            img = tvtf.center_crop(img, [200 * self._downsampling_factor] * 2)
+            return np.array(img)
 
-        return _make_example(x_=load_img, y=self._labels[idx])
+        return _make_record(x_=load_img, y=self._labels[idx])
 
     def __len__(self):
         return len(self._labels)
@@ -395,7 +354,7 @@ class TinyImagesDataset(Dataset):
         if self.exclude_cifar:
             while self.in_cifar(idx):
                 idx = np.random.randint(79302017)
-        return _make_example(lambda: self.load_image(idx), y=-1)
+        return _make_record(x_=lambda: self.load_image(idx), y=-1)
 
     def __len__(self):
         return 79302017
@@ -464,7 +423,7 @@ class CamVidDataset(Dataset):
             lab[lab == 11] = -1
             return lab
 
-        return _make_example(x_=lambda: np.array(_load_image(ip)), y_=load_label)
+        return _make_record(x_=lambda: _load_image(ip), y_=load_label)
 
     def __len__(self):
         return len(self._img_lab_list)
@@ -473,14 +432,13 @@ class CamVidDataset(Dataset):
 class CityscapesDataset(Dataset):
     subsets = ['train', 'val', 'test']  # 'test' labels are invalid
 
-    def __init__(self, data_dir, subset='train', downsampling_factor=1, remove_hood=False):
+    def __init__(self, data_dir, subset='train', downsampling_factor=1):
         _check_subsets(self.__class__, subset)
         if downsampling_factor <= 1:
             raise ValueError("downsampling_factor must be greater or equal to 1.")
 
         self._downsampling_factor = downsampling_factor
         self._shape = np.array([1024, 2048]) // downsampling_factor
-        self._remove_hood = remove_hood
 
         IMG_SUFFIX = "_leftImg8bit.png"
         LAB_SUFFIX = "_gtFine_labelIds.png"
@@ -497,11 +455,7 @@ class CityscapesDataset(Dataset):
             'class_names': [l.name for l in cslabels if l.trainId >= 0],
             'class_colors': [l.color for l in cslabels if l.trainId >= 0],
         }
-        modifiers = []
-        if downsampling_factor > 1:
-            modifiers += [f"downsample({downsampling_factor})"]
-        if remove_hood:
-            modifiers += [f"remove_hood"]
+        modifiers = [f"downsample({downsampling_factor})"] if downsampling_factor > 1 else []
         super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):
@@ -510,16 +464,13 @@ class CityscapesDataset(Dataset):
         def load_image():
             img = pimg.open(self._images_dir / self._image_list[idx])
             if self._downsampling_factor > 1:
-                img = img.resize(self._shape[::-1], pimg.BILINEAR)
-            img = np.array(img, dtype=np.uint8)
-            if self._remove_hood:
-                img = img[:rh_height, :, :]
-            return img
+                img = tvtf.resize(img, self._shape, pimg.BILINEAR)
+            return np.array(img, dtype=np.uint8)
 
         def load_label():
             lab = pimg.open(self._labels_dir / self._label_list[idx])
             if self._downsampling_factor > 1:
-                lab = lab.resize(self._shape[::-1], pimg.NEAREST)
+                lab = tvtf.resize(lab, self._shape, pimg.NEAREST)
             lab = np.array(lab, dtype=np.int8)
             for id, lb in self._id_to_label:
                 lab[lab == id] = lb
@@ -527,7 +478,7 @@ class CityscapesDataset(Dataset):
                 lab = lab[:rh_height, :]
             return lab
 
-        return _make_example(x_=load_image, y_=load_label)
+        return _make_record(x_=load_image, y_=load_label)
 
     def __len__(self):
         return len(self._image_list)
@@ -572,7 +523,7 @@ class WildDashDataset(Dataset):
         def load_img():
             img = pimg.open(f"{path_prefix}{self._IMG_SUFFIX}").convert('RGB')
             if self._downsampling_factor > 1:
-                img = img.resize(self._shape[::-1], pimg.BILINEAR)
+                img = tvtf.resize(img, self._shape, pimg.BILINEAR)
             return np.array(img, dtype=np.uint8)
 
         def load_lab():
@@ -581,13 +532,13 @@ class WildDashDataset(Dataset):
             else:
                 lab = pimg.open(f"{path_prefix}{self._LAB_SUFFIX}")
                 if self._downsampling_factor > 1:
-                    lab = lab.resize(self._shape[::-1], pimg.NEAREST)
+                    lab = tvtf.resize(lab, self._shape, pimg.NEAREST)
                 lab = np.array(lab, dtype=np.int8)
             for id, lb in self._id_to_label:
                 lab[lab == id] = lb
             return lab
 
-        return _make_example(x_=load_img, y_=load_lab)
+        return _make_record(x_=load_img, y_=load_lab)
 
     def __len__(self):
         return len(self._image_names)
@@ -614,14 +565,15 @@ class ICCV09Dataset(Dataset):
         name = self._image_list[idx]
 
         def load_img():
-            img = np.array(_load_image(self._images_dir / f"{name}.jpg"))
-            return pad_to_shape(crop(img, self._shape), self._shape)
+            img = _load_image(self._images_dir / f"{name}.jpg")
+            img = tvtf.center_crop(img, self._shape)
+            return np.array(img)
 
         def load_lab():
             lab = np.loadtxt(self._labels_dir / f"{name}.regions.txt", dtype=np.int8)
-            return pad_to_shape(crop(lab, self._shape), self._shape, value=-1)
+            return npimg.center_crop(lab, self._shape, padding_value=-1)
 
-        return _make_example(x_=load_img, y_=load_lab)
+        return _make_record(x_=load_img, y_=load_lab)
 
     def __len__(self):
         return len(self._image_list)
@@ -675,15 +627,16 @@ class VOC2012SegmentationDataset(Dataset):
         name = self._image_list[idx]
 
         def load_img():
-            img = np.array(_load_image(self._images_dir / f"{name}.jpg"))
-            return pad_to_shape(img, [500] * 2)
+            img = _load_image(self._images_dir / f"{name}.jpg")
+            img = tvtf.center_crop(img, [500] * 2)
+            return np.array(img)
 
         def load_lab():
             lab = np.array(
                 _load_image(self._labels_dir / f"{name}.png", force_rgb=False).astype(np.int8))
-            return pad_to_shape(lab, [500] * 2, value=-1)  # -1 ok?
+            return npimg.center_crop(lab, [500] * 2, padding_value=-1)  # -1 ok?
 
-        return _make_example(x_=load_img, y_=load_lab)
+        return _make_record(x_=load_img, y_=load_lab)
 
     def __len__(self):
         return len(self._image_list)
@@ -708,9 +661,8 @@ class ISUNDataset(Dataset):
         super().__init__(subset=subset, info=dict(problem=None))
 
     def get_example(self, idx):
-        return _make_example(
-            x_=lambda: np.array(
-                _load_image(f"{self._images_dir}/{self._image_names[idx]}.jpg")),
+        return _make_record(
+            x_=lambda: np.array(_load_image(f"{self._images_dir}/{self._image_names[idx]}.jpg")),
             y=-1)
 
     def __len__(self):
@@ -732,7 +684,7 @@ class LSUNDataset(Dataset):
         super().__init__(subset=subset, info=dict(id='LSUN', problem=None))
 
     def get_example(self, idx):
-        return _make_example(
+        return _make_record(
             x_=lambda: np.array(_load_image(f"{self._subset_dir}/{self._image_names[idx]}")),
             y=-1)
 

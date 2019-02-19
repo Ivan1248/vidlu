@@ -14,4 +14,4 @@ get_data = DatasetFactory(dirs.DATASETS)
 pds = cache_data_and_normalize_inputs(get_data(args.ds), cache_dir=dirs.CACHE)
 
 for k, ds in pds.items():
-    clear_dataset_hdd_cache(ds)
+    ds.clear_hdd_cache()

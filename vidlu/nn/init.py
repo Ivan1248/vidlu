@@ -1,5 +1,8 @@
+import warnings
+
 from torch import nn
-from vidlu.nn import components
+from . import components as co
+from . import modules as m
 
 
 def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
@@ -13,9 +16,15 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
         elif isinstance(m, nn.Linear):
             nn.init.constant_(m.bias, 0)
     if zero_init_residual:
+        found = False
         for m in module.modules():
-            if isinstance(m, components.ResGroups):
-                nn.init.constant_(m.post_norm.orig.weight, 0)
+            if isinstance(m, co.ResUnit):
+                for i, c in enumerate(reversed(list(m.children()))):
+                    if i == 1 and isinstance(c, m.BatchNorm):
+                        found = True
+                        nn.init.constant_(c.orig.weight, 0)
+        if not found:
+            warnings.warn("Batch normalization modules for residual zero-init not found.")
 
 
 def kaiming_densenet(module, nonlinearity='relu'):

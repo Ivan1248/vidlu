@@ -1,11 +1,5 @@
-from functools import partial
-
 import numpy as np
 from sklearn.metrics import confusion_matrix
-import torch
-from ignite import metrics
-
-from vidlu.problem import Problem, dataset_to_problem
 
 EPS = 1e-8
 
@@ -109,28 +103,3 @@ class ClassificationMetrics(AccumulatingMetric):
         A = tp.sum() / pos.sum()
         locs = locals()
         return dict((x, locs[x]) for x in returns)
-
-
-# get_default_metrics ##############################################################################
-
-def get_default_metric_args(dataset):
-    problem = dataset_to_problem(dataset)
-    if problem == Problem.CLASSIFICATION:
-        return dict(class_count=dataset.info.class_count)
-    elif problem == Problem.SEMANTIC_SEGMENTATION:
-        return dict(class_count=dataset.info.class_count)
-    elif problem == Problem.DEPTH_REGRESSION:
-        return dict()
-    elif problem == Problem.OTHER:
-        return dict()
-
-
-def get_default_metrics(dataset):
-    problem = dataset_to_problem(dataset)
-    if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
-        return [partial(FuncMetric, func=lambda io: io.loss, name='loss'),
-                partial(ClassificationMetrics, class_count=dataset.info.class_count)]
-    elif problem == Problem.DEPTH_REGRESSION:
-        return [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
-    elif problem == Problem.OTHER:
-        return []

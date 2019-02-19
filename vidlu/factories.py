@@ -6,17 +6,46 @@ import torch
 import numpy as np
 from torchvision.transforms.functional import to_tensor as image_to_tensor
 
-from vidlu.data import DatasetFactory, DataLoader
-from vidlu.data_utils import cache_data_and_normalize_inputs
-from vidlu.utils.func import (ArgTree, argtree_partial, argtree_hard_partial,
-                              find_empty_params_deep, ArgTree, params, Empty, valmap)
-from vidlu.utils.tree import tree_to_paths, print_tree
+from vidlu import defaults
+from vidlu.utils.func import (argtree_hard_partial, argtree_partial, find_empty_params_deep, ArgTree, params, Empty)
+from vidlu.utils.tree import print_tree
 
 t = ArgTree  # used in arg/evaluation
 
 
+# Factory messages #################################################################################
+
+def print_all_args_message(func):
+    print("All arguments:")
+    # for p, v in tree_to_paths(params_deep(func)):
+    #    print('.'.join(p), '=', v)
+
+    print(f"Argument tree of the model ({func.func}):")
+    print_tree(ArgTree.from_func(func), depth=1)
+
+
+def print_missing_args_message(func):
+    empty_args = find_empty_params_deep(func)
+    if len(empty_args) != 0:
+        print("Unassigned arguments:")
+        for ea in empty_args:
+            print(f"  {'/'.join(ea)}")
+
+
+def print_args_messages(kind, type_, factory, argtree, verbosity=1):
+    if verbosity > 0:
+        print(f'{kind}:', type_.__name__)
+        print_tree(argtree, depth=1)
+        if verbosity > 1:
+            print_all_args_message(factory)
+        print_missing_args_message(factory)
+
+
+# Dataset ##########################################################################################
+
 def parse_datasets(datasets_str: str, datasets_dir, cache_dir):
-    from vidlu.data import Record
+    from vidlu.data import Record, DatasetFactory
+    from vidlu.data_utils import cache_data_and_normalize_inputs
 
     def error(msg=""):
         raise ValueError(f'Invalid configuration string. {msg}'
@@ -59,39 +88,17 @@ parse_datasets.help = \
      '"camvid{trainval}, wilddash(downsampling_factor=2){val}')
 
 
-def print_all_args_message(func):
-    print("All arguments:")
-    # for p, v in tree_to_paths(params_deep(func)):
-    #    print('.'.join(p), '=', v)
-
-    print(f"Argument tree of the model ({func.func}):")
-    print_tree(ArgTree.from_func(func), depth=1)
-
-
-def print_missing_args_message(func):
-    empty_args = find_empty_params_deep(func)
-    if len(empty_args) != 0:
-        print("Unassigned arguments:")
-        for ea in empty_args:
-            print(f"  {'/'.join(ea)}")
-
-
-def print_args_messages(kind, type_, factory, argtree, verbosity=1):
-    if verbosity > 0:
-        print(f'{kind}:', type_.__name__)
-        print_tree(argtree, depth=1)
-        if verbosity > 1:
-            print_all_args_message(factory)
-        print_missing_args_message(factory)
-
+# Model ############################################################################################
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def parse_model(model_str: str, dataset, device=None, verbosity=1):
     import torch.nn  # used in model_str/evaluation
     import vidlu.nn  # used in model_str/evaluation
-    from vidlu.nn import components
-    from vidlu import models
+    from vidlu.nn import init, loss
+    import vidlu.nn.components as c
+    from vidlu.nn import models
     import torchvision as tv
+    from vidlu.data import DataLoader
 
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) > 0 else ArgTree()
@@ -99,7 +106,7 @@ def parse_model(model_str: str, dataset, device=None, verbosity=1):
         model_class = getattr(models, model_name)
     except:
         model_class = eval(model_name)
-    argtree = models.get_default_argtree(model_class, dataset)
+    argtree = defaults.get_model_argtree(model_class, dataset)
     argtree.update(argtree_arg)
     model_f = argtree_hard_partial(model_class, **argtree)
 
@@ -120,11 +127,13 @@ parse_model.help = \
      'Example: "ResNet,base_f=a(depth=34, base_width=64, small_input=True, _f=a(dropout=True)))"')
 
 
+# Trainer and metrics ##############################################################################
+
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def parse_trainer(trainer_str: str, model, dataset, device=None, verbosity=1):
     from torch import optim
     from torch.optim import lr_scheduler
-    from vidlu import trainers
+    from vidlu.training import trainers
 
     trainer_name, *argtree_arg = (x.strip() for x in trainer_str.strip().split(',', 1))
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) > 0 else ArgTree()
@@ -133,7 +142,7 @@ def parse_trainer(trainer_str: str, model, dataset, device=None, verbosity=1):
                          + " but not to the optimizer.")
     trainer_class = getattr(trainers, trainer_name)
 
-    argtree = trainers.get_default_argtree(trainer_class, model, dataset)
+    argtree = defaults.get_trainer_argtree(trainer_class, model, dataset)
     argtree.update(argtree_arg)
     trainer_f = argtree_hard_partial(trainer_class, **argtree)
 
@@ -150,22 +159,21 @@ parse_trainer.help = \
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def parse_metrics(metrics_str: str, dataset):
-    from vidlu import metrics
+    from vidlu.training import metrics
 
-    default_metrics = metrics.get_default_metrics(dataset)
+    default_metrics = defaults.get_default_metrics(dataset)
 
     metrics_str = metrics_str.strip()
     metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
     additional_metrics = [getattr(metrics, name) for name in metric_names]
 
     def add_missing_args(metric_f):
-        dargs = metrics.get_default_metric_args(dataset)
+        dargs = defaults.get_default_metric_args(dataset)
         missing = [p for p in params(metric_f) if p is Empty]
         return (partial(metric_f, **{p: dargs[p] for p in missing}) if len(missing) > 0
                 else metric_f)
 
-    metric_fs = set(default_metrics + additional_metrics)
-    return set(map(add_missing_args, metric_fs))
+    return list(map(add_missing_args, default_metrics + additional_metrics))
 
 
 def parse_pretrained_params(pretrained_params_str):

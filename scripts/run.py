@@ -1,12 +1,14 @@
 import argparse
 from pathlib import Path
 import datetime
+from functools import partial
 
 import cuda_pci_bus_id_device_order
 import torch
 
 from _context import vidlu
-from vidlu.parsing_factories import parse_datasets, parse_model, parse_trainer, parse_metrics
+from vidlu.nn.modules import parameter_count
+from vidlu.factories import parse_datasets, parse_model, parse_trainer, parse_metrics
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.path import to_valid_path
 from vidlu import gpu_utils
@@ -19,7 +21,11 @@ import dirs
 python run.py
 "whitenoise{train,test}" "ResNet,backbone_f=t(depth=34,small_input=True),head_f=partial(vidlu.nn.components.classification_head,10)" ResNetCifarTrainer "accuracy"
 "Cifar10{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True)" ResNetCifarTrainer ""
+"Cifar10{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True),init=t(zero_init_residual=False)" ResNetCifarTrainer ""
 "Cifar10{train,val}" "ResNet,backbone_f=t(depth=10,small_input=True,base_width=4)" ResNetCifarTrainer ""
+"Cifar10{train,val}" "DiscriminativeModel,backbone_f=c.VGGBackbone,init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
+"Cifar10{train,val}" "SmallImageClassifier" "SmallImageClassifierTrainer,data_loader_f=t(num_workers=4)" "" -v 2
+"Cifar10{train,val}" "DiscriminativeModel,backbone_f=partial(c.PreactBlock,kernel_sizes=[3,3,3],base_width=64,width_factors=[1,1,1]),init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
 """
 
 # Arguments ########################################################################################
@@ -43,7 +49,7 @@ with indent_print("Arguments:"):
 device = args.device
 if device is None:
     with indent_print("Selecting device..."):
-        device = torch.device(gpu_utils.get_first_available_device())
+        device = torch.device(gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
 
 # Data #############################################################################################
 
@@ -56,6 +62,8 @@ with indent_print('Initializing model...'):
     model = parse_model(args.model, dataset=datasets[0], device=args.device,
                         verbosity=args.verbosity)
     model.to(device=device)
+print(model)
+print('Parameter count:', parameter_count(model))
 
 # Trainer ##########################################################################################
 
@@ -85,8 +93,8 @@ def eval_str(metrics):
 
 
 def log(text: str):
-    timestr = datetime.datetime.now().strftime('%H:%M:%S')
-    text = f"  [{timestr}] {text}"
+    time_str = datetime.datetime.now().strftime('%H:%M:%S')
+    text = f"[{time_str}] {text}"
     print(text)
 
 
@@ -96,30 +104,38 @@ print('Starting training:...')
 
 
 @trainer.training.epoch_started.add_handler
-def handle_epoch_start(t):
-    s = t.state
-    print(f"Starting epoch {s.epoch} of {s.max_epochs} ({s.batch_count} iterations per epoch)")
+def on_training_epoch_started(e):
+    s = e.state
+    trainer.eval(datasets[1])
+    log(f"Starting epoch {s.epoch}/{s.max_epochs} ({s.batch_count} batches)")
+
+
+@trainer.training.completed.add_handler
+def on_training_completed(e):
+    trainer.eval(datasets[1])
+
+
+def report_metrics(e, validation=False):
+    s = e.state
+    metrics = trainer.get_metrics(reset=True)
+    with indent_print():
+        epoch_fmt, iter_fmt = f'{len(str(s.max_epochs))}d', f'{len(str(s.batch_count))}d'
+        log(f'{format(s.epoch, epoch_fmt)}.'
+            + ('val/test' if validation
+               else f'{format((s.iteration - 1) % s.batch_count + 1, iter_fmt)}')
+            + ': ' + eval_str(metrics))
+
+
+trainer.evaluation.epoch_completed.add_handler(partial(report_metrics, validation=True))
 
 
 @trainer.training.iteration_completed.add_handler
-def handle_iteration(t):
-    s = t.state
-    metric_values = dict()
-    for k, v in s.metrics.items():
-        if isinstance(v, dict):
-            metric_values.update(v)
-        else:
-            metric_values[k] = v
-    if (s.iteration + 1) % (s.batch_count // 5) == 0:
-        with indent_print():
-            epoch_fmt, iter_fmt = f'{len(str(s.max_epochs))}d', f'{len(str(s.batch_count))}d'
-            print(f'{format(s.epoch, epoch_fmt)}.{format(s.iteration % s.batch_count, iter_fmt)}:',
-                  eval_str(metric_values))
-        for m in metrics:
-            m.reset()
+def on_iteration_completed(e):
+    if e.state.iteration % (e.state.batch_count // 5) == 0:
+        report_metrics(e)
 
 
-trainer.train(*datasets)
+trainer.train(datasets[0].cache())
 
 """
 def wrap_call(call):

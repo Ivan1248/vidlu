@@ -11,53 +11,53 @@ from tqdm import tqdm
 
 # Inspection #######################################################################################
 
-def clean_locals_from_first_initializer():
+def class_initializer_locals_c():
     """
-    Returns arguments of the constructor of a subclass if `super().__init__()`
-    is the first statement in the subclass' `__init__`. Taken from MagNet
-    (https://github.components/MagNet-DL/magnet/blob/master/magnet/utils/misc.py) and
-    modified. Originally `magnet.utils.misc.caller_locals`.
+    Returns arguments of the initializer of a subclass if there are no variables
+    defined before `super().__init__()` calls in the initializer of the object's
+    class.
+    Based on `magnet.utils.misc.caller_locals`.
     """
     frame = inspect.currentframe().f_back.f_back
 
     try:
-        l = frame.f_locals
+        locals_ = frame.f_locals
+        caller = locals_.pop('self')
 
-        f_class = l.pop('__class__', None)
-        caller = l.pop('self')
-        while f_class is not None and isinstance(caller, f_class):
-            l.pop('args', None)
-            args = frame.f_locals.pop('args', None)
-            l.update(frame.f_locals)
-            if args is not None:
-                l['args'] = args
-
-            l.pop('self', None)
+        while True:
             frame = frame.f_back
             f_class = frame.f_locals.pop('__class__', None)
+            locals_curr = frame.f_locals
+            if f_class is None or locals_curr.pop('self', None) is not caller:
+                break
+            locals_ = locals_curr
 
-        l.pop('self', None)
-        l.pop('__class__', None)
-        return l
+        locals_.pop('self', None)
+        locals_.pop('__class__', None)
+        return locals_
     finally:
-        del frame
+        del frame  # to avoid cyclical references which the GC doesn't like, TODO
 
 
-def clean_locals():
-    locals_ = inspect.currentframe().f_back.f_locals
-    locals_.pop('self', None)
-    locals_.pop('__class__', None)
-    return locals_
-
-
-def find_frame_in_call_stack(frame_predicate, start_frame=None):
-    frame = start_frame or inspect.currentframe().f_back.f_back
+def locals_c():
+    """ Locals without `self` and `__class__`. """
+    frame = inspect.currentframe().f_back
     try:
-        while not frame_predicate(frame):
-            frame = frame.f_back
-        return frame
+        locals_ = frame.f_locals
+        locals_.pop('self', None)
+        locals_.pop('__class__', None)
+        return locals_
     finally:
-        del frame
+        del frame  # to avoid cyclical references which the GC doesn't like, TODO
+
+
+def find_frame_in_call_stack(frame_predicate, start_frame=-1):
+    frame = start_frame or inspect.currentframe().f_back.f_back
+    while not frame_predicate(frame):
+        frame = frame.f_back
+        if frame is None:
+            return None
+    return frame
 
 
 # Slicing ##########################################################################################
@@ -95,7 +95,7 @@ class Event:
 
 # Console ##########################################################################################
 
-def try_input():
+def try_input(default=None):
     """
     Returns `None` if the standard input is empty. Otherwise it returns a line
     like `input` does.
@@ -108,33 +108,19 @@ def try_input():
         else:
             return select.select([sys.stdin], [], [], 0)[0]
 
-    return input() if input_available() else None
+    return input() if input_available() else default
 
 
 # Dict #############################################################################################
 
 def get_key(dict_, value):
     for k, v in dict_.items():
-        if v is value:
+        if v == value:
             return k
     raise ValueError("the dictionary doesn't contain the value")
 
 
 # Downloading ######################################################################################
-
-def check_integrity(fpath, md5):
-    # from torchvision.datasets.utils
-    if not os.path.isfile(fpath):
-        return False
-    md5o = hashlib.md5()
-    with open(fpath, 'rb') as f:
-        # read in 1MB chunks
-        for chunk in iter(lambda: f.read(1024 * 1024), b''):
-            md5o.update(chunk)
-    md5c = md5o.hexdigest()
-    if md5c != md5:
-        return False
-    return True
 
 
 class _DownloadProgressBar(tqdm):
@@ -145,6 +131,20 @@ class _DownloadProgressBar(tqdm):
 
 
 def download(url, output_path, md5=None):
+    def check_integrity(fpath, md5):
+        # from torchvision.datasets.utils
+        if not os.path.isfile(fpath):
+            return False
+        md5o = hashlib.md5()
+        with open(fpath, 'rb') as f:
+            # read in 1MB chunks
+            for chunk in iter(lambda: f.read(1024 * 1024), b''):
+                md5o.update(chunk)
+        md5c = md5o.hexdigest()
+        if md5c != md5:
+            return False
+        return True
+
     if md5 is not None and os.path.isfile(output_path) and check_integrity(output_path, md5):
         print(f'Using downloaded and verified file: {output_path}')
     with _DownloadProgressBar(unit='B', unit_scale=True,

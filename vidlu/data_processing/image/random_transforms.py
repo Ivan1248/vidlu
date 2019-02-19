@@ -1,5 +1,5 @@
 import numpy as np
-from .shape import pad, crop
+from .npimg import pad
 
 
 def random_crop(im, shape):

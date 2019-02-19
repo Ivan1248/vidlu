@@ -57,4 +57,4 @@ def numpy_collate(batch):
 
 class DataLoader(torch.utils.data.DataLoader):
     __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True,
-                             collate_fn=default_collate)
+                             collate_fn=default_collate, drop_last=True)

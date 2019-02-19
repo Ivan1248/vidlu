@@ -23,4 +23,7 @@ def save_grads(params):
 
 
 def prepare_batch(batch, device=None, non_blocking=False):
-    return tuple(convert_tensor(x, device=device, non_blocking=non_blocking) for x in batch)
+    batch = tuple(convert_tensor(x, device=device, non_blocking=non_blocking) for x in batch)
+    for x in batch:
+        x.requires_grad = False
+    return batch

@@ -4,7 +4,6 @@ from functools import lru_cache
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-import skimage
 
 
 def get_color_palette(n, cmap='jet'):

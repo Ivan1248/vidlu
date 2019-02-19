@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from utils.torch import disable_tracking_bn_stats, save_grads
+from vidlu.utils.torch import disable_tracking_bn_stats, save_grads
 
 
 def _l2_normalize(d, eps=1e-8):
