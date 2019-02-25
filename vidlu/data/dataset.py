@@ -3,15 +3,16 @@ import os
 import pickle
 from collections.abc import Sequence
 from typing import Union, Callable
+from pathlib import Path
 import shutil
-from collections import Counter
+import warnings
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
 from .record import Record
-from .misc import default_collate, serialize
+from .misc import default_collate, serialize, serialized_sizeof
 
 from vidlu.utils.misc import slice_len
 from vidlu.utils.collections import NameDict
@@ -107,6 +108,8 @@ class Dataset(Sequence):
         else:
             if idx < 0:
                 idx += len(self)
+            if idx < 0 or idx >= len(self):
+                raise IndexError(f"Index {idx} out of range for dataset with length {len(self)}.")
             d = self.get_example(idx)
             return d if filter_fields is None else filter_fields(d)
         if filter_fields is not None:
@@ -127,6 +130,9 @@ class Dataset(Sequence):
 
     def get_example(self, idx):  # This can be overridden
         return self.data[idx]
+
+    def approx_example_sizeof(self, sample_count=30):
+        return serialized_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
 
     def batch(self, batch_size, **kwargs):  # Element type is tuple
         """
@@ -359,17 +365,18 @@ class HDDCacheDataset(Dataset):
     def __init__(self, dataset, cache_dir, separate_fields=True, **kwargs):
         modifier = 'cache_hdd' + ('_s' if separate_fields else '')
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
-        self.cache_dir = f"{cache_dir}/{self.full_name}"
+        self.cache_dir = Path(cache_dir) / self.full_name
         self.separate_fields = separate_fields
         if separate_fields:
             assert type(dataset[0]) is Record
             self.keys = list(self.data[0].keys())
         os.makedirs(self.cache_dir, exist_ok=True)
-        for i in range(6):
-            ii = i * len(dataset) // 6
+        consistency_check_sample_count = 16
+        for i in range(consistency_check_sample_count):
+            ii = i * len(dataset) // consistency_check_sample_count
             if serialize(dataset[ii]) != serialize(self[ii]):
-                print(f"Cache of the dataset {self.full_name} inconsistent." +
-                      "Deleting old and creating new cache.")
+                warnings.warn(f"Cache of the dataset {self.full_name} inconsistent." +
+                              "Deleting old and creating new cache.")
                 self.delete_cache()
                 os.makedirs(self.cache_dir, exist_ok=False)
                 break
@@ -440,10 +447,7 @@ class SubrangeDataset(Dataset):
         super().__init__(modifiers=[modifier], data=dataset, **kwargs)
 
     def get_example(self, idx):
-        i = self.start + self.step * idx
-        if i < 0 or i >= self.stop:
-            raise IndexError("Index out of range.")
-        return self.data[i]
+        return self.data[self.start + self.step * idx]
 
     def __len__(self):
         return self._len
@@ -522,8 +526,6 @@ class BatchDataset(Dataset):
         self._last_batch_size = self._batch_size - (self._length * batch_size - len(self.data))
 
     def get_example(self, idx):
-        if idx < 0 or idx >= self._length:
-            raise IndexError("Index out of range.")
         batch_size = self._last_batch_size if idx == self._length - 1 else self._batch_size
         i_start = idx * self._batch_size
         return tuple(self.data[i] for i in range(i_start, i_start + batch_size))

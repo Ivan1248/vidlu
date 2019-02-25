@@ -9,9 +9,22 @@ from vidlu.utils.tree import tree_to_paths
 
 # Wrappers #########################################################################################
 
+
+class composition:
+    __slots__ = 'funcs'
+
+    def __init__(self, *funcs):
+        self.funcs = funcs
+
+    def __call__(self, x):
+        for f in self.funcs:
+            x = f(x)
+        return x
+
+
 def pipe(x, *funcs):
     for f in funcs:
-        x = funcs[0](x)
+        x = f(x)
     return x
 
 

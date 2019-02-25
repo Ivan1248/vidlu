@@ -1,8 +1,8 @@
 import warnings
 
 from torch import nn
-from . import components as co
-from . import modules as m
+from . import components as com
+from . import modules as mod
 
 
 def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
@@ -18,9 +18,9 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
     if zero_init_residual:
         found = False
         for m in module.modules():
-            if isinstance(m, co.ResUnit):
+            if isinstance(m, com.ResUnit):
                 for i, c in enumerate(reversed(list(m.children()))):
-                    if i == 1 and isinstance(c, m.BatchNorm):
+                    if i == 1 and isinstance(c, mod.BatchNorm):
                         found = True
                         nn.init.constant_(c.orig.weight, 0)
         if not found:

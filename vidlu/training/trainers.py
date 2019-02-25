@@ -8,11 +8,17 @@ from ignite import engine
 from ignite.engine import Engine
 
 from vidlu.data import DataLoader
-from vidlu.utils.func import default_args
+from vidlu.utils.func import default_args, params, Empty
 from vidlu.utils.collections import NameDict
-from vidlu.utils.torch import prepare_batch
-from vidlu.training.engine import Engine
 from vidlu.nn.modules import get_device
+from .engine import Engine
+from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR
+
+from ignite._utils import convert_tensor
+
+
+def prepare_batch(batch, device=None, non_blocking=False):
+    return tuple(convert_tensor(x, device=device, non_blocking=non_blocking) for x in batch)
 
 
 # Runner ###########################################################################################
@@ -83,8 +89,17 @@ class Trainer(Evaluator):
                          data_loader_f=partial(data_loader_f, batch_size=batch_size),
                          prepare_batch=prepare_batch,
                          device=get_device(model) if device is None else device)
+        if 'weight_decay' in params(optimizer_f):
+            if not params(optimizer_f).weight_decay is Empty:
+                raise ValueError(
+                    "The weight_decay parameter of optimizer_f should be unassigned.")
         self.optimizer = optimizer_f(params=self.model.parameters(), weight_decay=weight_decay)
         self.epoch_count = epoch_count
+        if 'epoch_count' in params(lr_scheduler_f):
+            if not params(lr_scheduler_f).epoch_count is Empty:
+                raise ValueError(
+                    "The epoch_count parameter of lr_scheduler_f should be unassigned.")
+            lr_scheduler_f = partial(lr_scheduler_f, epoch_count=epoch_count)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
 
         self.training = Engine(lambda e, b: self.train_batch(b))
@@ -110,17 +125,6 @@ class SupervisedTrainer(Trainer):
         self.model.eval()
         with torch.no_grad():
             x, y = self.prepare_batch(batch, device=self.device)
-
-            prediction, outputs = self.get_outputs(x)
-            #print('.')
-            #on_cuda = True
-            #with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
-            #    prediction, outputs = self.get_outputs(x)
-            #if on_cuda:
-            #    torch.cuda.synchronize()
-            #print(prof.key_averages().table('cuda_time_total'))
-            #exit()
-
             prediction, outputs = self.get_outputs(x)
             loss = self.loss(prediction, y.long())
             return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
@@ -129,9 +133,7 @@ class SupervisedTrainer(Trainer):
         self.model.train()
         self.optimizer.zero_grad()
         x, y = self.prepare_batch(batch, device=self.device)
-
         prediction, outputs = self.get_outputs(x)
-
         loss = self.loss(prediction, y.long())
         loss.backward()
         self.optimizer.step()
@@ -149,28 +151,28 @@ class ClassificationTrainer(SupervisedTrainer):
                                    hard_prediction=log_probs.argmax(1))
 
 
-# Special
+# Configurations ###################################################################################
 
 class ResNetCifarTrainer(ClassificationTrainer):
     # as in www.arxiv.org/abs/1603.05027
     __init__ = partialmethod(
-        SupervisedTrainer.__init__,
-        optimizer_f=partial(SGD, lr=1e-1, momentum=0.9),
+        ClassificationTrainer.__init__,
+        optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty),
         weight_decay=1e-4,
         epoch_count=200,
-        lr_scheduler_f=partial(MultiStepLR, milestones=[60, 120, 160], gamma=0.2),
+        lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
         batch_size=128)
 
 
-class ResNetCamVidTrainer(ClassificationTrainer):
+class LadderDenseNetTrainer(ClassificationTrainer):
     # custom
     __init__ = partialmethod(
-        SupervisedTrainer.__init__,
-        optimizer_f=partial(SGD, lr=1e-1, momentum=0.9),
+        ClassificationTrainer.__init__,
+        optimizer_f=partial(SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
         weight_decay=1e-4,
+        lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
         epoch_count=40,
-        lr_scheduler_f=partial(MultiStepLR, milestones=[60, 120, 160], gamma=0.2),
-        batch_size=32)
+        batch_size=4)
 
 
 class WRNCifarTrainer(ResNetCifarTrainer):
@@ -185,7 +187,7 @@ class DenseNetCifarTrainer(ClassificationTrainer):
         weight_decay=1e-4,
         optimizer_f=default_args(ResNetCifarTrainer).optimizer_f,
         epoch_count=100,
-        lr_scheduler_f=partial(MultiStepLR, milestones=[50, 75], gamma=0.1),
+        lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
         batch_size=64)
 
 

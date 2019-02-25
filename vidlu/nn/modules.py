@@ -11,83 +11,84 @@ import numpy as np
 
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import class_initializer_locals_c, find_frame_in_call_stack
-from vidlu.utils.func import params, tryable
+from vidlu.utils.func import params, tryable, composition
 
 
-# Module class extenders ###########################################################################
+# Module class extensions ##########################################################################
 
-def _scoped(*superclasses):
-    class ScopedModuleMixin(*superclasses):
-        # def __del__(self):
-        #    for c in self.children():
-        #        self._unregister_as_parent(c)
-
-        def _register_as_parent(self, child_name, child_module):
-            if hasattr(child_module, 'parents'):
-                child_module.parents[self] = child_name
-            else:
-                child_module.parents = {self: child_name}
-
-        def _unregister_as_parent(self, child_module):
-            del child_module.parents[self]
-
-        def __setattr__(self, key, value):
-            super().__setattr__(key, value)
-            # if isinstance(value, nn.Module):
-            #    self._register_as_parent(key, value)
-
+def _extended_interface(*superclasses):
+    class ExtendedInterfaceModExt(*superclasses):
         def add_module(self, *args, **kwargs):
             if len(args) == 2 and len(kwargs) == 0:
                 name, module = args
             elif len(args) == 0 and len(kwargs) == 1:
-                name, module = next(kwargs.items())
+                name, module = next(iter(kwargs.items()))
             else:
                 raise ValueError(
                     "Either a pair of positional arguments or single keyword argument can be accepted.")
             super().add_module(name, module)
-            self._register_as_parent(name, module)
+
+        def add_modules(self, *args, **kwargs):
+            if len(args) == 0:
+                args = kwargs.items()
+                name, module = next(iter(kwargs.items()))
+            elif not len(kwargs) == 0:
+                raise ValueError(
+                    "Either only positional arguments or only keyword arguments can be accepted.")
+            for name, module in args:
+                super().add_module(name, module)
 
         @property
-        def scopei(self):
-            if hasattr(self, 'parents'):
-                scopes = [f'{par.scope}.{name}' for par, name in self.parents.items()]
-                if len(scopes) == 1:
-                    return scopes[0]
-                return '(' + ', '.join(scopes) + ')'
-            # breakpoint()
-            return 'ROOT'
+        def device(self):
+            param = next(self.parameters(), None)
+            return None if param is None else param[0].device
 
-        def get_parents(self):
-            import gc
-            for module in [r for r in gc.get_objects() if isinstance(r, (nn.Module))]:
-                for k, v in module.named_children():
-                    if v is self:
-                        yield module, k
-            """for r_modules in [r for r in gc.get_referrers(self)
-                              if isinstance(r, (dict, OrderedDict))]:
-                found = False
-                for r__dict__ in [r for r in gc.get_referrers(r_modules)
-                                  if type(r) is dict and r.get('_modules', None) is r_modules]:
-                    for r_parent in gc.get_referrers(r__dict__):
-                        if isinstance(r_parent, nn.Module) and r__dict__ is r_parent.__dict__:
-                            yield r_parent, get_key(r_modules, self)
-                            found = True
-                            break
-                    if found:
-                        break"""
+        def load_state_dict(self, state_dict_or_path, strict=True):
+            """Handle a path being given instead of a file. (preferred since it
+            automatically maps to the correct device). Taken from MagNet."""
+            from pathlib import Path
+            sd = state_dict_or_path
+            if isinstance(sd, (str, Path)):
+                sd = torch.load(sd, map_location=self.device)
+            return super().load_state_dict(sd, strict=strict)
 
-        @property
-        def scope(self):
-            scopes = [f'{par.scope}.{name}' for par, name in self.get_parents()]
-            if len(scopes) == 1:
-                return scopes[0]
-            return '(' + ', '.join(scopes) + ')'
+    return ExtendedInterfaceModExt
 
-    return ScopedModuleMixin
+
+def _buildable(*superclasses):
+    class BuildableModExt(*superclasses):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            args = class_initializer_locals_c()
+            self.args = NameDict(args)
+            self._built = False
+
+        def __call__(self, *args, **kwargs):
+            if not self._built:
+                self.build(*args, **kwargs)
+            result = super().__call__(*args, **kwargs)
+            if not self._built:
+                recompute_result = self.post_build(*args, **kwargs) is None
+                self._built = True
+                if recompute_result:
+                    return super().__call__(*args, **kwargs)
+            return result
+
+        def build(self, *args, **kwargs):
+            pass
+
+        def post_build(self, *args, **kwargs):
+            """
+            Leave this as it is if you don't need more initialization after
+            evaluaton. I you do, override it and make it return nothing (`None`).
+            """
+            return True
+
+    return BuildableModExt
 
 
 def _stochastic(*superclasses):
-    class StochasticModuleMixin(*superclasses):
+    class StochasticModExt(*superclasses):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self._stoch_next_run_id = -1
@@ -132,15 +133,25 @@ def _stochastic(*superclasses):
                 self.stochastic_eval()
             super().eval(**kwargs)
 
-    return StochasticModuleMixin
+    return StochasticModExt
+
+
+def _debuggable(*superclasses):
+    class DebbugableModExt(*superclasses):
+
+        def forward(self, *args, **kwargs):
+            y = super().forward(*args, **kwargs)
+            print(try_get_module_name_from_call_stack(self), y.shape)
+            return y
+
+    return DebbugableModExt
 
 
 def _extended(*superclasses):
-    return superclasses
-    # return [_stochastic(_scoped(*superclasses))]
+    return [e(*superclasses) for e in [_buildable, _extended_interface]]
 
 
-# Modified PyTorch Modules #########################################################################
+# Core Modules #####################################################################################
 
 class Module(*_extended(nn.Module, ABC)):
     # Based on https://github.com/MagNet-DL/magnet/blob/master/magnet/nodes/nodes.py
@@ -148,8 +159,6 @@ class Module(*_extended(nn.Module, ABC)):
     def __init__(self):
         super().__init__()
         args = class_initializer_locals_c()
-        for x in ['self', '__class__']:
-            args.pop(x, None)
         self.args = NameDict(args)
         self._built = False
 
@@ -167,9 +176,6 @@ class Module(*_extended(nn.Module, ABC)):
     def __str__(self):
         return (self.__class__.__name__ + "("
                 + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
-
-    def clone(self):
-        return type(self)(**self.args)
 
     @property
     def device(self):
@@ -207,25 +213,6 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-class Identity(Module):
-    def forward(self, x):
-        return x
-
-
-class Parallel(*_extended(nn.ModuleList)):
-    def forward(self, *input):
-        return [m(*input) for m in self]
-
-
-class Reduce(Module):
-    def __init__(self, func):
-        self.func = func
-        super().__init__()
-
-    def forward(self, input):
-        return reduce(self.func, input[1:], input[0])
-
-
 class Sequential(*_extended(nn.Sequential)):
     """
     A wrapper around torch.nn.Sequential to enable passing a dict as the only
@@ -258,16 +245,24 @@ class Sequential(*_extended(nn.Sequential)):
     def index(self, key):
         return list(zip(*self.named_children())).index(key)
 
-    # def forward(self, *x):
-    #    y=super().forward(*x)
-    #    print(try_get_name_from_call_stack(self), y.shape)
-    #    return y
+
+class Parallel(*_extended(nn.ModuleList)):
+    def forward(self, *input):
+        return [m(*input) for m in self]
 
 
-class EModuleDict(nn.ModuleDict):
-    def __init__(self, modules: dict, **kwargs):
-        modules.update(kwargs)
-        super().__init__(modules)
+class Identity(Module):
+    def forward(self, x):
+        return x
+
+
+class Reduce(Module):
+    def __init__(self, func):
+        self.func = func
+        super().__init__()
+
+    def forward(self, input):
+        return reduce(self.func, input[1:], input[0])
 
 
 def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.Module:
@@ -309,7 +304,7 @@ class WrappedModule(Module):
         return self.orig(x)
 
     def __repr__(self):
-        return "W " + repr(self.orig)
+        return "A" + repr(self.orig)
 
 
 class Conv(WrappedModule):
@@ -415,15 +410,55 @@ class Func(Module):
         return self._func(*args, **kwargs)
 
 
+"""
 class Sum(EModuleDict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def forward(self, *input):
         return sum(m(*input) for m in self.items())
+"""
 
 
-# Utils ############################################################################################
+# Stochastic #######################################################################################
+
+class StochasticModule(Module, ABC):
+    @abstractmethod
+    def deterministic_forward(self, *args, **kwargs):
+        pass
+
+
+def is_stochastic(module):
+    return isinstance(module, StochasticModule) or any(is_stochastic(m) for m in module.children())
+
+
+class _DropoutNd(StochasticModule, ABC):
+    __constants__ = ['p', 'inplace']
+
+    def __init__(self, p=0.5, inplace=False):
+        super().__init__()
+        if p < 0 or p > 1:
+            raise ValueError("dropout probability has to be between 0 and 1, "
+                             "but got {}".format(p))
+        self.p = p
+        self.inplace = inplace
+
+    def extra_repr(self):
+        inplace_str = ', inplace' if self.inplace else ''
+        return 'p={}{}'.format(self.p, inplace_str)
+
+
+class Dropout(_DropoutNd):
+    def forward(self, input):
+        return F.dropout(input, self.p, training=True, inplace=self.inplace)
+
+
+class Dropout2d(_DropoutNd):
+    def forward(self, input):
+        return F.dropout2d(input, self.p, training=True, inplace=self.inplace)
+
+
+# Utilities ########################################################################################
 
 def parameter_count(module):
     from numpy import prod
@@ -539,44 +574,6 @@ class IntermediateOutputsModuleWrapper(Module):
         return output, list(self.outputs)
 
 
-# Stochastic #######################################################################################
-
-class StochasticModule(Module, ABC):
-    @abstractmethod
-    def deterministic_forward(self, *args, **kwargs):
-        pass
-
-
-def is_stochastic(module):
-    return isinstance(module, StochasticModule) or any(is_stochastic(m) for m in module.children())
-
-
-class _DropoutNd(StochasticModule, ABC):
-    __constants__ = ['p', 'inplace']
-
-    def __init__(self, p=0.5, inplace=False):
-        super().__init__()
-        if p < 0 or p > 1:
-            raise ValueError("dropout probability has to be between 0 and 1, "
-                             "but got {}".format(p))
-        self.p = p
-        self.inplace = inplace
-
-    def extra_repr(self):
-        inplace_str = ', inplace' if self.inplace else ''
-        return 'p={}{}'.format(self.p, inplace_str)
-
-
-class Dropout(_DropoutNd):
-    def forward(self, input):
-        return F.dropout(input, self.p, training=True, inplace=self.inplace)
-
-
-class Dropout2d(_DropoutNd):
-    def forward(self, input):
-        return F.dropout2d(input, self.p, training=True, inplace=self.inplace)
-
-
 # Debugging ########################################################################################
 
 def get_calling_module(module, start_frame=None):
@@ -593,15 +590,15 @@ def get_calling_module(module, start_frame=None):
     return caller, frame
 
 
-def try_get_name_from_call_stack(module, start_frame=None, full_name=True):
+def try_get_module_name_from_call_stack(module, start_frame=None, full_name=True):
     parent, frame = get_calling_module(module, start_frame=start_frame)
     if parent is None:
-        return ''
+        return 'ROOT'
     for n, c in parent.named_children():
         if c is module:
             if not full_name:
                 return n
-            parent_name = try_get_name_from_call_stack(parent, start_frame=frame.f_back)
+            parent_name = try_get_module_name_from_call_stack(parent, start_frame=frame.f_back)
             return f'{parent_name}.{n}'
     return '???'
 

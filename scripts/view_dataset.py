@@ -2,11 +2,13 @@ import argparse
 
 from _context import vidlu
 
-from vidlu.data import DatasetFactory
+from vidlu.data import Record
 from vidlu.data.misc import serialized_sizeof
-from vidlu import data_utils
+from vidlu.transforms import image_transformer
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
+from vidlu import defaults
+from vidlu.factories import parse_datasets
 
 import dirs
 
@@ -22,9 +24,8 @@ parser.add_argument('--augment', action='store_true')
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-pds = DatasetFactory(dirs.DATASETS)(args.ds)
-pds = data_utils.cache_data_and_normalize_inputs(pds, dirs.CACHE)
-ds = pds[args.part]
+ds = parse_datasets(args.ds + '{' + args.part + '}', datasets_dir=dirs.DATASETS,
+                    cache_dir=dirs.CACHE)[0]
 
 print("Name:", ds.name)
 print("Info:")
@@ -36,9 +37,9 @@ if 'class_count' not in ds.info:
     ds.info['class_count'] = 2
 
 if args.augment:
-    ds = ds.map(data_utils.get_default_augmentation_func(ds))
+    ds = ds.map(defaults.get_jitter(ds))
 
 if args.permute:
     ds = ds.permute()
 
-view_predictions(ds, infer=lambda x: ds[0][1])
+view_predictions(ds.map(lambda r: (image_transformer(r.x).to_numpy().item, r.y)), infer=lambda x: ds[0][1])

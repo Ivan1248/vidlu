@@ -8,21 +8,18 @@ import warnings
 
 import PIL.Image as pimg
 import numpy as np
-# from skimage.transform import resize
 from scipy.io import loadmat
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
 
 from .. import Dataset, Record
-# from vidlu.data_processing.image.shape import pad_to_shape, crop
 from vidlu.utils.misc import download
-from vidlu.data_processing.image import npimg
+from vidlu.transforms import numpy
 
 from ._cityscapes_labels import labels as cslabels
 
 
 # Helper functions
-
 
 def _load_image(path, force_rgb=True):
     img = pimg.open(path)
@@ -36,7 +33,13 @@ def _rescale(img, factor, interpolation=pimg.BILINEAR):
 
 
 def _make_record(**kwargs):
-    return Record(**kwargs)
+    def array_to_image(k, v):
+        if (k == 'x' and isinstance(v, np.ndarray) and v.dtype == np.uint8
+                and 2 <= len(v.shape) <= 3):
+            return pimg.fromarray(v)  # automatic RGB or L, depending on shape
+        return v
+
+    return Record(**{k: array_to_image(k, v) for k, v in kwargs.items()})
 
 
 def _check_subsets(dataset_class, subset):
@@ -52,7 +55,8 @@ _max_int32 = 2 ** 31 - 1
 class WhiteNoiseDataset(Dataset):
     subsets = []
 
-    def __init__(self, distribution='normal', example_shape=(32, 32), size=1000, seed=53):
+    def __init__(self, distribution='normal', example_shape=(32, 32, 3), size=1000, seed=53,
+                 as_image=True):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.random_integers(_max_int32, size=(size,))
@@ -74,7 +78,7 @@ class WhiteNoiseDataset(Dataset):
 class RademacherNoiseDataset(Dataset):
     subsets = []
 
-    def __init__(self, example_shape=(32, 32), size=1000, seed=53):
+    def __init__(self, example_shape=(32, 32, 3), size=1000, seed=53):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
@@ -90,7 +94,7 @@ class RademacherNoiseDataset(Dataset):
 class HBlobsDataset(Dataset):
     subsets = []
 
-    def __init__(self, sigma=None, example_shape=(32, 32), size=1000, seed=53):
+    def __init__(self, sigma=None, example_shape=(32, 32, 3), size=1000, seed=53):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
@@ -154,19 +158,19 @@ class Cifar10Dataset(Dataset):
 
         h, w, ch = 32, 32, 3
         if ss == 'train':
-            train_x = np.ndarray((0, h * w * ch), dtype=np.float32)
+            train_x = np.ndarray((0, h * w * ch), dtype=np.uint8)
             train_y = []
             for i in range(1, 6):
                 ds = unpickle(data_dir / f'data_batch_{i}')
                 train_x = np.vstack((train_x, ds['data']))
                 train_y += ds['labels']
             train_x = train_x.reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
-            train_y = np.array(train_y, dtype=np.int32)
+            train_y = np.array(train_y, dtype=np.int8)
             self.x, self.y = train_x, train_y
         elif ss == 'test':
             ds = unpickle(data_dir / 'test_batch')
-            test_x = ds['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1).astype(np.float32)
-            test_y = np.array(ds['labels'], dtype=np.int32)
+            test_x = ds['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
+            test_y = np.array(ds['labels'], dtype=np.int8)
             self.x, self.y = test_x, test_y
         else:
             raise ValueError("The value of subset must be in {'train','test'}.")
@@ -223,7 +227,7 @@ class DescribableTexturesDataset(Dataset):
 
     def get_example(self, idx):
         x, y = self.data[idx]
-        return _make_record(x=np.array(x), y=y)
+        return _make_record(x=x, y=y)
 
     def __len__(self):
         return len(self.data)
@@ -265,7 +269,7 @@ class TinyImageNetDataset(Dataset):
 
     def get_example(self, idx):
         img_path, lab = self._examples[idx]
-        return _make_record(x_=lambda: np.array(_load_image(img_path)), y=lab)
+        return _make_record(x_=lambda: _load_image(img_path), y=lab)
 
     def __len__(self):
         return len(self._examples)
@@ -309,8 +313,7 @@ class INaturalist2018Dataset(Dataset):
             img_path = self._data_dir / self._file_names[idx]
             img = _load_image(img_path)
             img = _rescale(img, 1 / self._downsampling_factor)
-            img = tvtf.center_crop(img, [200 * self._downsampling_factor] * 2)
-            return np.array(img)
+            return tvtf.center_crop(img, [200 * self._downsampling_factor] * 2)
 
         return _make_record(x_=load_img, y=self._labels[idx])
 
@@ -386,8 +389,6 @@ class CamVidDataset(Dataset):
         else:
             raise FileNotFoundError()
 
-        # extrpath.replace(datasets_dir / "CamVid")
-
         if not found:
             raise FileNotFoundError(f"CamVid not found in {download_path}.")
 
@@ -404,7 +405,7 @@ class CamVidDataset(Dataset):
             for line in lines]
 
         info = dict(
-            problem='semseg', class_count=11,
+            problem='semantic_segmentation', class_count=11,
             class_names=[
                 'Sky', 'Building', 'Pole', 'Road', 'Pavement', 'Tree', 'SignSymbol',
                 'Fence', 'Car',
@@ -419,7 +420,7 @@ class CamVidDataset(Dataset):
         ip, lp = self._img_lab_list[idx]
 
         def load_label():
-            lab = np.array(_load_image(lp, force_rgb=False)).astype(np.int8)
+            lab = np.array(_load_image(lp, force_rgb=False), dtype=np.int8)
             lab[lab == 11] = -1
             return lab
 
@@ -465,7 +466,7 @@ class CityscapesDataset(Dataset):
             img = pimg.open(self._images_dir / self._image_list[idx])
             if self._downsampling_factor > 1:
                 img = tvtf.resize(img, self._shape, pimg.BILINEAR)
-            return np.array(img, dtype=np.uint8)
+            return img
 
         def load_label():
             lab = pimg.open(self._labels_dir / self._label_list[idx])
@@ -524,7 +525,7 @@ class WildDashDataset(Dataset):
             img = pimg.open(f"{path_prefix}{self._IMG_SUFFIX}").convert('RGB')
             if self._downsampling_factor > 1:
                 img = tvtf.resize(img, self._shape, pimg.BILINEAR)
-            return np.array(img, dtype=np.uint8)
+            return img
 
         def load_lab():
             if self._subset == 'bench':
@@ -566,12 +567,11 @@ class ICCV09Dataset(Dataset):
 
         def load_img():
             img = _load_image(self._images_dir / f"{name}.jpg")
-            img = tvtf.center_crop(img, self._shape)
-            return np.array(img)
+            return tvtf.center_crop(img, self._shape)
 
         def load_lab():
             lab = np.loadtxt(self._labels_dir / f"{name}.regions.txt", dtype=np.int8)
-            return npimg.center_crop(lab, self._shape, padding_value=-1)
+            return numpy.center_crop(lab, self._shape, fill=-1)
 
         return _make_record(x_=load_img, y_=load_lab)
 
@@ -628,13 +628,12 @@ class VOC2012SegmentationDataset(Dataset):
 
         def load_img():
             img = _load_image(self._images_dir / f"{name}.jpg")
-            img = tvtf.center_crop(img, [500] * 2)
-            return np.array(img)
+            return tvtf.center_crop(img, [500] * 2)
 
         def load_lab():
             lab = np.array(
                 _load_image(self._labels_dir / f"{name}.png", force_rgb=False).astype(np.int8))
-            return npimg.center_crop(lab, [500] * 2, padding_value=-1)  # -1 ok?
+            return numpy.center_crop(lab, [500] * 2, fill=-1)  # -1 ok?
 
         return _make_record(x_=load_img, y_=load_lab)
 

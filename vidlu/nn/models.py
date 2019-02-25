@@ -61,7 +61,6 @@ def densenet_backbone(depth, small_input, k=12, compression=0.5,
     # TODO: dropout 0.2
     # dropout if no pds augmentation
     ksizes = [1, 3]
-    breakpoint()
     depth_to_group_lengths = {
         121: ([6, 12, 24, 16], 32),
         161: ([6, 12, 36, 24], 48),

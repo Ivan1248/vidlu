@@ -17,6 +17,7 @@ class TestData:
         assert r.is_evaluated('a')
         assert r == Record(r)
         assert r == Record({'a': 5, 'b': 6}, b=7)
+        assert r == Record(zip(['a', 'b'], [5, 7]))
         assert r == Record(a_=lambda: 5, b_=lambda: 7)
         assert r == Record(list(r.items()))
         assert list(r.items()) == [('a', 5), ('b', 7)]
@@ -107,6 +108,11 @@ class TestData:
         assert len(ds_b) == len(ds_b[:])
         assert len(ds_b) == (len(ds) + 3 - 1) // 3
         assert all(len(b) == 3 for b in ds_b[:-1]) and len(ds_b[-1]) == 1
+
+        assert len(list(ds)) == len(ds)
+        assert [i for i, r in enumerate(ds)][-1] == len(ds) - 1
+
+        assert len(ds[1::3]) == len([x for x in ds[1::3]])
 
     def test_parted_dataset(self):
         part_to_split = {

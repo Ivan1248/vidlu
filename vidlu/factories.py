@@ -4,10 +4,10 @@ from functools import partial
 
 import torch
 import numpy as np
-from torchvision.transforms.functional import to_tensor as image_to_tensor
 
 from vidlu import defaults
-from vidlu.utils.func import (argtree_hard_partial, argtree_partial, find_empty_params_deep, ArgTree, params, Empty)
+from vidlu.utils.func import (argtree_hard_partial, argtree_partial, find_empty_params_deep,
+                              ArgTree, params, Empty)
 from vidlu.utils.tree import print_tree
 
 t = ArgTree  # used in arg/evaluation
@@ -17,9 +17,6 @@ t = ArgTree  # used in arg/evaluation
 
 def print_all_args_message(func):
     print("All arguments:")
-    # for p, v in tree_to_paths(params_deep(func)):
-    #    print('.'.join(p), '=', v)
-
     print(f"Argument tree of the model ({func.func}):")
     print_tree(ArgTree.from_func(func), depth=1)
 
@@ -43,17 +40,13 @@ def print_args_messages(kind, type_, factory, argtree, verbosity=1):
 
 # Dataset ##########################################################################################
 
-def parse_datasets(datasets_str: str, datasets_dir, cache_dir):
-    from vidlu.data import Record, DatasetFactory
-    from vidlu.data_utils import cache_data_and_normalize_inputs
+def parse_datasets(datasets_str: str, datasets_dir, cache_dir=None):
+    from vidlu.data import DatasetFactory
+    from vidlu.data_utils import CachingDatasetFactory
 
     def error(msg=""):
         raise ValueError(f'Invalid configuration string. {msg}'
                          + ' Syntax: "dataset1[([arg1=val1[, ...]])]{subset1[,...]}[, ...]".')
-
-    pds_factory = DatasetFactory(datasets_dir)
-    get_parted_dataset = lambda name, **k: cache_data_and_normalize_inputs(pds_factory(name, **k),
-                                                                           cache_dir)
 
     datasets_str = datasets_str.strip(' ,') + ','
     single_ds_regex = re.compile(r'(\s*(\w+)(\([^{]*\))?{(\w+(?:\s*,\s*\w+)*)}\s*(?:,|\s)\s*)')
@@ -62,23 +55,21 @@ def parse_datasets(datasets_str: str, datasets_dir, cache_dir):
     if reconstructed_config != datasets_str:
         error(f'Got "{datasets_str}", reconstructed as "{reconstructed_config}".')
 
-    def label_to_tensor(x):
-        kwargs = {}
-        if x.dtype == np.int8:  # workaround as PyTorch doesn't support np.int8 -> torch.int8
-            x = x.astype(np.int16)
-        return torch.tensor(x, **kwargs)
-
-    datasets = []
-    for single_ds_config in single_ds_configs:
-        m = single_ds_regex.match(single_ds_config)
+    name_options_subsets_tuples = []
+    for s in single_ds_configs:
+        m = single_ds_regex.match(s)
         name, options, subsets = m.groups()[1:]
-        options = eval(f'dict{options or "()"}')
         subsets = [s.strip() for s in subsets.split(',')]
-        pds = get_parted_dataset(name, **options).with_transform(
-            lambda ds: ds.map(lambda r: Record(x=image_to_tensor(r.x), y=label_to_tensor(r.y))))
+        name_options_subsets_tuples += [(name, options, subsets)]
+
+    get_parted_dataset = (DatasetFactory(datasets_dir) if cache_dir is None
+                          else CachingDatasetFactory(datasets_dir, cache_dir))
+    datasets = []
+    for name, options, subsets in name_options_subsets_tuples:
+        options = eval(f'dict{options or "()"}')
+        pds = get_parted_dataset(name, **options)
         datasets += [getattr(pds, x) for x in subsets]
 
-    # return [ds.map(lambda d: valmap(to_tensor, d, Record)) for ds in datasets]
     return datasets
 
 
@@ -95,12 +86,13 @@ def parse_model(model_str: str, dataset, device=None, verbosity=1):
     import torch.nn  # used in model_str/evaluation
     import vidlu.nn  # used in model_str/evaluation
     from vidlu.nn import init, loss
-    import vidlu.nn.components as c
+    import vidlu.nn.components as C
     from vidlu.nn import models
-    import torchvision as tv
+    import torchvision.models as tvmodels
     from vidlu.data import DataLoader
 
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
+
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) > 0 else ArgTree()
     try:
         model_class = getattr(models, model_name)
@@ -114,9 +106,10 @@ def parse_model(model_str: str, dataset, device=None, verbosity=1):
 
     model = model_f()
     batch_x = next(iter(DataLoader(dataset)))[0]
-    try:
+    if hasattr(model, 'initialize'):
         model.initialize(batch_x)
-    except AttributeError:
+    else:
+        model(batch_x)
         warnings.warn("The model doesn't have an initialize method.")
     return model
 
@@ -136,6 +129,7 @@ def parse_trainer(trainer_str: str, model, dataset, device=None, verbosity=1):
     from vidlu.training import trainers
 
     trainer_name, *argtree_arg = (x.strip() for x in trainer_str.strip().split(',', 1))
+
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) > 0 else ArgTree()
     if 'optimizer_f' in argtree_arg and 'weight_decay' in argtree_arg.optimizer_f:
         raise ValueError("weight_decay is allowed to be given as an argument to the trainer,"
@@ -161,14 +155,14 @@ parse_trainer.help = \
 def parse_metrics(metrics_str: str, dataset):
     from vidlu.training import metrics
 
-    default_metrics = defaults.get_default_metrics(dataset)
+    default_metrics = defaults.get_metrics(dataset)
 
     metrics_str = metrics_str.strip()
     metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
     additional_metrics = [getattr(metrics, name) for name in metric_names]
 
     def add_missing_args(metric_f):
-        dargs = defaults.get_default_metric_args(dataset)
+        dargs = defaults.get_metric_args(dataset)
         missing = [p for p in params(metric_f) if p is Empty]
         return (partial(metric_f, **{p: dargs[p] for p in missing}) if len(missing) > 0
                 else metric_f)
@@ -178,12 +172,3 @@ def parse_metrics(metrics_str: str, dataset):
 
 def parse_pretrained_params(pretrained_params_str):
     pass
-
-
-# run.py data model trainer evaluation
-""" python run.py 
-        cifar10{trainval,test} 
-        "ResNet,backbone_f=t(depth=34, small_input=True))"
-        "ResNetCifarTrainer"
-        "accuracy"
-"""

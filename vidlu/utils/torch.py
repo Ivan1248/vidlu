@@ -1,6 +1,6 @@
 import contextlib
 
-from ignite._utils import convert_tensor
+import torch
 
 
 @contextlib.contextmanager
@@ -22,8 +22,10 @@ def save_grads(params):
         p.grad = g
 
 
-def prepare_batch(batch, device=None, non_blocking=False):
-    batch = tuple(convert_tensor(x, device=device, non_blocking=non_blocking) for x in batch)
-    for x in batch:
-        x.requires_grad = False
-    return batch
+def profile(func, on_cuda=True):
+    on_cuda = True
+    with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
+        output = func()
+    if on_cuda:
+        torch.cuda.synchronize()
+    return output, prof.key_averages().table('cuda_time_total')

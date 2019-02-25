@@ -4,6 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+from . import modules as M
 from .modules import (Module, Conv, ConvTranspose, Sequential, MaxPool, BatchNorm, AvgPool, Func,
                       Linear, Func)
 from vidlu.utils.func import (do, pipe, default_args, params, Empty, Reserved)
@@ -14,7 +15,7 @@ from vidlu.utils.collections import NameDict
 
 _d = NameDict(
     norm_f=BatchNorm,
-    act_f=partial(nn.ReLU, inplace=False),  # TODO: Can "inplace=True" cause bugs?
+    act_f=partial(nn.ReLU, inplace=False),  # TODO: Can "inplace=True" cause bugs? YES.
     conv_f=partial(Conv, padding='half', bias=False),
     convt_f=partial(ConvTranspose, bias=False),
 )
@@ -105,14 +106,22 @@ class ClassificationHead(Sequential):
 class SegmentationHead(Sequential):
     def __init__(self, class_count, shape):
         super().__init__(logits=Conv(class_count, kernel_size=1),
-                         upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
+                         upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
+                                               align_corners=False)),
                          log_probs=nn.LogSoftmax(dim=1))
+
+    def forward(self, x):
+        logits = self.logits(x)
+        upsample = self.upsample(logits)
+        log_probs = self.log_probs(upsample)
+        return log_probs
 
 
 class RegressionHead(Sequential):
     def __init__(self, class_count, shape):
         super().__init__(logits=Conv(class_count, kernel_size=1),
-                         upsample=Func(partial(F.interpolate, size=shape, align_corners=False)),
+                         upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
+                                               align_corners=False)),
                          log_probs=nn.LogSoftmax(dim=1))
 
 
@@ -125,10 +134,10 @@ class VGGBackbone(Sequential):
                  pool_f=partial(MaxPool, ceil_mode=True)):
         super().__init__()
         for i, d in enumerate(block_depths):
-            self.add_module(f'block{i}',
-                            Reserved.call(block_f, kernel_sizes=[3] * d, base_width=base_width,
-                                          width_factors=[2 ** i] * d))
-            self.add_module(f'pool{i}', pool_f(kernel_size=2, stride=2))
+            self.add_modules(
+                (f'block{i}', Reserved.call(block_f, kernel_sizes=[3] * d, base_width=base_width,
+                                            width_factors=[2 ** i] * d)),
+                (f'pool{i}', pool_f(kernel_size=2, stride=2)))
 
 
 class VGGClassifier(Sequential):
@@ -136,8 +145,8 @@ class VGGClassifier(Sequential):
         super().__init__()
         widths = [fc_dim] * 2 + [class_count]
         for i, w in enumerate(widths):
-            self.add_module(f'linear{i}', Linear(w))
-            self.add_module(f'act_fc{i}', act_f())
+            self.add_modules((f'linear{i}', Linear(w)),
+                             (f'act_fc{i}', act_f()))
             if noise_f:
                 self.add_module(f'noise_fc{i}', noise_f())
         self.add_module('probs', nn.Softmax(dim=1))
@@ -153,9 +162,9 @@ class FCNEncoder(Sequential):
         conv_f = default_args(block_f).conv_f
         act_f = default_args(block_f).act_f
         for i in range(2):
-            self.add_module(f'conv_fc{i}', conv_f(fc_dim, kernel_size=7))
-            self.add_module(f'act_fc{i}', act_f())
-            self.add_module(f'noise_fc{i}', noise_f())
+            self.add_modules((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)),
+                             (f'act_fc{i}', act_f()),
+                             (f'noise_fc{i}', noise_f()))
 
 
 # ResNet ###########################################################################################
@@ -241,13 +250,13 @@ class DenseTransition(Sequential):
         self.args = NameDict(locals_c())
 
     def build(self, x):
-        self.add_module(norm=self.args.norm_f())
-        self.add_module(act=self.args.act_f())
+        self.add_modules(norm=self.args.norm_f(),
+                         act=self.args.act_f())
         if self.args.noise_f is not None:
             self.add_module(noise=self.args.noise_f())
-        self.add_module(
-            conv=self.args.conv_f(out_features=round(x.shape[1] * self.args.compression)))
-        self.add_module(pool=Reserved.call(self.args.pool_f, stride=2))
+        self.add_modules(
+            conv=self.args.conv_f(out_channels=round(x.shape[1] * self.args.compression)),
+            pool=Reserved.call(self.args.pool_f, stride=2))
 
 
 class DenseUnit(Module):
@@ -343,9 +352,10 @@ class AAEDecoder(Sequential):
         super().__init__()
         self.add_module('linear_h', Linear(h_dim))
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module(f'norm{i}', norm_f())
-            self.add_module(f'act{i}', act_f())
-            self.add_module(f'conv{i}', convt_f(kernel_size=k, out_channels=w, stride=2, padding=1))
+            self.add_module({f'norm{i}': norm_f(),
+                             f'act{i}': act_f(),
+                             f'conv{i}': convt_f(kernel_size=k, out_channels=w, stride=2,
+                                                 padding=1)})
         self.add_module('tanh', nn.Tanh())
 
 

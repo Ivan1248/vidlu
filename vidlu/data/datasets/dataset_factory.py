@@ -14,7 +14,7 @@ _ds_to_info = {
     'tinyimages': _info(TinyImagesDataset, 'tiny-images'),
     'inaturalist2018': _info(INaturalist2018Dataset, 'iNaturalist2018'),
     'cityscapes': _info(CityscapesDataset, 'Cityscapes',
-                        dict(downsampling_factor=2, remove_hood=False)),
+                        dict(downsampling_factor=2)),
     'wilddash': _info(WildDashDataset, 'WildDash', kwargs=dict(downsampling_factor=2)),
     'camvid': _info(CamVidDataset, 'CamVid'),
     'voc2012': _info(VOC2012SegmentationDataset, 'VOC2012'),

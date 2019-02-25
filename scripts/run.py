@@ -11,7 +11,7 @@ from vidlu.nn.modules import parameter_count
 from vidlu.factories import parse_datasets, parse_model, parse_trainer, parse_metrics
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.path import to_valid_path
-from vidlu import gpu_utils
+from vidlu import gpu_utils, defaults
 
 from ignite import handlers
 
@@ -49,17 +49,22 @@ with indent_print("Arguments:"):
 device = args.device
 if device is None:
     with indent_print("Selecting device..."):
-        device = torch.device(gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+        device = torch.device(
+            gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
 
 # Data #############################################################################################
 
 with indent_print('Initializing data...'):
-    datasets = parse_datasets(args.data, dirs.DATASETS, dirs.CACHE)
+    ds_train, ds_test = parse_datasets(args.data, dirs.DATASETS, dirs.CACHE)
 
+ds_train_jittered = ds_train.map(defaults.get_jitter(ds_train))
+prepare_input = defaults.get_input_preparation(ds_train)
+ds_train, ds_train_jittered, ds_test = [ds.map(prepare_input)
+                                        for ds in [ds_train, ds_train_jittered, ds_test]]
 # Model ############################################################################################
 
 with indent_print('Initializing model...'):
-    model = parse_model(args.model, dataset=datasets[0], device=args.device,
+    model = parse_model(args.model, dataset=ds_train, device=args.device,
                         verbosity=args.verbosity)
     model.to(device=device)
 print(model)
@@ -68,14 +73,14 @@ print('Parameter count:', parameter_count(model))
 # Trainer ##########################################################################################
 
 with indent_print('Initializing trainer...'):
-    trainer = parse_trainer(args.trainer, model=model, dataset=datasets[0], device=args.device,
+    trainer = parse_trainer(args.trainer, model=model, dataset=ds_train, device=args.device,
                             verbosity=args.verbosity)
 
 # Evaluation #######################################################################################
 
 
 with indent_print('Initializing evaluation metrics...'):
-    metrics = [m() for m in parse_metrics(args.evaluation, dataset=datasets[0])]
+    metrics = [m() for m in parse_metrics(args.evaluation, dataset=ds_train)]
     for m in metrics:
         trainer.attach_metric(m)
 
@@ -106,13 +111,14 @@ print('Starting training:...')
 @trainer.training.epoch_started.add_handler
 def on_training_epoch_started(e):
     s = e.state
-    trainer.eval(datasets[1])
-    log(f"Starting epoch {s.epoch}/{s.max_epochs} ({s.batch_count} batches)")
+    trainer.eval(ds_train_jittered)
+    log(
+        f"Starting epoch {s.epoch}/{s.max_epochs} ({s.batch_count} batches, lr={trainer.lr_scheduler.get_lr()})")
 
 
 @trainer.training.completed.add_handler
 def on_training_completed(e):
-    trainer.eval(datasets[1])
+    trainer.eval(ds_test)
 
 
 def report_metrics(e, validation=False):
@@ -135,7 +141,7 @@ def on_iteration_completed(e):
         report_metrics(e)
 
 
-trainer.train(datasets[0].cache())
+trainer.train(ds_train_jittered)
 
 """
 def wrap_call(call):

@@ -81,8 +81,8 @@ class ClassificationMetrics(AccumulatingMetric):
         self.cm.fill(0)
 
     def update(self, iter_output):
-        pred = iter_output.target.flatten().cpu().numpy()
-        true = iter_output.outputs.hard_prediction.flatten().cpu().numpy()
+        pred = iter_output.target.flatten().int().cpu().numpy()
+        true = iter_output.outputs.hard_prediction.flatten().int().cpu().numpy()
         self.cm += confusion_matrix(pred, true, labels=self.labels)
 
     def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
