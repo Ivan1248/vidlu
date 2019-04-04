@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.nn import Module, Func, Conv, Linear, BatchNorm, Sequential
+from vidlu.modules import Module, Func, Conv, Linear, BatchNorm, Sequential
 from vidlu.utils.collections import NameDict
 
 torch.no_grad()

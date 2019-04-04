@@ -1,5 +1,4 @@
 import pickle
-import io
 from collections.abc import Mapping, Sequence
 
 import numpy as np
@@ -12,16 +11,17 @@ from .record import Record
 
 # Serialization ####################################################################################
 
-def serialize(obj):
-    with io.BytesIO() as b:
-        pickle.dump(obj, b)
-        return b.getvalue()
+def pickle_sizeof(obj):
+    """An alternative to `sys.getsizeof` which works for lazily initialized objects (e.g. objects of
+    type `vidlu.data.Record`) that can be much larger when pickled.
 
+    Args:
+        obj: the object to be pickled.
 
-def serialized_sizeof(obj):
-    with io.BytesIO() as b:
-        pickle.dump(obj, b)
-        return len(b.getbuffer())
+    Returns:
+        int: the size of the pickled object in bytes.
+    """
+    return len(pickle.dumps(obj))
 
 
 # Collate ##########################################################################################

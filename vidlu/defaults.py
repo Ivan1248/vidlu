@@ -6,8 +6,8 @@ from ignite import metrics
 from torch import nn
 
 from vidlu.data import Record
-from vidlu.nn.models import DiscriminativeModel, Autoencoder
-from vidlu.nn import components as c
+from vidlu.models import DiscriminativeModel, Autoencoder
+from vidlu.modules import _components as c
 from vidlu.problem import Problem
 from vidlu.training.metrics import FuncMetric, ClassificationMetrics
 from vidlu.training.trainers import SupervisedTrainer
@@ -55,7 +55,7 @@ def get_model_argtree(model_class, dataset):
     return ArgTree()
 
 
-# Taining data jittering and model input perparation ###############################################
+# Training data jittering and model input perparation ##############################################
 
 
 def get_jitter(dataset):

@@ -36,19 +36,19 @@ def class_initializer_locals_c():
         locals_.pop('__class__', None)
         return locals_
     finally:
-        del frame  # to avoid cyclical references which the GC doesn't like, TODO
+        del frame  # to avoid cyclical references, TODO
 
 
-def locals_c():
+def locals_c(exclusions=('self', '__class__')):
     """ Locals without `self` and `__class__`. """
     frame = inspect.currentframe().f_back
     try:
         locals_ = frame.f_locals
-        locals_.pop('self', None)
-        locals_.pop('__class__', None)
+        for x in exclusions:
+            locals_.pop(x, None)
         return locals_
     finally:
-        del frame  # to avoid cyclical references which the GC doesn't like, TODO
+        del frame  # to avoid cyclical references, TODO
 
 
 def find_frame_in_call_stack(frame_predicate, start_frame=-1):
@@ -89,8 +89,8 @@ class Event:
         return decorator
 
     def __call__(self, *args, **kwargs):
-        for h in self.handlers:
-            h(*args, **kwargs)
+        for handler in self.handlers:
+            handler(*args, **kwargs)
 
 
 # Console ##########################################################################################
@@ -109,6 +109,16 @@ def try_input(default=None):
             return select.select([sys.stdin], [], [], 0)[0]
 
     return input() if input_available() else default
+
+
+def query_yes_no(question):
+    valid = dict(yes=True, y=True, no=False, n=False)
+    while True:
+        sys.stdout.write(f'{question} [y/n]: ')
+        choice = valid.get(input().lower(), None)
+        if choice is not None:
+            return choice
+        print("Please respond with either 'yes', 'no', 'y', or 'n').")
 
 
 # Dict #############################################################################################

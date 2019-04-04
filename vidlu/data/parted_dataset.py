@@ -62,7 +62,7 @@ class PartedDataset:
         try:
             return self.part_to_ds[item]
         except KeyError:
-            raise KeyError(f'The dataset does not have a part called "{item}".')
+            raise KeyError(f'The parted dataset does not have a part called "{item}".')
 
     def __getattr__(self, item):
         return self[item]
@@ -71,7 +71,7 @@ class PartedDataset:
         return PartedDataset(valmap(transform, self.part_to_ds))
 
     def keys(self):
-        return self._part_to_getter.keys()
+        return self.part_to_ds.keys()
 
     def items(self):
         for k in self.keys():

@@ -1,6 +1,7 @@
 import logging
 import time
 from collections import defaultdict
+import warnings
 
 from ignite._utils import _to_hours_mins_secs
 
@@ -11,6 +12,9 @@ class State(object):
     """An object that is used to pass internal and user-defined state between event handlers"""
 
     def __init__(self, **kwargs):
+        self.reset(**kwargs)
+
+    def reset(self, **kwargs):
         self.iteration = 0
         self.epoch = 0
         self.output = None
@@ -58,7 +62,7 @@ class Engine(object):
         self._process_function = process_function
         self.should_terminate = False
         self.should_terminate_single_epoch = False
-        self.state = None
+        self.state = State()
 
         # events
         self.started = Event()
@@ -102,7 +106,7 @@ class Engine(object):
         time_taken = time.time() - start_time
         return time_taken
 
-    def run(self, data, max_epochs=1):
+    def run(self, data, max_epochs=1, restart=True):
         """Runs the process_function over the passed data.
 
         Args:
@@ -113,12 +117,15 @@ class Engine(object):
             State: output state
         """
 
-        self.state = State(dataloader=data, max_epochs=max_epochs, metrics={},
-                           batch_count=len(data))
+        if restart or self.state is None:
+            self.state.reset(metrics={})
+        self.state.update(dataloader=data, max_epochs=max_epochs, batch_count=len(data))
 
         self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
         start_time = time.time()
         self.started(self)
+        if self.state.epoch >= max_epochs:
+            warnings.warn("All epochs are already completed.")
         while self.state.epoch < max_epochs and not self.should_terminate:
             self.state.epoch += 1
             self.epoch_started(self)
@@ -136,3 +143,9 @@ class Engine(object):
         self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")
 
         return self.state
+
+    def state_dict(self):
+        return dict(epoch=self.state.epoch)
+
+    def load_state_dict(self, state_dict):
+        self.state.epoch = state_dict['epoch']

@@ -29,3 +29,12 @@ def profile(func, on_cuda=True):
     if on_cuda:
         torch.cuda.synchronize()
     return output, prof.key_averages().table('cuda_time_total')
+
+
+# Math
+
+def to_one_hot(labels, c):
+    one_hot = torch.cuda.FloatTensor(labels.size(0), c).zero_()
+    target = one_hot.scatter_(1, labels.unsqueeze(-1), 1)
+    return target
+

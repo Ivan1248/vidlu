@@ -221,7 +221,7 @@ class TorchImageTransformer(ImageTransformer):
 
     def to_pil(self, mode=None):
         if self.layout != 'HWC':
-            raise ValueError("Can not convert array with layout HWC to image."
+            raise ValueError("Cannot convert array with layout HWC to image."
                              + " Use transpose_to_hwc first.")
         return TorchImageTransformer(torch_to_pil(self.item, mode=mode))
 

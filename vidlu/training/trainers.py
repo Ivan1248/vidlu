@@ -5,13 +5,12 @@ from torch import nn
 from torch.optim import SGD
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from ignite import engine
-from ignite.engine import Engine
 
 from vidlu.data import DataLoader
 from vidlu.utils.func import default_args, params, Empty
 from vidlu.utils.collections import NameDict
-from vidlu.nn.modules import get_device
-from .engine import Engine
+from vidlu import modules
+from vidlu.training.engine import Engine
 from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR
 
 from ignite._utils import convert_tensor
@@ -35,34 +34,30 @@ class Evaluator:
         self.data_loader_f = data_loader_f
 
         self.evaluation = Engine(lambda e, b: self.eval_batch(b))
+        self.evaluation.started.add_handler(lambda e: self._reset_metrics())
+        self.evaluation.iteration_completed.add_handler(self._update_metrics)
+
         self.metrics = {}
 
-    def _attach_metric(self, metric, name=None, engine=None):
+    def attach_metric(self, metric, name=None):
         name = name or type(metric).__name__
         self.metrics[name] = metric
-        engine = engine or self.evaluation
-        engine.epoch_started.add_handler(lambda e: metric.reset())
-        engine.iteration_completed.add_handler(lambda e: metric.update(e.state.output))
 
-        def compute_metric(e):
-            e.state.metrics[name] = metric.compute()
-
-        engine.iteration_completed.add_handler(lambda e: compute_metric(e))
-
-    def attach_metric(self, metric, name=None):
-        self._attach_metric(metric, name=name, engine=self.evaluation)
-
-    def reset_metrics(self):
+    def _reset_metrics(self):
         for m in self.metrics.values():
             m.reset()
 
-    def get_metrics(self, *, reset=False):
+    def _update_metrics(self, e):
+        for m in self.metrics.values():
+            m.update(e.state.output)
+
+    def get_metric_values(self, *, reset=False):
         metric_evals = dict()
         for k, m in self.metrics.items():
             value = m.compute()
             metric_evals.update(value if isinstance(value, dict) else {k: value.compute()})
         if reset:
-            self.reset_metrics()
+            self._reset_metrics()
         return metric_evals
 
     def get_outputs(self, *x):
@@ -72,7 +67,7 @@ class Evaluator:
         return prediction, NameDict(prediction=prediction)
 
     def eval(self, dataset):
-        return self.evaluation.run(self.data_loader_f(dataset))
+        return self.evaluation.run(self.data_loader_f(dataset, drop_last=False))
 
     def eval_batch(self, batch):
         raise NotImplementedError()
@@ -88,7 +83,7 @@ class Trainer(Evaluator):
         super().__init__(model, loss_f=loss_f,
                          data_loader_f=partial(data_loader_f, batch_size=batch_size),
                          prepare_batch=prepare_batch,
-                         device=get_device(model) if device is None else device)
+                         device=modules.get_device(model) if device is None else device)
         if 'weight_decay' in params(optimizer_f):
             if not params(optimizer_f).weight_decay is Empty:
                 raise ValueError(
@@ -104,18 +99,27 @@ class Trainer(Evaluator):
 
         self.training = Engine(lambda e, b: self.train_batch(b))
 
-        self.training.epoch_started.add_handler(lambda e: self.lr_scheduler.step)
+        self.training.epoch_started.add_handler(lambda e: self.lr_scheduler.step())
+        self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
+        self.training.iteration_completed.add_handler(self._update_metrics)
 
-    def attach_metric(self, metric, name=None):
-        for eng in [self.training, self.evaluation]:
-            super()._attach_metric(metric, name=name, engine=eng)
-
-    def train(self, dataset):
+    def train(self, dataset, restart=False):
         data_loader = self.data_loader_f(dataset)
-        return self.training.run(data_loader, max_epochs=self.epoch_count)
+        return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def train_batch(self, batch):
         raise NotImplementedError()
+
+    def state_dict(self):
+        return dict(model=self.model.state_dict(), training_state=self.training.state_dict(),
+                    optimizer=self.optimizer.state_dict(),
+                    lr_scheduler=self.lr_scheduler.state_dict())
+
+    def load_state_dict(self, state_dict):
+        self.model.load_state_dict(state_dict['model'])
+        self.training.load_state_dict(state_dict['training_state'])
+        self.optimizer.load_state_dict(state_dict['optimizer'])
+        self.lr_scheduler.load_state_dict(state_dict['lr_scheduler'])
 
 
 # Supervised #######################################################################################
@@ -164,17 +168,6 @@ class ResNetCifarTrainer(ClassificationTrainer):
         batch_size=128)
 
 
-class LadderDenseNetTrainer(ClassificationTrainer):
-    # custom
-    __init__ = partialmethod(
-        ClassificationTrainer.__init__,
-        optimizer_f=partial(SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
-        weight_decay=1e-4,
-        lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
-        epoch_count=40,
-        batch_size=4)
-
-
 class WRNCifarTrainer(ResNetCifarTrainer):
     # as in www.arxiv.org/abs/1605.07146
     __init__ = partialmethod(ResNetCifarTrainer.__init__, weight_decay=5e-4)
@@ -185,7 +178,7 @@ class DenseNetCifarTrainer(ClassificationTrainer):
     __init__ = partialmethod(
         SupervisedTrainer.__init__,
         weight_decay=1e-4,
-        optimizer_f=default_args(ResNetCifarTrainer).optimizer_f,
+        optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
         epoch_count=100,
         lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
         batch_size=64)
@@ -199,6 +192,17 @@ class SmallImageClassifierTrainer(ClassificationTrainer):
         weight_decay=0,
         epoch_count=50,
         batch_size=64)
+
+
+class LadderDenseNetTrainer(ClassificationTrainer):
+    # custom
+    __init__ = partialmethod(
+        ClassificationTrainer.__init__,
+        optimizer_f=partial(SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
+        weight_decay=1e-4,
+        lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
+        epoch_count=40,
+        batch_size=4)
 
 
 # Autoencoder ######################################################################################

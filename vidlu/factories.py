@@ -2,11 +2,8 @@ import warnings
 import re
 from functools import partial
 
-import torch
-import numpy as np
-
-from vidlu import defaults
-from vidlu.utils.func import (argtree_hard_partial, argtree_partial, find_empty_params_deep,
+from vidlu import defaults, models
+from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
                               ArgTree, params, Empty)
 from vidlu.utils.tree import print_tree
 
@@ -45,8 +42,9 @@ def parse_datasets(datasets_str: str, datasets_dir, cache_dir=None):
     from vidlu.data_utils import CachingDatasetFactory
 
     def error(msg=""):
-        raise ValueError(f'Invalid configuration string. {msg}'
-                         + ' Syntax: "dataset1[([arg1=val1[, ...]])]{subset1[,...]}[, ...]".')
+        raise ValueError(
+            f'Invalid configuration string. {msg}'
+            + ' Syntax: "(dataset1`{`(subset1_1, ..)`}`, dataset2`{`(subset2_1, ..)`}`, ..)')
 
     datasets_str = datasets_str.strip(' ,') + ','
     single_ds_regex = re.compile(r'(\s*(\w+)(\([^{]*\))?{(\w+(?:\s*,\s*\w+)*)}\s*(?:,|\s)\s*)')
@@ -74,9 +72,10 @@ def parse_datasets(datasets_str: str, datasets_dir, cache_dir=None):
 
 
 parse_datasets.help = \
-    ('Dataset configuration, e.g. "cifar10{train,val}",' +
-     '"cityscapes(remove_hood=True){trainval,val,test}", "inaturalist{train,all}", or ' +
-     '"camvid{trainval}, wilddash(downsampling_factor=2){val}')
+    ('Dataset configuration with syntax'
+     + ' "(dataset1`{`(subset1_1, ..)`}`, dataset2`{`(subset2_1, ..)`}`, ..)",'
+     + ' e.g. "cifar10{train,val}", "cityscapes(remove_hood=True){trainval,val,test}",'
+     + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling_factor=2){val}"')
 
 
 # Model ############################################################################################
@@ -84,10 +83,9 @@ parse_datasets.help = \
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def parse_model(model_str: str, dataset, device=None, verbosity=1):
     import torch.nn  # used in model_str/evaluation
-    import vidlu.nn  # used in model_str/evaluation
-    from vidlu.nn import init, loss
-    import vidlu.nn.components as C
-    from vidlu.nn import models
+    import vidlu.modules as modules  # used in model_str/evaluation
+    from vidlu.modules import loss
+    import vidlu.modules._components as com
     import torchvision.models as tvmodels
     from vidlu.data import DataLoader
 
@@ -110,14 +108,15 @@ def parse_model(model_str: str, dataset, device=None, verbosity=1):
         model.initialize(batch_x)
     else:
         model(batch_x)
-        warnings.warn("The model doesn't have an initialize method.")
+        warnings.warn("The model does not have an initialize method.")
     return model
 
 
 parse_model.help = \
-    ('Model defined in format Model[,arg=value,...], where values can be ArgTrees. ' +
-     'Instead of ArgTree(...), t(...) can be used. ' +
-     'Example: "ResNet,base_f=a(depth=34, base_width=64, small_input=True, _f=a(dropout=True)))"')
+    ('Model configuration with syntax "Model[,arg1=value1, arg2=value2, ..]",'
+     + ' where values can be ArgTrees. '
+     + 'Instead of ArgTree(...), t(...) can be used. '
+     + 'Example: "ResNet,base_f=a(depth=34, base_width=64, small_input=True, _f=a(dropout=True)))"')
 
 
 # Trainer and metrics ##############################################################################
@@ -146,9 +145,10 @@ def parse_trainer(trainer_str: str, model, dataset, device=None, verbosity=1):
 
 
 parse_trainer.help = \
-    ('Trainer defined in format Trainer[,arg=value,...], where values can be ArgTrees. ' +
-     'Instead of ArgTree(...), t(...) can be used. ' +
-     'Example: "ResNetCifarTrainer"')
+    ('Trainer configuration with syntax "Trainer[,arg1=value1, arg2=value2, ..]",'
+     + ' where values can be ArgTrees.'
+     + ' Instead of ArgTree(...), t(...) can be used.'
+     + ' Example: "ResNetCifarTrainer"')
 
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal

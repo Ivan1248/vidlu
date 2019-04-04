@@ -36,40 +36,6 @@ class FuncMetric(AccumulatingMetric):
         return {self.name: self._sum / self._n}
 
 
-class NumPyClassificationMetrics(AccumulatingMetric):
-    def __init__(self, class_count):
-        self.class_count = class_count
-        self.cm = np.zeros([class_count] * 2)
-        self.labels = np.arange(class_count)
-        self.active = False
-
-    def reset(self):
-        self.cm.fill(0)
-
-    def update(self, iter_output):
-        self.cm += confusion_matrix(iter_output.target.flatten(),
-                                    iter_output.hard_prediction.flatten(),
-                                    labels=self.labels)
-
-    def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU')):
-        # Computes macro-averaged classification evaluation metrics based on the
-        # accumulated confusion matrix and clears the confusion matrix.
-        tp = np.diag(self.cm)
-        actual_pos = self.cm.sum(axis=1)
-        pos = self.cm.sum(axis=0)
-        fp = pos - tp
-        with np.errstate(divide='ignore', invalid='ignore'):
-            P = tp / pos
-            R = tp / actual_pos
-            F1 = 2 * P * R / (P + R)
-            IoU = tp / (actual_pos + fp)
-            P, R, F1, IoU = map(np.nan_to_num, [P, R, F1, IoU])  # 0 where tp=0
-        mP, mR, mF1, mIoU = map(np.mean, [P, R, F1, IoU])
-        A = tp.sum() / pos.sum()
-        locs = locals()
-        return dict((x, locs[x]) for x in returns)
-
-
 class ClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count):
         self.class_count = class_count
@@ -93,10 +59,11 @@ class ClassificationMetrics(AccumulatingMetric):
         pos = self.cm.sum(axis=0) + eps
         fp = pos - tp
 
-        P = tp / pos
-        R = tp / actual_pos
-        F1 = 2 * P * R / (P + R)
-        IoU = tp / (actual_pos + fp)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            P = tp / pos
+            R = tp / actual_pos
+            F1 = 2 * P * R / (P + R)
+            IoU = tp / (actual_pos + fp)
         P, R, F1, IoU = map(np.nan_to_num, [P, R, F1, IoU])  # 0 where tp=0
 
         mP, mR, mF1, mIoU = map(np.mean, [P, R, F1, IoU])

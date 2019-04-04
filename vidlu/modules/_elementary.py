@@ -245,15 +245,32 @@ class Sequential(*_extended(nn.Sequential)):
     def index(self, key):
         return list(zip(*self.named_children())).index(key)
 
-
-class Parallel(*_extended(nn.ModuleList)):
-    def forward(self, *input):
-        return [m(*input) for m in self]
+    def forward(self, *x):
+        y = super().forward(*x)
+        #print(try_get_module_name_from_call_stack(self), y.shape)
+        return y
 
 
 class Identity(Module):
     def forward(self, x):
         return x
+
+
+# Branching, parallel, and reduction ###############################################################
+
+class BranchOut(*_extended(nn.ModuleList)):
+    def forward(self, input):
+        return [m(input) for m in self]
+
+
+class Parallel(*_extended(nn.ModuleList)):
+    def forward(self, inputs):
+        if len(self) == 1:
+            return [self[0](x) for x in inputs]
+        elif len(inputs) != len(self):
+            raise ValueError(f"The number of inputs ({len(inputs)}) does not "
+                             + "match the number of parallel modules.")
+        return [m(x) for m, x in zip(self, inputs)]
 
 
 class Reduce(Module):
@@ -264,6 +281,24 @@ class Reduce(Module):
     def forward(self, input):
         return reduce(self.func, input[1:], input[0])
 
+
+class Sum(Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, inputs):
+        return torch.sum(torch.stack(inputs), 0)
+
+
+class Concat(Module):
+    def __init__(self, dim=1):
+        super().__init__()
+
+    def forward(self, inputs):
+        return torch.cat(inputs, self.args.dim)
+
+
+# Wrapped modules ##################################################################################
 
 def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.Module:
     if in_channels_name in args and args[in_channels_name] is None:
@@ -400,6 +435,15 @@ for name, cls in inspect.getmembers(nn, inspect.isclass):
 
 
 # Additional generally useful modules ##############################################################
+
+
+class Identity(Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+
 
 class Func(Module):
     def __init__(self, func):

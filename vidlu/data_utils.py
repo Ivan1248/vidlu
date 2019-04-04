@@ -5,16 +5,24 @@ from tqdm import tqdm
 import warnings
 
 import numpy as np
-import torch
 
-from vidlu.data import Record, DatasetFactory
-from vidlu.problem import Problem
-from vidlu.defaults import get_problem
+from vidlu.data import DatasetFactory
 from vidlu.utils import path
 from vidlu.utils.collections import NameDict
 
 
 # Standardization ##################################################################################
+
+def compute_pixel_mean_std(dataset, progress_bar=False):
+    pbar = tqdm if progress_bar else lambda x: x
+    mvn = np.array([(x.mean((0, 1)), x.var((0, 1)), np.prod(x.shape[:2]))
+                    for x in pbar(dataset.map(lambda r: np.array(r.x)))])
+    means, vars, ns = [mvn[:, i] for i in range(3)]  # means, variances, pixel counts
+    ws = ns / ns.sum()  # image weights (pixels in image / pixels in all images)
+    mean = ws.dot(means)  # mean pixel
+    var = vars.mean(0) + ws.dot(means ** 2) - mean ** 2  # pixel variance
+    return mean, np.sqrt(var)  # pixel mean, pixel standard deviation
+
 
 class LazyImageStatisticsComputer:
     def __init__(self, dataset, cache_dir, max_sample_size=10000):
@@ -22,58 +30,18 @@ class LazyImageStatisticsComputer:
         if len(self.dataset) > max_sample_size:
             self.dataset = self.dataset.permute()[:max_sample_size]
         self.initialized = multiprocessing.Value('i', 0)
-        self._mean, self._std = (multiprocessing.Array('f', x) for x in
-                                 self._get_stats(dataset[:2]))
+        self.single_channel = len(np.array(dataset[0].x).shape) == 2
+        value_type = multiprocessing.Value if self.single_channel else multiprocessing.Array
+        self._mean, self._std = (value_type('f', x) for x in compute_pixel_mean_std(dataset[:2]))
         self.cache_dir = f"{cache_dir}/dataset-statistics"
-        subset = f'-{dataset.subset}' if dataset.subset else ''
-        self.cache_path = f"{self.cache_dir}/{dataset.full_name}.txt"
+        self.cache_path = f"{self.cache_dir}/{dataset.identifier}.txt"
 
     @property
     def stats(self):
         self._initialize_if_necessary()
-        return NameDict(mean=np.array(self._mean), std=np.array(self._std))
-
-    def normalize(self, x):
-        self._initialize_if_necessary()
-        return ((x - self._mean) / self._std).astype(np.float32)
-
-    @staticmethod
-    def _get_stats(dataset):
-        mvn = np.array([(x.mean((0, 1)), x.var((0, 1)), np.prod(x.shape[:2]))
-                        for x in tqdm(dataset.map(lambda r: np.array(r.x)))])
-        means, vars, ns = [mvn[:, i] for i in range(3)]  # means, variances, pixel counts
-        ws = ns / ns.sum()  # image weights (pixels in image / pixels in all images)
-        mean = ws.dot(means)  # mean pixel
-        var = vars.mean(0) + ws.dot(means ** 2) - mean ** 2  # pixel variance
-        return mean, np.sqrt(var)  # pixel mean, pixel standard deviation
-
-    @staticmethod
-    def _get_stats_a(dataset):
-        mvn = np.array([(x.mean((0, 1)), x.var((0, 1)))
-                        for x in tqdm(dataset.map(lambda r: np.array(r.x)))])
-        means, vars = [mvn[:, i] for i in range(2)]  # means, variances, pixel counts
-        mean = means.mean(0)  # mean pixel
-        var = vars.mean(0) + means.var(0)  # pixel variance
-        return mean, np.sqrt(var)  # pixel mean, pixel standard deviation
-
-    @staticmethod
-    def _get_stats_old(dataset):
-        ms = np.array([(x.mean((0, 1)), x.std((0, 1)))
-                       for x in dataset.map(lambda r: np.array(r[0]))])
-        return ms.mean(0)
-
-    @staticmethod
-    def _get_stats_old2(dataset):
-        def get_mean_sqrsum_n(x):
-            return x.mean((0, 1)), (x ** 2).sum((0, 1)), np.prod(x.shape[:2])
-
-        sums_sq_sums = np.array([get_mean_sqrsum_n(x)
-                                 for x in dataset.map(lambda r: np.array(r[0]))])
-        means, sqrsums, ns = [sums_sq_sums[:, i] for i in range(3)]
-        mean = np.mean(means)
-        n = np.sum(ns)
-        std = np.sqrt(np.sum(sqrsums) / n - mean ** 2)
-        return mean, std
+        mean, std = ((self._mean.item, self._std.item) if self.single_channel
+                     else (np.array(self._mean), np.array(self._std)))
+        return NameDict(mean=mean, std=std)
 
     def _initialize(self):
         mean_std = None
@@ -84,10 +52,13 @@ class LazyImageStatisticsComputer:
                 os.remove(self.cache_path)
         if mean_std is None:
             print(f"Computing dataset statistics for {self.dataset.name}")
-            mean_std = self._get_stats(self.dataset)
+            mean_std = compute_pixel_mean_std(self.dataset, progress_bar=True)
             os.makedirs(self.cache_dir, exist_ok=True)
             np.savetxt(self.cache_path, mean_std, fmt='%12.8f')
-        self._mean[:], self._std[:] = mean_std
+        if self.single_channel:
+            self._mean.item, self._std.item = mean_std
+        else:
+            self._mean[:], self._std[:] = mean_std
 
     def _initialize_if_necessary(self):
         with self.initialized.get_lock():
@@ -98,7 +69,7 @@ class LazyImageStatisticsComputer:
 
 # Cached dataset with normalized inputs ############################################################
 
-def add_statistics_to_info_lazily(parted_dataset, cache_dir):
+def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
     imstat = LazyImageStatisticsComputer(parted_dataset.trainval, cache_dir)
 
     def transform(ds):
@@ -122,7 +93,7 @@ def cache_data_lazily(parted_dataset, cache_dir):
         else:
             ds_cached.delete_cache()
             del ds_cached
-            warnings.warn(f'The dataset {ds.full_name} will not be cached because it is too large.'
+            warnings.warn(f'The dataset {ds.identifier} will not be cached because it is too large.'
                           + f' Available space: {free_space / 2 ** 30} GiB.'
                           + f' Data size: {elem_size * len(ds)} GiB (subset), {size} GiB (all).')
         return ds
@@ -138,7 +109,7 @@ class CachingDatasetFactory(DatasetFactory):
 
     def __call__(self, ds_name, **kwargs):
         pds = super().__call__(ds_name, **kwargs)
-        pds = add_statistics_to_info_lazily(pds, self.cache_dir)
+        pds = add_image_statistics_to_info_lazily(pds, self.cache_dir)
         return cache_data_lazily(pds, self.cache_dir)
 
 

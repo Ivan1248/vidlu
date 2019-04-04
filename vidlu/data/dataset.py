@@ -12,9 +12,9 @@ from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
 from .record import Record
-from .misc import default_collate, serialize, serialized_sizeof
+from .misc import default_collate, pickle_sizeof
 
-from vidlu.utils.misc import slice_len
+from vidlu.utils.misc import slice_len, query_yes_no
 from vidlu.utils.collections import NameDict
 
 
@@ -79,8 +79,17 @@ class Dataset(Sequence):
         self.info = NameDict(info or getattr(data, 'info', dict()))
         self.data = data
 
+    def download_if_necessary(self, data_dir):
+        if not data_dir.exists():
+            if not query_yes_no('Dataset not found. Would you like it to be downloaded?'):
+                raise FileNotFoundError(f"The dataset doesn't exist in {data_dir}.")
+            self.download(data_dir)
+
+    def download(self, data_dir):
+        raise NotImplementedError(f"Dataset downloading not available for {type(self).__name__}.")
+
     @property
-    def full_name(self):
+    def identifier(self):
         fn = self.name
         if self.subset:
             fn += '-' + self.subset
@@ -120,7 +129,7 @@ class Dataset(Sequence):
         return len(self.data)
 
     def __str__(self):
-        return f'Dataset(full_name="{self.full_name}", info={self.info})'
+        return f'Dataset(identifier="{self.identifier}", info={self.info})'
 
     def __repr__(self):
         return str(self)
@@ -132,7 +141,7 @@ class Dataset(Sequence):
         return self.data[idx]
 
     def approx_example_sizeof(self, sample_count=30):
-        return serialized_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
+        return pickle_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
 
     def batch(self, batch_size, **kwargs):  # Element type is tuple
         """
@@ -209,7 +218,7 @@ class Dataset(Sequence):
         datasets = [self] + list(other)
         info = kwargs.pop('info', {k: v for k, v in datasets[0].info.items()
                                    if all(d.info.get(k, None) == v for d in datasets[1:])})
-        name = f"join(" + ",".join(x.full_name for x in datasets) + ")"
+        name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
 
     def random(self, length=None, replace=False, seed=53, **kwargs):
@@ -223,26 +232,25 @@ class Dataset(Sequence):
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
 
-    def clear_hdd_cache(ds):
+    def clear_hdd_cache(self):
         import inspect
-        if hasattr(ds, 'cache_dir'):
-            shutil.rmtree(ds.cache_dir)
-            print(f"Deleted {ds.cache_dir}")
-        elif isinstance(ds, MapDataset):  # lazyNormalizer
-            cache_path = inspect.getclosurevars(ds.func).nonlocals['f'].__self__.cache_path
+        if hasattr(self, 'cache_dir'):
+            shutil.rmtree(self.cache_dir)
+            print(f"Deleted {self.cache_dir}")
+        elif isinstance(self, MapDataset):  # lazyNormalizer
+            cache_path = inspect.getclosurevars(self.func).nonlocals['f'].__self__.cache_path
             if os.path.exists(cache_path):
                 os.remove(cache_path)
                 print(f"Deleted {cache_path}")
-        for k, v in vars(ds).items():
-            if isinstance(v, Dataset):
-                v.clear_hdd_cache()
-            elif isinstance(v, Sequence):
-                for w in v:
-                    if isinstance(w, Dataset):
-                        w.clear_hdd_cache()
+        if isinstance(self.data, Dataset):
+            self.data.clear_hdd_cache()
+        elif isinstance(self.data, Sequence):
+            for ds in self.data:
+                if isinstance(ds, Dataset):
+                    ds.clear_hdd_cache()
 
     def _print(self, *args, **kwargs):
-        print(*args, f"({self.full_name})", **kwargs)
+        print(*args, f"({self.identifier})", **kwargs)
 
 
 # Dataset wrappers and proxies
@@ -263,7 +271,7 @@ class ZipDataset(Dataset):
     def __init__(self, datasets, **kwargs):
         if not all(len(d) == len(datasets[0]) for d in datasets):
             raise ValueError("All datasets must have the same length.")
-        super().__init__(name='zip[' + ','.join(x.full_name for x in datasets) + "]",
+        super().__init__(name='zip[' + ','.join(x.identifier for x in datasets) + "]",
                          data=datasets, **kwargs)
 
     def get_example(self, idx):
@@ -323,7 +331,7 @@ class HDDAndRAMCacheDataset(Dataset):
     def __init__(self, dataset, cache_dir, chunk_size=100, **kwargs):
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = f"{cache_dir}/{self.full_name}.p"
+        cache_path = f"{cache_dir}/{self.identifier}.p"
         data = None
         if os.path.exists(cache_path):
             try:
@@ -365,7 +373,7 @@ class HDDCacheDataset(Dataset):
     def __init__(self, dataset, cache_dir, separate_fields=True, **kwargs):
         modifier = 'cache_hdd' + ('_s' if separate_fields else '')
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
-        self.cache_dir = Path(cache_dir) / self.full_name
+        self.cache_dir = Path(cache_dir) / self.identifier
         self.separate_fields = separate_fields
         if separate_fields:
             assert type(dataset[0]) is Record
@@ -374,9 +382,9 @@ class HDDCacheDataset(Dataset):
         consistency_check_sample_count = 16
         for i in range(consistency_check_sample_count):
             ii = i * len(dataset) // consistency_check_sample_count
-            if serialize(dataset[ii]) != serialize(self[ii]):
-                warnings.warn(f"Cache of the dataset {self.full_name} inconsistent." +
-                              "Deleting old and creating new cache.")
+            if pickle.dumps(dataset[ii]) != pickle.dumps(self[ii]):
+                warnings.warn(f"Cache of the dataset {self.identifier} inconsistent." +
+                              " Deleting old and creating new cache.")
                 self.delete_cache()
                 os.makedirs(self.cache_dir, exist_ok=False)
                 break
@@ -479,7 +487,7 @@ class SampleDataset(Dataset):
         else:
             indices = rand.permutation(len(dataset))[:length]
             if length > len(dataset):
-                raise ValueError("A sample without replacement can not be larger"
+                raise ValueError("A sample without replacement cannot be larger"
                                  + " than the original dataset.")
         self._indices = _compress_indices(indices, len(dataset))
         args = f"{seed}"

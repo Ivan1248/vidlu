@@ -87,7 +87,7 @@ class ArgTree(NameDict):
 
 
 class HardArgTree(ArgTree):
-    """An argtree whose arguments can not be overridden."""
+    """An argtree whose arguments cannot be overridden."""
 
 
 class EscapedArgTree:
@@ -244,8 +244,6 @@ Empty = inspect.Parameter.empty  # unassigned parameter that should be assigned
 
 
 class Reserved:  # placeholder to mark parameters that shouldn't be assigned / are reserved
-    pass
-
     @staticmethod
     def partial(func, **kwargs):
         """Applies partial to func only if all supplied arguments are Reserved."""

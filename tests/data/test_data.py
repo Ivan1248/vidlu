@@ -65,8 +65,8 @@ class TestData:
 
         mds = ds.map(lambda a: Record(x=a.x, y=a.y ** 0.5), info={**ds.info, 'len': 20})
         assert mds.data == ds and 'len' in mds.info
-        assert len(mds.full_name) > len(ds.full_name) and mds.name[
-                                                          :len(ds.full_name)] == ds.full_name
+        assert len(mds.identifier) > len(ds.identifier) and mds.name[
+                                                          :len(ds.identifier)] == ds.identifier
         for x, y in mds:
             assert y == (x ** 2) ** 0.5
 

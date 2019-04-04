@@ -8,6 +8,7 @@ def _info(cls, path=None, kwargs=None):
 
 
 _ds_to_info = {
+    'mnist': _info(MNISTDataset, 'MNIST'),
     'cifar10': _info(Cifar10Dataset, 'cifar-10-batches-py'),
     'cifar100': _info(Cifar100Dataset, 'cifar-100-python'),
     'tinyimagenet': _info(TinyImageNetDataset, 'tiny-imagenet-200'),

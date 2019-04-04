@@ -1,8 +1,9 @@
 import warnings
 
 from torch import nn
-from . import components as com
-from . import modules as mod
+
+from vidlu.modules import _components as com
+from vidlu.modules import _elementary as mod
 
 
 def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
@@ -18,7 +19,7 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
     if zero_init_residual:
         found = False
         for m in module.modules():
-            if isinstance(m, com.ResUnit):
+            if isinstance(m, com.ResNetV2Unit):
                 for i, c in enumerate(reversed(list(m.children()))):
                     if i == 1 and isinstance(c, mod.BatchNorm):
                         found = True
