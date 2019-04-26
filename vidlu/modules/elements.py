@@ -9,9 +9,10 @@ from torch import nn
 import torch.functional as F
 import numpy as np
 
+from vidlu.modules.utils import try_get_module_name_from_call_stack
 from vidlu.utils.collections import NameDict
-from vidlu.utils.misc import class_initializer_locals_c, find_frame_in_call_stack
-from vidlu.utils.func import params, tryable, composition
+from vidlu.utils.inspect import class_initializer_locals_c
+from vidlu.utils.func import params, tryable
 
 
 # Module class extensions ##########################################################################
@@ -65,13 +66,14 @@ def _buildable(*superclasses):
 
         def __call__(self, *args, **kwargs):
             if not self._built:
-                self.build(*args, **kwargs)
-            result = super().__call__(*args, **kwargs)
-            if not self._built:
-                recompute_result = self.post_build(*args, **kwargs) is None
-                self._built = True
-                if recompute_result:
-                    return super().__call__(*args, **kwargs)
+                self._built = self.build(*args, **kwargs) is None
+                result = super().__call__(*args, **kwargs)
+                if not self._built:
+                    self.post_build(*args, **kwargs) is None
+                    self._built = True
+                    result = super().__call__(*args, **kwargs)
+            else:
+                result = super().__call__(*args, **kwargs)
             return result
 
         def build(self, *args, **kwargs):
@@ -80,9 +82,9 @@ def _buildable(*superclasses):
         def post_build(self, *args, **kwargs):
             """
             Leave this as it is if you don't need more initialization after
-            evaluaton. I you do, override it and make it return nothing (`None`).
+            evaluaton. I you do, make `build` return True.
             """
-            return True
+            pass
 
     return BuildableModExt
 
@@ -141,7 +143,7 @@ def _debuggable(*superclasses):
 
         def forward(self, *args, **kwargs):
             y = super().forward(*args, **kwargs)
-            print(try_get_module_name_from_call_stack(self), y.shape)
+            # print(try_get_module_name_from_call_stack(self), parameter_count(self))
             return y
 
     return DebbugableModExt
@@ -161,17 +163,6 @@ class Module(*_extended(nn.Module, ABC)):
         args = class_initializer_locals_c()
         self.args = NameDict(args)
         self._built = False
-
-    def __call__(self, *args, **kwargs):
-        if not self._built:
-            self.build(*args, **kwargs)
-        result = super().__call__(*args, **kwargs)
-        if not self._built:
-            recompute_result = self.post_build(*args, **kwargs) is None
-            self._built = True
-            if recompute_result:
-                return super().__call__(*args, **kwargs)
-        return result
 
     def __str__(self):
         return (self.__class__.__name__ + "("
@@ -243,12 +234,10 @@ class Sequential(*_extended(nn.Sequential)):
         return super().__getitem__(idx)
 
     def index(self, key):
-        return list(zip(*self.named_children())).index(key)
-
-    def forward(self, *x):
-        y = super().forward(*x)
-        #print(try_get_module_name_from_call_stack(self), y.shape)
-        return y
+        names, children = list(zip(*self.named_children()))
+        if isinstance(key, str):
+            return names.index(key)
+        return children.index(key)
 
 
 class Identity(Module):
@@ -268,8 +257,9 @@ class Parallel(*_extended(nn.ModuleList)):
         if len(self) == 1:
             return [self[0](x) for x in inputs]
         elif len(inputs) != len(self):
-            raise ValueError(f"The number of inputs ({len(inputs)}) does not "
-                             + "match the number of parallel modules.")
+            raise ValueError(f"The number of inputs ({len(inputs)}) does not"
+                             + " match the number of parallel modules."
+                             + f"\nError in {try_get_module_name_from_call_stack(self)}.")
         return [m(x) for m, x in zip(self, inputs)]
 
 
@@ -282,12 +272,33 @@ class Reduce(Module):
         return reduce(self.func, input[1:], input[0])
 
 
+def pasum(x):
+    def sum_pairs(l, r):
+        return [a + b for a, b in zip(l, r)]
+
+    def split(x):
+        l, r = x[:len(x) // 2], x[len(x) // 2:]
+        r, rem = r[:len(l)], r[len(l):]
+        return x, r, rem
+
+    while len(x) > 1:
+        l, r, rem = split(x)
+        x = sum_pairs(l, r) + rem
+
+    return x[0]
+
+
 class Sum(Module):
     def __init__(self):
         super().__init__()
 
     def forward(self, inputs):
-        return torch.sum(torch.stack(inputs), 0)
+        y = inputs[0].clone()
+        for x in inputs[1:]:
+            y.add_(x)
+        return y
+        # return sum(inputs)
+        # return torch.sum(torch.stack(inputs), 0)
 
 
 class Concat(Module):
@@ -508,7 +519,7 @@ def parameter_count(module):
     from numpy import prod
 
     trainable, non_trainable = 0, 0
-    for p in module.parameters():
+    for name, p in module.named_parameters():
         n = prod(p.size())
         if p.requires_grad:
             trainable += n
@@ -616,37 +627,3 @@ class IntermediateOutputsModuleWrapper(Module):
         self.outputs = [None] * len(self.args.submodule_paths)
         output = self.module.forward(*input)
         return output, list(self.outputs)
-
-
-# Debugging ########################################################################################
-
-def get_calling_module(module, start_frame=None):
-    def predicate(frame):
-        locals_ = frame.f_locals
-        if 'self' in locals_:
-            self_ = locals_['self']
-            return isinstance(locals_['self'], nn.Module) and self_ is not module
-
-    frame = find_frame_in_call_stack(predicate, start_frame)
-    if frame is None:
-        return None, None
-    caller = frame.f_locals['self']
-    return caller, frame
-
-
-def try_get_module_name_from_call_stack(module, start_frame=None, full_name=True):
-    parent, frame = get_calling_module(module, start_frame=start_frame)
-    if parent is None:
-        return 'ROOT'
-    for n, c in parent.named_children():
-        if c is module:
-            if not full_name:
-                return n
-            parent_name = try_get_module_name_from_call_stack(parent, start_frame=frame.f_back)
-            return f'{parent_name}.{n}'
-    return '???'
-
-
-def get_device(module):
-    param = next(module.parameters(), None)
-    return None if param is None else param[0].device

@@ -64,7 +64,6 @@ class Dataset(Sequence):
 
     def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
                  info: dict = None, data=None):
-        assert not hasattr(self, 'name') and not hasattr(self, 'info')
         self.name = name or getattr(data, 'name', None)
         if self.name is None:
             if type(self) is Dataset:
@@ -97,7 +96,7 @@ class Dataset(Sequence):
             fn += '.' + '.'.join(self.modifiers)
         return fn
 
-    def __getitem__(self, idx, *args):
+    def __getitem__(self, idx, field=None):
         def element_fancy_index(d, key):
             if isinstance(key, (list, tuple)):
                 if isinstance(d, (list, tuple)):
@@ -106,11 +105,9 @@ class Dataset(Sequence):
                     return {k: d[k] for k in key}
             return d[key]
 
-        assert len(args) <= 1
-        filter_fields = (lambda x: element_fancy_index(x, *args)) if len(args) == 1 else None
+        filter_fields = (lambda x: element_fancy_index(x, field)) if field is not None else None
 
         if isinstance(idx, slice):
-            start, stop, step = idx.indices(len(self))
             ds = SubrangeDataset(self, idx)
         elif isinstance(idx, (Sequence, np.ndarray)):
             ds = SubDataset(self, idx)
@@ -122,7 +119,8 @@ class Dataset(Sequence):
             d = self.get_example(idx)
             return d if filter_fields is None else filter_fields(d)
         if filter_fields is not None:
-            ds = ds.map(filter_fields, func_name=ds.modifiers.pop()[:-1] + ', '.join(args) + ']')
+            field_str = '' if field is None else f', {field}'
+            ds = ds.map(filter_fields, func_name=ds.modifiers.pop()[:-1] + field_str + ']')
         return ds
 
     def __len__(self):  # This can be overridden
@@ -376,7 +374,9 @@ class HDDCacheDataset(Dataset):
         self.cache_dir = Path(cache_dir) / self.identifier
         self.separate_fields = separate_fields
         if separate_fields:
-            assert type(dataset[0]) is Record
+            if not isinstance(dataset[0], Record):
+                raise ValueError(
+                    f"If `separate_fields == True`, the element type must be `Record`.")
             self.keys = list(self.data[0].keys())
         os.makedirs(self.cache_dir, exist_ok=True)
         consistency_check_sample_count = 16
@@ -446,11 +446,10 @@ class SubDataset(Dataset):
 class SubrangeDataset(Dataset):
     __slots__ = ("start", "stop", "step", "_len")
 
-    def __init__(self, dataset, slice, **kwargs):
-        # convert indices to smaller int type if possible
-        start, stop, step = slice.indices(len(dataset))
+    def __init__(self, dataset, slice_, **kwargs):
+        start, stop, step = slice_.indices(len(dataset))
         self.start, self.stop, self.step = start, stop, step
-        self._len = slice_len(slice, len(dataset))
+        self._len = slice_len(slice_, len(dataset))
         modifier = f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]")
         super().__init__(modifiers=[modifier], data=dataset, **kwargs)
 
@@ -480,7 +479,9 @@ class SampleDataset(Dataset):
 
     def __init__(self, dataset, length=None, replace=False, seed=53, **kwargs):
         length = length or len(dataset)
-        assert replace or length <= len(dataset)
+        if length > len(dataset) and not replace:
+            raise ValueError("Cannot sample without replacement if `length` is larger than the "
+                             + " length of the original dataset.")
         rand = np.random.RandomState(seed=seed)
         if replace:
             indices = [rand.randint(0, len(dataset)) for _ in range(len(dataset))]

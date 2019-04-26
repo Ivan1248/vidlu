@@ -6,6 +6,7 @@ from torch.optim import SGD
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 from ignite import engine
 
+import vidlu.modules.utils
 from vidlu.data import DataLoader
 from vidlu.utils.func import default_args, params, Empty
 from vidlu.utils.collections import NameDict
@@ -83,7 +84,7 @@ class Trainer(Evaluator):
         super().__init__(model, loss_f=loss_f,
                          data_loader_f=partial(data_loader_f, batch_size=batch_size),
                          prepare_batch=prepare_batch,
-                         device=modules.get_device(model) if device is None else device)
+                         device=modules.utils.get_device(model) if device is None else device)
         if 'weight_decay' in params(optimizer_f):
             if not params(optimizer_f).weight_decay is Empty:
                 raise ValueError(
@@ -177,8 +178,8 @@ class DenseNetCifarTrainer(ClassificationTrainer):
     # as in www.arxiv.org/abs/1608.06993
     __init__ = partialmethod(
         SupervisedTrainer.__init__,
-        weight_decay=1e-4,
         optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
+        weight_decay=1e-4,
         epoch_count=100,
         lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
         batch_size=64)

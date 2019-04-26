@@ -9,7 +9,6 @@ from vidlu.utils.tree import tree_to_paths
 
 # Wrappers #########################################################################################
 
-
 class composition:
     __slots__ = 'funcs'
 

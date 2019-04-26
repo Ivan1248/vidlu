@@ -2,7 +2,7 @@ from functools import partial
 
 from torch import nn
 
-from .._elementary import Module
+from ..elements import Module
 from .core_components import PreactBlock
 
 

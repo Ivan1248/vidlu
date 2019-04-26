@@ -1,4 +1,4 @@
-from enum import Enum
+from functools import partial
 
 try:
     import accimage
@@ -254,6 +254,13 @@ class TorchImageTransformer(ImageTransformer):
             raise TypeError("Only float tensors can be destandardized.")
         mean, std = [torch.tensor(s, dtype=torch.float32) for s in [mean, std]]
         return self.transform(lambda x: x * std + mean)
+
+    def resize(self, size, interpolation=2):
+        self.transform(partial(tvt.functional.resize, size=size, interpolation=interpolation))
+
+    def scale(self, factor, interpolation=2):
+        self.resize((np.array(self.x.shape[:2]) * factor).astype(np.int),
+                    interpolation=interpolation)
 
 
 def image_transformer(x):

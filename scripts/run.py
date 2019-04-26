@@ -1,13 +1,13 @@
 import argparse
-from pathlib import Path
 from datetime import datetime
 from functools import partial
 
 import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
 import torch
+import numpy as np
 
 from _context import vidlu
-from vidlu.modules._elementary import parameter_count
+from vidlu.modules.elements import parameter_count
 from vidlu.factories import parse_datasets, parse_model, parse_trainer, parse_metrics
 from vidlu.training.checkpoint_manager import CheckpointManager
 from vidlu.utils.indent_print import indent_print
@@ -27,7 +27,7 @@ python run.py
 "Cifar10{train,val}" "DiscriminativeModel,backbone_f=partial(c.PreactBlock,kernel_sizes=[3,3,3],base_width=64,width_factors=[1,1,1]),init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
 """
 
-# Arguments ########################################################################################
+# Argument parsing #################################################################################
 
 parser = argparse.ArgumentParser(description='Training script')
 # learner configuration
@@ -45,6 +45,8 @@ parser.add_argument("-r", "--resume", action='store_true',
                     help="Resume training from the last checkpoint of the same experiment.")
 parser.add_argument("--restart", action='store_true',
                     help="Remove existing checkpoints and start training from the beginning.")
+parser.add_argument("-s", "--seed", type=str, default=53,
+                    help="RNG seed for experiment reproducibility. WARNING: CUDA not supported.")
 # reporting
 parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=1)
 
@@ -52,6 +54,11 @@ args = parser.parse_args()
 
 with indent_print("Arguments:"):
     print(args)
+
+# RNG seed #########################################################################################
+
+torch.manual_seed(args.seed)
+np.random.seed(args.seed)
 
 # Device ###########################################################################################
 
@@ -116,6 +123,7 @@ if args.resume:
     for line in log_lines:
         print(line)
     trainer.load_state_dict(state)
+    model.to(device=device)
 
 
 # Training loop actions ############################################################################
@@ -168,6 +176,8 @@ trainer.eval(ds_test)
 trainer.train(ds_train_jittered, restart=False)
 
 cpman.remove_old_checkpoints()
+
+print(f'Trained model saved in {cpman._dir_path}')
 
 # End ##############################################################################################
 

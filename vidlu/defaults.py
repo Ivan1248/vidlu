@@ -3,11 +3,11 @@ import warnings
 from functools import partial
 
 from ignite import metrics
-from torch import nn
 
 from vidlu.data import Record
-from vidlu.models import DiscriminativeModel, Autoencoder
-from vidlu.modules import _components as c
+from vidlu.modules.models import DiscriminativeModel, Autoencoder
+from vidlu.modules import components as c
+from vidlu.modules import loss
 from vidlu.problem import Problem
 from vidlu.training.metrics import FuncMetric, ClassificationMetrics
 from vidlu.training.trainers import SupervisedTrainer
@@ -16,7 +16,6 @@ from vidlu.utils.func import ArgTree
 
 # Problem ######################################################################
 
-
 def get_problem(dataset):
     if 'problem' not in dataset.info:
         raise ValueError("Unknown problem.")
@@ -24,7 +23,6 @@ def get_problem(dataset):
 
 
 # Model ############################################################################################
-
 
 def get_model_argtree(model_class, dataset):
     problem = get_problem(dataset)
@@ -57,7 +55,6 @@ def get_model_argtree(model_class, dataset):
 
 # Training data jittering and model input perparation ##############################################
 
-
 def get_jitter(dataset):
     from vidlu.transforms.jitter import cifar_jitter, rand_hflip
     if any(dataset.name.lower().startswith(x)
@@ -82,18 +79,16 @@ def get_input_preparation(dataset):
 
 # Trainer/Evaluator ################################################################################
 
-
 def get_trainer_argtree(trainer_class, model, dataset):
     problem = get_problem(dataset)
     argtree = ArgTree()
     if issubclass(trainer_class, SupervisedTrainer):
         if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
-            argtree.update(ArgTree(loss_f=partial(nn.NLLLoss, ignore_index=-1)))
+            argtree.update(ArgTree(loss_f=partial(loss.SoftmaxCrossEntropyLoss, ignore_index=-1)))
     return argtree
 
 
 # Metrics ##########################################################################################
-
 
 def get_metrics(dataset):
     problem = get_problem(dataset)

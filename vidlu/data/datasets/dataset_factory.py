@@ -17,7 +17,7 @@ _ds_to_info = {
     'cityscapes': _info(CityscapesDataset, 'Cityscapes',
                         dict(downsampling_factor=2)),
     'wilddash': _info(WildDashDataset, 'WildDash', kwargs=dict(downsampling_factor=2)),
-    'camvid': _info(CamVidDataset, 'CamVid'),
+    'camvid': _info(CamVidDataset, 'CamVid', dict(downsampling_factor=2)),
     'voc2012': _info(VOC2012SegmentationDataset, 'VOC2012'),
     'iccv09': _info(ICCV09Dataset, 'iccv09'),
     'isun': _info(ISUNDataset, 'iSUN'),

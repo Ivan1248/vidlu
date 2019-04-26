@@ -1,6 +1,6 @@
 from collections import Callable
 
-from .._elementary import Sequential
+from ..elements import Sequential
 
 
 

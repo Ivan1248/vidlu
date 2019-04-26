@@ -2,7 +2,8 @@ import warnings
 import re
 from functools import partial
 
-from vidlu import defaults, models
+from vidlu import defaults
+from vidlu.modules import models
 from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
                               ArgTree, params, Empty)
 from vidlu.utils.tree import print_tree
@@ -85,9 +86,17 @@ def parse_model(model_str: str, dataset, device=None, verbosity=1):
     import torch.nn  # used in model_str/evaluation
     import vidlu.modules as modules  # used in model_str/evaluation
     from vidlu.modules import loss
-    import vidlu.modules._components as com
+    import vidlu.modules.components as com
     import torchvision.models as tvmodels
     from vidlu.data import DataLoader
+
+
+    class TVDenseNet(tvmodels.densenet.DenseNet):
+        def forward(self, x):
+            return self.features(x)
+
+    def densenet121():
+        return TVDenseNet(num_init_features=64, growth_rate=32, block_config=(6, 12, 24, 16))
 
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
@@ -103,7 +112,8 @@ def parse_model(model_str: str, dataset, device=None, verbosity=1):
     print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
 
     model = model_f()
-    batch_x = next(iter(DataLoader(dataset)))[0]
+    model.eval()
+    batch_x = next(iter(DataLoader(dataset, batch_size=2)))[0]
     if hasattr(model, 'initialize'):
         model.initialize(batch_x)
     else:

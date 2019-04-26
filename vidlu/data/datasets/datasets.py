@@ -87,11 +87,11 @@ def load_segmentation_with_downsampling(path, downsampling_factor, id_to_label=d
         id_to_label = {np.array(k).dot(scalarizer): v for k, v in id_to_label.items()}
         return np.array([id_to_label.get(k, -1)
                          for k in u], dtype=dtype)[inv].reshape(lab.shape[:2])
-    elif len(id_to_label) > 140:  # faster for large number of distinct labels
+    elif len(id_to_label) > 140:  # faster for great numbers of distinct labels
         lab = np.array(lab)
         u, inv = np.unique(lab, return_inverse=True)
         return np.array([id_to_label.get(k, k) for k in u], dtype=dtype)[inv].reshape(lab.shape)
-    else:  # faster for small number of distinct labels
+    else:  # faster for small numbers of distinct labels
         lab = np.array(lab, dtype=dtype)
         for id, lb in id_to_label.items():
             lab[lab == id] = lb
@@ -566,14 +566,12 @@ class CityscapesDataset(Dataset):
         super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):
-        ip, lp = self._images_dir / self._image_list[
-            idx], self._labels_dir / self._label_list[idx],
+        ip = self._images_dir / self._image_list[idx]
+        lp = self._labels_dir / self._label_list[idx]
         df = self._downsampling_factor
         return _make_record(
             x_=lambda: load_image_with_downsampling(ip, df),
-            y_=
-            lambda: load_segmentation_with_downsampling(lp, df, self._id_to_label)
-        )
+            y_=lambda: load_segmentation_with_downsampling(lp, df, self._id_to_label))
 
     def __len__(self):
         return len(self._image_list)

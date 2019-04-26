@@ -8,7 +8,7 @@ import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
 import torch
 
 from _context import vidlu
-from vidlu.modules._elementary import parameter_count
+from vidlu.modules.elements import parameter_count
 from vidlu.factories import parse_datasets, parse_model, parse_trainer, parse_metrics
 from vidlu.training.checkpoint_manager import CheckpointManager
 from vidlu.utils.indent_print import indent_print

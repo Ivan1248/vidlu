@@ -5,9 +5,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .._elementary import (Module, Sequential, Conv, ConvTranspose, MaxPool, BatchNorm, Linear,
-                           Func, Identity, AvgPool)
-from vidlu.utils.func import params, Reserved, default_args, Empty
+from ..elements import (Module, Sequential, Conv, ConvTranspose, MaxPool, BatchNorm, Linear,
+                        Func, Identity, AvgPool, Parallel, Sum, Concat,
+                        parameter_count)
+from vidlu.modules.utils import try_get_module_name_from_call_stack
+from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
 
 import math
@@ -46,13 +48,19 @@ class RootBlock(Sequential):
         if small_input:  # CIFAR
             super().__init__(conv=Conv(out_channels, 3, padding='half', bias=False))
         else:
-            super().__init__(conv=Conv(out_channels, kernel_size=7, padding='half', bias=False),
+            super().__init__(conv=Conv(out_channels, 7, stride=2, padding='half', bias=False),
                              norm=norm_f(),
                              activation=act_f(),
                              pool=MaxPool(3, stride=2, padding='half'))
 
 
 # blocks ###########################################################################################
+
+def add_norm_act(seq, suffix, norm_f, act_f):
+    if norm_f:
+        seq.add_module(f'norm{suffix}', norm_f())
+    seq.add_module(f'act{suffix}', act_f())
+
 
 class PreactBlock(Sequential):
     """A block of one or more sequences of the form
@@ -75,8 +83,7 @@ class PreactBlock(Sequential):
         noise_f: Noise module factory.
     """
 
-    def __init__(self, kernel_sizes, base_width, width_factors,
-                 noise_locations=(), stride=1,
+    def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
                  omit_first_preactivation=False, norm_f=_d.norm_f, act_f=_d.act_f,
                  conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved),
@@ -85,9 +92,7 @@ class PreactBlock(Sequential):
         widths = [base_width * wf for wf in width_factors]
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             if i > 0 or not omit_first_preactivation:
-                if norm_f:
-                    self.add_module(f'norm{i}', norm_f())
-                self.add_module(f'act{i}', act_f())
+                add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
                 self.add_module(f'noise{i}', noise_f())
             self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
@@ -116,18 +121,16 @@ class PostactBlock(Sequential):
     """
 
     def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
+                 omit_first_preactivation=False, norm_f=_d.norm_f, act_f=_d.act_f,
                  conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved),
-                 norm_f=_d.norm_f, act_f=_d.act_f,
                  noise_f=None):
         super().__init__()
         widths = [base_width * wf for wf in width_factors]
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
                                                       stride=stride if i == 0 else 1))
-            if norm_f:
-                self.add_module(f'norm{i}', norm_f())
-            self.add_module(f'act{i}', act_f())
+            add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
                 self.add_module(f'noise{i}', noise_f())
 
@@ -246,16 +249,14 @@ class DenseSpatialPyramidPooling(nn.Module):
 class ClassificationHead(Sequential):
     def __init__(self, class_count):
         super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
-                         logits=Linear(class_count),
-                         log_probs=nn.LogSoftmax(dim=1))
+                         logits=Linear(class_count))
 
 
 class SegmentationHead(Sequential):
     def __init__(self, class_count, shape):
         super().__init__(logits=Conv(class_count, kernel_size=1),
                          upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
-                                               align_corners=False)),
-                         log_probs=nn.LogSoftmax(dim=1))
+                                               align_corners=False)))
 
 
 class TCSegmentationHead(Sequential):
@@ -278,7 +279,6 @@ class TCSegmentationHead(Sequential):
                                                       padding=1)})
         self.add_module(upsample=Func(partial(F.interpolate, size=self.shape, mode='bilinear',
                                               align_corners=False)))
-        self.add_module(log_probs=nn.LogSoftmax(dim=1))
 
 
 class RegressionHead(Sequential):
@@ -287,61 +287,6 @@ class RegressionHead(Sequential):
                          upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
                                                align_corners=False)),
                          log_probs=nn.LogSoftmax(dim=1))
-
-
-# Autoencoder ######################################################################################
-
-class SimpleEncoder(Sequential):
-    def __init__(self, kernel_sizes=(4,) * 4, widths=(32, 64, 128, 256), z_width=32,
-                 norm_f=_d.norm_f, act_f=nn.ReLU, conv_f=_d.conv_f):
-        super().__init__()
-        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module(f'conv{i}',
-                            conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
-            if norm_f is not None:
-                self.add_module(f'norm{i}', norm_f())
-            self.add_module(f'act{i}', act_f())
-        self.add_module('linear_z', Linear(z_width))
-
-
-# Adversarial autoencoder ##########################################################################
-# TODO: linear to batchnorm, output shape
-
-class AAEEncoder(Sequential):
-    def __init__(self, kernel_sizes=(4,) * 3, widths=(64,) + (256,) * 2, z_dim=128,
-                 norm_f=_d.norm_f, act_f=nn.LeakyReLU, conv_f=_d.conv_f):
-        super().__init__()
-        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module(f'conv{i}',
-                            conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
-            if i > 0:
-                self.add_module(f'norm{i}', norm_f())
-            self.add_module(f'act{i}', act_f())
-        self.add_module('linear_z', Linear(z_dim))
-
-
-class AAEDecoder(Sequential):
-    def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
-                 norm_f=_d.norm_f, act_f=nn.ReLU, convt_f=_d.convt_f):
-        super().__init__()
-        self.add_module('linear_h', Linear(h_dim))
-        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module({f'norm{i}': norm_f(),
-                             f'act{i}': act_f(),
-                             f'conv{i}': convt_f(kernel_size=k, out_channels=w, stride=2,
-                                                 padding=1)})
-        self.add_module('tanh', nn.Tanh())
-
-
-class AAEDiscriminator(Sequential):
-    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=_d.norm_f, act_f=nn.ReLU):
-        super().__init__()
-        for i in range(2):
-            # batch normalization?
-            self.add_module(f'linear{i}', Linear(h_dim))
-            self.add_module(f'act{i}', act_f())
-        self.add_module('logits', Linear(2))
-        self.add_module('probs', nn.Softmax(dim=1))
 
 
 # ResNet ###########################################################################################
@@ -357,7 +302,7 @@ class ResNetV2Unit(Module):
                  dim_change='proj'):
         _check_block_args(block_f)
         super().__init__()
-        if dim_change not in ['pad', 'proj']:
+        if dim_change not in ['pad', 'proj', 'proj3']:
             raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
         block = Reserved.call(block_f, omit_first_preactivation=False)
         self.preact = block[:'conv0']
@@ -374,6 +319,9 @@ class ResNetV2Unit(Module):
         else:
             if self.args.dim_change == 'proj':
                 self.shortcut = Conv(out_width, kernel_size=1, stride=stride, padding='half',
+                                     bias=False)
+            elif self.args.dim_change == 'proj3':
+                self.shortcut = Conv(out_width, kernel_size=3, stride=stride, padding='half',
                                      bias=False)
             else:
                 pad = [0] * 5 + [out_width - x.shape[1]]
@@ -440,21 +388,22 @@ class DenseTransition(Sequential):
                  conv_f=partial(_d.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
-        self.args = NameDict(compression=compression, norm_f=norm_f, act_f=act_f, conv_f=conv_f,
-                             noise_f=noise_f, pool_f=pool_f)
+        self.add_modules(norm=norm_f(),
+                         act=act_f())
+        if self.args.noise_f is not None:
+            self.add_module(noise=noise_f())
+        self.args = NameDict(compression=compression, conv_f=conv_f, pool_f=pool_f)
 
     def build(self, x):
-        self.add_modules(norm=self.args.norm_f(),
-                         act=self.args.act_f())
-        if self.args.noise_f is not None:
-            self.add_module(noise=self.args.noise_f())
         self.add_modules(
             conv=self.args.conv_f(out_channels=round(x.shape[1] * self.args.compression)),
             pool=Reserved.call(self.args.pool_f, stride=2))
 
 
 class DenseUnit(Module):
-    def __init__(self, block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
+    def __init__(self,
+                 block_f=argtree_partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1),
+                                         act_f=ArgTree(inplace=True))):
         super().__init__()
         self.block = block_f()
 
@@ -473,12 +422,14 @@ class DenseSequence(Sequential):
                  block_f=partial(default_args(DenseBlock).block_f, base_width=Reserved)):
         super().__init__()
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        for i, len in enumerate(db_lengths):
-            if i > 0:
-                self.add_module(f'transition{i - 1}', DenseTransition(compression, **norm_act_args))
+        for i, length in enumerate(db_lengths):
             self.add_module(f'dense_block{i}',
-                            DenseBlock(len,
+                            DenseBlock(length,
                                        block_f=Reserved.partial(block_f, base_width=growth_rate)))
+            if i != len(db_lengths) - 1:
+                self.add_module(f'transition{i}', DenseTransition(compression, **norm_act_args))
+        self.add_modules(norm=default_args(block_f).norm_f(),
+                         act=default_args(block_f).act_f())
 
 
 class DenseNetBackbone(Sequential):
@@ -488,6 +439,143 @@ class DenseNetBackbone(Sequential):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
                          features=DenseSequence(growth_rate, db_lengths, compression, block_f))
+
+
+# MDenseNet ########################################################################################
+
+class MDenseTransition(Sequential):
+    def __init__(self, compression=0.5, norm_f=_d.norm_f, act_f=_d.act_f,
+                 conv_f=partial(_d.conv_f, kernel_size=1), noise_f=None,
+                 pool_f=partial(AvgPool, kernel_size=2, stride=Reserved)):
+        super().__init__()
+        self.args = NameDict(compression=compression, norm_f=norm_f, act_f=act_f, conv_f=conv_f,
+                             noise_f=noise_f, pool_f=pool_f)
+
+    def build(self, x):
+        out_channels = round(sum(y.shape[1] for y in x) * self.args.compression)
+        starts = Parallel([Sequential() for _ in range(len(x))])
+        for s in starts:
+            s.add_modules(norm=self.args.norm_f(),
+                          act=self.args.act_f())
+            if self.args.noise_f is not None:
+                s.add_module(noise=self.args.noise_f())
+            s.add_module(conv=self.args.conv_f(out_channels=out_channels))
+        self.add_modules(starts=starts,
+                         sum=Sum(),
+                         pool=Reserved.call(self.args.pool_f, stride=2))
+
+
+class MDenseUnit(Module):
+    def __init__(self, block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
+        super().__init__()
+        self.block_starts = Parallel()
+        self.sum = Sum()
+        block = block_f()
+        self._split_index = block.index('conv0') + 1
+        self.block_end = block[self._split_index:]
+
+    def build(self, x):
+        self.block_starts.extend([self.args.block_f()[:self._split_index] for _ in range(len(x))])
+
+    def forward(self, x):
+        return x + [self.block_end(self.sum(self.block_starts(x)))]
+
+
+class MDenseBlock(Sequential):
+    def __init__(self, length, block_f=default_args(MDenseUnit).block_f):
+        super().__init__(to_list=Func(lambda x: [x]),
+                         **{f'unit{i}': MDenseUnit(block_f) for i in range(length)})
+
+
+class MDenseSequence(Sequential):
+    def __init__(self, growth_rate, db_lengths,
+                 compression=default_args(MDenseTransition).compression,
+                 block_f=partial(default_args(MDenseBlock).block_f, base_width=Reserved)):
+        super().__init__()
+        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
+        for i, len in enumerate(db_lengths):
+            if i > 0:
+                self.add_module(f'transition{i - 1}',
+                                MDenseTransition(compression, **norm_act_args))
+            self.add_module(f'dense_block{i}',
+                            MDenseBlock(len,
+                                        block_f=Reserved.partial(block_f, base_width=growth_rate)))
+        self.add_module('concat', Concat())
+        self.add_modules(norm=default_args(block_f).norm_f(),
+                         act=default_args(block_f).act_f())
+
+
+class MDenseNetBackbone(Sequential):
+    def __init__(self, growth_rate=12, small_input=True, db_lengths=(2,) * 4,
+                 compression=default_args(MDenseSequence).compression,
+                 block_f=default_args(MDenseSequence).block_f):
+        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
+        super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
+                         features=MDenseSequence(growth_rate, db_lengths, compression, block_f))
+
+
+# FDenseNet ########################################################################################
+
+FDenseTransition = MDenseTransition
+
+
+class FDenseBlock(Module):
+    def __init__(self, length,
+                 block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
+        super().__init__()
+        self.length = length
+        self.width = default_args(block_f).width_factors[0] * default_args(block_f).base_width
+        self.sum = Sum()
+        self.block_start_columns = nn.ModuleList()
+        self.block_ends = nn.ModuleList()
+
+        wf = default_args(block_f).width_factors
+
+        def get_width_factors(idx):
+            return [wf[0] * (length - idx)] + list(wf[1:])
+
+        split_index = block_f().index('conv0') + 1
+        for i in range(length):
+            block = block_f(width_factors=get_width_factors(i))
+            self.block_start_columns.append(block[:split_index])
+            self.block_ends.append(block[self.split_index:])
+
+    def forward(self, x):
+        inputs = [x]
+        columns = []
+        for i, (col, end) in enumerate(zip(self.block_start_columns, self.block_ends)):
+            columns.append(col(inputs[-1]))
+            inputs.append(end(self.sum(
+                [columns[j].narrow(1, self.width * (i - j), self.width)
+                 for j in range(i + 1)])))
+        return inputs
+
+
+class FDenseSequence(Sequential):
+    def __init__(self, growth_rate, db_lengths,
+                 compression=default_args(FDenseTransition).compression,
+                 block_f=partial(default_args(FDenseBlock).block_f, base_width=Reserved)):
+        super().__init__()
+        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
+        for i, len in enumerate(db_lengths):
+            if i > 0:
+                self.add_module(f'transition{i - 1}',
+                                FDenseTransition(compression, **norm_act_args))
+            self.add_module(f'dense_block{i}',
+                            FDenseBlock(len,
+                                        block_f=Reserved.partial(block_f, base_width=growth_rate)))
+        self.add_module('concat', Concat())
+        self.add_modules(norm=default_args(block_f).norm_f(),
+                         act=default_args(block_f).act_f())
+
+
+class FDenseNetBackbone(Sequential):
+    def __init__(self, growth_rate=12, small_input=True, db_lengths=(2,) * 4,
+                 compression=default_args(FDenseSequence).compression,
+                 block_f=default_args(FDenseSequence).block_f):
+        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
+        super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
+                         features=FDenseSequence(growth_rate, db_lengths, compression, block_f))
 
 
 # VGG ##############################################################################################
@@ -530,3 +618,58 @@ class FCNEncoder(Sequential):
             self.add_modules((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)),
                              (f'act_fc{i}', act_f()),
                              (f'noise_fc{i}', noise_f()))
+
+
+# Autoencoder ######################################################################################
+
+class SimpleEncoder(Sequential):
+    def __init__(self, kernel_sizes=(4,) * 4, widths=(32, 64, 128, 256), z_width=32,
+                 norm_f=_d.norm_f, act_f=nn.ReLU, conv_f=_d.conv_f):
+        super().__init__()
+        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
+            self.add_module(f'conv{i}',
+                            conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
+            if norm_f is not None:
+                self.add_module(f'norm{i}', norm_f())
+            self.add_module(f'act{i}', act_f())
+        self.add_module('linear_z', Linear(z_width))
+
+
+# Adversarial autoencoder ##########################################################################
+# TODO: linear to batchnorm, output shape
+
+class AAEEncoder(Sequential):
+    def __init__(self, kernel_sizes=(4,) * 3, widths=(64,) + (256,) * 2, z_dim=128,
+                 norm_f=_d.norm_f, act_f=nn.LeakyReLU, conv_f=_d.conv_f):
+        super().__init__()
+        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
+            self.add_module(f'conv{i}',
+                            conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
+            if i > 0:
+                self.add_module(f'norm{i}', norm_f())
+            self.add_module(f'act{i}', act_f())
+        self.add_module('linear_z', Linear(z_dim))
+
+
+class AAEDecoder(Sequential):
+    def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
+                 norm_f=_d.norm_f, act_f=nn.ReLU, convt_f=_d.convt_f):
+        super().__init__()
+        self.add_module('linear_h', Linear(h_dim))
+        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
+            self.add_module({f'norm{i}': norm_f(),
+                             f'act{i}': act_f(),
+                             f'conv{i}': convt_f(kernel_size=k, out_channels=w, stride=2,
+                                                 padding=1)})
+        self.add_module('tanh', nn.Tanh())
+
+
+class AAEDiscriminator(Sequential):
+    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=_d.norm_f, act_f=nn.ReLU):
+        super().__init__()
+        for i in range(2):
+            # batch normalization?
+            self.add_module(f'linear{i}', Linear(h_dim))
+            self.add_module(f'act{i}', act_f())
+        self.add_module('logits', Linear(2))
+        self.add_module('probs', nn.Softmax(dim=1))

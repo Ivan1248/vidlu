@@ -1,0 +1,7 @@
+python run.py "Cifar10{train,val}" "DenseNet,backbone_f=partial(models.mdensenet_backbone, depth=112,small_input=True)" DenseNetCifarTrainer ""
+
+python run.py "CamVid{val,val}" "DenseNet,backbone_f=partial(models.mdensenet_backbone,depth=121,small_input=False)" "LadderDenseNetTrainer,batch_size=4" ""
+python run.py "CamVid{val,val}" "DenseNet,backbone_f=t(depth=121,small_input=False)" "LadderDenseNetTrainer,batch_size=4" ""
+8305 6965131
+python run.py "CamVid{val,val}" "DenseNet,backbone_f=densenet121" "LadderDenseNetTrainer,batch_size=4" ""
+2737 7990131

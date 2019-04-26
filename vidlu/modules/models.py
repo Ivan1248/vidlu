@@ -4,7 +4,7 @@ import torch
 
 from vidlu import modules
 from vidlu.training import initialization
-from vidlu.modules import _components as com
+from vidlu.modules import components as com
 from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, default_args)
 
 
@@ -13,10 +13,11 @@ from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, d
 def resnet_v2_backbone(depth, base_width=default_args(com.ResNetV2Backbone).base_width,
                        small_input=default_args(com.ResNetV2Backbone).small_input,
                        block_f=partial(default_args(com.ResNetV2Backbone).block_f,
-                                    kernel_sizes=Reserved)):
+                                       kernel_sizes=Reserved), dim_change=None):
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
     bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
+    dim_change_arg = dim_change
     group_lengths, (ksizes, width_factors, dim_change) = {
         10: ([1] * 4, basic),  # [1] bw 64
         18: ([2] * 4, basic),  # [1] bw 64
@@ -33,7 +34,7 @@ def resnet_v2_backbone(depth, base_width=default_args(com.ResNetV2Backbone).base
                                 group_lengths=group_lengths,
                                 width_factors=width_factors,
                                 block_f=partial(block_f, kernel_sizes=ksizes),
-                                dim_change=dim_change)
+                                dim_change=dim_change_arg or dim_change)
 
 
 def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
@@ -55,9 +56,9 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
                                 dim_change=dim_change)
 
 
-def densenet_backbone(depth, small_input, k=12, compression=0.5,
+def densenet_backbone(depth, small_input, k=None, compression=0.5,
                       block_f=partial(default_args(com.DenseNetBackbone).block_f,
-                                      kernel_sizes=Reserved)):
+                                      kernel_sizes=Reserved), backbone_f=com.DenseNetBackbone):
     # TODO: dropout 0.2
     # dropout if no pds augmentation
     ksizes = [1, 3]
@@ -66,21 +67,35 @@ def densenet_backbone(depth, small_input, k=12, compression=0.5,
         161: ([6, 12, 36, 24], 48),
         169: ([6, 12, 32, 32], 32),
     }
+
     if depth in depth_to_group_lengths:
-        db_lengths, bw = depth_to_group_lengths[depth]
-        k = k or bw
+        db_lengths, default_growth_rate = depth_to_group_lengths[depth]
+        k = k or default_growth_rate
     else:
-        assert k is not None, "base_width not supplied for non-standard depth"
+        if k is None:
+            raise ValueError("`k` (growth rate) must be supplied for non-Imagenet-model depth.")
         db_count = 3
-        assert (depth - db_count - 1) % 3 == 0, \
-            f"invalid depth: (depth-group_count-1) must be divisible by 3"
-        blocks_per_group = (depth - db_count - 1) // (db_count * len(ksizes))
+        block_count = (depth - db_count - 1)
+        if block_count % 3 != 0:
+            raise ValueError(
+                f"invalid depth: (depth-db_count-1) % 3 = {(depth - db_count - 1) % 3} != 0.")
+        blocks_per_group = block_count // (db_count * len(ksizes))
         db_lengths = [blocks_per_group] * db_count
-    return com.DenseNetBackbone(growth_rate=k,
-                                small_input=small_input,
-                                db_lengths=db_lengths,
-                                compression=compression,
-                                block_f=partial(block_f, kernel_sizes=ksizes))
+    return backbone_f(growth_rate=k,
+                      small_input=small_input,
+                      db_lengths=db_lengths,
+                      compression=compression,
+                      block_f=partial(block_f, kernel_sizes=ksizes))
+
+
+mdensenet_backbone = partial(densenet_backbone,
+                             block_f=partial(default_args(com.MDenseNetBackbone).block_f,
+                                             kernel_sizes=Reserved),
+                             backbone_f=com.MDenseNetBackbone)
+fdensenet_backbone = partial(densenet_backbone,
+                             block_f=partial(default_args(com.FDenseNetBackbone).block_f,
+                                             kernel_sizes=Reserved),
+                             backbone_f=com.FDenseNetBackbone)
 
 
 # Models ###########################################################################################
@@ -127,7 +142,7 @@ class WideResNet(ResNet):
 
 class DenseNet(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
-                             backbone_f=partial(densenet_backbone),
+                             backbone_f=densenet_backbone,
                              init=partial(initialization.kaiming_densenet, module=Reserved))
 
 

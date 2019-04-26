@@ -2,8 +2,8 @@ import warnings
 
 from torch import nn
 
-from vidlu.modules import _components as com
-from vidlu.modules import _elementary as mod
+from vidlu.modules import components as com
+from vidlu.modules import elements as mod
 
 
 def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):

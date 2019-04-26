@@ -117,7 +117,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
         if len(others) > 0:
             return reduce(lambda a, b: a.join(b, overwrite=overwrite), [self, other, *others])
         if not overwrite and any(a in self.keys() for a in other.keys()):
-            raise ValueError("Sets of field names should be disjoint if overwrite == False.")
+            raise ValueError("Sets of field names should be disjoint if `overwrite == False`.")
         return Record(self, **other._dict)
 
     def keys(self) -> KeysView:

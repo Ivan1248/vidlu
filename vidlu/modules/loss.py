@@ -2,8 +2,15 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from vidlu.utils.torch import disable_tracking_bn_stats, save_grads
+from vidlu.torch_utils import disable_tracking_bn_stats, save_grads
 
+# Cross entropy ####################################################################################
+
+# Cross entropy between softmax of the input (logits) and target
+SoftmaxCrossEntropyLoss = nn.CrossEntropyLoss
+
+
+# Adversarial training #############################################################################
 
 def _l2_normalize(d, eps=1e-8):
     d_reshaped = d.view(d.shape[0], -1, *(1 for _ in range(d.dim() - 2)))
@@ -48,3 +55,25 @@ class VATLoss(nn.Module):
                     model.zero_grad()
 
             return get_kl_div(x + d * self.eps)
+
+class CarliniWagnerLoss(nn.Module):
+    """
+    Carlini-Wagner Loss: objective function #6.
+    Paper: https://arxiv.org/pdf/1608.04644.pdf
+    """
+
+    def __init__(self):
+        super(CarliniWagnerLoss, self).__init__()
+
+    def forward(self, input, target):
+        """
+        :param input: pre-softmax/logits.
+        :param target: true labels.
+        :return: CW loss value.
+        """
+        num_classes = input.size(1)
+        label_mask = to_one_hot(target, num_classes=num_classes).float()
+        correct_logit = torch.sum(label_mask * input, dim=1)
+        wrong_logit = torch.max((1. - label_mask) * input, dim=1)[0]
+        loss = -F.relu(correct_logit - wrong_logit + 50.).sum()
+        return loss
