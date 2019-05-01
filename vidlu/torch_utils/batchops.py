@@ -23,15 +23,14 @@ def are_broadcastable(a, b):
     if number_of_scalars == 1:
         return True
     minlen = min(len(a.shape), len(b.shape))
-    return all(are_broadcastable_dimensions(d, e)
-               for d, e in zip(a.shape[-minlen:], b.shape[-minlen:]))
+    return all(
+        are_broadcastable_dimensions(d, e) for d, e in zip(a.shape[-minlen:], b.shape[-minlen:]))
 
 
 def are_comapatible_batches(a, b):
-    return (not is_scalar(a) and not is_scalar(b)
-            and len(a.shape) == len(b.shape)
-            and a.shape[0] == b.shape[0]
-            and all(are_broadcastable_dimensions(d, e) for d, e in zip(a.shape, b.shape)))
+    return (not is_scalar(a) and not is_scalar(b) and len(a.shape) == len(b.shape) and a.shape[0] ==
+            b.shape[0] and all(
+                are_broadcastable_dimensions(d, e) for d, e in zip(a.shape, b.shape)))
 
 
 def redim_as(this, other, is_batch=True):
@@ -39,6 +38,22 @@ def redim_as(this, other, is_batch=True):
 
 
 def redim(x, batch_shape, is_batch=True):
+    """Returns a view of `x` so that it (usually a batch) is broadcastable.
+
+    The new shape for x is
+        x.shape[:1] + [1, ...] + x.shape[1:] if `x` is a batch,
+                      [1, ...] + x.shape[1:] otherwise
+
+    Args:
+        x (Tensor): input.
+        batch_shape (tuple): shape that `x` has to be correctly broadcastable
+            to.
+        is_batch (bool): whether `x` is a batch, in which case the new array
+            dimensions have to be inserted after its first dimension.
+
+    Returns:
+        A view of `x` with shape (N, 1, .., *)
+    """
     if not isinstance(x, torch.Tensor):
         x = torch.tensor(x)
 
@@ -47,20 +62,9 @@ def redim(x, batch_shape, is_batch=True):
 
     if len(batch_shape) == len(x.shape):
         return x
+
     dim_fill = (1,) * (len(batch_shape) - len(x.shape))
-    if len(x.shape) == 0 or not is_batch:
-        return x.view(dim_fill + x.shape)  # scalar
-    return x.view(x.shape[:1] + dim_fill + x.shape[1:])
-
-
-class Redimmer:
-    __slots__ = 'shape',
-
-    def __init__(self, batch_or_shape):
-        shape = batch_or_shape.shape if isinstance(batch_or_shape, torch.Tensor) else batch_or_shape
-
-    def __call__(self, x, is_batch=True):
-        return redim(x, self.shape, is_batch)
+    return x.view((x.shape[:1] + dim_fill + x.shape[1:]) if is_batch else (dim_fill + x.shape))
 
 
 '''
@@ -173,7 +177,13 @@ def restrict_norm_old(x, r, p, r_is_batch=False):
 
 
 def restrict_norm(x, r, p):
-    """The projection is ideal for 2-norm and inf-norm but not for others"""
+    """Projects inputs `x` to p-balls with norm(s) `r`.
+
+    Args:
+        x: inputs.
+        r: p-ball radius/radii.
+        p: p-norm p.
+    """
     # TODO: non-scalar r
     if p == np.inf:
         return single.clamp(x, -r, r)
@@ -183,6 +193,17 @@ def restrict_norm(x, r, p):
         torch.min(x, project_to_1_ball(x, r))
     else:
         raise NotImplementedError(f"Operation not implemented for {p}-norm.")
+
+
+def restrict_norm_by_scaling(x, r, p):
+    """Divides inputs by their norms and multiples them by `r`.
+
+    Args:
+        x: inputs.
+        r: p-ball radius/radii.
+        p: p-norm p.
+    """
+    return x * (r / norm(x, p))
 
 
 def linear_min_on_p_ball(grad, r, p=2):
