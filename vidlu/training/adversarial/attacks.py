@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from vidlu.modules.loss import SoftmaxCrossEntropyLoss
-from vidlu.torch_utils import clamp
+from vidlu.torch_utils import clamp, to_one_hot
 from vidlu.torch_utils import batchops as B
 from vidlu.torch_utils import random
 
@@ -237,7 +237,7 @@ class PGDAttack(Attack):
                                  clip_bounds=self.clip_bounds, delta_init=delta)
 
 
-'''
+
 CARLINI_L2DIST_UPPER = 1e10
 CARLINI_COEFF_UPPER = 1e10
 INVALID_LABEL = -1
@@ -247,6 +247,25 @@ UPPER_CHECK = 1e9
 PREV_LOSS_INIT = 1e6
 TARGET_MULT = 10000.0
 NUM_CHECKS = 10
+
+
+def get_carlini_loss(targeted, confidence_threshold):
+    def carlini_loss(logits, y):
+        y_onehot = to_one_hot(y, logits.shape[-1])
+        real = (y_onehot * logits).sum(dim=-1)
+
+        other = ((1.0 - y_onehot) * logits - (y_onehot * TARGET_MULT)).max(1)[0]
+        # - (y_onehot * TARGET_MULT) is for the true label not to be selected
+
+        if targeted:
+            loss1 = (other - real + confidence_threshold).relu_()
+        else:
+            loss1 = (real - other + confidence_threshold).relu_()
+        loss2 = (l2distsq).sum()
+        loss1 = torch.sum(const * loss1)
+        loss = loss1 + loss2
+        return loss
+
 
 class CarliniWagnerL2Attack(Attack):
     def __init__(self, predict, loss_fn=None, clip_bounds=None, minimize_loss=False,
@@ -422,4 +441,4 @@ class CarliniWagnerL2Attack(Attack):
                                      coeff_lower_bound)
 
         return final_advs
-'''
+

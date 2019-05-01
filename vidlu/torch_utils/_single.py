@@ -37,7 +37,8 @@ def profile(func, on_cuda=True):
 
 def to_one_hot(y: torch.Tensor, c: int, dtype=None, device=None):
     y_flat = y.view(-1, 1)
-    return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=device)
+    device = device or y.device
+    return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=device or y.device)
             .scatter_(1, y_flat, 1).view(*y.shape, -1))
 
 
