@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from vidlu.torch_utils import disable_tracking_bn_stats, save_grads
+from vidlu.utils.torch import disable_tracking_bn_stats, save_grads
 
 # Cross entropy ####################################################################################
 
