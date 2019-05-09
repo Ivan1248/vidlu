@@ -1,6 +1,6 @@
 from _context import vidlu
 
-from vidlu.torch_utils.random import uniform_random_sample_from_p_ball
+from vidlu.ops.random import uniform_random_sample_from_p_ball
 
 maxi = 9
 for i in range(maxi):
