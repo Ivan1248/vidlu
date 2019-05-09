@@ -2,17 +2,20 @@ from functools import partial
 
 import numpy as np
 import torch
+from torch import nn
 import torch.nn.functional as F
+from torch import optim
 
 from vidlu.modules.loss import SoftmaxCrossEntropyLoss
-from vidlu.torch_utils import clamp, to_one_hot
-from vidlu.torch_utils import batchops as B
-from vidlu.torch_utils import random
+from vidlu.ops import clamp, one_hot, atanh, scaled_tanh
+from vidlu.ops import batch
+from vidlu.ops import random
+from vidlu.utils.func import default_args
 
 
 # Attack implementations are based on AdverTorch (https://github.com/BorealisAI/advertorch)
 
-def _get_predicted_label(predict, x):
+def _predict_hard(predict, x):
     """Compute predicted labels given `x`. Used to prevent label leaking
 
     Args:
@@ -28,7 +31,7 @@ def _get_predicted_label(predict, x):
         return y
 
 
-def _get_predicted_label_soft(predict, x, temperature=1):
+def _predict_soft(predict, x, temperature=1):
     """Computes softmax output given logits `x`.
 
      It computes `softmax(x/temperature)`. `temperature` is `1` by default.
@@ -47,6 +50,14 @@ def _get_predicted_label_soft(predict, x, temperature=1):
         if temperature != 1:
             out /= temperature
         return F.softmax(out, dim=1)
+
+
+def classification_untargeted_is_sucess(label, pred):
+    return pred != label
+
+
+def classification_targeted_is_sucess(label, pred):
+    return pred == label
 
 
 class Attack:
@@ -75,14 +86,17 @@ class Attack:
         `None` (default) if the output of `_predict` doesn't have to be clipped.
     """
 
-    def __init__(self, predict, loss_fn=None, clip_bounds=None, minimize_loss=False,
-                 get_predicted_label=_get_predicted_label):
-        loss_fn = SoftmaxCrossEntropyLoss(reduction='sum') if loss_fn is None else loss_fn
+    def __init__(self, predict, loss_fn=None, clip_bounds=None, is_success_fn=None,
+                 get_predicted_label=None):
+        if type(self._perturb) == Attack._perturb:
+            raise RuntimeError(
+                "The `_perturb` (not `perturb`) method should be overridden in subclass"
+                + f" `{type(self).__name__}`.")
         self.predict = predict
-        self.loss_fn = (
-            (lambda prediction, label: -loss_fn(prediction, label)) if minimize_loss else loss_fn)
+        self.loss_fn = SoftmaxCrossEntropyLoss(reduction='sum') if loss_fn is None else loss_fn
         self.clip_bounds = clip_bounds
-        self.get_predicted_label = get_predicted_label
+        self.get_predicted_label = _predict_hard if get_predicted_label is None else get_predicted_label
+        self.is_success = classification_untargeted_is_sucess if is_success_fn is None else is_success_fn
 
     def perturb(self, x, y=None):
         """Generates an adversarial example.
@@ -110,7 +124,7 @@ class Attack:
         return torch.clamp(x, *self.clip_bounds)
 
     def _perturb(self, x, y):
-        # has to be overriden in subclasses
+        # has to be implemented in subclasses
         raise NotImplementedError()
 
 
@@ -120,17 +134,17 @@ class GradientSignAttack(Attack):
     Paper: https://arxiv.org/abs/1412.6572
     """
 
-    def __init__(self, predict, loss_fn=None, clip_bounds=None, minimize_loss=False,
-                 get_predicted_label=_get_predicted_label, eps=0.3):
+    def __init__(self, predict, loss_fn=None, clip_bounds=None, is_success_fn=None,
+                 get_predicted_label=None, eps=0.3):
         """Create an instance of the GradientSignAttack.
 
         Args:
             eps (float or Tensor): attack step size.
         """
-        super().__init__(predict, loss_fn, clip_bounds, minimize_loss, get_predicted_label)
+        super().__init__(predict, loss_fn, clip_bounds, is_success_fn, get_predicted_label)
         self.eps = eps
 
-    def perturb(self, x, y=None):
+    def _perturb(self, x, y=None):
         output, loss, grad = self._get_output_and_loss_and_grad(x, y)
         grad_sign = grad.sign()
         return x + self.eps * grad_sign
@@ -189,13 +203,13 @@ def perturb_iterative(x, y, predict, iter_count, eps, step_size, loss_fn, delta_
             if p == np.inf:  # try with restrict_norm instead of sign, mul
                 delta += delta.grad.sign().mul_(step_size)
                 if eps is not None:
-                    delta = B.restrict_norm(delta, eps, p=p)
+                    delta = batch.restrict_norm(delta, eps, p=p)
                 delta = (x + delta).clamp_(*clip_bounds).sub_(x)
             elif p in [1, 2]:  # try with restrict_norm_by_scaling instead of restrict_norm
-                delta += B.restrict_norm(delta.grad, 1, p=p).mul_(step_size)
+                delta += batch.restrict_norm(delta.grad, 1, p=p).mul_(step_size)
                 delta = (x + delta).clamp_(*clip_bounds).sub_(x)
                 if eps is not None:
-                    delta = B.restrict_norm(delta, eps, p=p)  # !!
+                    delta = batch.restrict_norm(delta, eps, p=p)  # !!
             else:
                 raise NotImplementedError(f"Not implemented for p = {p}.")
 
@@ -205,8 +219,8 @@ def perturb_iterative(x, y, predict, iter_count, eps, step_size, loss_fn, delta_
 
 
 class PGDAttack(Attack):
-    def __init__(self, predict, loss_fn=None, clip_bounds=None, minimize_loss=False,
-                 get_predicted_label=_get_predicted_label, eps=0.3, iter_count=40, step_size=0.01,
+    def __init__(self, predict, loss_fn=None, clip_bounds=None, is_success_fn=None,
+                 get_predicted_label=_predict_hard, eps=0.3, iter_count=40, step_size=0.01,
                  rand_init=True, p=np.inf):
         """The PGD attack (Madry et al, 2017).
 
@@ -221,7 +235,7 @@ class PGDAttack(Attack):
             rand_init (bool, optional): random initialization.
             p (optional): the order of maximum distortion (inf or 2).
         """
-        super().__init__(predict, loss_fn, clip_bounds, minimize_loss, get_predicted_label)
+        super().__init__(predict, loss_fn, clip_bounds, is_success_fn, get_predicted_label)
         self.eps = eps
         self.iter_count = iter_count
         self.step_size = step_size
@@ -237,7 +251,6 @@ class PGDAttack(Attack):
                                  clip_bounds=self.clip_bounds, delta_init=delta)
 
 
-
 CARLINI_L2DIST_UPPER = 1e10
 CARLINI_COEFF_UPPER = 1e10
 INVALID_LABEL = -1
@@ -250,8 +263,8 @@ NUM_CHECKS = 10
 
 
 def get_carlini_loss(targeted, confidence_threshold):
-    def carlini_loss(logits, y):
-        y_onehot = to_one_hot(y, logits.shape[-1])
+    def carlini_loss(logits, y, l2distsq, c):
+        y_onehot = one_hot(y, logits.shape[-1])
         real = (y_onehot * logits).sum(dim=-1)
 
         other = ((1.0 - y_onehot) * logits - (y_onehot * TARGET_MULT)).max(1)[0]
@@ -262,16 +275,19 @@ def get_carlini_loss(targeted, confidence_threshold):
         else:
             loss1 = (real - other + confidence_threshold).relu_()
         loss2 = (l2distsq).sum()
-        loss1 = torch.sum(const * loss1)
+        loss1 = torch.sum(c * loss1)
         loss = loss1 + loss2
         return loss
 
+    return carlini_loss
+
 
 class CarliniWagnerL2Attack(Attack):
-    def __init__(self, predict, loss_fn=None, clip_bounds=None, minimize_loss=False,
-                 get_predicted_label=_get_predicted_label, num_classes, confidence=0,
-                 learning_rate=0.01,
-                 binary_search_steps=9, max_iter=10000, abort_early=True, initial_const=1e-3):
+    def __init__(self, predict, loss_fn=None, clip_bounds=None, is_success_fn=None,
+                 get_predicted_label=_predict_hard, distance_fn=batch.l2_distace_sqr,
+                 num_classes=None, confidence=0,
+                 learning_rate=0.01, binary_search_steps=9, max_iter=10000, abort_early=True,
+                 initial_const=1e-3):
         """The Carlini and Wagner L2 Attack, https://arxiv.org/abs/1608.04644
 
         Args:
@@ -279,7 +295,7 @@ class CarliniWagnerL2Attack(Attack):
             confidence: confidence of the adversarial examples.
             learning_rate: the learning rate for the attack algorithm
             binary_search_steps: number of binary search times to find the optimum
-            max_iterations: the maximum number of iterations
+            max_iter: the maximum number of iterations
             abort_early: if set to true, abort early if getting stuck in local min
             initial_const: initial value of the constant c
         """
@@ -287,9 +303,10 @@ class CarliniWagnerL2Attack(Attack):
             raise NotImplementedError("The CW attack currently does not support a different loss"
                                       " function other than the default. Setting loss_fn manually"
                                       " is not effective.")
+        loss_fn = loss_fn or get_carlini_loss()
+        super().__init__(predict, loss_fn, clip_bounds, is_success_fn, get_predicted_label)
 
-        super().__init__(predict, loss_fn, clip_bounds, minimize_loss, get_predicted_label)
-
+        self.distance_fn = distance_fn
         self.learning_rate = learning_rate
         self.max_iter = max_iter
         self.binary_search_steps = binary_search_steps
@@ -300,27 +317,13 @@ class CarliniWagnerL2Attack(Attack):
         # The last iteration (if we run many steps) repeat the search once.
         self.repeat = binary_search_steps >= REPEAT_STEP
 
-    def _loss_fn(self, output, y_onehot, l2distsq, const):
-        # TODO: move this out of the class and make this the default loss_fn
-        #   after having targeted tests implemented
-        real = (y_onehot * output).sum(dim=1)
-
-        # TODO: make loss modular, write a loss class
-        other = ((1.0 - y_onehot) * output - (y_onehot * TARGET_MULT)).max(1)[0]
-        # - (y_onehot * TARGET_MULT) is for the true label not to be selected
-
-        if self.minimize_loss:
-            loss1 = clamp(other - real + self.confidence, min=0.)
-        else:
-            loss1 = clamp(real - other + self.confidence, min=0.)
-        loss2 = (l2distsq).sum()
-        loss1 = torch.sum(const * loss1)
-        loss = loss1 + loss2
-        return loss
+    def _loss_fn(self, output, y_onehot, l2distsq, loss_coef):
+        return get_carlini_loss(self.targeted, self.confidence)(output, y_onehot, l2distsq,
+                                                                loss_coef)
 
     def _is_successful(self, output, label, is_logits):
         # determine success, see if confidence-adjusted logits give the right
-        #   label
+        # label
 
         if is_logits:
             output = output.detach().clone()
@@ -334,30 +337,30 @@ class CarliniWagnerL2Attack(Attack):
             if pred == INVALID_LABEL:
                 return pred.new_zeros(pred.shape).byte()
 
-        return is_successful(pred, label, self.targeted)
+        return self.is_success(pred, label)
 
     def _forward_and_update_delta(self, optimizer, x_atanh, delta, y_onehot, loss_coeffs):
-
         optimizer.zero_grad()
-        adv = tanh_rescale(delta + x_atanh, self.clip_min, self.clip_max)
-        transimgs_rescale = tanh_rescale(x_atanh, self.clip_min, self.clip_max)
+
+        adv = scaled_tanh(delta + x_atanh, *self.clip_bounds)
+        transimgs_rescale = scaled_tanh(x_atanh, *self.clip_bounds)
+        l2distsq = self.distance_fn(adv, transimgs_rescale)
         output = self.predict(adv)
-        l2distsq = calc_l2distsq(adv, transimgs_rescale)
+
         loss = self._loss_fn(output, y_onehot, l2distsq, loss_coeffs)
         loss.backward()
         optimizer.step()
 
-        return loss.item(), l2distsq.data, output.data, adv.data
+        return loss.item(), l2distsq.detach(), output.detach(), adv.detach()
 
-    def _get_arctanh_x(self, x):
+    def _arctanh_clip(self, x):
         result = clamp((x - self.clip_min) / (self.clip_max - self.clip_min), min=self.clip_min,
                        max=self.clip_max) * 2 - 1
-        return torch_arctanh(result * ONE_MINUS_EPS)
+        return atanh(result * ONE_MINUS_EPS)
 
     def _update_if_smaller_dist_succeed(self, adv_img, labs, output, l2distsq, batch_size,
                                         cur_l2distsqs, cur_labels, final_l2distsqs, final_labels,
                                         final_advs):
-
         target_label = labs
         output_logits = output
         _, output_label = torch.max(output_logits, 1)
@@ -374,7 +377,6 @@ class CarliniWagnerL2Attack(Attack):
 
     def _update_loss_coeffs(self, labs, cur_labels, batch_size, loss_coeffs, coeff_upper_bound,
                             coeff_lower_bound):
-
         # TODO: remove for loop, not significant, since only called during each
         # binary search step
         for ii in range(batch_size):
@@ -391,13 +393,7 @@ class CarliniWagnerL2Attack(Attack):
                 else:
                     loss_coeffs[ii] *= 10
 
-    def perturb(self, x, y=None):
-        x, y = self._verify_and_process_inputs(x, y)
-
-        # Initialization
-        if y is None:
-            y = self._get_predicted_label(x)
-        x = replicate_input(x)
+    def _perturb(self, x, y):
         batch_size = len(x)
         coeff_lower_bound = x.new_zeros(batch_size)
         coeff_upper_bound = x.new_ones(batch_size) * CARLINI_COEFF_UPPER
@@ -405,8 +401,8 @@ class CarliniWagnerL2Attack(Attack):
         final_l2distsqs = [CARLINI_L2DIST_UPPER] * batch_size
         final_labels = [INVALID_LABEL] * batch_size
         final_advs = x
-        x_atanh = self._get_arctanh_x(x)
-        y_onehot = to_one_hot(y, self.num_classes).float()
+        x_atanh = self._arctanh_clip(x)
+        y_onehot = one_hot(y, self.num_classes).float()
 
         final_l2distsqs = torch.FloatTensor(final_l2distsqs).to(x.device)
         final_labels = torch.LongTensor(final_labels).to(x.device)
@@ -424,14 +420,12 @@ class CarliniWagnerL2Attack(Attack):
             if (self.repeat and outer_step == (self.binary_search_steps - 1)):
                 loss_coeffs = coeff_upper_bound
             for ii in range(self.max_iter):
-                loss, l2distsq, output, adv_img = self._forward_and_update_delta(optimizer, x_atanh,
-                                                                                 delta, y_onehot,
-                                                                                 loss_coeffs)
-                if self.abort_early:
-                    if ii % (self.max_iter // NUM_CHECKS or 1) == 0:
-                        if loss > prevloss * ONE_MINUS_EPS:
-                            break
-                        prevloss = loss
+                loss, l2distsq, output, adv_img = self._forward_and_update_delta(
+                    optimizer, x_atanh, delta, y_onehot, loss_coeffs)
+                if self.abort_early and ii % (self.max_iter // NUM_CHECKS or 1) == 0:
+                    if loss > prevloss * ONE_MINUS_EPS:
+                        break
+                    prevloss = loss
 
                 self._update_if_smaller_dist_succeed(adv_img, y, output, l2distsq, batch_size,
                                                      cur_l2distsqs, cur_labels, final_l2distsqs,
@@ -441,4 +435,3 @@ class CarliniWagnerL2Attack(Attack):
                                      coeff_lower_bound)
 
         return final_advs
-
