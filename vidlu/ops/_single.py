@@ -1,30 +1,10 @@
 import warnings
 
-import contextlib
-from functools import partial
-
 import numpy as np
 import torch
 
 
-@contextlib.contextmanager
-def disable_tracking_bn_stats(model):
-    def switch_attr(m):
-        if hasattr(m, 'track_running_stats'):
-            m.track_running_stats ^= True
-
-    model.apply(switch_attr)
-    yield
-    model.apply(switch_attr)
-
-
-@contextlib.contextmanager
-def save_grads(params):
-    param_grads = [(p, p.grad.clone().detach()) for p in params]
-    yield
-    for p, g in param_grads:
-        p.grad = g
-
+# operations
 
 def profile(func, on_cuda=True):
     on_cuda = True
@@ -35,17 +15,49 @@ def profile(func, on_cuda=True):
     return output, prof.key_averages().table('cuda_time_total')
 
 
-def to_one_hot(y: torch.Tensor, c: int, dtype=None, device=None):
-    y_flat = y.view(-1, 1)
-    device = device or y.device
-    return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=device or y.device)
-            .scatter_(1, y_flat, 1).view(*y.shape, -1))
+def one_hot(indices: torch.Tensor, c: int, dtype=None, device=None):
+    """Returns a one-hot array.
+
+    Args:
+        indices (Tensor): labels.
+        c (int): number of classes.
+
+    Returns:
+        A one-hot array with the last array dimension of size `c` and ones at
+        `indices`.
+    """
+    y_flat = indices.view(-1, 1)
+    return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=device or indices.device)
+            .scatter_(1, y_flat, 1).view(*indices.shape, -1))
 
 
 def clamp(x, min, max):
+    """A `clamp` that works with `min` and `max` being arrays.
+
+    Args:
+        x: input array.
+        min (Tensor or float): lower bound.
+        max (Tensor or float): upper bound.
+
+    Returns:
+        An array with values bounded with `min` and `max`.
+    """
     if not isinstance(min, torch.Tensor):
         return x.clamp(min, max)
     return torch.min(torch.max(x, min), max)
+
+
+def project_to_1_ball(x, max_norm=1, inplace=False):
+    """from https://gist.github.com/daien/1272551"""
+    sign = x.sign()
+    x = x.abs_() if inplace else x.abs()
+    xs, _ = x.view(-1).sort(descending=True)
+    cssmn = xs.cumsum(dim=0) - max_norm
+    ind = torch.arange(1, xs.shape[0] + 1, dtype=torch.float)
+    pcond = (xs * ind) > cssmn
+    rho = ind[pcond][-1]  # number of > 0 elements
+    theta = cssmn[pcond][-1] / rho
+    return x.sub_(theta).clamp_(min=0).mul_(sign)
 
 
 def project_to_1_ball_i(x, max_norm=1, max_iter=20, eps=1e-6, inplace=False):
@@ -68,19 +80,6 @@ def project_to_1_ball_i(x, max_norm=1, max_iter=20, eps=1e-6, inplace=False):
     return x.clamp_(min=0).mul_(sign)
 
 
-def project_to_1_ball(x, max_norm=1, inplace=False):
-    """from https://gist.github.com/daien/1272551"""
-    sign = x.sign()
-    x = x.abs_() if inplace else x.abs()
-    xs, _ = x.view(-1).sort(descending=True)
-    cssmn = xs.cumsum(dim=0) - max_norm
-    ind = torch.arange(1, xs.shape[0] + 1, dtype=torch.float)
-    pcond = (xs * ind) > cssmn
-    rho = ind[pcond][-1]  # number of > 0 elements
-    theta = cssmn[pcond][-1] / rho
-    return x.sub_(theta).clamp_(min=0).mul_(sign)
-
-
 def linear_min_on_p_ball(grad, max_norm, p):
     """Finds the minimum of a function on a `p`-ball with norm `max_norm`.
 
@@ -101,3 +100,16 @@ def linear_min_on_p_ball(grad, max_norm, p):
         return sol
     else:
         raise ValueError(f"Frank-Wolfe LMO solving not implemented for p={p}.")
+
+
+# Elemetwise functions
+
+def scaled_tanh(x, min=-1., max=1., hardness=1):
+    if hardness != 1:
+        x *= hardness
+    y_scale, y_offset = 0.5 * (max - min), 0.5 * (max + min)
+    return torch.tanh(x) * y_scale + y_offset
+
+
+def atanh(x):
+    return 0.5 * torch.log((1 + x).div_(1 - x))

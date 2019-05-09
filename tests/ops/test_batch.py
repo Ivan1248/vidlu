@@ -3,7 +3,7 @@ import pytest
 import torch
 import numpy as np
 
-from vidlu.torch_utils import batchops
+from vidlu.ops import batch
 
 torch.no_grad()
 
@@ -19,7 +19,7 @@ class TestBatchops:
             for s in shapes:
                 x = torch.zeros(s).uniform_(-1, 2)
                 x /= x.numel() ** (1 / (p + 1e-1))
-                norms = batchops.norm(x, p)
+                norms = batch.norm(x, p)
                 for i, e in enumerate(x):  # bug in torch.norm in pytorch <= 1.0.0
                     assert torch.allclose(norms[i], torch.norm(e.view(-1), p, dim=0))
 
@@ -29,7 +29,7 @@ class TestBatchops:
         for s in shapes:
             for n in target_norms:
                 x = torch.zeros(s).uniform_(-2, 2)
-                x_proj = batchops.project_to_1_ball(x, n)
-                x_proj = batchops.project_to_1_ball(x_proj, n)
+                x_proj = batch.project_to_1_ball(x, n)
+                x_proj = batch.project_to_1_ball(x_proj, n)
                 norms = x_proj.view(x.shape[0], -1).abs().sum(1)
                 assert torch.allclose(norms, torch.full_like(norms, n), **weaker_tols)

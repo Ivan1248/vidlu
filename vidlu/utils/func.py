@@ -1,7 +1,6 @@
 import inspect
 from inspect import signature
 from functools import partialmethod, partial, reduce, wraps
-from toolz import valmap
 
 from .collections import NameDict
 from vidlu.utils.tree import tree_to_paths
@@ -9,16 +8,26 @@ from vidlu.utils.tree import tree_to_paths
 
 # Wrappers #########################################################################################
 
-class composition:
-    __slots__ = 'funcs'
+def compose(func0, *funcs):
+    """Creates a composition of functions.
 
-    def __init__(self, *funcs):
-        self.funcs = funcs
+    Functions are applied from left to right. The first function can have any
+    signature, while other functions should be able to accept only 1 argument.
 
-    def __call__(self, x):
-        for f in self.funcs:
+    Args:
+        func0 (callable): the first function. I can have any signature.
+        *funcs (callable): other functions. They are to be called with a single
+            argument.
+    """
+
+    @wraps(func0)
+    def wrapper(*args, **kwargs):
+        x = func0(*args, **kwargs)
+        for f in funcs:
             x = f(x)
         return x
+
+    return wrapper()
 
 
 def pipe(x, *funcs):

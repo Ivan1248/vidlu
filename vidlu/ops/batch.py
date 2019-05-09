@@ -1,10 +1,12 @@
-from functools import partial, update_wrapper
+import functools
 
 import numpy as np
 import torch
 from . import _single as single
 from numbers import Real
 
+
+# Mutual batch broadcastability
 
 def is_scalar(x):
     return isinstance(x, Real) or isinstance(x, torch.Tensor) and len(x.shape) == 0
@@ -28,9 +30,12 @@ def are_broadcastable(a, b):
 
 
 def are_comapatible_batches(a, b):
-    return (not is_scalar(a) and not is_scalar(b) and len(a.shape) == len(b.shape) and a.shape[0] ==
-            b.shape[0] and all(
-                are_broadcastable_dimensions(d, e) for d, e in zip(a.shape, b.shape)))
+    return (not is_scalar(a) and not is_scalar(b)
+            and len(a.shape) == len(b.shape) and a.shape[0] == b.shape[0]
+            and all(are_broadcastable_dimensions(d, e) for d, e in zip(a.shape, b.shape)))
+
+
+# Making batches correctly broadcastable (batch-broadcastable)
 
 
 def redim_as(this, other, is_batch=True):
@@ -103,39 +108,43 @@ sub = _create_inplace_batch_op(torch.Tensor.sub, torch.Tensor.sub_)
 '''
 
 
+# Norms and generalized norms
+
+def abs_pow_sum(x, p, keep_dims=False):
+    x = x.view(x.size(0), -1)
+    psum = (x.abs().pow_(p) if p % 2 == 0 else x.pow(p)).sum(dim=1)
+    return redim_as(psum, x) if keep_dims else psum
+
+
 def norm(x, p, keep_dims=False):
     norm_ = x.view(x.size(0), -1).norm(p=p, dim=1)
     return redim_as(norm_, x) if keep_dims else norm_
 
 
-# TODO: remove
-'''
-def clamp(x, min, max, bounds_are_batches=False, *, inplace=True):
-    if not isinstance(min, torch.Tensor):
-        return (x.clamp_ if inplace else x.clamp)(min, max)
-    min, max = [redim_as(m, x, bounds_are_batches) for m in [min, max]]
-    out = x if inplace else None
-    return torch.min(torch.max(x, min, out=out), max, out=out)
-'''
+def mean_pow(x, p, keep_dims=False):
+    """Generalized mean of `abs(x)`."""
+    x = x.view(x.size(0), -1)
+    pmean = (x.pow(p) if p % 2 == 0 else x.pow(p)).mean(dim=1)
+    return redim_as(pmean, x) if keep_dims else pmean
 
-'''
-def project_to_1_ball_old(x, r, r_is_batch=False, *, inplace=False):
-    """Batch version, based on https://gist.github.com/daien/1272551"""
-    if r_is_batch:
-        if len(r.shape) > 2:
-            raise ValueError("Not implemented for `r` having more than 2 array dimensions.")
-        r = redim_as(r, x, r_is_batch)
 
-    sign = x.sign()
-    x = x.abs_() if inplace else x.abs()
-    sorted, _ = x.view(x.shape[0], -1).sort(descending=True)
-    cssmns = sorted.cumsum(dim=1) - r
-    ind = torch.arange(1, sorted.shape[1] + 1, dtype=torch.float)
-    pconds = (sorted * ind) > cssmns
-    rhos = torch.tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
-    thetas = torch.tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
-    return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
-'''
+def generalized_mean(x, p, keep_dims=False):
+    return mean_pow(x, p, keep_dims).pow_(1 - p)
+
+
+def mean_pow_abs(x, p, keep_dims=False):
+    x = x.view(x.size(0), -1)
+    pmean = (x.abs().pow_(p) if p % 2 == 0 else x.pow(p)).mean(dim=1)
+    return redim_as(pmean, x) if keep_dims else pmean
+
+
+def generalized_mean_abs(x, p, keep_dims=False):
+    """Generalized mean of `abs(x)`."""
+    return mean_pow_abs(x, p, keep_dims).pow_(1 - p)
+
+
+def l2_distace_sqr(x, y, keep_dims=False):
+    return abs_pow_sum(x - y, 2, keep_dims=False)
 
 
 def project_to_1_ball(x, r, inplace=False):
@@ -158,22 +167,6 @@ def project_to_1_ball(x, r, inplace=False):
     rhos = torch.tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
     thetas = torch.tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
     return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
-
-
-'''
-def restrict_norm_old(x, r, p, r_is_batch=False):
-    """The projection is ideal for 2-norm and inf-norm but not for others"""
-    # TODO: non-scalar r
-    if p == np.inf:
-        return clamp(x, -r, r, r_is_batch)
-    elif p == 2:  # TODO: ellipsoid
-        factor = torch.min(redim_as(r, x, r_is_batch) / redim_as(norm(x, p), x), torch.ones(()))
-        return x.mul_(factor, x)
-    elif p == 1:
-        torch.min(x, project_to_1_ball(x, r, inplace=True))  # TODO: optimize
-    else:
-        raise NotImplementedError(f"Operation not implemented for {p}-norm.")
-'''
 
 
 def restrict_norm(x, r, p):

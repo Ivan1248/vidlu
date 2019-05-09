@@ -1,6 +1,6 @@
 import torch
 
-from vidlu.torch_utils import save_grads
+from vidlu.utils.torch import save_grads
 
 
 class TestSaveGrads:

@@ -5,7 +5,7 @@ from functools import partial
 from ignite import metrics
 
 from vidlu.data import Record
-from vidlu.modules.models import DiscriminativeModel, Autoencoder
+from vidlu.models import DiscriminativeModel, Autoencoder
 from vidlu.modules import components as c
 from vidlu.modules import loss
 from vidlu.problem import Problem
