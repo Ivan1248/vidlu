@@ -2,6 +2,8 @@ from functools import partial
 
 from torch.optim.lr_scheduler import MultiStepLR, LambdaLR
 
+from vidlu.utils.func import default_args
+
 
 class ScalableMultiStepLR(MultiStepLR):
     """Set the learning rate of each parameter group to the initial lr decayed
@@ -32,7 +34,8 @@ class ScalableMultiStepLR(MultiStepLR):
         >>>     validate(...)
     """
 
-    def __init__(self, optimizer, milestones, epoch_count, gamma=0.1, last_epoch=-1):
+    def __init__(self, optimizer, milestones, epoch_count, gamma=0.1,
+                 last_epoch=default_args(MultiStepLR).last_epoch):
         super().__init__(optimizer, milestones=[round(m * epoch_count) for m in milestones],
                          gamma=gamma, last_epoch=last_epoch)
 
@@ -62,7 +65,8 @@ class ScalableLambdaLR(LambdaLR):
         >>>     validate(...)
     """
 
-    def __init__(self, optimizer, lr_lambda, epoch_count, last_epoch=-1):
+    def __init__(self, optimizer, lr_lambda, epoch_count,
+                 last_epoch=default_args(LambdaLR).last_epoch):
         if not isinstance(lr_lambda, list) and not isinstance(lr_lambda, tuple):
             lr_lambda = [lr_lambda] * len(optimizer.param_groups)
         lr_lambda = [lambda e: ll(e / epoch_count) for ll in lr_lambda]
