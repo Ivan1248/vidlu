@@ -2,7 +2,7 @@ import argparse
 
 # noinspection PyUnresolvedReferences
 from _context import vidlu
-from vidlu.utils.tree import paths_to_tree
+from vidlu.utils import tree
 from vidlu.utils.func import ArgTree, find_empty_params_deep
 
 # example: python find_empty_args.py vidlu.learning.models.ResNet18
@@ -24,7 +24,7 @@ try:
     for ea in empty_args:
         print(' ', '/'.join(ea))
     print("As tree:")
-    print(' ', paths_to_tree([(x, '?') for x in empty_args], ArgTree))
+    print(' ', tree.unflatten([(x, '?') for x in empty_args], ArgTree))
 except (NameError, AttributeError):
     print(f"{namespace_str} contains the following:")
     namespace = eval(namespace_str)

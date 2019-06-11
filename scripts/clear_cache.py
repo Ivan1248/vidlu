@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('ds', type=str)
 args = parser.parse_args()
 
-get_data = CachingDatasetFactory(dirs.DATASETS, cache_dir=dirs.CACHE)
+get_data = CachingDatasetFactory(dirs.DATASETS, cache_dir=dirs.CACHE, add_statistics=True)
 pds = get_data(args.ds)
 
 for k, ds in pds.items():
