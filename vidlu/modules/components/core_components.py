@@ -6,8 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from ..elements import (Module, Sequential, Conv, ConvTranspose, MaxPool, BatchNorm, Linear,
-                        Func, Identity, AvgPool, Parallel, Sum, Concat,
-                        parameter_count)
+                        Func, Identity, AvgPool, Parallel, Sum, Concat, Identity, parameter_count)
 from vidlu.modules.utils import try_get_module_name_from_call_stack
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
@@ -15,7 +14,6 @@ from vidlu.utils.collections import NameDict
 import math
 
 # Default arguments ################################################################################
-
 
 _d = NameDict(
     norm_f=BatchNorm,

@@ -1,5 +1,6 @@
 from torch import nn
 
+from vidlu.utils.func import Empty
 from vidlu.utils.inspect import find_frame_in_call_stack
 
 

@@ -102,13 +102,16 @@ def linear_min_on_p_ball(grad, max_norm, p):
         raise ValueError(f"Frank-Wolfe LMO solving not implemented for p={p}.")
 
 
-# Elemetwise functions
+# Elementwise functions
 
-def scaled_tanh(x, min=-1., max=1., hardness=1):
-    if hardness != 1:
-        x *= hardness
+def scaled_tanh(x, min=-1., max=1., input_scale=1):
     y_scale, y_offset = 0.5 * (max - min), 0.5 * (max + min)
-    return torch.tanh(x) * y_scale + y_offset
+    return torch.tanh(x if input_scale == 1 else input_scale * x) * y_scale + y_offset
+
+
+def unscaled_atanh(x, min=-1., max=1., input_scale=1):
+    y_scale, y_offset = 0.5 * (max - min), 0.5 * (max + min)
+    return torch.tanh(x if input_scale == 1 else input_scale * x) * y_scale + y_offset
 
 
 def atanh(x):

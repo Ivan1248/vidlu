@@ -14,9 +14,9 @@ def generalized_normal_distribution(p, loc, scale):
         return D.Laplace(loc, scale)
 
 
-def generalized_normal_sample(p, loc=0, scale=1, shape=()):
-    """Samples from a generalized normal distribution with a 1 degree of
-    freedom diagonal covariance matrix.
+def generalized_normal_sample(p, loc=0, scale=1, shape=(), dtype=None, device=None):
+    """Samples from a generalized normal distribution with a diagonal covariance
+    matrix with 1 degree of freedom.
 
     p(x) = 1/Z*exp(-(|x-loc|/scale)^p), Z = p/(2*scale*gamma(1/p))
 
@@ -32,15 +32,16 @@ def generalized_normal_sample(p, loc=0, scale=1, shape=()):
     """
     if isinstance(shape, Real):
         shape = (shape,)
+    kw = dict(dtype=dtype, device=device)
     if p in [np.inf, 'inf']:
-        return torch.empty(shape).uniform_(loc - scale, loc + scale)
+        return torch.empty(shape, **kw).uniform_(loc - scale, loc + scale)
     if p == 2:
-        return torch.empty(shape).normal_(loc, scale)
+        return torch.empty(shape, **kw).normal_(loc, scale)
     elif p == 1:
         return D.Laplace(loc, scale).rsample(shape)
 
 
-def uniform_sample_from_p_ball(p, shape=()):
+def uniform_sample_from_p_ball(p, shape=(), device=None, dtype=None):
     """Samples from a uniform distribution over unit a p-ball.
 
     A sample from a p-generalized normal distribution is taken, divided by its
@@ -55,8 +56,9 @@ def uniform_sample_from_p_ball(p, shape=()):
     """
     if isinstance(shape, Real):
         shape = (shape,)
-    arr = generalized_normal_sample(p, 0, 1, shape=shape)
+    kw = dict(dtype=dtype, device=device)
+    arr = generalized_normal_sample(p, 0, 1, shape=shape, **kw)
     if p in [np.inf, 'inf']:
         return arr
-    r = torch.empty(()).uniform_(0, 1).pow_(1 / np.prod(shape))
+    r = torch.empty((), **kw).uniform_(0, 1).pow_(1 / np.prod(shape))
     return arr.mul_(r / arr.norm(p))

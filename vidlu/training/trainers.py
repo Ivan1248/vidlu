@@ -1,56 +1,87 @@
-from functools import partial, partialmethod, lru_cache
+from abc import ABC
+from collections import Callable, Mapping
+from functools import partial, lru_cache
+import dataclasses as dc
+from dataclasses import dataclass, InitVar
 
+from tqdm import tqdm
 import torch
 from torch import nn
-from torch.optim import SGD
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
-from ignite import engine
-
-import vidlu.modules.utils
-from vidlu.data import DataLoader
-from vidlu.utils.func import default_args, params, Empty
-from vidlu.utils.collections import NameDict
-from vidlu import modules
-from vidlu.training.engine import Engine
-from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR
-
 from ignite._utils import convert_tensor
 
+from vidlu import modules
+import vidlu.modules.utils
+from vidlu.data_utils import DataLoader
+from vidlu.utils.func import default_args, params, Empty
+from vidlu.utils.collections import NameDict
+from vidlu.utils.misc import Event
+from vidlu.utils.misc import AttributeCheckingMeta
+from vidlu.training.engine import Engine
 
-def prepare_batch(batch, device=None, non_blocking=False):
+
+def default_prepare_batch(batch, device=None, non_blocking=False):
     return tuple(convert_tensor(x, device=device, non_blocking=non_blocking) for x in batch)
 
 
-# Runner ###########################################################################################
+# Evaluator and trainer ############################################################################
 
+
+def get_outputs(self, *x):
+    model = self.model
+    if hasattr(model, 'get_outputs'):
+        return model.get_outputs(*x)
+    prediction = model(*x)
+    return prediction, NameDict(prediction=prediction)
+
+
+class Missing:
+    def __init__(self):
+        raise TypeError('`Missing` constructor was called, indicating that a parameter with default'
+                        + ' value `Missing` has not been assigned a "real" value.')
+
+
+@dataclass
 class Evaluator:
-    def __init__(self, model, loss_f,
-                 data_loader_f=partial(DataLoader, batch_size=1, num_workers=2),
-                 prepare_batch=prepare_batch, device=None):
-        super().__init__()
-        self.model = model
-        self.loss = loss_f()
-        self.device = device
-        self.prepare_batch = partial(prepare_batch, device=device, non_blocking=False)
-        self.data_loader_f = data_loader_f
+    model: Callable = Missing
+    loss_f: InitVar[Callable] = Missing
+    prepare_batch: Callable = default_prepare_batch
+    data_loader_f: Callable = partial(DataLoader, batch_size=1, num_workers=2)
+    batch_size: int = 1
+    metrics: dict = dc.field(default_factory=dict)
+    get_outputs: Callable = get_outputs
+    eval_step: Callable = Missing
 
-        self.evaluation = Engine(lambda e, b: self.eval_batch(b))
-        self.evaluation.started.add_handler(lambda e: self._reset_metrics())
+    loss: Callable = dc.field(init=False)
+
+    def __post_init__(self, loss_f):
+        self.prepare_batch = partial(self.prepare_batch,
+                                     device=modules.utils.get_device(self.model),
+                                     non_blocking=False)
+        self.eval_step = partial(self.eval_step, self)
+        self.get_outputs = partial(self.get_outputs, self)
+        self.loss = loss_f()
+        metrics = self.metrics
+        self.metrics = dict()
+        if not isinstance(metrics, Mapping):
+            for m in metrics:
+                self.add_metric(m)
+        self.data_loader_f = partial(self.data_loader_f, batch_size=self.batch_size)
+
+        self.evaluation = Engine(lambda e, b: self.eval_step(b))
+        self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.iteration_completed.add_handler(self._update_metrics)
 
-        self.metrics = {}
-
-    def attach_metric(self, metric, name=None):
-        name = name or type(metric).__name__
-        self.metrics[name] = metric
+    def add_metric(self, m):
+        self.metrics[type(m).__name__] = m
 
     def _reset_metrics(self):
         for m in self.metrics.values():
             m.reset()
 
-    def _update_metrics(self, e):
+    def _update_metrics(self, es):
         for m in self.metrics.values():
-            m.update(e.state.output)
+            m.update(es.output)
 
     def get_metric_values(self, *, reset=False):
         metric_evals = dict()
@@ -61,171 +92,77 @@ class Evaluator:
             self._reset_metrics()
         return metric_evals
 
-    def get_outputs(self, *x):
-        if hasattr(self.model, 'get_outputs'):
-            return self.model.get_outputs(*x)
-        prediction = self.model(*x)
-        return prediction, NameDict(prediction=prediction)
-
     def eval(self, dataset):
-        return self.evaluation.run(self.data_loader_f(dataset, drop_last=False))
-
-    def eval_batch(self, batch):
-        raise NotImplementedError()
+        data_loader = tqdm(self.data_loader_f(dataset, drop_last=False))
+        return self.evaluation.run(data_loader)
 
 
 # Trainer ##########################################################################################
 
+
+@dataclass
 class Trainer(Evaluator):
-    def __init__(self, model, loss_f, weight_decay, optimizer_f, epoch_count,
-                 lr_scheduler_f=partial(LambdaLR, lr_lambda=lambda e: 1), batch_size=1,
-                 data_loader_f=default_args(Evaluator).data_loader_f,
-                 prepare_batch=prepare_batch, device=None):
-        super().__init__(model, loss_f=loss_f,
-                         data_loader_f=partial(data_loader_f, batch_size=batch_size),
-                         prepare_batch=prepare_batch,
-                         device=modules.utils.get_device(model) if device is None else device)
-        if 'weight_decay' in params(optimizer_f):
-            if not params(optimizer_f).weight_decay is Empty:
-                raise ValueError(
-                    "The weight_decay parameter of optimizer_f should be unassigned.")
-        self.optimizer = optimizer_f(params=self.model.parameters(), weight_decay=weight_decay)
-        self.epoch_count = epoch_count
+    state_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
+
+    weight_decay: float = Missing
+    optimizer_f: InitVar[callable] = Missing
+    epoch_count: int = Missing
+    lr_scheduler_f: InitVar[callable] = partial(LambdaLR, lr_lambda=lambda e: 1)
+    train_step: Callable = Missing
+
+    optimizer: object = dc.field(init=False)
+    lr_scheduler: object = dc.field(init=False)
+
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f):
+        super().__post_init__(loss_f)
+        if params(optimizer_f).weight_decay not in [0, Empty]:
+            raise ValueError("The parameter weight_decay of optimizer_f should be unassigned.")
         if 'epoch_count' in params(lr_scheduler_f):
-            if not params(lr_scheduler_f).epoch_count is Empty:
+            if params(lr_scheduler_f).epoch_count is not Empty:
                 raise ValueError(
-                    "The epoch_count parameter of lr_scheduler_f should be unassigned.")
-            lr_scheduler_f = partial(lr_scheduler_f, epoch_count=epoch_count)
+                    "The parameter epoch_count of lr_scheduler_f should be unassigned.")
+            lr_scheduler_f = partial(lr_scheduler_f, epoch_count=self.epoch_count)
+        self.optimizer = optimizer_f(params=self.model.parameters(), weight_decay=self.weight_decay)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
+        self.train_step = partial(self.train_step, self)
 
-        self.training = Engine(lambda e, b: self.train_batch(b))
-
+        self.training = Engine(lambda e, b: self.train_step(b))
+        # TODO: move lr_scheduler.step() to epoch_completed for PyTorch 1.1.0
         self.training.epoch_started.add_handler(lambda e: self.lr_scheduler.step())
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
         self.training.iteration_completed.add_handler(self._update_metrics)
 
     def train(self, dataset, restart=False):
-        data_loader = self.data_loader_f(dataset)
+        data_loader = self.data_loader_f(dataset, drop_last=True)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
-    def train_batch(self, batch):
-        raise NotImplementedError()
-
     def state_dict(self):
-        return dict(model=self.model.state_dict(), training_state=self.training.state_dict(),
-                    optimizer=self.optimizer.state_dict(),
-                    lr_scheduler=self.lr_scheduler.state_dict())
+        return {k: getattr(self, k).state_dict() for k in type(self).state_attrs}
 
     def load_state_dict(self, state_dict):
-        self.model.load_state_dict(state_dict['model'])
-        self.training.load_state_dict(state_dict['training_state'])
-        self.optimizer.load_state_dict(state_dict['optimizer'])
-        self.lr_scheduler.load_state_dict(state_dict['lr_scheduler'])
+        for k in type(self).state_attrs:
+            getattr(self, k).load_state_dict(state_dict[k])
 
 
-# Supervised #######################################################################################
+@dataclass
+class AdversarialTrainer(Trainer):
+    attack_f: InitVar[callable] = Missing
 
-class SupervisedTrainer(Trainer):
-    def eval_batch(self, batch):
-        self.model.eval()
-        with torch.no_grad():
-            x, y = self.prepare_batch(batch, device=self.device)
-            prediction, outputs = self.get_outputs(x)
-            loss = self.loss(prediction, y.long())
-            return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
+    attack: object = dc.field(init=False)
 
-    def train_batch(self, batch):
-        self.model.train()
-        self.optimizer.zero_grad()
-        x, y = self.prepare_batch(batch, device=self.device)
-        prediction, outputs = self.get_outputs(x)
-        loss = self.loss(prediction, y.long())
-        loss.backward()
-        self.optimizer.step()
-        return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item())
-
-
-# Classification ###################################################################################
-
-class ClassificationTrainer(SupervisedTrainer):
-    def get_outputs(self, *x):
-        if hasattr(self.model, 'get_outputs'):
-            return self.model.get_outputs(*x)
-        log_probs = self.model(*x)
-        return log_probs, NameDict(prediction=log_probs, log_probs=log_probs, probs=log_probs.exp(),
-                                   hard_prediction=log_probs.argmax(1))
-
-
-# Configurations ###################################################################################
-
-class ResNetCifarTrainer(ClassificationTrainer):
-    # as in www.arxiv.org/abs/1603.05027
-    __init__ = partialmethod(
-        ClassificationTrainer.__init__,
-        optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty),
-        weight_decay=1e-4,
-        epoch_count=200,
-        lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
-        batch_size=128)
-
-
-class WRNCifarTrainer(ResNetCifarTrainer):
-    # as in www.arxiv.org/abs/1605.07146
-    __init__ = partialmethod(ResNetCifarTrainer.__init__, weight_decay=5e-4)
-
-
-class DenseNetCifarTrainer(ClassificationTrainer):
-    # as in www.arxiv.org/abs/1608.06993
-    __init__ = partialmethod(
-        SupervisedTrainer.__init__,
-        optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
-        weight_decay=1e-4,
-        epoch_count=100,
-        lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
-        batch_size=64)
-
-
-class SmallImageClassifierTrainer(ClassificationTrainer):
-    # as in www.arxiv.org/abs/1603.05027
-    __init__ = partialmethod(
-        SupervisedTrainer.__init__,
-        optimizer_f=partial(SGD, lr=1e-2, momentum=0.9),
-        weight_decay=0,
-        epoch_count=50,
-        batch_size=64)
-
-
-class LadderDenseNetTrainer(ClassificationTrainer):
-    # custom
-    __init__ = partialmethod(
-        ClassificationTrainer.__init__,
-        optimizer_f=partial(SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
-        weight_decay=1e-4,
-        lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
-        epoch_count=40,
-        batch_size=4)
-
-
-# Autoencoder ######################################################################################
-
-
-class AutoencoderTrainer(Trainer):
-    def train_batch(self, batch):
-        self.model.train()
-        self.optimizer.zero_grad()
-        x = self.prepare_batch(batch)[0]
-        x_r = self.model(x)
-        loss = self.loss(x_r, x)
-        loss.backward()
-        self.optimizer.step()
-        return NameDict(reconstruction=x_r, input=x, loss=loss.item())
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, attack_f):
+        super().__post_init__(loss_f, optimizer_f, lr_scheduler_f)
+        if attack_f is Missing:
+            raise ValueError(f"`{type(self).__name__}` missing argument `attack_f`.")
+        self.attack = attack_f(model=self.model, **(
+            dict(loss=self.loss) if params(attack_f)['loss'] is Empty else {}))
 
 
 # GAN ##############################################################################################
 
 class GANTrainer(Trainer):
     def __init__(self, model, loss=None, optimizer_f=None, epoch_count=1,
-                 prepare_batch=engine._prepare_batch, device=None, non_blocking=False):
+                 prepare_batch=None, device=None, non_blocking=False):
         loss = loss or nn.BCELoss()
         args = {k: v for k, v in locals() if k not in ['self', 'class']}
         super().__init__(**args)
@@ -238,7 +175,7 @@ class GANTrainer(Trainer):
     def _get_fake_labels(self, batch_size):
         return torch.zeros(batch_size, device=self.model.device)
 
-    def train_batch(self, batch):
+    def train_step(self, batch):
         """ Copied from ignite/examples/gan/dcgan and modified"""
         self.model.train()
         real = self.prepare_batch(batch)[0]

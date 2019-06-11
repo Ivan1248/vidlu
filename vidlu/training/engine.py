@@ -97,9 +97,9 @@ class Engine(object):
         for batch in self.state.dataloader:
             self.state.iteration += 1
             self.state.batch = batch
-            self.iteration_started(self)
+            self.iteration_started(self.state)
             self.state.output = self._process_function(self, batch)
-            self.iteration_completed(self)
+            self.iteration_completed(self.state)
             if self.should_terminate or self.should_terminate_single_epoch:
                 self.should_terminate_single_epoch = False
                 break
@@ -123,21 +123,21 @@ class Engine(object):
 
         self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
         start_time = time.time()
-        self.started(self)
+        self.started(self.state)
         if self.state.epoch >= max_epochs:
             warnings.warn("All epochs are already completed.")
         while self.state.epoch < max_epochs and not self.should_terminate:
             self.state.epoch += 1
-            self.epoch_started(self)
+            self.epoch_started(self.state)
             time_taken = self._run_once_on_dataset()
             hours, mins, secs = _to_hours_mins_secs(time_taken)
             self._logger.info(
                 f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}")
             if self.should_terminate:
                 break
-            self.epoch_completed(self)
+            self.epoch_completed(self.state)
 
-        self.completed(self)
+        self.completed(self.state)
         time_taken = time.time() - start_time
         hours, mins, secs = _to_hours_mins_secs(time_taken)
         self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")

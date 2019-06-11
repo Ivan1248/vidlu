@@ -46,28 +46,28 @@ class CheckpointManager(object):
         >>> from torch import nn
         >>> model = nn.Linear(3, 3)
         >>> cpman = CheckpointManager('/tmp/states', 'lin33', n_saved=2, overwrite_if_exists=True)
-        >>> cpman.save(model.state_dict(), log=['baz'])
-        >>> cpman.save(model.state_dict(), log=['baz', 'bap'])
-        >>> state, log = cpman.load_last()
+        >>> cpman.save(model.state_dict(), summary=dict(lines=['baz']))
+        >>> cpman.save(model.state_dict(), summary=dict(lines=['baz', 'bap']))
+        >>> state, logger_state = cpman.load_last()
         >>> model.load_state_dict(state)
-        >>> assert log == ['baz', 'bap']
+        >>> assert logger_state == dict(lines=['baz', 'bap'])
         >>> os.listdir('/tmp/states')
         ['lin33_1', 'lin33_2']
     """
     STATE_FILENAME = 'state.pth'
     INFO_FILENAME = 'checkpoint.info'
-    LOG_FILENAME = 'log.txt'
+    SUMMARY_FILENAME = 'log.txt'
 
     def __init__(self, dir_path, id, n_saved=1, resume=False, remove_old=False):
-        self._dir_path = Path(dir_path).expanduser()
-        self._dir_path.mkdir(parents=True, exist_ok=True)
-        self._id = id
+        self.dir_path = Path(dir_path).expanduser()
+        self.dir_path.mkdir(parents=True, exist_ok=True)
+        self.id = id
         self._n_saved = n_saved
         self._index = 0
         self._required_resuming = resume
 
         def get_existing_checkpoints():
-            paths = [str(p) for p in self._dir_path.iterdir() if p.name.startswith(self._id)]
+            paths = [str(p) for p in self.dir_path.iterdir() if p.name.startswith(self.id)]
             indexes = map(self._name_to_index, paths)
             index_paths = sorted(zip(indexes, paths), key=lambda x: x[0])
             return [p for i, p in index_paths]
@@ -83,44 +83,41 @@ class CheckpointManager(object):
         if not resume and len(self.saved) > 0:
             raise RuntimeError(f"Files with ID {id} are already present in the directory "
                                + f"{dir_path}. If you want to use this ID anyway, pass either"
-                               + "`overwrite_if_exists=True` or `resume=True`. ")
+                               + "`remove_old=True` or `resume=True`. ")
 
-    def save(self, state, log=None):
+    def save(self, state, summary=None):
         if self._required_resuming:
-            raise RuntimeError("Cannot save state before it has been resumed. `load_last` needs"
-                               + " to be called  before saving for the training to be considered"
-                               + " resumed. ")
+            raise RuntimeError("Cannot save state before it has been resumed. The `load_last`"
+                               + " method needs to be called before saving to resume the training.")
         if len(state) == 0:
-            raise RuntimeError("No objects to checkpoint found.")
+            raise RuntimeError("There are no objects to checkpoint in `state`.")
 
         self._index += 1
 
         name = self._index_to_name(self._index)
-        path = self._dir_path / name
-        path.mkdir()
+        path = self.dir_path / name
+        path.mkdir(parents=True, exist_ok=True)
         self._save(path / self.STATE_FILENAME, state)
         self._save(path / self.INFO_FILENAME, Namespace(index=self._index))
-        if log is not None:
-            (path / self.LOG_FILENAME).write_text('\n'.join(log))
+        self._save(path / self.SUMMARY_FILENAME, summary)
         self.saved.append(path)
 
         self.remove_old_checkpoints()
 
     def load_last(self):
-        path = self._dir_path / self.saved[-1]
+        path = self.dir_path / self.saved[-1]
         self._index = torch.load(path / self.INFO_FILENAME).index
         state = torch.load(path / self.STATE_FILENAME)
-        log_path = path / self.LOG_FILENAME
-        log = log_path.read_text().split('\n') if log_path.exists() else []
+        summary = torch.load(path / self.SUMMARY_FILENAME)
         self._required_resuming = False
-        return state, log
+        return state, summary
 
     def _save(self, path, obj):
         create_file_atomic(path=path,
                            save_action=lambda file: torch.save(obj, file))
 
     def _index_to_name(self, index):
-        return f'{self._id}_{index}'
+        return f'{self.id}_{index}'
 
     def _name_to_index(self, name):
         return int(name[name.rindex('_') + 1:])

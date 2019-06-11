@@ -2,11 +2,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+
 from vidlu.utils.torch import disable_tracking_bn_stats, save_grads
 
 # Cross entropy ####################################################################################
 
 # Cross entropy between softmax of the input (logits) and target
+
 SoftmaxCrossEntropyLoss = nn.CrossEntropyLoss
 
 
@@ -56,9 +58,11 @@ class VATLoss(nn.Module):
 
             return get_kl_div(x + d * self.eps)
 
+
 class CarliniWagnerLoss(nn.Module):
     """
-    Carlini-Wagner Loss: objective function #6.
+    Carlini-Wagner
+    Loss: objective function #6.
     Paper: https://arxiv.org/pdf/1608.04644.pdf
     """
 

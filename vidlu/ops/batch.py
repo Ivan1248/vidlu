@@ -164,13 +164,33 @@ def project_to_1_ball(x, r, inplace=False):
     cssmns = sorted.cumsum(dim=1) - r
     ind = torch.arange(1, sorted.shape[1] + 1, dtype=torch.float)
     pconds = (sorted * ind) > cssmns
-    rhos = torch.tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
-    thetas = torch.tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
+    rhos = x.new_tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
+    thetas = x.new_tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
     return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
 
 
-def restrict_norm(x, r, p):
-    """Projects inputs `x` to p-balls with norm(s) `r`.
+def normalize_by_norm(x, p):
+    """Projects inputs `x` to p-sphere with norm(s) `r` with maximum difference with
+
+    Args:
+        x: inputs.
+        r: p-ball radius/radii.
+        p: p-norm p.
+    """
+    # TODO: non-scalar r
+    if p == np.inf:
+        return x.sign()
+    elif p == 2:  # TODO: make correct for ellipsoids
+        return x.div(norm(x, p, keep_dims=True))
+    elif p == 1:  # TODO: optimize
+        return project_to_1_ball(x, r=1)
+    else:
+        raise NotImplementedError(f"Operation not implemented for {p}-norm.")
+
+
+def project_to_p_ball(x, r, p):
+    """Projects inputs `x` to p-ball with norm(s) `r` with minimum L2 distance
+    with respect to the original value.
 
     Args:
         x: inputs.
@@ -183,12 +203,12 @@ def restrict_norm(x, r, p):
     elif p == 2:  # TODO: make correct for ellipsoids
         return x.mul_(torch.min(r / norm(x, p, keep_dims=True), torch.ones(())))
     elif p == 1:  # TODO: optimize
-        torch.min(x, project_to_1_ball(x, r))
+        return torch.min(x, project_to_1_ball(x, r))
     else:
         raise NotImplementedError(f"Operation not implemented for {p}-norm.")
 
 
-def restrict_norm_by_scaling(x, r, p):
+def scale_to_norm(x, r, p):
     """Divides inputs by their norms and multiples them by `r`.
 
     Args:
@@ -196,7 +216,7 @@ def restrict_norm_by_scaling(x, r, p):
         r: p-ball radius/radii.
         p: p-norm p.
     """
-    return x * (r / norm(x, p))
+    return x * (r / norm(x, p, keep_dims=True))
 
 
 def linear_min_on_p_ball(grad, r, p=2):
