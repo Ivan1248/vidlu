@@ -1,9 +1,6 @@
+from dataclasses import dataclass
 from functools import partial
 
-try:
-    import accimage
-except ImportError:
-    accimage = None
 from PIL import Image
 import numpy as np
 import torch
@@ -11,6 +8,7 @@ import torchvision.transforms as tvt
 import torchvision.transforms.functional as F
 from . import numpy as npt
 
+# Maybe have 1 class per transform, like in torchvision, instead of TRANSFORMERS
 # Type and format checking #########################################################################
 
 is_pil_image = F._is_pil_image
@@ -27,7 +25,8 @@ def is_numpy_image(img):
 # Conversion #######################################################################################
 
 def pil_to_torch(img):
-    """Converts a PIL Image to a Torch tensor.
+    """Converts a PIL Image to a Torch tensor with HWC (not CHW) layout with
+    values in from 0 to 255.
 
     Taken from `torchvision.transforms` and modified.
 
@@ -35,41 +34,46 @@ def pil_to_torch(img):
         img (PIL Image or numpy.ndarray): Image to be converted to tensor.
 
     Returns:
-        Tensor: Converted image.
+        Tensor: HWC image with values from 0 to 255.
     """
     if not is_pil_image(img):
-        raise TypeError(f'img should be PIL Image. Got {type(img)}')
+        raise TypeError(f'img should be PIL Image. Got {type(img)}.')
 
-    if accimage is not None and isinstance(img, accimage.Image):
-        npimg = np.zeros([img.channels, img.height, img.width], dtype=np.float32)
-        img.copyto(npimg)
-        return torch.from_numpy(npimg)
-
-    if img.mode == 'I':
+    if img.mode == 'I':  # i32, greyscale
         return torch.from_numpy(np.array(img, np.int32, copy=False))
-    elif img.mode == 'I;16':
+    elif img.mode == 'I;16':  # i16, greyscale
         return torch.from_numpy(np.array(img, np.int16, copy=False))
-    elif img.mode == 'F':
-        return torch.from_numpy(np.array(img, np.float32, copy=False))
-    elif img.mode == '1':
+    elif img.mode == '1':  # binary, stored with one pixel per byte
         return 255 * torch.from_numpy(np.array(img, np.uint8, copy=False))
+    elif img.mode == 'F':
+        raise ValueError("Float PIL-images not supported.")
     else:
         timg = torch.ByteTensor(torch.ByteStorage.from_buffer(img.tobytes()))
-        # PIL image mode: L, P, I, F, RGB, YCbCr, RGBA, CMYK
-        if img.mode == 'YCbCr':
+        # PIL image mode: L, P, RGB, YCbCr, RGBA, CMYK
+        if img.mode == 'YCbCr':  # 24-bit color, video format
             nchannel = 3
-        elif img.mode == 'I;16':
-            nchannel = 1
         else:
             nchannel = len(img.mode)
         return timg.view(img.size[1], img.size[0], nchannel)
 
 
+class PILToTorch:
+    __call__ = staticmethod(pil_to_torch)
+
+
 numpy_to_torch = torch.from_numpy
+
+
+class NumPyToTorch:
+    __call__ = staticmethod(torch.from_numpy)
 
 
 def torch_to_numpy(arr):
     return arr.numpy()
+
+
+class TorchToNumPy:
+    __call__ = staticmethod(torch_to_numpy)
 
 
 def numpy_to_pil(npimg, mode=None):
@@ -123,8 +127,20 @@ def numpy_to_pil(npimg, mode=None):
     return Image.fromarray(npimg, mode=mode)
 
 
+@dataclass
+class NumPyToPIL:
+    mode: str = None
+
+    def __call__(self, img):
+        return numpy_to_pil(img, mode=self.mode)
+
+
 def pil_to_numpy(img, dtype=None, copy=False):
     return np.array(img, dtype=dtype, copy=copy)
+
+
+class PILToNumPy:
+    __call__ = staticmethod(np.array)  # keywords: call, copy, ...
 
 
 def torch_to_pil(timg, mode=None):
@@ -146,17 +162,25 @@ def torch_to_pil(timg, mode=None):
     return numpy_to_pil(timg.numpy(), mode=mode)
 
 
+@dataclass
+class TorchToPIL:
+    mode: str = None
+
+    def __call__(self, img):
+        return torch_to_pil(img, mode=self.mode)
+
+
 # Transformers #####################################################################################
 
 
 class Transformer:
-    __slots__ = 'x'
+    __slots__ = 'item'
 
-    def __init__(self, item):
+    def __init__(self, item, **args):
         self.item = item
 
     def transform(self, func, *args, **kwargs):
-        return type(self)(func(self.item, *args, **kwargs))
+        return type(self)(**{**self.__dict__, 'item': func(self.item, *args, **kwargs)})
 
 
 class ImageTransformer(Transformer):
@@ -166,6 +190,11 @@ class ImageTransformer(Transformer):
         super().__init__(item)
         self.layout = layout
 
+    def transform(self, func, *args, **kwargs):
+        if isinstance(func, str):
+            return getattr(type(self))
+        return super().transform(func, *args, **kwargs)
+
 
 class NumPyImageTransformer(ImageTransformer):
     def __init__(self, item, layout='HWC'):
@@ -173,8 +202,9 @@ class NumPyImageTransformer(ImageTransformer):
             raise ValueError('The memory layout of the array should be HWC.')
         super().__init__(item, layout)
 
-    def to_numpy(self):
-        return
+    def to_numpy(self, dtype=None):
+        return (self if dtype is None or dtype == self.item.dtype
+                else np.array(self.item, dtype=dtype))
 
     def to_pil(self, mode=None):
         return PILImageTransformer(numpy_to_pil(self.item, mode=mode))
@@ -221,20 +251,20 @@ class TorchImageTransformer(ImageTransformer):
 
     def to_pil(self, mode=None):
         if self.layout != 'HWC':
-            raise ValueError("Cannot convert array with layout HWC to image."
-                             + " Use transpose_to_hwc first.")
-        return TorchImageTransformer(torch_to_pil(self.item, mode=mode))
+            raise ValueError("Cannot convert array with layout CHW to PIL."
+                             + " Use chw_to_hwc first.")
+        return PILImageTransformer(torch_to_pil(self.item, mode=mode))
 
     def to_torch(self, dtype=None):
         return (self if dtype is None or dtype == self.item.dtype
                 else torch.tensor(self.item, dtype=dtype))
 
-    def transpose_to_chw(self):
+    def hwc_to_chw(self):
         if self.layout == 'HWC':
             return TorchImageTransformer(self.item.permute(2, 0, 1), layout='CHW')
         raise ValueError("Only HWC to CHW transposition is possible.")
 
-    def transpose_to_hwc(self):
+    def chw_to_hwc(self):
         if self.layout == 'CHW':
             return TorchImageTransformer(self.item.permute(1, 2, 0), layout='HWC')
         raise ValueError("Only CHW to HWC transposition is possible.")
@@ -244,6 +274,12 @@ class TorchImageTransformer(ImageTransformer):
 
     def to_uint8(self):
         return self.transform(lambda x: x.byte())
+
+    def div255(self):
+        return self.transform(lambda x: x / 255)
+
+    def mul255(self):
+        return self.transform(lambda x: x * 255)
 
     def standardize(self, mean, std, dtype=torch.float32):
         mean, std = [torch.tensor(s, dtype=dtype) for s in [mean, std]]

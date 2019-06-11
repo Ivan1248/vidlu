@@ -6,7 +6,7 @@ from vidlu.transforms import image_transformer
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
 from vidlu import defaults
-from vidlu.factories import parse_datasets
+from vidlu.factories import get_data
 
 import dirs
 
@@ -23,8 +23,8 @@ parser.add_argument('--augment', action='store_true')
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-ds = parse_datasets(args.ds + '{' + args.part + '}', datasets_dir=dirs.DATASETS,
-                    cache_dir=dirs.CACHE)[0]
+ds = get_data(args.ds + '{' + args.part + '}', datasets_dir=dirs.DATASETS,
+              cache_dir=dirs.CACHE)[0]
 print("Name:", ds.name)
 print("Info:")
 print_tree(ds.info, depth=1)

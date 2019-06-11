@@ -1,31 +1,18 @@
-from .datasets import *
-from .. import PartedDataset
+import inspect
 from argparse import Namespace
 
+from . import datasets
+from .datasets import *
+from .. import PartedDataset
 
-def _info(cls, path=None, kwargs=None):
-    return Namespace(cls=cls, path=path, kwargs=kwargs or dict())
+
+def _info(cls, path=None, default_kwargs=None):
+    return Namespace(cls=cls, path=path, kwargs=default_kwargs or dict())
 
 
-_ds_to_info = {
-    'mnist': _info(MNISTDataset, 'MNIST'),
-    'cifar10': _info(Cifar10Dataset, 'cifar-10-batches-py'),
-    'cifar100': _info(Cifar100Dataset, 'cifar-100-python'),
-    'tinyimagenet': _info(TinyImageNetDataset, 'tiny-imagenet-200'),
-    'tinyimages': _info(TinyImagesDataset, 'tiny-images'),
-    'inaturalist2018': _info(INaturalist2018Dataset, 'iNaturalist2018'),
-    'cityscapes': _info(CityscapesDataset, 'Cityscapes',
-                        dict(downsampling_factor=2)),
-    'wilddash': _info(WildDashDataset, 'WildDash', kwargs=dict(downsampling_factor=2)),
-    'camvid': _info(CamVidDataset, 'CamVid', dict(downsampling_factor=2)),
-    'voc2012': _info(VOC2012SegmentationDataset, 'VOC2012'),
-    'iccv09': _info(ICCV09Dataset, 'iccv09'),
-    'isun': _info(ISUNDataset, 'iSUN'),
-    'lsun': _info(LSUNDataset, 'LSUN'),
-    'whitenoise': _info(WhiteNoiseDataset),
-    'rademachernoise': _info(RademacherNoiseDataset),
-    'hblobs': _info(HBlobsDataset),
-}
+_ds_to_info = {k.lower(): _info(v, path=getattr(v, 'default_dir', None))
+               for k, v in vars(datasets).items()
+               if inspect.isclass(v) and issubclass(v, Dataset) and v is not Dataset}
 
 _default_parts = ['all', 'trainval', 'train', 'val', 'test']
 _default_splits = {
@@ -35,16 +22,14 @@ _default_splits = {
 
 
 class DatasetFactory:
-
     def __init__(self, datasets_dir):
         self.datasets_dir = Path(datasets_dir)
 
     def __call__(self, name: str, **kwargs):
         name = name.lower()
-        try:
-            info = _ds_to_info[name]
-        except KeyError:
+        if name not in _ds_to_info:
             raise KeyError(f'No dataset has the name "{name}".')
+        info = _ds_to_info[name]
         subsets = info.cls.subsets
         path_args = [self.datasets_dir / info.path] if info.path else []
         if len(info.cls.subsets) == 0:

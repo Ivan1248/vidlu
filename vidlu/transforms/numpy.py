@@ -1,10 +1,6 @@
 import numpy as np
 
 
-def normalize(x, mean, std):
-    return (x - mean) / std
-
-
 def center_crop(img, shape, fill=0, padding_mode='constant'):
     shape = np.array(shape)
     if len(shape) != 2 or np.any(shape <= 0):

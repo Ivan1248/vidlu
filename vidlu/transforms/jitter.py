@@ -1,6 +1,6 @@
 import random
 
-from .transforms import image_transformer
+from .transformers import image_transformer
 
 
 def cifar_jitter(x):
@@ -9,8 +9,16 @@ def cifar_jitter(x):
 
 
 def rand_hflip(*arrays, p=0.5):
+    """
+    Args:
+        *arrays: fields of a single example, e.g. image and its segmentation.
+        p (float): flip probability.
+
+    Returns:
+        An array or a tuple of arrays.
+    """
     if p < random.random:
-        return [image_transformer(a).hflip() for a in arrays]
+        arrays = [image_transformer(a).hflip() for a in arrays]
     if len(arrays) == 1:
         return arrays[0]
-    return arrays
+    return arrays[0] if len(arrays) == 1 else arrays

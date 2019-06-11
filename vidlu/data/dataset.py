@@ -1,3 +1,9 @@
+"""
+Dataset with transformations that create new dataset objects.
+
+Dataset objects should be considered immutable.
+"""
+
 import itertools
 import os
 import pickle
@@ -6,6 +12,8 @@ from typing import Union, Callable
 from pathlib import Path
 import shutil
 import warnings
+import multiprocessing
+import json
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
@@ -16,6 +24,8 @@ from .misc import default_collate, pickle_sizeof
 
 from vidlu.utils.misc import slice_len, query_yes_no
 from vidlu.utils.collections import NameDict
+from vidlu.utils.path import to_valid_path
+from vidlu.utils.func import identity
 
 
 # Helpers ######################################################################
@@ -80,12 +90,12 @@ class Dataset(Sequence):
 
     def download_if_necessary(self, data_dir):
         if not data_dir.exists():
-            if not query_yes_no('Dataset not found. Would you like it to be downloaded?'):
+            if not query_yes_no(f'Dataset not found in {data_dir}. Would you like to download it?'):
                 raise FileNotFoundError(f"The dataset doesn't exist in {data_dir}.")
             self.download(data_dir)
 
     def download(self, data_dir):
-        raise NotImplementedError(f"Dataset downloading not available for {type(self).__name__}.")
+        raise TypeError(f"Dataset downloading not available for {type(self).__name__}.")
 
     @property
     def identifier(self):
@@ -176,6 +186,36 @@ class Dataset(Sequence):
         """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
 
+    def info_cache_hdd(self, name_to_func, directory, **kwargs):
+        """Caches the dataset on the hard disk.
+
+        It can be useful to automatically
+        cache preprocessed data without modifying the original dataset and make
+        data loading faster.
+
+        Args:
+            name_to_func: A mapping from names to functions computing attributes
+                to be stored in dataset.info.cache, e.g.
+                `dataset.info.cache.name = func()` for a `{name: func}` mapping.
+            directory: The directory in which info cache is to be stored.
+            **kwargs: additional arguments to the Dataset constructor.
+        """
+        return HDDInfoCacheDataset(self, name_to_func, directory, **kwargs)
+
+    def info_cache(self, name_to_func, **kwargs):
+        """Caches the dataset in RAM.
+
+        It can be useful to automatically
+        cache preprocessed data without modifying the original dataset and make
+        data loading faster.
+
+        Args:
+            separate_fields: If True, record fileds are saved in separate files,
+                e.g. labels are stored separately from input examples.
+            **kwargs: additional arguments to the Dataset constructor.
+        """
+        return InfoCacheDataset(self, name_to_func, **kwargs)
+
     def collate(self, collate_func=None, func_name=None, **kwargs):
         """ Collates examples of a batch dataset or a zip dataset. """
         return CollateDataset(self, collate_func, func_name=func_name, **kwargs)
@@ -190,8 +230,19 @@ class Dataset(Sequence):
         return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
 
     def map(self, func, *, func_name=None, **kwargs):
-        """ Creates a dataset withe elements transformed with `func`. """
+        """ Creates a dataset with elements transformed with `func`. """
         return MapDataset(self, func, func_name=func_name, **kwargs)
+
+    def map_fields(self, field_to_func, *, record_factory=Record, func_name=None, **kwargs):
+        """ Creates a dataset with each element transformed with its function.
+
+        ds.map_fields(dict(x1=func1, ..., xn=funcn)) does the same as
+        ds.map(lambda r: Record(x1=func1(r.x_1), ..., xn=funcn(r.xn), x(n+1)=identity, ...))
+
+        It is useful when using multiprocessing, which uses pickling which
+        doesn't support pickling of lambdas.
+        """
+        return self.map(FieldsMap(field_to_func, record_factory), func_name=func_name, **kwargs)
 
     def permute(self, seed=53, **kwargs):
         """ Creates a permutation of the dataset. """
@@ -249,6 +300,15 @@ class Dataset(Sequence):
 
     def _print(self, *args, **kwargs):
         print(*args, f"({self.identifier})", **kwargs)
+
+
+class FieldsMap:
+    def __init__(self, field_to_func, record_factory=Record):
+        self.field_to_func = field_to_func
+        self.record_factory = record_factory
+
+    def __call__(self, r):
+        return type(r)(r, **{k: f(r[k]) for k, f in self.field_to_func.items()})
 
 
 # Dataset wrappers and proxies
@@ -371,7 +431,7 @@ class HDDCacheDataset(Dataset):
     def __init__(self, dataset, cache_dir, separate_fields=True, **kwargs):
         modifier = 'cache_hdd' + ('_s' if separate_fields else '')
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
-        self.cache_dir = Path(cache_dir) / self.identifier
+        self.cache_dir = to_valid_path(Path(cache_dir) / self.identifier)
         self.separate_fields = separate_fields
         if separate_fields:
             if not isinstance(dataset[0], Record):
@@ -416,6 +476,71 @@ class HDDCacheDataset(Dataset):
 
     def delete_cache(self):
         shutil.rmtree(self.cache_dir)
+
+
+class InfoCacheDataset(Dataset):  # TODO
+    def __init__(self, dataset, name_to_func, **kwargs):
+        self.names_str = ', '.join(name_to_func.keys())
+        modifier = f"info_cache({self.names_str})"
+        self.initialized = multiprocessing.Value('i', 0)  # must be before super
+        info = NameDict(dataset.info or kwargs.get('info', dict()))
+        info.cache = NameDict(info.get('cache', NameDict()))
+        super().__init__(modifiers=modifier, data=dataset, info=info, **kwargs)
+        self.name_to_func = name_to_func
+
+    @property
+    def info(self):
+        if not self.initialized.value:
+            self._update_info_cache()
+        return self._info
+
+    @info.setter
+    def info(self, value):
+        self._info = value
+
+    def _get_info_cache(self):
+        print(f"{type(self).__name__}: computing {self.names_str} for {self.data.identifier}")
+        info_cache = dict()
+        for n, f in self.name_to_func.items():
+            info_cache[n] = f(self.data)
+        return info_cache
+
+    def _update_info_cache(self):
+        with self.initialized.get_lock():
+            if not self.initialized.value:  # lazy
+                if any(k not in self._info.cache for k in self.name_to_func):
+                    self._info.cache.update(self._get_info_cache())
+                self.initialized.value = True
+
+
+class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
+    def __init__(self, dataset, name_to_func, cache_dir, **kwargs):
+        super().__init__(dataset, name_to_func, **kwargs)
+        self.cache_dir = Path(cache_dir)
+        self.cache_file = to_valid_path(self.cache_dir / self.identifier / 'info_cache.txt')
+        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _store_info_cache(self, info_cache):
+        try:
+            with self.cache_file.open('wb') as file:
+                pickle.dump(info_cache, file)
+        except Exception as ex:
+            self.cache_file.unlink()
+            raise
+
+    def _get_info_cache(self):
+        if self.cache_file.exists():
+            try:
+                with self.cache_file.open('rb') as file:
+                    return pickle.load(file)
+            except Exception as ex:
+                self.cache_file.unlink()
+                raise
+        else:
+            print(f"HDDInfoCacheDataset: Computing {self.names_str} for {self.data.identifier}")
+            info_cache = super()._get_info_cache()
+            self._store_info_cache(info_cache)
+            return info_cache
 
 
 class SubDataset(Dataset):

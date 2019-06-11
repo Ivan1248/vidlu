@@ -19,8 +19,8 @@ class TestData:
         assert np.all(imtt.to_numpy().item == imtn.item)
         assert np.all(imtn.item == imtp.to_torch().to_numpy().item)
 
-        assert imtt.transpose_to_chw().item.shape != imtt.item.shape
-        assert torch.all(imtt.transpose_to_chw().transpose_to_hwc().item == imtt.item)
+        assert imtt.hwc_to_chw().item.shape != imtt.item.shape
+        assert torch.all(imtt.hwc_to_chw().chw_to_hwc().item == imtt.item)
 
         imtt_f = imtt.to_float32()
         mean, std = (127,) * 3, (50,) * 3

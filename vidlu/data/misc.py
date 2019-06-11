@@ -2,10 +2,8 @@ import pickle
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-import torch
 from torch.utils.data.dataloader import default_collate as torch_collate
 
-from functools import partialmethod
 from .record import Record
 
 
@@ -51,10 +49,3 @@ def numpy_collate(batch):
         return list(map(numpy_collate, zip(*batch)))
     else:
         raise TypeError(type(elem))
-
-
-# DataLoader class with collate function suporting Record examples
-
-class DataLoader(torch.utils.data.DataLoader):
-    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True,
-                             collate_fn=default_collate, drop_last=True)

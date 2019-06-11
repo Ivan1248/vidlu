@@ -1,3 +1,5 @@
+from collections import Counter
+
 import pytest
 from collections.abc import Sequence
 
@@ -5,6 +7,7 @@ import numpy as np
 import torch
 
 from vidlu.data import Record, Dataset, PartedDataset
+from vidlu.data_utils import DataLoader
 
 
 class TestRecord:
@@ -152,3 +155,57 @@ class TestDataset:
             run_tests(pds)
             pds_t = pds.with_transform(lambda x: x)
             run_tests(pds_t)
+
+    def test_info_cache_hdd(self, tmpdir):
+        upper = 9
+        for i in range(2):
+            ds = Dataset(name="Pairs", data=[i for i in range(upper + 1)])
+            call_counts = Counter()
+
+            def call_counting(func):
+                def apply(ds):
+                    nonlocal call_counts
+                    call_counts[func] += 1
+                    return func(x for x in ds)
+
+                return apply
+
+            name_to_func = {'sum': call_counting(sum), 'max': call_counting(max)}
+
+            ds = ds.info_cache_hdd(name_to_func, tmpdir)
+
+            if i == 0:  # in the second run, the info is cached on the filesystem
+                assert len(call_counts) == 0
+                _ = ds.info
+                assert all(x == 1 for x in call_counts.values()) and len(call_counts) > 0
+                _ = ds.info
+                assert all(x == 1 for x in call_counts.values())
+            else:
+                _ = ds.info
+                assert len(call_counts) == 0
+                _ = ds.info
+                assert len(call_counts) == 0
+
+    def test_info_cache_hdd_parallel(self, tmpdir):
+        lower = 5
+        ds = Dataset(name="Numbers", data=[i + lower for i in range(100)])
+        name_to_func = {'first': first, 'also': first}
+        ds = ds.info_cache_hdd(name_to_func, tmpdir)
+        ds = ds.map(SubFirst(ds))
+        dl = DataLoader(ds, num_workers=3)
+        assert min(x for x in dl) == 0
+        assert ds.info.cache.first == lower
+
+
+# test_cache_lazy_info_hdd_parallel
+
+class SubFirst:
+    def __init__(self, ds):
+        self.ds = ds
+
+    def __call__(self, d):
+        return d - self.ds.info.cache.first
+
+
+def first(ds):
+    return ds[0]

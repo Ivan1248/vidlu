@@ -1,12 +1,16 @@
 import os
 import shutil
 import multiprocessing
+from argparse import Namespace
+from functools import partialmethod
+
+import torch
 from tqdm import tqdm
 import warnings
 
 import numpy as np
 
-from vidlu.data import DatasetFactory
+from vidlu.data import DatasetFactory, default_collate
 from vidlu.utils import path
 from vidlu.utils.collections import NameDict
 
@@ -24,6 +28,7 @@ def compute_pixel_mean_std(dataset, progress_bar=False):
     return mean, np.sqrt(var)  # pixel mean, pixel standard deviation
 
 
+"""
 class LazyImageStatisticsComputer:
     def __init__(self, dataset, cache_dir, max_sample_size=10000):
         self.dataset = dataset
@@ -67,16 +72,54 @@ class LazyImageStatisticsComputer:
                 self.initialized.value = True
 
 
+class LazyDatasetInfoModifier:  # TODO
+    def __init__(self, dataset, lazy_info_name, func):
+        self.dataset = dataset
+        self.lazy_info_name = lazy_info_name
+        self.func = func
+        self.initialized = multiprocessing.Value('i', 0)
+
+    def __call__(self):
+        with self.initialized.get_lock():
+            if not self.initialized.value:  # lazy
+                self._initialize()
+                self.initialized.value = True
+
+    def _initialize(self):
+        if self.lazy_info_name not in self.dataset.info.cache:
+            print(f"Computing {self.lazy_info_name} for {self.dataset.name}")
+            self.dataset.info.cache[self.lazy_info_name] = NameDict(**self.func(self.dataset))
+
+
+def lazily_add_statistics(dataset, max_sample_size=10000):
+    if len(dataset) > max_sample_size:
+        dataset = dataset.permute()[:max_sample_size]
+    return LazyDatasetInfoModifier(dataset, 'statistics',
+                                   lambda ds: compute_pixel_mean_std(ds, progress_bar=True))
+"""
+
+
 # Cached dataset with normalized inputs ############################################################
 
 def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
+    def compute_pixel_mean_std_d(ds):
+        return Namespace(**dict(zip(['mean', 'std'], compute_pixel_mean_std(ds, True))))
+
+    ds_with_info = parted_dataset.trainval.info_cache_hdd(
+        dict(standardization=compute_pixel_mean_std_d), cache_dir)
+    return parted_dataset.with_transform(
+        lambda ds: ds.info_cache(
+            dict(standardization=lambda ds: ds_with_info.info.cache['standardization'])))
+
+    """
     imstat = LazyImageStatisticsComputer(parted_dataset.trainval, cache_dir)
 
     def transform(ds):
-        ds.info.standardization = NameDict(**imstat.stats, standardized=False)
+        ds.info.cache.standardization = NameDict(**imstat.stats, standardized=False)
         return ds
 
     return parted_dataset.with_transform(transform)
+    """
 
 
 def cache_data_lazily(parted_dataset, cache_dir):
@@ -102,37 +145,21 @@ def cache_data_lazily(parted_dataset, cache_dir):
 
 
 class CachingDatasetFactory(DatasetFactory):
-    def __init__(self, datasets_dir, cache_dir):
-        super().__init__(datasets_dir)
-        self.datasets_dir = datasets_dir
+    def __init__(self, datasets_dir_or_factory, cache_dir, add_statistics=False):
+        ddof = datasets_dir_or_factory
+        super().__init__(ddof.datasets_dir if isinstance(ddof, DatasetFactory) else ddof)
+        self.add_statistics = add_statistics
         self.cache_dir = cache_dir
 
     def __call__(self, ds_name, **kwargs):
         pds = super().__call__(ds_name, **kwargs)
-        pds = add_image_statistics_to_info_lazily(pds, self.cache_dir)
+        if self.add_statistics:
+            pds = add_image_statistics_to_info_lazily(pds, self.cache_dir)
         return cache_data_lazily(pds, self.cache_dir)
 
 
-"""
-# Torch ############################################################################################
+# DataLoader class with collate function that supports Record examples
 
-# TODO
-def to_torch(dataset, device):
-    problem = get_problem(dataset)
-    if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
-        transform = lambda r: Record(x=torch.from_numpy(r.x), y=torch.from_numpy(r.y))
-    else:
-        raise NotImplementedError()
-    return dataset.map(transform)
-
-
-
-def dataset_to_torch(ds):
-    from torchvision.transforms.functional import to_tensor
-    def label_to_tensor(x):
-        if x.dtype == np.int8:  # PyTorch doesn't support np.int8 -> torch.int8
-            return torch.tensor(x.astype(np.uint8), dtype=torch.int8)
-        return torch.from_numpy(x)
-
-    return ds.map(lambda r: Record(x=to_tensor(r.x), y=label_to_tensor(r.y)))
-"""
+class DataLoader(torch.utils.data.DataLoader):
+    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True,
+                             collate_fn=default_collate, drop_last=True)
