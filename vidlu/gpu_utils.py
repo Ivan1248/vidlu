@@ -1,4 +1,6 @@
 import subprocess
+import warnings
+
 import xmltodict
 from argparse import Namespace
 import os
@@ -63,13 +65,19 @@ def get_first_available_cuda_gpu(max_gpu_util, min_mem_free, no_processes=True):
     return best_idx, statuses, availabilities
 
 
-def get_first_available_device(max_gpu_util=0.2, min_mem_free=4000, no_processes=True):
-    device_idx, statuses, availabilities = get_first_available_cuda_gpu(max_gpu_util, min_mem_free,
-                                                                        no_processes=no_processes)
+def get_first_available_device(max_gpu_util=0.2, min_mem_free=4000, no_processes=True, verbosity=0):
+    try:
+        device_idx, statuses, availabilities = get_first_available_cuda_gpu(
+            max_gpu_util, min_mem_free, no_processes=no_processes)
+    except RuntimeError as ex:
+        warnings.warn(f"Unable to get GPU(s). \nCaught exception: \n{ex}")
+        device_idx = None
     if device_idx is None:
-        print(f"Selected device: CPU.")
+        if verbosity > 0:
+            print(f"Selected device: CPU.")
         return 'cpu'
     else:
-        print(f"Selected device {statuses[device_idx].name}"
-              + f" with availability score {availabilities[device_idx]}.")
+        if verbosity > 0:
+            print(f"Selected device {statuses[device_idx].name}"
+                  + f" with availability score {availabilities[device_idx]}.")
         return device_idx
