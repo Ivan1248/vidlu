@@ -181,7 +181,6 @@ def rand_init_delta(x, p, eps, bounds, batch=False):
 
 # PGD ##############################################################################################
 
-'''
 def perturb_iterative(x, y, predict, step_count, eps, step_size, loss, grad_preprocessing='sign',
                       delta_init=None, p=np.inf, clip_bounds=(0, 1), is_success_for_stopping=None):
     """Iteratively maximizes the loss over the input. It is a shared method for
@@ -195,67 +194,21 @@ def perturb_iterative(x, y, predict, step_count, eps, step_size, loss, grad_prep
         eps: maximum distortion.
         step_size: attack step size per iteration.
         loss: loss function.
-        delta_init (optional): tensor contains the random initialization.
+        grad_preprocessing (str): preprocessing of gradient before
+            multiplication with step_size.'sign' for gradient sign, 'normalize'
+            for p-norm normalization.
+        delta_init (optional): initial delta.
         p (optional): the order of maximum distortion (inf or 2).
         clip_bounds (optional): mininum and maximum value pair.
+        is_success_for_stopping (optional): a function that determines whether
+            the attack is successful example-wise based on the predictions and
+            the true labels. If it None, step_count of iterations is performed
+            on every example.
 
     Returns:
-        The perturbed input.
+        Perturbed inputs.
     """
-    if is_success_for_stopping is None:
-        is_success_for_stopping = lambda *a: None
-    loss_fn = loss
-    if grad_preprocessing == 'sign':
-        grad_preprocessing = lambda x: x.sign()
-    elif grad_preprocessing == 'normalize':
-        grad_preprocessing = lambda g: g / ops.batch.norm(g, p, keep_dims=True)
 
-    delta = torch.zeros_like(x) if delta_init is None else delta_init
-    delta.requires_grad_()
-    prev_success = None
-    for ii in range(step_count):
-        pred = predict(x + delta)
-
-        success = is_success_for_stopping(pred, y)
-        if success is not None:
-            with torch.no_grad():
-                success = success  # .view(-1, *([1] * (len(delta.shape) - 1)))
-                # keep the already succesful adversarial examples unchanged
-                if prev_success is not None:
-                    prev_succ_ind = prev_success == 1
-                    delta[prev_succ_ind] = prev_delta[prev_succ_ind]
-                if success.all():
-                    print(ii)
-                    break  # stop whene all adversarial examples are successful
-                prev_success = success
-                prev_delta = delta
-        if ii == step_count - 1:
-            print(ii + 1, prev_success.float().mean())
-
-        loss = loss_fn(pred, y)
-        loss.backward()
-        with torch.no_grad():
-            pgrad = grad_preprocessing(delta.grad)
-            if p == np.inf:  # try with restrict_norm instead of sign, mul
-                delta += pgrad.mul_(step_size)
-                delta.set_(ops.batch.project_to_p_ball(delta, eps, p=p))
-                delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
-            elif p in [1, 2]:  # try with restrict_norm_by_scaling instead of restrict_norm
-                raise NotImplementedError("use pgrad, todo")
-                delta += ops.batch.project_to_p_ball(delta.grad, 1, p=p).mul_(step_size)
-                delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
-                if eps is not None:
-                    delta.set_(ops.batch.project_to_p_ball(delta, eps, p=p))  # !!
-            else:
-                raise NotImplementedError(f"Not implemented for p = {p}.")
-
-            delta.grad.zero_()
-    return torch.clamp(x + delta, *clip_bounds)
-'''
-
-
-def perturb_iterative(x, y, predict, step_count, eps, step_size, loss, grad_preprocessing='sign',
-                      delta_init=None, p=np.inf, clip_bounds=(0, 1), is_success_for_stopping=None):
     stop_on_success = is_success_for_stopping is not None
     loss_fn = loss
     if grad_preprocessing == 'sign':
@@ -341,12 +294,7 @@ class PGDAttack(Attack):
         within eps from the initial point.
         Paper: https://arxiv.org/pdf/1706.06083.pdf
 
-        Args:
-            eps: maximum distortion.
-            step_count: number of iterations.
-            step_size: attack step size.
-            rand_init (bool, optional): random initialization.
-            p (optional): the order of the norm of maximum distortion.
+        See the documentation of perturb_iterative.
         """
         super().__init__(model, loss, clip_bounds, is_success, get_predicted_label)
         self.eps = eps
@@ -358,12 +306,12 @@ class PGDAttack(Attack):
         self.stop_on_success = stop_on_success
 
     def _perturb(self, x, y=None):
-        delta = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
+        delta_init = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
                  else torch.zeros_like(x))
         return perturb_iterative(x, y, self.model, step_count=self.step_count, eps=self.eps,
                                  step_size=self.step_size, loss=self.loss,
                                  grad_preprocessing=self.grad_preprocessing, p=self.p,
-                                 clip_bounds=self.clip_bounds, delta_init=delta,
+                                 clip_bounds=self.clip_bounds, delta_init=delta_init,
                                  is_success_for_stopping=self.is_success if self.stop_on_success else None)
 
 
