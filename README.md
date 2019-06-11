@@ -19,7 +19,7 @@ A deep learning library for research with emphasis on computer vision, based on 
     - [X] logging, checkpoints, resuming interupted training
     - [ ] pretrained parameter loading: ResNet, DenseNet
     - [X] supervised training
-    - [ ] adversarial training
+    - [X] adversarial training
     - [ ] GAN training
 - algorithms 
   - models (convolutional) with training algorithms
@@ -36,7 +36,7 @@ A deep learning library for research with emphasis on computer vision, based on 
     - [ ] flow-based generative models
   - adversarial attacks
       - [X] single step gradient
-      - [ ] PGD/BIM
+      - [X] PGD/BIM
       - [ ] CW
       - [ ] DDN (arXiv:1811.09600)
       - [ ] Frank-Wolfe constrained optimization
