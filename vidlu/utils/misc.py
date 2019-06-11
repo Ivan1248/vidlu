@@ -4,6 +4,7 @@ import platform
 import os
 import hashlib
 import urllib.request
+from dataclasses import dataclass
 
 from tqdm import tqdm
 
@@ -98,3 +99,83 @@ def download(url, output_path, md5=None):
     with _DownloadProgressBar(unit='B', unit_scale=True,
                               miniters=1, desc="Downloading " + url.split('/')[-1]) as t:
         urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
+
+
+# Iterator functions
+
+def skip(iterator, n=None):
+    """Advances the iterator `n` steps. If n is None, the whole iterator is consumed."""
+    if n is not None or not (isinstance(n, int) and n > 0):
+        raise ValueError(f"`n` should be `None` or a positive integer, not {n}.")
+
+    if n is None:
+        for _ in iterator:
+            pass
+    else:
+        for i, _ in enumerate(iterator):
+            if i >= n:
+                break
+    return iterator
+
+
+def consume(iterator):
+    for _ in iterator:
+        pass
+    return iterator
+
+
+# Dataclasses
+
+@dataclass
+class FieldCheckingClass:
+    def __post_init__(self):
+        self.check_all_initialized()
+
+    def check_all_initialized(self, invalid_predicate):
+        for k, v in self.__dict__:
+            if invalid_predicate(v):
+                raise TypeError(
+                    f"Attribute {k} has invalid value {v} (for an object of type {type(self)}).")
+
+
+def check_all_initialized(obj, invalid_predicate):
+    for k, v in obj.__dict__.items():
+        if invalid_predicate(v):
+            raise TypeError(
+                f"{type(obj).__name__} attribute '{k}' is missing or has invalid value {v} .")
+
+
+def AttributeCheckingMeta(*, invalid_value):
+    class SpecialAttributeCheckingMeta(type):
+        def __new__(cls, name, bases, dict):
+            return type.__new__(cls, name, bases, dict)
+
+        def __call__(cls, *args, **kwargs):
+            instance = super().__call__(*args, **kwargs)
+            check_all_initialized(instance, lambda x: x is invalid_value)
+            return instance
+
+    return SpecialAttributeCheckingMeta
+
+
+# Mappings
+
+
+def fuse(*dicts, overridable=None, non_overridable=None, ignore_if_equal=True, factory=None):
+    if overridable is not None and non_overridable is not None:
+        raise ValueError("Only one of `overridable` and `non_overridable` lists can be provided.")
+    factory = factory or type(dicts[0])
+
+    if overridable is None and non_overridable is None:
+        return factory(*dicts)
+
+    def key_not_overridable(k):
+        return k in non_overridable if overridable is None else k not in overridable
+
+    result = factory(**dicts[0])
+    for d in dicts[1:]:
+        for k, v in d.items():
+            if k in result and key_not_overridable(k) and not (ignore_if_equal and result[k] is v):
+                raise RuntimeError(f"Key '{k}' is already assigned.")
+            result[k] = v
+    return result
