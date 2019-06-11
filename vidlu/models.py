@@ -56,12 +56,11 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
                                 dim_change=dim_change)
 
 
-def densenet_backbone(depth, small_input, k=None, compression=0.5,
+def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3),
                       block_f=partial(default_args(com.DenseNetBackbone).block_f,
                                       kernel_sizes=Reserved), backbone_f=com.DenseNetBackbone):
     # TODO: dropout 0.2
     # dropout if no pds augmentation
-    ksizes = [1, 3]
     depth_to_group_lengths = {
         121: ([6, 12, 24, 16], 32),
         161: ([6, 12, 36, 24], 48),
