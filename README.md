@@ -2,7 +2,8 @@
 
 A deep learning library for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/).
 
-#### Things (to be) done:
+## Things (to be) done
+
 - general
   - [X] data
     - [X] easy data processing (transformations, splitting, joining)
@@ -11,7 +12,7 @@ A deep learning library for research with emphasis on computer vision, based on 
     - [X] many datasets (data loaders)
   - [X] modules
     - [X] modules without having to define the input dimension (like in e.g. MXNet or MagNet) -- requires an initial run for initialization
-    - [X] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names 
+    - [X] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names
     - [X] high generality/customizability of components and models (deep arguments) (not completely satisfactory)
   - [X] training
     - [X] inductive bias (mostly) disentangled from the model
@@ -21,7 +22,7 @@ A deep learning library for research with emphasis on computer vision, based on 
     - [X] supervised training
     - [X] adversarial training
     - [ ] GAN training
-- algorithms 
+- algorithms
   - models (convolutional) with training algorithms
     - classification
       - [X] ResNet, WRN, DenseNet
@@ -35,8 +36,8 @@ A deep learning library for research with emphasis on computer vision, based on 
     - [ ] VAE
     - [ ] flow-based generative models
   - adversarial attacks
-      - [X] single step gradient
-      - [X] PGD/BIM
-      - [ ] CW
-      - [ ] DDN (arXiv:1811.09600)
-      - [ ] Frank-Wolfe constrained optimization
+    - [X] single step gradient
+    - [X] PGD/BIM
+    - [ ] CW
+    - [ ] DDN (arXiv:1811.09600)
+    - [ ] Frank-Wolfe constrained optimization
