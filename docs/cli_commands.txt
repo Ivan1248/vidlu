@@ -1,0 +1,31 @@
+python run.py train
+
+"MNIST{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True)" ResNetCifarTrainer
+"whitenoise{train,test}" "ResNet,backbone_f=t(depth=18,small_input=True),head_f=partial(vidlu.nn.components.classification_head,10)" ResNetCifarTrainer "accuracy"
+
+"Cifar10{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True)" ResNetCifarTrainer ""
+
+"Cifar10{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True),init=t(zero_init_residual=False)" ResNetCifarTrainer ""
+"Cifar10{train,val}" "ResNet,backbone_f=t(depth=10,small_input=True,base_width=4)" ResNetCifarTrainer ""
+"Cifar10{train,val}" "DiscriminativeModel,backbone_f=c.VGGBackbone,init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
+"Cifar10{train,val}" "SmallImageClassifier" "SmallImageClassifierTrainer,data_loader_f=t(num_workers=4)" "" -v 2
+"Cifar10{train,val}" "DiscriminativeModel,backbone_f=partial(c.PreactBlock,kernel_sizes=[3,3,3],base_width=64,width_factors=[1,1,1]),init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
+
+python run.py train
+-d "Cifar10-train,val" --input_prep "standardize(Cifar10-train,)" -m "ResNet,backbone_f=t(depth=18,small_input=True)" -t ResNetCifarTrainer --metrics ""
+
+
+
+
+
+
+python run.py train "cifar10{train,val}" standardize "ResNet,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
+python run.py train "cifar10{train,val}" div255      "ResNet,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
+
+python run.py train "cifar10{train,val}" div255 "DenseNet,backbone_f=t(depth=121,small_input=True)" "Trainer,**configs.resnet_cifar"
+
+
+Adversarial training
+"cifar10{train,val}"     div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'attack_f':partial(configs.madry_cifar10_attack, step_count=10)}"
+"cifar10{trainval,test}" div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'attack_f':partial(configs.madry_cifar10_attack, step_count=10)}"
+"cifar10{trainval,test}" div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'train_step':configs.AdversarialTrainStep(True),'attack_f':partial(configs.madry_cifar10_attack, step_count=10,stop_on_success=True)}"

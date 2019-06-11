@@ -1,0 +1,56 @@
+numpy vs torch vs PIL
+slika:
+    PIL:   HWC
+    numpy: HWC,  uint8
+    torch: CHW,  uint8
+    kod ulaza
+oznaka:
+    int8 / int16 / int32 (što manje zbog keširanja kod semantičke segmentacije)
+    ne može np.int8 -> torch.int8, mora se np.int8 -> np.uint8 -> torch.int8
+
+put podataka
+slika(), oznaka(semseg,clf):
+    učitavanje (slika: uint8 PIL/numpy, oznaka: int PIL/numpy)
+    -> [računanje statistika i normalizacija (slika: float numpy/torch, oznaka: *)]
+        -> jitter (slika: uint8 torchvision podržava PIL, oznaka: PIL,*)
+            -> model (slika: torch)
+            -> priprema za prikaz (slika: numpy/PIL, oznaka: numpy)
+                -> prikaz
+
+    uint8 PIL/numpy      -> float numpy/torch -> uint8 PIL    -> torch
+    int PIL/numpy, numpy -> *                 -> uint8 PIL, * -> torch
+
+    train:
+    load> uint8     PIL    -stats> -cache> -jitter(PIL/np)> -to_torch> float     pt -standardizacija> pt -model>
+    load> int/float np, np ------- -cache> -jitter(np)----> -to_torch> int/float pt ----------------> pt -model>
+    '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+    val/test:
+    load> uint8     PIL    ------- -cache> ---------------- -to_torch> float     pt -standardizacija> pt -model>
+
+
+               load - kod slika daje sliku PIL-a, uint8, podaci (npr. oznake za
+                      semantičku segmentaciju) trebaju biti što manji zbog keširanja
+              stats - sprema sredinu i standardnu devijaciju u ds.info.normaization
+              cache - keširanje na disk
+              npPIL - prebacivanje np u PIL ako već nije PIL
+             jitter - radi slučajne transformacije pomoću PIL-a ili NumPyja (kod slika da sliku PIL-a)
+           to_torch - pretvara ulaz u torch.Tensor (slike transponira HWC -> CHW i pretvara u float)
+    standardizacija - standardizira sliku prema spremljenim statistikama u ds.info.normaization
+
+
+
+-?-------------------------------------------------------------torch
+loading [-> caching] [-> jittering (training set)] -> input preparation -> prepare_batch -> model
+\1.1.1/  \1.1.2____/
+\1.1_______________/  \1.2______________________/   \1.3______________/ \2.1___________/ \2.2___/
+\1____________________________________________________________________/ \2______________________/
+
+1) experiments.get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, input_prep_str) -> Namespace
+1.1) factories.get_datasets(datasets_str: str, datasets_dir, cache_dir=None) -> list
+1.1.1) DatasetFactory(datasets_dir) -> PartedDataset
+1.1.2) CachingDatasetFactory(*, cache_dir)
+1.2) *.map(defaults.get_jitter(*))
+1.3) *.map(defaults.get_input_preparation(*))
+2) Trainer.train_step | Evaluator.eval_step
+2.1) trainers.default_prepare_batch(batch, device=None, non_blocking=False) or something else
+2.2) model
