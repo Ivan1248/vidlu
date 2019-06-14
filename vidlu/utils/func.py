@@ -5,7 +5,7 @@ from functools import partialmethod, partial, reduce, wraps
 import itertools
 
 from .collections import NameDict
-from vidlu.utils import tree
+from vidlu.utils import tree, misc
 
 
 def identity(x):
@@ -128,6 +128,18 @@ def functree_shallow(func, *args, **kwargs):
     return _FuncTree(func, **{**default_args(func), **kwargs})
 
 
+def call_with_args_from_dict(func, dict):
+    par = params(func)
+    return func(**misc.update_existing_items(
+        {k: v for k, v in par.items() if v is not Empty or k in dict}, dict))
+
+
+def partial_with_args_from_dict(func, dict):
+    par = params(func)
+    return partial(func, **misc.update_existing_items(
+        {k: v for k, v in par.items() if v is not Empty or k in dict}, dict))
+
+
 # parameters/arguments #############################################################################
 
 def parameter_count(func) -> int:
@@ -142,7 +154,12 @@ def default_args(func) -> NameDict:
 
 
 def params(func) -> NameDict:
-    return NameDict({k: v.default for k, v in signature(func).parameters.items()})
+    if not callable(func):
+        raise ValueError("The provided type is not callable.")
+    try:
+        return NameDict({k: v.default for k, v in signature(func).parameters.items()})
+    except ValueError as e:
+        return NameDict()
 
 
 def params_deep(func):

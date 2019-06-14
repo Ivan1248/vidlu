@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 from tqdm import tqdm
 
+from . import func
+
 
 # Slicing ##########################################################################################
 
@@ -179,3 +181,10 @@ def fuse(*dicts, overridable=None, non_overridable=None, ignore_if_equal=True, f
                 raise RuntimeError(f"Key '{k}' is already assigned.")
             result[k] = v
     return result
+
+
+def update_existing_items(dest, src, copy=False):
+    if copy:
+        dest = dest.copy()
+    dest.update({k: v for k, v in src.items() if k in dest})
+    return dest
