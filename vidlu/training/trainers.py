@@ -1,3 +1,4 @@
+import collections
 from abc import ABC
 from collections import Callable, Mapping
 from functools import partial, lru_cache
@@ -8,20 +9,28 @@ from tqdm import tqdm
 import torch
 from torch import nn
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
-from ignite._utils import convert_tensor
 
 from vidlu import modules
 import vidlu.modules.utils
+from vidlu.data import Record
 from vidlu.data_utils import DataLoader
 from vidlu.utils.func import default_args, params, Empty
 from vidlu.utils.collections import NameDict
-from vidlu.utils.misc import Event
-from vidlu.utils.misc import AttributeCheckingMeta
 from vidlu.training.engine import Engine
 
 
-def default_prepare_batch(batch, device=None, non_blocking=False):
-    return tuple(convert_tensor(x, device=device, non_blocking=non_blocking) for x in batch)
+def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=False):
+    """ A function for putting feature batches on the relevant device"""
+
+    def _prepare(x):
+        return x.to(device=device, non_blocking=non_blocking)
+
+    if isinstance(batch, feature_type):
+        return _prepare(batch)
+    elif isinstance(batch, (collections.Mapping, Record)):
+        return type(batch)({k: _prepare(x) for k, x in batch.items()})
+    elif isinstance(batch, collections.Sequence):
+        return type(batch)(_prepare(x) for x in batch)
 
 
 # Evaluator and trainer ############################################################################
