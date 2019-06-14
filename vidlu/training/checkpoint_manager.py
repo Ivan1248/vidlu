@@ -55,19 +55,24 @@ class CheckpointManager(object):
         ['lin33_1', 'lin33_2']
     """
     STATE_FILENAME = 'state.pth'
-    INFO_FILENAME = 'checkpoint.info'
+    PROGRESS_INFO_FILENAME = 'progress.info'
+    EXPERIMENT_INFO_FILENAME = 'experiment.info'
     SUMMARY_FILENAME = 'log.txt'
 
-    def __init__(self, dir_path, id, n_saved=1, resume=False, remove_old=False):
-        self.dir_path = Path(dir_path).expanduser()
-        self.dir_path.mkdir(parents=True, exist_ok=True)
-        self.id = id
+    def __init__(self, checkpoints_dir, experiment_str, experiment_desc=None, n_saved=1,
+                 resume=False,
+                 remove_old=False):
+        self.checkpoints_dir = checkpoints_dir
+        self.exp_dir_path = Path(checkpoints_dir).expanduser() / experiment_str
+        self.exp_dir_path.mkdir(parents=True, exist_ok=True)
+        self.experiment_str = experiment_str
+        self.experiment_desc = experiment_desc or dict()
         self._n_saved = n_saved
         self._index = 0
         self._required_resuming = resume
 
         def get_existing_checkpoints():
-            paths = [str(p) for p in self.dir_path.iterdir() if p.name.startswith(self.id)]
+            paths = [str(p.stem) for p in self.exp_dir_path.iterdir()]
             indexes = map(self._name_to_index, paths)
             index_paths = sorted(zip(indexes, paths), key=lambda x: x[0])
             return [p for i, p in index_paths]
@@ -81,9 +86,9 @@ class CheckpointManager(object):
         if resume and len(self.saved) == 0:
             raise RuntimeError("Cannot resume from checkpoint. Checkpoints not found.")
         if not resume and len(self.saved) > 0:
-            raise RuntimeError(f"Files with ID {id} are already present in the directory "
-                               + f"{dir_path}. If you want to use this ID anyway, pass either"
-                               + "`remove_old=True` or `resume=True`. ")
+            raise RuntimeError(f"Files with ID {experiment_str} are already present in the "
+                               + f"directory {checkpoints_dir}. If you want to use this ID anyway, pass"
+                               + "either `remove_old=True` or `resume=True`. ")
 
     def save(self, state, summary=None):
         if self._required_resuming:
@@ -95,37 +100,38 @@ class CheckpointManager(object):
         self._index += 1
 
         name = self._index_to_name(self._index)
-        path = self.dir_path / name
+        path = self.exp_dir_path / name
         path.mkdir(parents=True, exist_ok=True)
         self._save(path / self.STATE_FILENAME, state)
-        self._save(path / self.INFO_FILENAME, Namespace(index=self._index))
+        self._save(path / self.PROGRESS_INFO_FILENAME, Namespace(index=self._index))
+        self._save(path / self.EXPERIMENT_INFO_FILENAME, self.experiment_desc)
         self._save(path / self.SUMMARY_FILENAME, summary)
-        self.saved.append(path)
+        self.saved.append(name)
 
         self.remove_old_checkpoints()
 
     def load_last(self):
-        path = self.dir_path / self.saved[-1]
-        self._index = torch.load(path / self.INFO_FILENAME).index
+        path = self.exp_dir_path / self.saved[-1]
+        self._index = torch.load(path / self.PROGRESS_INFO_FILENAME).index
+        self.experiment_desc = torch.load(path / self.EXPERIMENT_INFO_FILENAME)
         state = torch.load(path / self.STATE_FILENAME)
         summary = torch.load(path / self.SUMMARY_FILENAME)
         self._required_resuming = False
         return state, summary
 
     def _save(self, path, obj):
-        create_file_atomic(path=path,
-                           save_action=lambda file: torch.save(obj, file))
+        create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
 
     def _index_to_name(self, index):
-        return f'{self.id}_{index}'
+        return f'{index}'
 
     def _name_to_index(self, name):
-        return int(name[name.rindex('_') + 1:])
+        return int(name)
 
     def remove_old_checkpoints(self, n_saved=None):
         n_saved = self._n_saved if n_saved is None else n_saved
         while len(self.saved) > n_saved:
-            path = self.saved.pop(0)
+            path = self.exp_dir_path / self.saved.pop(0)
             try:
                 shutil.rmtree(path)
             except FileNotFoundError as ex:

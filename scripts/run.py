@@ -8,8 +8,8 @@ import numpy as np
 # noinspection PyUnresolvedReferences
 from _context import vidlu
 from vidlu import factories
-from vidlu.experiments import TrainingExperiment
-from vidlu.utils.func import Empty
+from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
+from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
 
 import dirs
@@ -20,48 +20,63 @@ def train(args):
     np.random.seed(args.seed)
 
     e = TrainingExperiment.from_args(
-        data_str=args.data, input_prep_str=args.input_prep, model_str=args.model,
-        trainer_str=args.trainer, metrics_str=args.metrics,
-        experiment_suffix=args.experiment_suffix, resume=args.resume, device=args.device,
-        verbosity=args.verbosity, dirs=dirs)
+        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
     print(('Continuing' if args.resume else 'Starting') + ' training:...')
 
-    #e.trainer.eval(e.data.test)
     e.trainer.train(e.data.train_jittered, restart=False)
+    e.trainer.eval(e.data.train)
 
     e.cpman.remove_old_checkpoints()
 
     print(f'Trained model saved in {e.cpman.dir_path}')
 
 
+def test(args):
+    e = TrainingExperiment.from_args(
+        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+
+    print('Starting evaluation (test/val):...')
+    e.trainer.eval(e.data.test)
+    print('Starting evaluation (train):...')
+    e.trainer.eval(e.data.train)
+
+    e.cpman.remove_old_checkpoints()
+
+
 # Argument parsing #################################################################################
 
-parser = argparse.ArgumentParser(description='Training script')
+def add_standard_arguments(parser):
+    # learner configuration
+    parser.add_argument("data", type=str, help=factories.get_data.help)
+    parser.add_argument("input_prep", type=str, default=Empty,
+                        help='A string representing input preparation, e.g. "standardize", "div255".')
+    parser.add_argument("model", type=str, help=factories.get_model.help)
+    parser.add_argument("trainer", type=str, help=factories.get_trainer.help)
+    parser.add_argument("--metrics", type=str, default="",
+                        help='A comma-separated list of metrics.')
+    # device
+    parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.", default=None)
+    # experiment result saving, state checkpoints
+    parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
+                        help="Experiment ID suffix. Required for running multiple experiments"
+                             + " with the same configuration.")
+    parser.add_argument("-r", "--resume", action='store_true',
+                        help="Resume training from the last checkpoint of the same experiment.")
+    parser.add_argument("-s", "--seed", type=str, default=53,
+                        help="RNG seed for experiment reproducibility. Useless on GPU.")
+    # reporting
+    parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.",
+                        default=1)
+    parser.set_defaults(func=train)
+
+
+parser = argparse.ArgumentParser(description='Experiment running script')
 subparsers = parser.add_subparsers()
 parser_train = subparsers.add_parser("train")
-# learner configuration
-parser_train.add_argument("data", type=str, help=factories.get_data.help)
-parser_train.add_argument("input_prep", type=str, default=Empty,
-                          help='A string representing input preparation, e.g. "standardize", "div255".')
-parser_train.add_argument("model", type=str, help=factories.get_model.help)
-parser_train.add_argument("trainer", type=str, help=factories.get_trainer.help)
-parser_train.add_argument("--metrics", type=str, default="",
-                          help='A comma-separated list of metrics.')
-# device
-parser_train.add_argument("-d", "--device", type=torch.device, help="PyTorch device.", default=None)
-# experiment result saving, state checkpoints
-parser_train.add_argument("-e", "--experiment_suffix", type=str, default="",
-                          help="Experiment ID suffix. Required for running multiple experiments"
-                               + " with the same configuration.")
-parser_train.add_argument("-r", "--resume", action='store_true',
-                          help="Resume training from the last checkpoint of the same experiment.")
-parser_train.add_argument("-s", "--seed", type=str, default=53,
-                          help="RNG seed for experiment reproducibility. Useless on GPU.")
-# reporting
-parser_train.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.",
-                          default=1)
-parser_train.set_defaults(func=train)
+add_standard_arguments(parser_train)
+parser_test = subparsers.add_parser("test")
+add_standard_arguments(parser_test)
 
 args = parser.parse_args()
 

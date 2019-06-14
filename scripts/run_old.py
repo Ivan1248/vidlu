@@ -115,7 +115,7 @@ learner_name = to_valid_path(f"{args.model}-{args.trainer}")
 experiment_id = f'{args.data}-{learner_name}-exp_{args.experiment_suffix}'
 print('Learner name:', learner_name)
 print('Experiment ID:', experiment_id)
-cpman = CheckpointManager(dirs.SAVED_STATES, id=experiment_id, resume=args.resume,
+cpman = CheckpointManager(dirs.SAVED_STATES, experiment_str=experiment_id, resume=args.resume,
                           remove_old=args.experiment_suffix == '' and not args.resume)
 if args.resume:
     state, log_lines = cpman.load_last()
@@ -176,7 +176,7 @@ trainer.train(ds_train_jittered, restart=False)
 
 cpman.remove_old_checkpoints()
 
-print(f'Trained model saved in {cpman.dir_path}')
+print(f'Trained model saved in {cpman.exp_dir_path}')
 
 # End ##############################################################################################
 

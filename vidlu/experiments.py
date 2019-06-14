@@ -1,6 +1,7 @@
 from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
+import warnings
 
 import torch
 import numpy as np
@@ -8,14 +9,28 @@ import numpy as np
 from vidlu import gpu_utils, factories, defaults
 from vidlu.modules import parameter_count
 from vidlu.training.checkpoint_manager import CheckpointManager
+from vidlu.utils.func import Empty
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils import tree
-from vidlu.utils.misc import try_input
+from vidlu.utils.misc import try_input, query_yes_no
 
 
 # TODO: logger instead of verbosity
+
+@dataclass
+class TrainingExperimentFactoryArgs:
+    data: str
+    input_prep: str
+    model: str
+    trainer: str
+    metrics: str
+    experiment_suffix: str
+    resume: bool
+    device: torch.device
+    verbosity: int
+
 
 # Data #############################################################################################
 
@@ -99,14 +114,16 @@ def define_training_loop_actions(trainer, cpman, ds_test, logger):
 
 # Checkpoint manager ###############################################################################
 
-def get_checkpoint_manager(data_str, model_str, trainer_str, experiment_suffix, resume,
-                           checkpoints_dir):
-    learner_name = to_valid_path(f"{model_str}/{trainer_str}")
-    experiment_id = f'{data_str}/{learner_name}-exp_{experiment_suffix}'
+def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
+    a = training_args
+    learner_name = to_valid_path(f"{a.model}/{a.trainer}")
+    expsuff = a.experiment_suffix or "_"
+    experiment_id = f'{a.data}/{learner_name}/{expsuff}'
     print('Learner name:', learner_name)
     print('Experiment ID:', experiment_id)
-    return CheckpointManager(checkpoints_dir, id=experiment_id, resume=resume,
-                             remove_old=experiment_suffix == '' and not resume)
+    return CheckpointManager(checkpoints_dir, experiment_str=experiment_id,
+                             experiment_desc=training_args, resume=a.resume,
+                             remove_old=a.experiment_suffix == '' and not a.resume)
 
 
 # Experiment #######################################################################################
@@ -123,28 +140,26 @@ class TrainingExperiment:
     cpman: CheckpointManager
 
     @staticmethod
-    def from_args(data_str, input_prep_str, model_str, trainer_str, metrics_str, experiment_suffix,
-                  resume, device, dirs, verbosity):
+    def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
+        a = training_args
         with indent_print("Selecting device..."):
-            if device is None:
+            if a.device is None:
                 device = torch.device(
-                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+                        gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
         with indent_print('Initializing data...'):
-            data = get_prepared_data_for_trainer(data_str, dirs.DATASETS, dirs.CACHE,
-                                                 input_prep_str)
+            data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE, a.input_prep)
         with indent_print('Initializing model...'):
-            model = get_model(model_str, data.train, device, verbosity)
+            model = get_model(a.model, data.train, device, a.verbosity)
         with indent_print('Initializing trainer and evaluation...'):
-            trainer = factories.get_trainer(trainer_str, model=model, dataset=data.train,
-                                            verbosity=verbosity)
-            for m in factories.get_metrics(metrics_str, trainer, dataset=data.train):
+            trainer = factories.get_trainer(a.trainer, model=model, dataset=data.train,
+                                            verbosity=a.verbosity)
+            for m in factories.get_metrics(a.metrics, trainer, dataset=data.train):
                 trainer.add_metric(m())
         logger = Logger()
-        cpman = get_checkpoint_manager(data_str, model_str, trainer_str, experiment_suffix, resume,
-                                       dirs.SAVED_STATES)
+        cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
         define_training_loop_actions(trainer, cpman, data.test, logger)
 
-        if resume:
+        if a.resume:
             for obj, state in zip([trainer, logger], cpman.load_last()):
                 obj.load_state_dict(state)
             logger.print_all()
