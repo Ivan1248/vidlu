@@ -54,7 +54,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
             raise ValueError("All arguments but the first one must be keyword arguments."
                              + " The optional positional argument can only be a Record or Mapping.")
         if len(args) == 1:
-            dict_ = dict(args[0]._dict if isinstance(args[0], Record) else args[0], **kwargs)
+            d = args[0]
+            dict_ = dict(d._dict if isinstance(d, Record) else d, **kwargs)
         else:
             dict_ = kwargs
         dict_ = dict([(k[:-1], _LazyField(v)) if k.endswith('_') else (k, v)
