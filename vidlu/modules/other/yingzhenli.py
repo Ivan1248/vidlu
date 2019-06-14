@@ -1,6 +1,6 @@
 from collections import Callable
 
-from ..elements import Sequential
+from vidlu.modules.elements import Sequential
 
 
 

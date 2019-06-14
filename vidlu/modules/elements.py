@@ -240,6 +240,23 @@ class Sequential(*_extended(nn.Sequential)):
         return children.index(key)
 
 
+class ModuleTable(*_extended(nn.ModuleList)):
+    """
+    A wrapper around torch.nn.Sequential to enable passing a dict as the only
+    parameter whereas in torch.nn.Sequential only OrderedDict is accepted
+    currently.
+    It also supports slicing using strings.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*_to_sequential_init_args(*args, **kwargs))
+
+    __getitem__ = Sequential.__getitem__
+
+    def index(self, key):
+        return Sequential.index(self, key)
+
+
 class Identity(Module):
     def forward(self, x):
         return x
@@ -446,14 +463,6 @@ for name, cls in inspect.getmembers(nn, inspect.isclass):
 
 
 # Additional generally useful modules ##############################################################
-
-
-class Identity(Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x
 
 
 class Func(Module):

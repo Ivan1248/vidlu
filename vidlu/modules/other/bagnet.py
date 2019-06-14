@@ -2,7 +2,7 @@ import torch.nn as nn
 import math
 from torch.utils import model_zoo
 
-from .core_components import RootBlock
+from vidlu.modules.components import RootBlock
 
 import os
 

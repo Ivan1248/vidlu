@@ -5,22 +5,15 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from ..elements import (Module, Sequential, Conv, ConvTranspose, MaxPool, BatchNorm, Linear,
-                        Func, Identity, AvgPool, Parallel, Sum, Concat, Identity, parameter_count)
-from vidlu.modules.utils import try_get_module_name_from_call_stack
+from vidlu.modules.elements import (Module, Sequential, ModuleTable, Conv, MaxPool, Linear, Func,
+                                    AvgPool, Parallel, Sum, Concat, Identity)
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
 
-import math
+from . import _default_factories as D
+
 
 # Default arguments ################################################################################
-
-_d = NameDict(
-    norm_f=BatchNorm,
-    act_f=partial(nn.ReLU, inplace=False),  # TODO: Can "inplace=True" cause bugs? YES.
-    conv_f=partial(Conv, padding='half', bias=False),
-    convt_f=partial(ConvTranspose, bias=False),
-)
 
 
 def _call_no_inplace(module_f):
@@ -42,7 +35,7 @@ class RootBlock(Sequential):
         act_f: Activation module factory.
     """
 
-    def __init__(self, out_channels: int, small_input, norm_f=_d.norm_f, act_f=_d.act_f):
+    def __init__(self, out_channels: int, small_input, norm_f=D.norm_f, act_f=D.act_f):
         if small_input:  # CIFAR
             super().__init__(conv=Conv(out_channels, 3, padding='half', bias=False))
         else:
@@ -82,8 +75,8 @@ class PreactBlock(Sequential):
     """
 
     def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
-                 omit_first_preactivation=False, norm_f=_d.norm_f, act_f=_d.act_f,
-                 conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
+                 omit_first_preactivation=False, norm_f=D.norm_f, act_f=D.act_f,
+                 conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved),
                  noise_f=None):
         super().__init__()
@@ -119,8 +112,8 @@ class PostactBlock(Sequential):
     """
 
     def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
-                 omit_first_preactivation=False, norm_f=_d.norm_f, act_f=_d.act_f,
-                 conv_f=partial(_d.conv_f, kernel_size=Reserved, out_channels=Reserved,
+                 omit_first_preactivation=False, norm_f=D.norm_f, act_f=D.act_f,
+                 conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved),
                  noise_f=None):
         super().__init__()
@@ -176,25 +169,33 @@ class Resize(Module):
 
 # Ladder Upsampling ################################################################################
 
+
 class LadderUpsampleBlend(Module):
+    """ For LadderDenseNet and SwiftNet. """
+    _pre_blendings = dict(
+        sum=lambda e, d: e + d,
+        concat=lambda e, d: torch.cat((e, d), 1),
+    )
+
     def __init__(self, out_channels, pre_blending='concat',
-                 block_f=partial(PreactBlock, base_width=Reserved, width_Factors=[1])):
-        if self.joining_mode not in ['sum', 'concat']:
-            raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
-                             + f"It should be either 'add' or 'concat'.")
+                 blend_block_f=partial(PreactBlock, base_width=Reserved, width_Factors=Reserved)):
         super().__init__()
+        if pre_blending not in self._pre_blendings:
+            raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
+                             + f"It should be one of {tuple(self._pre_blendings.keys())}.")
+        self.args.block_f = Reserved.partial(blend_block_f, width_Factors=[1])
 
-    def build(self, e, d):
-        self.project = Reserved.partial(self.block_f, base_width=d.shape[1])(kernel_sizes=[1])
-        self.upsample = Resize(size=e.shape[:2], mode='bilinear')
-        self.join = ((lambda e, d: e + d) if self.joinining_mode == 'add'
-                     else (lambda e, d: torch.cat([e, d], 1)))
-        self.blend = Reserved.partial(self.block_f, base_width=self.out_channels)(kernel_sizes=[3])
+    def build(self, h_enc, h_dec):
+        a = self.args
+        self.project = Reserved.partial(a.block_f)(kernel_sizes=[1])
+        self.upsample = Resize(size=h_enc.shape[:2], mode='bilinear')
+        self.pre_blend = self._pre_blendings[self.a.pre_blending]
+        self.blend = Reserved.partial(self.block_f, base_width=a.out_channels)(kernel_sizes=[3])
 
-    def forward(self, e, d):
-        e = self.project(e)
-        d = self.upsample(d, e.shape[2:])
-        return self.blend(self.join(d, e))
+    def forward(self, h_enc, h_dec):
+        h_enc = self.project(h_enc)
+        h_dec = self.upsample(h_dec)
+        return self.blend(self.pre_blend(h_dec, h_enc))
 
 
 class Ladder(Module):
@@ -214,77 +215,34 @@ class Ladder(Module):
 
 # Pyramid pooling ##################################################################################
 
-class DenseSpatialPyramidPooling(nn.Module):
-    def __init__(self, num_levels, bt_size=512, level_size=128, out_size=128, grids=(6, 3, 2, 1),
+
+class DenseSPP(nn.Module):
+    # Spatial pyramid pooling for dense prediction
+    def __init__(self, bottleneck_size=512, level_size=128, out_size=128, grid_sizes=(8, 4, 2, 1),
                  block_f=partial(PreactBlock, base_width=Reserved, kernel_sizes=[1],
-                                 width_Factors=[1])):
+                                 width_Factors=[1]),
+                 upsample=partial(F.interpolate, mode='bilinear', align_corners=False)):
         super().__init__()
-        self.grids = grids
-        self.spp = Sequential(spp_bn=block_f(bt_size))
-        for i in range(num_levels):
-            self.spp.add_module('spp' + str(i), block_f(level_size))
-        self.spp.add_module(spp_fuse=block_f(out_size))
+        self.grid_sizes = grid_sizes
+        self.upsample = upsample
+        self.input_block = block_f(bottleneck_size)  # reduces the number of channels
+        self.pyramid_blocks = ModuleTable(
+            {f'block{i}': block_f(level_size) for i in range(len(grid_sizes))})
+        self.fuse_block = block_f(out_size)
 
     def forward(self, x):
-        levels = []
         target_size = x.size()[2:4]
+        ar = target_size[1] / target_size[0]
 
-        x = self.spp[0].forward(x)
-        levels.append(x)
-        num = len(self.spp) - 1
-
-        for i in range(1, num):
-            x_pooled = F.adaptive_avg_pool2d(x, self.grids[i - 1])
-            level = self.spp[i].forward(x_pooled)
-            level = upsample(level, target_size)
-            levels.append(level)
-        x = torch.cat(levels, 1)
-        return self.spp[-1].forward(x)
-
-
-# Heads ############################################################################################
-
-class ClassificationHead(Sequential):
-    def __init__(self, class_count):
-        super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
-                         logits=Linear(class_count))
-
-
-class SegmentationHead(Sequential):
-    def __init__(self, class_count, shape):
-        super().__init__(logits=Conv(class_count, kernel_size=1),
-                         upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
-                                               align_corners=False)))
-
-
-class TCSegmentationHead(Sequential):
-    def __init__(self, class_count, shape, norm_f=_d.norm_f, act_f=nn.ReLU, convt_f=_d.convt_f):
-        super().__init__()
-        self.shape = shape
-        self.class_count = class_count
-        self.norm_f, self.act_f, self.convt_f = norm_f, act_f, convt_f
-
-        self.add_module(logits=Conv(class_count, kernel_size=1))
-        self.add_module(logits=Conv(class_count, kernel_size=1))
-
-    def build(self, x):
-        for i in range(round(math.log(self.shape[0] / (x.shape[2] * 2), 2))):
-            self.add_module({f'norm{i}': self.norm_f(),
-                             f'act{i}': self.act_f(),
-                             f'conv{i}': self.convt_f(kernel_size=3,
-                                                      out_channels=x.shape[1] / 2 ** i,
-                                                      stride=2,
-                                                      padding=1)})
-        self.add_module(upsample=Func(partial(F.interpolate, size=self.shape, mode='bilinear',
-                                              align_corners=False)))
-
-
-class RegressionHead(Sequential):
-    def __init__(self, class_count, shape):
-        super().__init__(logits=Conv(class_count, kernel_size=1),
-                         upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
-                                               align_corners=False)),
-                         log_probs=nn.LogSoftmax(dim=1))
+        x = self.input_block(x)
+        levels = [x]
+        for pyr_block, grid_size in zip(self.pyramid_blocks[1:-1], self.grid_sizes[1:]):
+            if not self.square_grid:  # keep aspect ration
+                grid_size = (grid_size, max(1, round(ar * grid_size)))
+            x_pooled = F.adaptive_avg_pool2d(x, grid_size)  # TODO: x vs levels[-1]
+            level = pyr_block(x_pooled)
+            levels.append(self.upsample(level, target_size))
+        return self.fuse_block(torch.cat(levels, 1))
 
 
 # ResNet ###########################################################################################
@@ -382,8 +340,8 @@ class ResNetV2Backbone(Sequential):
 # DenseNet #########################################################################################
 
 class DenseTransition(Sequential):
-    def __init__(self, compression=0.5, norm_f=_d.norm_f, act_f=_d.act_f,
-                 conv_f=partial(_d.conv_f, kernel_size=1), noise_f=None,
+    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=D.act_f,
+                 conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
         self.add_modules(norm=norm_f(),
@@ -442,25 +400,26 @@ class DenseNetBackbone(Sequential):
 # MDenseNet ########################################################################################
 
 class MDenseTransition(Sequential):
-    def __init__(self, compression=0.5, norm_f=_d.norm_f, act_f=_d.act_f,
-                 conv_f=partial(_d.conv_f, kernel_size=1), noise_f=None,
+    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=D.act_f,
+                 conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
         self.args = NameDict(compression=compression, norm_f=norm_f, act_f=act_f, conv_f=conv_f,
                              noise_f=noise_f, pool_f=pool_f)
 
     def build(self, x):
-        out_channels = round(sum(y.shape[1] for y in x) * self.args.compression)
+        a = self.args
+        out_channels = round(sum(y.shape[1] for y in x) * a.compression)
         starts = Parallel([Sequential() for _ in range(len(x))])
         for s in starts:
-            s.add_modules(norm=self.args.norm_f(),
-                          act=self.args.act_f())
-            if self.args.noise_f is not None:
-                s.add_module(noise=self.args.noise_f())
-            s.add_module(conv=self.args.conv_f(out_channels=out_channels))
+            s.add_modules(norm=a.norm_f(),
+                          act=a.act_f())
+            if a.noise_f is not None:
+                s.add_module(noise=a.noise_f())
+            s.add_module(conv=a.conv_f(out_channels=out_channels))
         self.add_modules(starts=starts,
                          sum=Sum(),
-                         pool=Reserved.call(self.args.pool_f, stride=2))
+                         pool=Reserved.call(a.pool_f, stride=2))
 
 
 class MDenseUnit(Module):
@@ -592,7 +551,7 @@ class VGGBackbone(Sequential):
 
 
 class VGGClassifier(Sequential):
-    def __init__(self, fc_dim, class_count, act_f=_d.act_f, noise_f=nn.Dropout):
+    def __init__(self, fc_dim, class_count, act_f=D.act_f, noise_f=nn.Dropout):
         super().__init__()
         widths = [fc_dim] * 2 + [class_count]
         for i, w in enumerate(widths):
@@ -622,7 +581,7 @@ class FCNEncoder(Sequential):
 
 class SimpleEncoder(Sequential):
     def __init__(self, kernel_sizes=(4,) * 4, widths=(32, 64, 128, 256), z_width=32,
-                 norm_f=_d.norm_f, act_f=nn.ReLU, conv_f=_d.conv_f):
+                 norm_f=D.norm_f, act_f=nn.ReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add_module(f'conv{i}',
@@ -638,7 +597,7 @@ class SimpleEncoder(Sequential):
 
 class AAEEncoder(Sequential):
     def __init__(self, kernel_sizes=(4,) * 3, widths=(64,) + (256,) * 2, z_dim=128,
-                 norm_f=_d.norm_f, act_f=nn.LeakyReLU, conv_f=_d.conv_f):
+                 norm_f=D.norm_f, act_f=nn.LeakyReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add_module(f'conv{i}',
@@ -651,7 +610,7 @@ class AAEEncoder(Sequential):
 
 class AAEDecoder(Sequential):
     def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
-                 norm_f=_d.norm_f, act_f=nn.ReLU, convt_f=_d.convt_f):
+                 norm_f=D.norm_f, act_f=nn.ReLU, convt_f=D.convt_f):
         super().__init__()
         self.add_module('linear_h', Linear(h_dim))
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
@@ -663,7 +622,7 @@ class AAEDecoder(Sequential):
 
 
 class AAEDiscriminator(Sequential):
-    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=_d.norm_f, act_f=nn.ReLU):
+    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=D.norm_f, act_f=nn.ReLU):
         super().__init__()
         for i in range(2):
             # batch normalization?

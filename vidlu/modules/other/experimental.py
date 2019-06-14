@@ -2,8 +2,8 @@ from functools import partial
 
 from torch import nn
 
-from ..elements import Module
-from .core_components import PreactBlock
+from vidlu.modules.elements import Module
+from vidlu.modules.components import PreactBlock
 
 
 class SlugUnit(Module):

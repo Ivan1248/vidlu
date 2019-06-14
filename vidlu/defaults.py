@@ -6,7 +6,7 @@ from ignite import metrics
 
 from vidlu.data import Record
 from vidlu.models import DiscriminativeModel, Autoencoder
-from vidlu.modules import components as c
+from vidlu.modules import components
 from vidlu.modules import loss
 from vidlu.problem import Problem
 from vidlu.training.metrics import FuncMetric, ClassificationMetrics, ClassificationMetricsAdv
@@ -30,14 +30,14 @@ def get_model_argtree(model_class, dataset):
         if issubclass(model_class, DiscriminativeModel):
             if problem == Problem.CLASSIFICATION:
                 return ArgTree(
-                    head_f=partial(c.ClassificationHead, class_count=dataset.info.class_count))
+                    head_f=partial(components.ClassificationHead, class_count=dataset.info.class_count))
             elif problem == Problem.SEMANTIC_SEGMENTATION:
                 return ArgTree(
-                    head_f=partial(c.SegmentationHead, class_count=dataset.info.class_count,
+                    head_f=partial(components.SegmentationHead, class_count=dataset.info.class_count,
                                    shape=dataset[0].y.shape))
             elif problem == Problem.DEPTH_REGRESSION:
                 return ArgTree(
-                    head_f=partial(c.RegressionHead, shape=dataset[0].y.shape))
+                    head_f=partial(components.RegressionHead, shape=dataset[0].y.shape))
             elif problem == Problem.OTHER:
                 return ArgTree()
         elif issubclass(model_class, Autoencoder):

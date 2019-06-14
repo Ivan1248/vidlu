@@ -129,7 +129,7 @@ def get_model(model_str: str, dataset, device=None, verbosity=1):
     import torch.nn  # used in model_str/evaluation
     from vidlu import modules  # used in model_str/evaluation
     from vidlu.modules import loss
-    import vidlu.modules.components as com
+    import vidlu.modules.components as C
     import torchvision.models as tvmodels
     from vidlu.data_utils import DataLoader
 
