@@ -804,7 +804,7 @@ class ISUN(Dataset):
     def __len__(self):
         return len(self._image_names)
 
-
+"""
 class LSUN(Dataset):
     # TODO: labels, replace with LSUNDatasetNew
     subsets = ['test']
@@ -827,3 +827,4 @@ class LSUN(Dataset):
 
     def __len__(self):
         return len(self._image_names)
+"""
