@@ -10,7 +10,7 @@ from vidlu.training.trainers import Trainer
 from vidlu.training.trainers import AdversarialTrainer
 from vidlu.training import configs
 from vidlu.modules.loss import SoftmaxCrossEntropyLoss
-from vidlu.modules import ClassificationHead
+from vidlu.modules.components import ClassificationHead
 from vidlu.models import ResNet, resnet_v2_backbone
 from vidlu.training.adversarial.attacks import GradientSignAttack
 
