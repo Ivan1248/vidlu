@@ -8,10 +8,12 @@ import torchvision.transforms as tvt
 import torchvision.transforms.functional as F
 from . import numpy as npt
 
+
 # Maybe have 1 class per transform, like in torchvision, instead of TRANSFORMERS
 # Type and format checking #########################################################################
 
-is_pil_image = F._is_pil_image
+def is_pil_image(img):
+    return isinstance(img, Image.Image)
 
 
 def is_torch_image(img):
