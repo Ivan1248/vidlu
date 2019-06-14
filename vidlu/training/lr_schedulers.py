@@ -1,11 +1,11 @@
 from functools import partial
 
-from torch.optim.lr_scheduler import MultiStepLR, LambdaLR
+from torch.optim import lr_scheduler
 
 from vidlu.utils.func import default_args
 
 
-class ScalableMultiStepLR(MultiStepLR):
+class ScalableMultiStepLR(lr_scheduler.MultiStepLR):
     """Set the learning rate of each parameter group to the initial lr decayed
     by gamma once the number of epoch reaches one of the milestones. When
     last_epoch=-1, sets initial lr as lr.
@@ -35,12 +35,12 @@ class ScalableMultiStepLR(MultiStepLR):
     """
 
     def __init__(self, optimizer, milestones, epoch_count, gamma=0.1,
-                 last_epoch=default_args(MultiStepLR).last_epoch):
+                 last_epoch=default_args(lr_scheduler.MultiStepLR).last_epoch):
         super().__init__(optimizer, milestones=[round(m * epoch_count) for m in milestones],
                          gamma=gamma, last_epoch=last_epoch)
 
 
-class ScalableLambdaLR(LambdaLR):
+class ScalableLambdaLR(lr_scheduler.LambdaLR):
     """Sets the learning rate of each parameter group to the initial lr
     times a given function. When last_epoch=-1, sets initial lr as lr.
 
@@ -66,8 +66,15 @@ class ScalableLambdaLR(LambdaLR):
     """
 
     def __init__(self, optimizer, lr_lambda, epoch_count,
-                 last_epoch=default_args(LambdaLR).last_epoch):
+                 last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
         if not isinstance(lr_lambda, list) and not isinstance(lr_lambda, tuple):
             lr_lambda = [lr_lambda] * len(optimizer.param_groups)
         lr_lambda = [lambda e: ll(e / epoch_count) for ll in lr_lambda]
         super().__init__(optimizer=optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
+
+
+class CosineLR(lr_scheduler.CosineAnnealingLR):
+    def __init__(self, optimizer, epoch_count, eta_min=0,
+                 last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
+        super().__init__(optimizer=optimizer, T_max=epoch_count, eta_min=eta_min,
+                         last_epoch=last_epoch)
