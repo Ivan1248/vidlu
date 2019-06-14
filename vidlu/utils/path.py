@@ -20,8 +20,9 @@ def find_in_ancestor(path, ancestor_sibling_path):
 
 
 def to_valid_path(path):
-    path = str(path).strip().replace('"', "'")
-    return Path(re.sub(r'(?u)[^-\w.{}[\]+=\'\\/]', "+", path))
+    path = str(path).strip()
+    allowed = r"-\w.,\'\\/!#$%^&()_+=@{}\[\]"
+    return Path(re.sub(f"(?u)[^{allowed}]", "+", str(path)))
 
 
 def get_size(path):
