@@ -1,14 +1,15 @@
 from functools import partial
 
 import torch
-from torch.optim import SGD
+from torch import optim
+from torch.optim import lr_scheduler
 import numpy as np
 
 from vidlu.utils.func import default_args, params, Empty
 from vidlu.utils.misc import fuse
 from vidlu.utils.collections import NameDict
 from .adversarial.attacks import PGDAttack
-from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR
+from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
 
 
 # Training/evaluation steps ########################################################################
@@ -46,18 +47,20 @@ def autoencoder_train_step(trainer, batch):
 
 def adversarial_eval_step(trainer, batch):
     trainer.model.eval()
-    with torch.no_grad():
-        x, y = trainer.prepare_batch(batch)
 
+    x, y = trainer.prepare_batch(batch)
+    with torch.no_grad():
         prediction, outputs = trainer.get_outputs(x)
         loss = trainer.loss(prediction, y)
 
-        x_adv = x  # self.attack.perturb(x, y)
-        prediction_adv, outputs_adv = prediction, outputs  # self.get_outputs(x_adv)
-        loss_adv = loss * 0  # self.loss(prediction_adv, y)
-        return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item(),
-                        x_adv=x_adv, prediction_adv=prediction_adv, outputs_adv=outputs_adv,
-                        loss_adv=loss_adv.item())
+    x_adv = trainer.attack.perturb(x, y)
+    with torch.no_grad():
+        prediction_adv, outputs_adv = trainer.get_outputs(x_adv)
+        loss_adv = trainer.loss(prediction_adv, y)
+
+    return NameDict(x=x, y=y, prediction=prediction, target=y, outputs=outputs, loss=loss.item(),
+                    x_adv=x_adv, prediction_adv=prediction_adv, outputs_adv=outputs_adv,
+                    loss_adv=loss_adv.item())
 
 
 class AdversarialTrainStep:
@@ -75,16 +78,18 @@ class AdversarialTrainStep:
             loss.backward()
             trainer.optimizer.step()
 
+        trainer.model.eval()  # TODO: check necessity
         x_adv = trainer.attack.perturb(x, y)
+        trainer.model.train()
         trainer.optimizer.zero_grad()
         prediction_adv, outputs_adv = trainer.get_outputs(x_adv)
         loss_adv = trainer.loss(prediction_adv, y)
         loss_adv.backward()
         trainer.optimizer.step()
 
-        return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item(), x=x,
-                        x_adv=x_adv, prediction_adv=prediction_adv, outputs_adv=outputs_adv,
-                        loss_adv=loss_adv.item())
+        return NameDict(x=x, y=y, prediction=prediction, target=y, outputs=outputs,
+                        loss=loss.item(), x_adv=x_adv, prediction_adv=prediction_adv,
+                        outputs_adv=outputs_adv, loss_adv=loss_adv.item())
 
 
 def adversarial_train_step(trainer, batch):
@@ -104,7 +109,7 @@ def adversarial_train_step(trainer, batch):
     loss_adv.backward()
     trainer.optimizer.step()
 
-    return NameDict(prediction=prediction, target=y, outputs=outputs, loss=loss.item(), x=x,
+    return NameDict(x=x, y=y, prediction=prediction, target=y, outputs=outputs, loss=loss.item(),
                     x_adv=x_adv, prediction_adv=prediction_adv, outputs_adv=outputs_adv,
                     loss_adv=loss_adv.item())
 
@@ -143,11 +148,16 @@ autoencoder = dict(
 
 resnet_cifar = dict(  # as in www.arxiv.org/abs/1603.05027
     **classification,
-    optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty),
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=Empty),
     weight_decay=1e-4,
     epoch_count=200,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
     batch_size=128)
+
+resnet_cifar_cosine = fuse(  # as in www.arxiv.org/abs/1603.05027
+    resnet_cifar,
+    dict(lr_scheduler_f=partial(CosineLR, eta_min=1e-4)),
+    overridable=['lr_scheduler_f'])
 
 wrn_cifar = fuse(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar,
@@ -157,7 +167,7 @@ wrn_cifar = fuse(  # as in www.arxiv.org/abs/1603.05027
 densenet_cifar = dict(  # as in www.arxiv.org/abs/1608.06993
     **classification,
     weight_decay=1e-4,
-    optimizer_f=partial(SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
     epoch_count=100,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
     batch_size=64)
@@ -165,14 +175,14 @@ densenet_cifar = dict(  # as in www.arxiv.org/abs/1608.06993
 small_image_classifier = dict(  # as in www.arxiv.org/abs/1603.05027
     **classification,
     weight_decay=0,
-    optimizer_f=partial(SGD, lr=1e-2, momentum=0.9),
+    optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9),
     epoch_count=50,
     batch_size=64)
 
 ladder_densenet = dict(  # custom
     **classification,
     weight_decay=1e-4,
-    optimizer_f=partial(SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
+    optimizer_f=partial(optim.SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
     lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
     epoch_count=40,
     batch_size=4)
