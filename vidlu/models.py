@@ -10,10 +10,13 @@ from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, d
 
 # Backbones ########################################################################################
 
-def resnet_v2_backbone(depth, base_width=default_args(com.ResNetV2Backbone).base_width,
-                       small_input=default_args(com.ResNetV2Backbone).small_input,
-                       block_f=partial(default_args(com.ResNetV2Backbone).block_f,
-                                       kernel_sizes=Reserved), dim_change=None):
+
+def resnet_v1_backbone(depth, base_width=default_args(com.ResNetV1Backbone).base_width,
+                       small_input=default_args(com.ResNetV1Backbone).small_input,
+                       block_f=partial(default_args(com.ResNetV1Backbone).block_f,
+                                       kernel_sizes=Reserved),
+                       dim_change=None,
+                       backbone_f=com.ResNetV1Backbone):
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
     bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
@@ -29,16 +32,19 @@ def resnet_v2_backbone(depth, base_width=default_args(com.ResNetV2Backbone).base
         164: ([18] * 3, bottleneck),  # [1] bw 16
         200: ([3, 24, 36, 3], bottleneck),  # [2] bw 64
     }[depth]
-    return com.ResNetV2Backbone(base_width=base_width,
-                                small_input=small_input,
-                                group_lengths=group_lengths,
-                                width_factors=width_factors,
-                                block_f=partial(block_f, kernel_sizes=ksizes),
-                                dim_change=dim_change_arg or dim_change)
+    return backbone_f(base_width=base_width, small_input=small_input, group_lengths=group_lengths,
+                      width_factors=width_factors, block_f=partial(block_f, kernel_sizes=ksizes),
+                      dim_change=dim_change_arg or dim_change)
+
+
+resnet_v2_backbone = partial(resnet_v1_backbone,
+                             block_f=partial(default_args(com.ResNetV2Backbone).block_f,
+                                             kernel_sizes=Reserved),
+                             backbone_f=com.ResNetV2Backbone)
 
 
 def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
-                         block_f=partial(default_args(resnet_v2_backbone).block_f)):
+                         block_f=default_args(resnet_v2_backbone).block_f):
     zagoruyko_depth = depth
 
     group_count, ksizes = 3, [3, 3]
@@ -129,14 +135,19 @@ class ClassificationModel(DiscriminativeModel):
     pass
 
 
-class ResNet(ClassificationModel):
+class ResNetV1(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
-                             backbone_f=partial(resnet_v2_backbone, base_width=64),
+                             backbone_f=partial(resnet_v1_backbone, base_width=64),
                              init=partial(initialization.kaiming_resnet, module=Reserved))
 
 
-class WideResNet(ResNet):
-    __init__ = partialmethod(ResNet.__init__, backbone_f=wide_resnet_backbone)
+class ResNetV2(ClassificationModel):
+    __init__ = partialmethod(ResNetV1.__init__,
+                             backbone_f=partial(resnet_v2_backbone, base_width=64))
+
+
+class WideResNet(ResNetV2):
+    __init__ = partialmethod(ResNetV2.__init__, backbone_f=wide_resnet_backbone)
 
 
 class DenseNet(ClassificationModel):
@@ -145,10 +156,56 @@ class DenseNet(ClassificationModel):
                              init=partial(initialization.kaiming_densenet, module=Reserved))
 
 
-# Variants for the purpose of shorter names
+class SwiftNet(DiscriminativeModel):
+    def __init__(self,
+                 backbone_f=partial(resnet_v1_backbone, base_width=64),
+                 intermediate_paths=tuple(f"features.unit{i}_{j}.sum"
+                                          for i, j in zip(range(3), [1] * 3)),
+                 ladder_width=128, head_f=com.heads.SegmentationHead):
+        """
 
-class ResNet18(ResNet):
-    __init__ = argtree_partialmethod(ResNet.__init__, backbone_f=ArgTree(depth=18))
+        intermediate_paths contains all but the last block?
+
+        Args:
+            backbone_f:
+            intermediate_paths:
+            ladder_width:
+        """
+        super().__init__(backbone_f=partial(com.KresoLadderNet,
+                                            backbone_f=backbone_f,
+                                            intermediate_paths=intermediate_paths,
+                                            ladder_width=ladder_width,
+                                            context_f=partial(
+                                                com.DenseSPP, bottleneck_size=128, level_size=42,
+                                                out_size=128, grid_sizes=(8, 4, 2))),
+                         head_f=head_f,
+                         init=partial(initialization.kaiming_resnet, module=Reserved))
+
+
+class LadderDensenet(DiscriminativeModel):
+    def __init__(self,
+                 backbone_f=partial(densenet_backbone),
+                 intermediate_paths=None,
+                 ladder_width=128, head_f=com.heads.SegmentationHead):
+        """
+
+        intermediate_paths contains all but the last block?
+
+        Args:
+            backbone_f:
+            intermediate_paths:
+            ladder_width:
+        """
+        if intermediate_paths is None:
+            intermediate_paths = tuple(
+                f"features.dense_block{i}.unit{j}.sum"  # TODO: automatic based on backbone
+                for i, j in zip(range(3), [1] * 3))
+        super().__init__(backbone_f=partial(com.KresoLadderNet,
+                                            backbone_f=backbone_f,
+                                            intermediate_paths=intermediate_paths,
+                                            ladder_width=ladder_width),
+                         head_f=head_f,
+                         init=partial(initialization.kaiming_resnet, module=Reserved))
 
 
 # Autoencoders #####################################################################################

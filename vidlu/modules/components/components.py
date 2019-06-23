@@ -1,4 +1,4 @@
-from functools import partial
+from functools import partial, partialmethod
 from collections import Sequence
 
 import torch
@@ -6,7 +6,8 @@ from torch import nn
 from torch.nn import functional as F
 
 from vidlu.modules.elements import (Module, Sequential, ModuleTable, Conv, MaxPool, Linear, Func,
-                                    AvgPool, Parallel, Sum, Concat, Identity)
+                                    AvgPool, Sum, Concat, Identity, Branching, Parallel)
+import vidlu.modules.elements as E
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
 
@@ -47,7 +48,7 @@ class RootBlock(Sequential):
 
 # blocks ###########################################################################################
 
-def add_norm_act(seq, suffix, norm_f, act_f):
+def _add_norm_act(seq, suffix, norm_f, act_f):
     if norm_f:
         seq.add_module(f'norm{suffix}', norm_f())
     seq.add_module(f'act{suffix}', act_f())
@@ -74,20 +75,24 @@ class PreactBlock(Sequential):
         noise_f: Noise module factory.
     """
 
-    def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
-                 omit_first_preactivation=False, norm_f=D.norm_f, act_f=D.act_f,
-                 conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
-                                stride=Reserved),
+    def __init__(self, *, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
+                 dilation=1, norm_f=D.norm_f, act_f=D.act_f,
+                 conv_f=partial(D.conv_f, stride=Reserved, dilation=Reserved, kernel_size=Reserved,
+                                out_channels=Reserved),
                  noise_f=None):
         super().__init__()
         widths = [base_width * wf for wf in width_factors]
-        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            if i > 0 or not omit_first_preactivation:
-                add_norm_act(self, f'{i}', norm_f, act_f)
+        conv_defaults = default_args(D.conv_f)
+        if not isinstance(stride, Sequence):
+            stride = [stride] + [conv_defaults.stride] * (len(widths) - 1)
+        if not isinstance(dilation, Sequence):
+            dilation = [dilation] + [conv_defaults.dilation] * (len(widths) - 1)
+        for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
+            _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
                 self.add_module(f'noise{i}', noise_f())
             self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
-                                                      stride=stride if i == 0 else 1))
+                                                      stride=s, dilation=d))
 
 
 class PostactBlock(Sequential):
@@ -103,16 +108,14 @@ class PostactBlock(Sequential):
         noise_locations (Sequence[int]): The indices of activations that are to
             be followed by a noise layer.
         stride (int): Stride of the first convolution.
-        omit_first_preactivation (bool): If True, the first normalization and
-            activation are to be omitted.
         conv_f: Convolution module factory.
         norm_f: Normalization module factory.
         act_f: Activation module factory.
         noise_f: Noise module factory.
     """
 
-    def __init__(self, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
-                 omit_first_preactivation=False, norm_f=D.norm_f, act_f=D.act_f,
+    def __init__(self, *, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
+                 norm_f=D.norm_f, act_f=D.act_f,
                  conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved),
                  noise_f=None):
@@ -121,7 +124,7 @@ class PostactBlock(Sequential):
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
                                                       stride=stride if i == 0 else 1))
-            add_norm_act(self, f'{i}', norm_f, act_f)
+            _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
                 self.add_module(f'noise{i}', noise_f())
 
@@ -163,72 +166,29 @@ class Resize(Module):
         super().__init__()
 
     def forward(self, x):
-        return F.interpolate(x, size=self.args.size, scale_factor=self.args.scale_factor,
-                             mode=self.mode, align_corners=self.align_corners)
-
-
-# Ladder Upsampling ################################################################################
-
-
-class LadderUpsampleBlend(Module):
-    """ For LadderDenseNet and SwiftNet. """
-    _pre_blendings = dict(
-        sum=lambda e, d: e + d,
-        concat=lambda e, d: torch.cat((e, d), 1),
-    )
-
-    def __init__(self, out_channels, pre_blending='concat',
-                 blend_block_f=partial(PreactBlock, base_width=Reserved, width_Factors=Reserved)):
-        super().__init__()
-        if pre_blending not in self._pre_blendings:
-            raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
-                             + f"It should be one of {tuple(self._pre_blendings.keys())}.")
-        self.args.block_f = Reserved.partial(blend_block_f, width_Factors=[1])
-
-    def build(self, h_enc, h_dec):
         a = self.args
-        self.project = Reserved.partial(a.block_f)(kernel_sizes=[1])
-        self.upsample = Resize(size=h_enc.shape[:2], mode='bilinear')
-        self.pre_blend = self._pre_blendings[self.a.pre_blending]
-        self.blend = Reserved.partial(self.block_f, base_width=a.out_channels)(kernel_sizes=[3])
-
-    def forward(self, h_enc, h_dec):
-        h_enc = self.project(h_enc)
-        h_dec = self.upsample(h_dec)
-        return self.blend(self.pre_blend(h_dec, h_enc))
-
-
-class Ladder(Module):
-    def __init__(self, width, upsample_blend_f=LadderUpsampleBlend):
-        super().__init__()
-
-    def build(self, forwards):
-        self.upsample_blends = nn.ModuleList(
-            [self.args.upsample_blend_f(self.args.width) for _ in range(len(forwards) - 1)])
-
-    def forward(self, forwards):
-        backs = [forwards[0]]
-        for i, upbl in enumerate(self.upsample_blends):
-            backs.append(upbl(forwards[i + 1], backs[-1]))
-        return backs[-1]
+        return F.interpolate(x, size=a.size, scale_factor=a.scale_factor, mode=a.mode,
+                             align_corners=a.align_corners)
 
 
 # Pyramid pooling ##################################################################################
 
 
-class DenseSPP(nn.Module):
+class DenseSPP(Module):
     # Spatial pyramid pooling for dense prediction
     def __init__(self, bottleneck_size=512, level_size=128, out_size=128, grid_sizes=(8, 4, 2, 1),
                  block_f=partial(PreactBlock, base_width=Reserved, kernel_sizes=[1],
-                                 width_Factors=[1]),
-                 upsample=partial(F.interpolate, mode='bilinear', align_corners=False)):
+                                 width_factors=[1]),
+                 upsample=partial(F.interpolate, mode='bilinear', align_corners=False),
+                 square_grid=False):
         super().__init__()
         self.grid_sizes = grid_sizes
         self.upsample = upsample
-        self.input_block = block_f(bottleneck_size)  # reduces the number of channels
+        self.input_block = block_f(base_width=bottleneck_size)  # reduces the number of channels
         self.pyramid_blocks = ModuleTable(
-            {f'block{i}': block_f(level_size) for i in range(len(grid_sizes))})
-        self.fuse_block = block_f(out_size)
+            {f'block{i}': block_f(base_width=level_size) for i in range(len(grid_sizes))})
+        self.fuse_block = block_f(base_width=out_size)
+        self.square_grid = square_grid
 
     def forward(self, x):
         target_size = x.size()[2:4]
@@ -236,8 +196,8 @@ class DenseSPP(nn.Module):
 
         x = self.input_block(x)
         levels = [x]
-        for pyr_block, grid_size in zip(self.pyramid_blocks[1:-1], self.grid_sizes[1:]):
-            if not self.square_grid:  # keep aspect ration
+        for pyr_block, grid_size in zip(self.pyramid_blocks, self.grid_sizes):
+            if not self.square_grid:  # keep aspect ratio
                 grid_size = (grid_size, max(1, round(ar * grid_size)))
             x_pooled = F.adaptive_avg_pool2d(x, grid_size)  # TODO: x vs levels[-1]
             level = pyr_block(x_pooled)
@@ -245,25 +205,105 @@ class DenseSPP(nn.Module):
         return self.fuse_block(torch.cat(levels, 1))
 
 
-# ResNet ###########################################################################################
-
-def _check_block_args(block_f):
-    args = params(block_f)
-    if 'kernel_sizes' in args and args['kernel_sizes'] is Empty:
-        raise ValueError("Argument kernel_sizes missing in block_f.")
+# Ladder Upsampling ################################################################################
 
 
-class ResNetV2Unit(Module):
-    def __init__(self, block_f=partial(PreactBlock, omit_first_preactivation=Reserved),
+class LadderUpsampleBlend(Sequential):
+    """ For LadderDenseNet and SwiftNet. """
+    _pre_blendings = dict(
+        sum=Sum,
+        concat=Concat
+    )
+
+    def __init__(self, out_channels, pre_blending='concat',
+                 blend_block_f=partial(PreactBlock, base_width=Reserved, width_factors=Reserved)):
+        super().__init__()
+        if pre_blending not in self._pre_blendings:
+            raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
+                             + f"It should be one of {tuple(self._pre_blendings.keys())}.")
+        self.args.block_f = Reserved.partial(blend_block_f, width_factors=[1])
+
+    def build(self, x, skip):
+        a = self.args
+        self.add_modules(
+            parallel=Parallel(
+                upsample=Resize(size=skip.shape[2:], mode='bilinear'),
+                project=Reserved.partial(a.block_f, base_width=x.shape[1])(kernel_sizes=[1])),
+            pre_blend=self._pre_blendings[a.pre_blending](),
+            blend=a.block_f(base_width=a.out_channels, kernel_sizes=[3]))
+
+    def forward(self, x, skip):
+        return super().forward((x, skip))
+
+
+class KresoLadder(Module):
+    def __init__(self, width, upsample_blend_f=LadderUpsampleBlend):
+        super().__init__()
+
+    def build(self, inputs):
+        self.upsample_blends = nn.ModuleList(
+            [self.args.upsample_blend_f(self.args.width) for _ in range(len(inputs) - 1)])
+
+    def forward(self, skips):
+        ups = [skips[0]]
+        for upbl, skip in zip(self.upsample_blends, skips):
+            ups.append(upbl(ups[-1], skip))
+        return ups[-1]
+
+
+class KresoContext(Sequential):
+    def __init__(self, base_width=128,
+                 block_f=partial(PreactBlock, base_width=Reserved, kernel_sizes=Reserved,
+                                 width_factors=Reserved, dilation=Reserved)):
+        super().__init__(
+            context=Reserved.call(block_f, base_width=base_width, kernel_sizes=[1, 3],
+                                  width_factors=[4, 1], dilation=[1, 2]))
+
+
+class KresoLadderNet(Module):
+    def __init__(self, backbone_f, intermediate_paths, ladder_width, context_f=DenseSPP,
+                 upsample_blend_f=LadderUpsampleBlend):
+        super().__init__()
+        self.backbone_intermediate = E.IntermediateOutputsModuleWrapper(backbone_f(),
+                                                                        intermediate_paths)
+        self.context = context_f()
+        self.ladder = KresoLadder(ladder_width, upsample_blend_f)
+        defaults = default_args(default_args(upsample_blend_f).blend_block_f)
+        self.norm, self.act = defaults.norm_f(), defaults.act_f()
+
+    def forward(self, x):
+        backbone_outputs = self.backbone_intermediate(x)
+        ladder_inputs = (self.context(backbone_outputs[0]),) + backbone_outputs[1][::-1]
+        return self.act(self.norm(self.ladder(ladder_inputs)))
+
+
+# ResNetV1 #########################################################################################
+
+def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
+    if stride == 1 and in_width == out_width:
+        return Identity()
+    else:
+        if dim_change in ('proj', 'conv3'):
+            k = 3 if dim_change == 'conv3' else 1
+            return Sequential(
+                conv=Conv(out_width, kernel_size=k, stride=stride, padding='half', bias=False),
+                norm=norm_f())
+        else:
+            pad = [0] * 5 + [out_width - in_width]
+            return Sequential(pool=AvgPool(stride, stride),
+                              pad=Func(partial(F.pad, pad=pad, mode='constant')))
+
+
+"""
+class ResNetV1UnitOld(Module):
+    def __init__(self, block_f=partial(PostactBlock, omit_first_preactivation=Reserved),
                  dim_change='proj'):
         _check_block_args(block_f)
         super().__init__()
-        if dim_change not in ['pad', 'proj', 'proj3']:
+        if dim_change not in ['pad', 'proj', 'conv3']:
             raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
-        block = Reserved.call(block_f, omit_first_preactivation=False)
-        self.preact = block[:'conv0']
-        self.block = block['conv0':]
-        del block
+        self.block = Reserved.call(block_f, omit_first_preactivation=False)[:-1]
+        self.last_act = default_args(block_f).act_f()
         self.shortcut = None
 
     def build(self, x):
@@ -273,11 +313,9 @@ class ResNetV2Unit(Module):
         if stride == 1 and x.shape[1] == out_width:
             self.shortcut = Identity()
         else:
-            if self.args.dim_change == 'proj':
-                self.shortcut = Conv(out_width, kernel_size=1, stride=stride, padding='half',
-                                     bias=False)
-            elif self.args.dim_change == 'proj3':
-                self.shortcut = Conv(out_width, kernel_size=3, stride=stride, padding='half',
+            if self.args.dim_change in ('proj', 'conv3'):
+                k = 3 if self.args.dim_change == 'conv3' else 1
+                self.shortcut = Conv(out_width, kernel_size=k, stride=stride, padding='half',
                                      bias=False)
             else:
                 pad = [0] * 5 + [out_width - x.shape[1]]
@@ -285,34 +323,51 @@ class ResNetV2Unit(Module):
                                            pad=Func(partial(F.pad, pad=pad, mode='constant')))
 
     def forward(self, x):
-        p = self.preact(x)
-        return self.block(p) + self.shortcut(p if self.args.dim_change == 'proj' else x)
+        return self.last_act(self.block(x) + self.shortcut(x))
+"""
 
 
-class ResNetV2Groups(Sequential):
+class ResNetV1Unit(Sequential):
+    def __init__(self, block_f=PostactBlock,
+                 dim_change='proj'):
+        _check_block_args(block_f)
+        super().__init__()
+        if dim_change not in ['pad', 'proj', 'conv3']:
+            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+
+    def build(self, x):
+        block_args = default_args(self.args.block_f)
+        shortcut = _get_resnetv1_shortcut(
+            in_width=x.shape[1], out_width=block_args.base_width * block_args.width_factors[-1],
+            stride=block_args.stride, dim_change=self.args.dim_change, norm_f=block_args.norm_f)
+        block_f = self.args.block_f
+        block = Reserved.call(block_f)[:-1]  # block without the last activation
+        self.add_modules(
+            branchout=Branching(
+                shortcut=shortcut,
+                block=block),
+            sum=Sum(),
+            act=default_args(block_f).act_f())
+
+
+class ResNetV1Groups(Sequential):
     def __init__(self, group_lengths, base_width, width_factors,
-                 block_f=partial(default_args(ResNetV2Unit).block_f, base_width=Reserved,
+                 block_f=partial(default_args(ResNetV1Unit).block_f, base_width=Reserved,
                                  width_factors=Reserved, stride=Reserved),
-                 dim_change=default_args(ResNetV2Unit).dim_change):
+                 dim_change=default_args(ResNetV1Unit).dim_change, unit_f=ResNetV1Unit):
         super().__init__()
         _check_block_args(block_f)
         for i, l in enumerate(group_lengths):
             for j in range(l):
-                self.add_module(f'unit{i}_{j}',
-                                ResNetV2Unit(
-                                    block_f=Reserved.partial(block_f,
-                                                             base_width=base_width * 2 ** i,
-                                                             width_factors=width_factors,
-                                                             stride=1 + int(i > 0 and j == 0)),
-                                    dim_change=dim_change))
-        norm_f = default_args(block_f).norm_f
-        if norm_f is not None:
-            self.add_module('post_norm', norm_f())
-        self.add_module('post_act', default_args(block_f).act_f())
+                u = unit_f(block_f=Reserved.partial(block_f, base_width=base_width * 2 ** i,
+                                                    width_factors=width_factors,
+                                                    stride=1 + int(i > 0 and j == 0)),
+                           dim_change=dim_change)
+                self.add_module(f'unit{i}_{j}', u)
 
 
-class ResNetV2Backbone(Sequential):
-    """ Pre-activation resnet backbone.
+class ResNetV1Backbone(Sequential):
+    """ Resnet (V1) backbone.
 
     Args:
         base_width (int): number of channels in the output of the root block and the base width of
@@ -326,15 +381,114 @@ class ResNetV2Backbone(Sequential):
     """
 
     def __init__(self, base_width=64, small_input=True, group_lengths=(2,) * 4,
-                 width_factors=(1,) * 2, block_f=default_args(ResNetV2Groups).block_f,
-                 dim_change=default_args(ResNetV2Groups).dim_change):
+                 width_factors=(1,) * 2, block_f=default_args(ResNetV1Groups).block_f,
+                 dim_change=default_args(ResNetV1Groups).dim_change, groups_f=ResNetV1Groups):
         _check_block_args(block_f)
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         super().__init__(
             root=RootBlock(base_width, small_input, **norm_act_args),
-            features=ResNetV2Groups(group_lengths, base_width=base_width,
-                                    width_factors=width_factors,
-                                    block_f=block_f, dim_change=dim_change))
+            features=groups_f(group_lengths, base_width=base_width,
+                              width_factors=width_factors,
+                              block_f=block_f, dim_change=dim_change))
+
+
+# ResNetV2 #########################################################################################
+
+def _check_block_args(block_f):
+    args = params(block_f)
+    if 'kernel_sizes' in args and args['kernel_sizes'] is Empty:
+        raise ValueError("Argument kernel_sizes missing in block_f.")
+
+
+def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change):
+    if stride == 1 and in_width == out_width:
+        return Identity()
+    else:
+        if dim_change in ('proj', 'conv3'):
+            k = 3 if dim_change == 'conv3' else 1
+            return Conv(out_width, kernel_size=k, stride=stride, padding='half', bias=False)
+        else:
+            return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, None)
+
+
+"""
+class ResNetV2UnitOld(Module):
+    def __init__(self, block_f=partial(PreactBlock, omit_first_preactivation=Reserved),
+                 dim_change='proj'):
+        _check_block_args(block_f)
+        super().__init__()
+        if dim_change not in ['pad', 'proj', 'conv3']:
+            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+        block = Reserved.call(block_f, omit_first_preactivation=False)
+        self.preact = block[:'conv0']
+        self.block = block['conv0':]
+        self.shortcut = None
+        del block
+
+    build = ResNetV1Unit.build
+
+    def forward(self, x):
+        p = self.preact(x)
+        return self.block(p) + self.shortcut(p if self.args.dim_change in ('conv3', 'proj') else x)
+"""
+
+
+class ResNetV2Unit(Sequential):
+    def __init__(self, block_f=PreactBlock,                 dim_change='proj'):
+        _check_block_args(block_f)
+        super().__init__()
+        if dim_change not in ['pad', 'proj', 'conv3']:
+            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+
+    def build(self, x):
+        block_f = self.args.block_f
+        block = block_f()
+
+        dim_change = self.args.dim_change
+        in_width = x.shape[1]
+        block_args = default_args(self.args.block_f)
+        out_width = block_args.base_width * block_args.width_factors[-1]
+        stride = block_args.stride
+        if stride == 1 and in_width == out_width:
+            self.add_module(branching=Branching(shortcut=Identity(), block=block))
+        else:
+            shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, dim_change)
+            self.add_modules(preact=block[:'conv0'],
+                             branching=Branching(shortcut=shortcut, block=block['conv0':]))
+        self.add_module(sum=Sum())
+
+
+class ResNetV2Groups(ResNetV1Groups):
+    def __init__(self, group_lengths, base_width, width_factors,
+                 block_f=partial(default_args(ResNetV2Unit).block_f, base_width=Reserved,
+                                 width_factors=Reserved, stride=Reserved),
+                 dim_change=default_args(ResNetV2Unit).dim_change):
+        super().__init__(group_lengths, base_width, width_factors, block_f, dim_change,
+                         unit_f=ResNetV2Unit)
+        norm_f = default_args(block_f).norm_f
+        if norm_f is not None:
+            self.add_module('post_norm', norm_f())
+        self.add_module('post_act', default_args(block_f).act_f())
+
+
+class ResNetV2Backbone(ResNetV1Backbone):
+    """ Pre-activation resnet backbone.
+
+    Args:
+        base_width (int): number of channels in the output of the root block and the base width of
+            blocks in the first group.
+        small_input (bool): If True, the root block doesn't reduce spatial dimensions. E.g. it
+            should be `True` for CIFAR-10, but `False` for ImageNet.
+        group_lengths:
+        width_factors:
+        block_f:
+        dim_change:
+    """
+
+    __init__ = partialmethod(ResNetV1Backbone.__init__,
+                             block_f=default_args(ResNetV2Groups).block_f,
+                             dim_change=default_args(ResNetV2Groups).dim_change,
+                             groups_f=ResNetV2Groups)
 
 
 # DenseNet #########################################################################################
