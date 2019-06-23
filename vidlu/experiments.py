@@ -73,7 +73,7 @@ def get_model(model_str: str, ds_train, device, verbosity):
 
 # Training loop actions ############################################################################
 
-def define_training_loop_actions(trainer, cpman, ds_test, logger):
+def define_training_loop_actions(trainer, cpman, data, logger):
     @trainer.training.epoch_started.add_handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
@@ -81,7 +81,7 @@ def define_training_loop_actions(trainer, cpman, ds_test, logger):
 
     @trainer.training.epoch_completed.add_handler
     def on_epoch_completed(_):
-        trainer.eval(ds_test)
+        trainer.eval(data.test)
         cpman.save(trainer.state_dict(), summary=logger.state_dict())  # checkpoint
 
     def report_metrics(es, is_validation=False):
@@ -97,17 +97,27 @@ def define_training_loop_actions(trainer, cpman, ds_test, logger):
                            + f'{format((iter - 1) % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
-    @trainer.training.iteration_completed.add_handler
-    def on_iteration_completed(es):
-        if es.iteration % es.batch_count % (es.batch_count // 5) == 0:
-            report_metrics(es)
+    @trainer.evaluation.iteration_completed.add_handler
+    def on_eval_iteration_completed(es):
+        nonlocal trainer, data
+        from pathlib import Path
+        from vidlu.utils.presentation import visualization
+        from IPython import embed
 
         optional_input = try_input()
         if optional_input is not None:
             try:
-                exec(try_input())
+                exec(optional_input)
             except:
+                print(f'Cannot execute "{optional_input}".')
                 pass
+
+    @trainer.training.iteration_completed.add_handler
+    def on_iteration_completed(es):
+        if es.iteration % es.batch_count % (max(1, es.batch_count // 5)) == 0:
+            report_metrics(es)
+
+        on_eval_iteration_completed(es)
 
     trainer.evaluation.epoch_completed.add_handler(partial(report_metrics, is_validation=True))
 
@@ -121,9 +131,9 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     experiment_id = f'{a.data}/{learner_name}/{expsuff}'
     print('Learner name:', learner_name)
     print('Experiment ID:', experiment_id)
-    return CheckpointManager(checkpoints_dir, experiment_str=experiment_id,
+    return CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
                              experiment_desc=training_args, resume=a.resume,
-                             remove_old=a.experiment_suffix == '' and not a.resume)
+                             remove_old=expsuff == '_' and not a.resume)
 
 
 # Experiment #######################################################################################
@@ -144,12 +154,12 @@ class TrainingExperiment:
         a = training_args
         with indent_print("Selecting device..."):
             if a.device is None:
-                device = torch.device(
-                        gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+                a.device = torch.device(
+                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
         with indent_print('Initializing data...'):
             data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE, a.input_prep)
         with indent_print('Initializing model...'):
-            model = get_model(a.model, data.train, device, a.verbosity)
+            model = get_model(a.model, data.train, a.device, a.verbosity)
         with indent_print('Initializing trainer and evaluation...'):
             trainer = factories.get_trainer(a.trainer, model=model, dataset=data.train,
                                             verbosity=a.verbosity)
@@ -157,12 +167,12 @@ class TrainingExperiment:
                 trainer.add_metric(m())
         logger = Logger()
         cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
-        define_training_loop_actions(trainer, cpman, data.test, logger)
+        define_training_loop_actions(trainer, cpman, data, logger)
 
         if a.resume:
             for obj, state in zip([trainer, logger], cpman.load_last()):
                 obj.load_state_dict(state)
             logger.print_all()
-            model.to(device=device)
+            model.to(device=a.device)
 
         return TrainingExperiment(model, trainer, data, logger, cpman)

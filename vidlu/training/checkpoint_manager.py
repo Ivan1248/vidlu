@@ -59,20 +59,19 @@ class CheckpointManager(object):
     EXPERIMENT_INFO_FILENAME = 'experiment.info'
     SUMMARY_FILENAME = 'log.txt'
 
-    def __init__(self, checkpoints_dir, experiment_str, experiment_desc=None, n_saved=1,
-                 resume=False,
-                 remove_old=False):
+    def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_saved=1,
+                 resume=False, remove_old=False):
         self.checkpoints_dir = checkpoints_dir
-        self.exp_dir_path = Path(checkpoints_dir).expanduser() / experiment_str
-        self.exp_dir_path.mkdir(parents=True, exist_ok=True)
-        self.experiment_str = experiment_str
+        self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
+        self.experiment_dir.mkdir(parents=True, exist_ok=True)
+        self.experiment_str = experiment_name
         self.experiment_desc = experiment_desc or dict()
         self._n_saved = n_saved
         self._index = 0
         self._required_resuming = resume
 
         def get_existing_checkpoints():
-            paths = [str(p.stem) for p in self.exp_dir_path.iterdir()]
+            paths = [str(p.stem) for p in self.experiment_dir.iterdir()]
             indexes = map(self._name_to_index, paths)
             index_paths = sorted(zip(indexes, paths), key=lambda x: x[0])
             return [p for i, p in index_paths]
@@ -86,9 +85,13 @@ class CheckpointManager(object):
         if resume and len(self.saved) == 0:
             raise RuntimeError("Cannot resume from checkpoint. Checkpoints not found.")
         if not resume and len(self.saved) > 0:
-            raise RuntimeError(f"Files with ID {experiment_str} are already present in the "
-                               + f"directory {checkpoints_dir}. If you want to use this ID anyway, pass"
-                               + "either `remove_old=True` or `resume=True`. ")
+            raise RuntimeError(f"Files with ID {experiment_name} are already present in the "
+                               + f"directory {checkpoints_dir}. If you want to use this ID anyway, "
+                               + "pass either `remove_old=True` or `resume=True`. ")
+
+    @property
+    def last_checkpoint_path(self):
+        return self.experiment_dir / self.saved[-1]
 
     def save(self, state, summary=None):
         if self._required_resuming:
@@ -100,7 +103,7 @@ class CheckpointManager(object):
         self._index += 1
 
         name = self._index_to_name(self._index)
-        path = self.exp_dir_path / name
+        path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
         self._save(path / self.STATE_FILENAME, state)
         self._save(path / self.PROGRESS_INFO_FILENAME, Namespace(index=self._index))
@@ -111,7 +114,7 @@ class CheckpointManager(object):
         self.remove_old_checkpoints()
 
     def load_last(self):
-        path = self.exp_dir_path / self.saved[-1]
+        path = self.last_checkpoint_path
         self._index = torch.load(path / self.PROGRESS_INFO_FILENAME).index
         self.experiment_desc = torch.load(path / self.EXPERIMENT_INFO_FILENAME)
         state = torch.load(path / self.STATE_FILENAME)
@@ -131,7 +134,7 @@ class CheckpointManager(object):
     def remove_old_checkpoints(self, n_saved=None):
         n_saved = self._n_saved if n_saved is None else n_saved
         while len(self.saved) > n_saved:
-            path = self.exp_dir_path / self.saved.pop(0)
+            path = self.experiment_dir / self.saved.pop(0)
             try:
                 shutil.rmtree(path)
             except FileNotFoundError as ex:
