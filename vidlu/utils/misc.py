@@ -5,6 +5,7 @@ import os
 import hashlib
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 from tqdm import tqdm
 
@@ -79,6 +80,11 @@ class _DownloadProgressBar(tqdm):
         if tsize is not None:
             self.total = tsize
         self.update(b * bsize - self.n)
+
+
+def download_if_not_downloaded(url, output_path, md5=None):
+    if not Path(output_path).exists():
+        download(url, output_path, md5=None)
 
 
 def download(url, output_path, md5=None):
