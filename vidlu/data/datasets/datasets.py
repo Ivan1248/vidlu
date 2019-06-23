@@ -167,7 +167,7 @@ class HBlobs(Dataset):
 class DummyClassification(Dataset):
     subsets = []
 
-    def __init__(self, example_shape=(32, 32, 3), size=1000):
+    def __init__(self, example_shape=(28, 28, 3), size=256):
         self._shape = example_shape
         self._colors = [row for row in np.eye(3, 3) * 255]
         self._len = size
@@ -548,7 +548,8 @@ class CamVid(Dataset):
                 self.color_to_label[color] = i
         self.color_to_label[(0, 0, 0)] = -1
 
-        super().__init__(subset=subset, info=info)
+        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
+        super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):
         ip, lp = self._img_lab_list[idx]
@@ -633,8 +634,7 @@ class WildDash(Dataset):
             'class_colors': [l.color for l in cslabels if l.trainId >= 0],
         }
         self._blank_label = np.full(list(self._shape), -1, dtype=np.int8)
-        modifiers = [f"downsample({downsampling})"
-                     ] if downsampling > 1 else []
+        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
         super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):
@@ -803,6 +803,7 @@ class ISUN(Dataset):
 
     def __len__(self):
         return len(self._image_names)
+
 
 """
 class LSUN(Dataset):
