@@ -29,7 +29,7 @@ def train(args):
 
     e.cpman.remove_old_checkpoints()
 
-    print(f'Trained model saved in {e.cpman.dir_path}')
+    print(f'Trained model saved in {e.cpman.experiment_dir}')
 
 
 def test(args):
@@ -53,6 +53,8 @@ def add_standard_arguments(parser):
                         help='A string representing input preparation, e.g. "standardize", "div255".')
     parser.add_argument("model", type=str, help=factories.get_model.help)
     parser.add_argument("trainer", type=str, help=factories.get_trainer.help)
+    parser.add_argument("--parameters", type=str, default=None,
+                        help='A comma-separated list of metrics.')
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
     # device
