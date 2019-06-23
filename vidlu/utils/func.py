@@ -369,8 +369,9 @@ class Reserved:  # placeholder to mark parameters that shouldn't be assigned / a
     @staticmethod
     def partial(func, **kwargs):
         """Applies partial to func only if all supplied arguments are Reserved."""
+        dargs = params(func)
         for k, v in kwargs.items():
-            if default_args(func)[k] is not Reserved:
+            if dargs[k] is not Reserved:
                 raise ValueError(
                     f"The argument {k} should be reserved in order to be assigned a value."
                     + " The reserved argument might have been overridden with partial.")
