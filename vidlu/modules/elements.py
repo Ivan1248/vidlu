@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from argparse import Namespace
 from collections import OrderedDict
 from collections.abc import Sequence
+import functools
 from functools import reduce
 
 import torch
@@ -13,6 +14,8 @@ from vidlu.modules.utils import try_get_module_name_from_call_stack
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
 from vidlu.utils.func import params, tryable
+
+from . import utils
 
 
 # Module class extensions ##########################################################################
@@ -66,12 +69,13 @@ def _buildable(*superclasses):
 
         def __call__(self, *args, **kwargs):
             if not self._built:
-                self._built = self.build(*args, **kwargs) is None
+                if type(self).build != BuildableModExt.build:
+                    self.build(*args, **kwargs)
                 result = super().__call__(*args, **kwargs)
-                if not self._built:
-                    self.post_build(*args, **kwargs) is None
-                    self._built = True
+                if type(self).post_build != BuildableModExt.post_build:
+                    self.post_build(*args, **kwargs)
                     result = super().__call__(*args, **kwargs)
+                self._built = True
             else:
                 result = super().__call__(*args, **kwargs)
             return result
@@ -85,6 +89,9 @@ def _buildable(*superclasses):
             evaluaton. I you do, make `build` return True.
             """
             pass
+
+        def clone(self):
+            return type(self)(**self.args)
 
     return BuildableModExt
 
@@ -160,8 +167,9 @@ class Module(*_extended(nn.Module, ABC)):
 
     def __init__(self):
         super().__init__()
-        args = class_initializer_locals_c()
-        self.args = NameDict(args)
+        if type(self).__init__ is not Module.__init__:
+            args = class_initializer_locals_c()
+            self.args = NameDict(args)
         self._built = False
 
     def __str__(self):
@@ -181,16 +189,6 @@ class Module(*_extended(nn.Module, ABC)):
         if isinstance(sd, (str, Path)):
             sd = torch.load(sd, map_location=self.device)
         return super().load_state_dict(sd, strict=strict)
-
-    def build(self, *args, **kwargs):
-        pass
-
-    def post_build(self, *args, **kwargs):
-        """
-        Leave this as it is if you don't need more initialization after
-        evaluaton. I you do, override it and make it return nothing (`None`).
-        """
-        return True
 
 
 def _to_sequential_init_args(*args, **kwargs):
@@ -239,22 +237,20 @@ class Sequential(*_extended(nn.Sequential)):
             return names.index(key)
         return children.index(key)
 
+    def forward(self, *input):
+        modules = list(self._modules.values())
+        if len(modules) > 0:
+            input = modules[0](*input)
+            for module in modules[1:]:
+                input = module(input)
+        else:
+            breakpoint()
+        return input
 
-class ModuleTable(*_extended(nn.ModuleList)):
-    """
-    A wrapper around torch.nn.Sequential to enable passing a dict as the only
-    parameter whereas in torch.nn.Sequential only OrderedDict is accepted
-    currently.
-    It also supports slicing using strings.
-    """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*_to_sequential_init_args(*args, **kwargs))
-
-    __getitem__ = Sequential.__getitem__
-
-    def index(self, key):
-        return Sequential.index(self, key)
+class ModuleTable(Sequential):
+    def forward(self, *input):
+        raise NotImplementedError
 
 
 class Identity(Module):
@@ -262,22 +258,34 @@ class Identity(Module):
         return x
 
 
-# Branching, parallel, and reduction ###############################################################
+# Branching, parallel and reduction ################################################################
 
-class BranchOut(*_extended(nn.ModuleList)):
+def tuple_to_varargs_method(f):
+    @functools.wraps(f)
+    def wrapper(self, *inputs):
+        if len(inputs) == 1:
+            if isinstance(inputs[0], Sequence):  # tuple, not any sequence
+                inputs = inputs[0]
+        return f(self, *inputs)
+
+    return wrapper
+
+
+class Branching(ModuleTable):
     def forward(self, input):
-        return [m(input) for m in self]
+        return tuple(m(input) for m in self)
 
 
-class Parallel(*_extended(nn.ModuleList)):
-    def forward(self, inputs):
+class Parallel(ModuleTable):
+    @tuple_to_varargs_method
+    def forward(self, *inputs):
         if len(self) == 1:
             return [self[0](x) for x in inputs]
         elif len(inputs) != len(self):
             raise ValueError(f"The number of inputs ({len(inputs)}) does not"
                              + " match the number of parallel modules."
                              + f"\nError in {try_get_module_name_from_call_stack(self)}.")
-        return [m(x) for m, x in zip(self, inputs)]
+        return tuple(m(x) for m, x in zip(self, inputs))
 
 
 class Reduce(Module):
@@ -285,8 +293,9 @@ class Reduce(Module):
         self.func = func
         super().__init__()
 
-    def forward(self, input):
-        return reduce(self.func, input[1:], input[0])
+    @tuple_to_varargs_method
+    def forward(self, *inputs):
+        return reduce(self.func, inputs[1:], inputs[0].clone())
 
 
 def pasum(x):
@@ -309,20 +318,20 @@ class Sum(Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, inputs):
+    @tuple_to_varargs_method
+    def forward(self, *inputs):
         y = inputs[0].clone()
         for x in inputs[1:]:
-            y.add_(x)
+            y += x
         return y
-        # return sum(inputs)
-        # return torch.sum(torch.stack(inputs), 0)
 
 
 class Concat(Module):
     def __init__(self, dim=1):
         super().__init__()
 
-    def forward(self, inputs):
+    @tuple_to_varargs_method
+    def forward(self, *inputs):
         return torch.cat(inputs, self.args.dim)
 
 
@@ -617,9 +626,9 @@ class IntermediateOutputsModuleWrapper(Module):
         self.module = module
         self.handles, self.outputs = None, None
 
-    def __del__(self):
+    """def __del__(self):
         for h in self.handles:
-            h.remove()
+            h.remove()"""
 
     def post_build(self, *args, **kwargs):
         def create_hook(idx):
@@ -634,5 +643,5 @@ class IntermediateOutputsModuleWrapper(Module):
 
     def forward(self, *input):
         self.outputs = [None] * len(self.args.submodule_paths)
-        output = self.module.forward(*input)
-        return output, list(self.outputs)
+        output = self.module(*input)
+        return output, tuple(self.outputs)
