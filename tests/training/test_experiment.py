@@ -19,12 +19,12 @@ def get_dirs(tmpdir):
 def test_training_experiment(tmpdir):
     e = TrainingExperiment.from_args(
         TrainingExperimentFactoryArgs(
-            data="DummyClassification{train,val}",
+            data="DummyClassification(size=25){train,val}",
             input_prep="nop",
-            model="DenseNet,backbone_f=t(depth=121,small_input=True)",
-            trainer="Trainer,**{**configs.densenet_cifar,**dict(epoch_count=2)}",
+            model="DenseNet,backbone_f=t(depth=40,k=12,small_input=True)",
+            trainer="Trainer,**{**configs.densenet_cifar,**dict(epoch_count=2,batch_size=4)},data_loader_f=t(num_workers=0)",
             metrics="",
-            experiment="",
+            experiment_suffix="_",
             resume=False,
             device=None,
             verbosity=1),

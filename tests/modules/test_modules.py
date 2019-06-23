@@ -4,7 +4,8 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.modules import Module, Func, Conv, Linear, BatchNorm, Sequential
+from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Sequential, Branching, Parallel,
+                           Reduce, Identity, Sum, IntermediateOutputsModuleWrapper)
 from vidlu.utils.collections import NameDict
 
 torch.no_grad()
@@ -40,11 +41,58 @@ class TestModule:
     """
 
 
-class TestLambda:
+class TestFunc:
     def test_square(self):
         x = torch.ones(4, 1, 28, 28)
         node = Func(lambda x: x ** 2).eval()
         assert torch.all(node(x) == x ** 2)
+
+
+class TestSequentialBranchingParallelReduce:
+    def test_sequential(self):
+        m = Sequential(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
+        for i in range(100):
+            assert m(torch.tensor(i)) == (i + 1) * 3
+
+    def test_branching(self):
+        m = Branching(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
+        for i in range(100):
+            assert m(torch.tensor(i)) == ((i + 1), 3 * i)
+
+    def test_parallel(self):
+        m = Parallel(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
+        for i in range(100):
+            assert (m((torch.tensor(i), torch.tensor(i + 1))) == (
+                torch.tensor(i + 1), torch.tensor(3 * (i + 1))))
+
+    def test_reduce(self):
+        l = list(map(torch.tensor, range(5)))
+        for m in [Reduce(lambda x, y: x.add_(y)), Sum()]:
+            assert m(l) == sum(l)
+
+    def test_combined(self):
+        m = Sequential(branch=Branching(id=Identity(),
+                                        sqr=Func(lambda x: x ** 2)),
+                       para=Parallel(mul2=Func(lambda x: 2 * x),
+                                     mul3=Func(lambda x: x * 3)),
+                       sum=Sum())
+        for i in range(5):
+            assert m(torch.tensor(i)) == 2 * i + 3 * i ** 2
+
+    def test_intermediate(self):
+        m = Sequential(branch=Branching(id=Identity(),
+                                        sqr=Func(lambda x: x ** 2)),
+                       para=Parallel(add2=Func(lambda x: x + 2),
+                                     mul3=Func(lambda x: x * 3)),
+                       sum=Sum())
+        iamw = IntermediateOutputsModuleWrapper(m, ["branch.id", "para.mul3", "para"])
+        for i in range(5):
+            id = i
+            add2 = i + 2
+            mul3 = 3 * i ** 2
+            para = (add2, mul3)
+            sum_ = add2 + mul3
+            assert iamw(torch.tensor(i)) == (sum_, (id, mul3, para))
 
 
 class TestConv:

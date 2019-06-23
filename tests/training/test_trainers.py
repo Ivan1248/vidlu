@@ -11,13 +11,13 @@ from vidlu.training.trainers import AdversarialTrainer
 from vidlu.training import configs
 from vidlu.modules.loss import SoftmaxCrossEntropyLoss
 from vidlu.modules.components import ClassificationHead
-from vidlu.models import ResNet, resnet_v2_backbone
+from vidlu.models import ResNetV2, resnet_v2_backbone
 from vidlu.training.adversarial.attacks import GradientSignAttack
 
 
 def get_a_model():
-    model = ResNet(backbone_f=partial(resnet_v2_backbone, depth=18),
-                   head_f=partial(ClassificationHead, 2))
+    model = ResNetV2(backbone_f=partial(resnet_v2_backbone, depth=18),
+                     head_f=partial(ClassificationHead, 2))
     model(torch.empty(1, 3, 32, 32))
     return model
 
