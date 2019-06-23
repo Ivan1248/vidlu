@@ -93,7 +93,8 @@ class Attack:
                 "The `_perturb` (not `perturb`) method should be overridden in subclass"
                 + f" `{type(self).__name__}`.")
         self.model = model
-        self.loss = SoftmaxCrossEntropyLoss(reduction='sum') if loss is None else loss
+        self.loss = SoftmaxCrossEntropyLoss(reduction='sum',
+                                            ignore_index=-1) if loss is None else loss
         self.clip_bounds = clip_bounds
         self.get_predicted_label = _predict_hard if get_predicted_label is None else get_predicted_label
         self.is_success = classification_untargeted_is_sucess if is_success is None else is_success
@@ -208,7 +209,6 @@ def perturb_iterative(x, y, predict, step_count, eps, step_size, loss, grad_prep
     Returns:
         Perturbed inputs.
     """
-
     stop_on_success = is_success_for_stopping is not None
     loss_fn = loss
     if grad_preprocessing == 'sign':
@@ -288,7 +288,7 @@ class PGDAttack(Attack):
     def __init__(self, model, loss=None, clip_bounds=None, is_success=None,
                  get_predicted_label=_predict_hard, eps=8 / 255, step_count=40, step_size=2 / 255,
                  grad_preprocessing='sign', rand_init=True, p=np.inf, stop_on_success=False):
-        """The PGD attack (Madry et al, 2017).
+        """The PGD attack (Madry et al., 2017).
 
         The attack performs nb_iter steps of size eps_iter, while always staying
         within eps from the initial point.
@@ -307,7 +307,7 @@ class PGDAttack(Attack):
 
     def _perturb(self, x, y=None):
         delta_init = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
-                 else torch.zeros_like(x))
+                      else torch.zeros_like(x))
         return perturb_iterative(x, y, self.model, step_count=self.step_count, eps=self.eps,
                                  step_size=self.step_size, loss=self.loss,
                                  grad_preprocessing=self.grad_preprocessing, p=self.p,
