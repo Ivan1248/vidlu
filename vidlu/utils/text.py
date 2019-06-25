@@ -27,7 +27,7 @@ def writer_expr(): return OneOrMore([const, ('{', translator, '}')]), EOF()
 # @formatter:on
 
 
-class _CommonVisitor(PTNodeVisitor):
+class _ScannerWriterVisitorBase(PTNodeVisitor):
     def visit_const(self, node, children):
         if self.debug: print(f"const: {node.value}")
         return node.value
@@ -35,6 +35,10 @@ class _CommonVisitor(PTNodeVisitor):
     def visit_re_pattern(self, node, children):
         if self.debug: print(f"re_pattern: {node.value}")
         return R(node.value[1:-1])
+
+    def visit_pattern(self, node, children):
+        if self.debug: print(f"re_pattern: {node.value}")
+        return tuple(children) if len(children) > 1 else children[0]
 
     def visit_or_pattern(self, node, children):
         if self.debug: print(f"or_pattern: {children}")
@@ -45,7 +49,7 @@ class _CommonVisitor(PTNodeVisitor):
         return node.value
 
 
-class _ScannerExprVisitor(_CommonVisitor):
+class _ScannerExprVisitor(_ScannerWriterVisitorBase):
     def visit_var_pattern(self, node, children):
         if self.debug: print(f"var_pattern: {children}")
         return children[0]
@@ -53,7 +57,7 @@ class _ScannerExprVisitor(_CommonVisitor):
     def visit_input_var(self, node, children):
         if self.debug: print(f"input_var: {children}")
         var_name = children[0]
-        pattern = R(".*") if len(children) == 1 else children[1]
+        pattern = R(".") if len(children) == 1 else children[1]
         return Namespace(var_name=var_name, pattern=pattern)
 
     def visit_scanner_expr(self, node, children):
@@ -62,14 +66,14 @@ class _ScannerExprVisitor(_CommonVisitor):
         var_to_index = dict()
         for c in children:
             if isinstance(c, Namespace):
-                var_to_index[c.var_name] = len(pattern)
-                pattern += (c.pattern,)
-            else:
-                pattern += (c,)
+                n = len(pattern)
+                var_to_index[c.var_name] = n
+                c = c.pattern
+            pattern += (c,)
         return pattern, var_to_index
 
 
-class _WriterExprVisitor(_CommonVisitor):
+class _WriterExprVisitor(_ScannerWriterVisitorBase):
     def __init__(self, vars_, **kwargs):
         super().__init__(**kwargs)
         self.vars = vars_
@@ -109,11 +113,18 @@ class FormatScanner:
         format_parse_tree = format_parser.parse(format)
         input_pattern, self.var_to_index = visit_parse_tree(format_parse_tree,
                                                             _ScannerExprVisitor(debug=debug))
+        input_pattern += (EOF(),)
         self.input_parser = arpeggio.ParserPython(lambda: input_pattern)
 
     def __call__(self, input):
         parsed = self.input_parser.parse(input)
         return {k: parsed[ind].value for k, ind in self.var_to_index.items()}
+
+    def try_scan(self, input):
+        try:
+            return self(input)
+        except arpeggio.NoMatch as ex:
+            return None
 
 
 class FormatWriter:
@@ -127,6 +138,7 @@ class FormatWriter:
                                  _WriterExprVisitor(vars_, debug=self.debug))
         return ''.join(parts)
 
+
 class FormatTranslator:
     def __init__(self, input_format, output_format, debug=False):
         self.scanner = FormatScanner(input_format)
@@ -135,3 +147,9 @@ class FormatTranslator:
     def __call__(self, input, **additional_vars):
         vars_ = self.scanner(input)
         return self.writer(**vars_, **additional_vars)
+
+    def try_translate(self, input, **additional_vars):
+        try:
+            return self(input, **additional_vars)
+        except arpeggio.NoMatch as ex:
+            return None

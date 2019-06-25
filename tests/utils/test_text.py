@@ -6,14 +6,14 @@ from vidlu.utils import text
 
 
 def test_format_scanner():
-    scanner = text.FormatScanner("backbone(\d+).{a:conv|bn}1.blarp{:va|(\d+)}.zup{bee:0|1|(x*)}",
+    scanner = text.FormatScanner("duck(\d+).{a:conv|bn}1.blarp{:va|(\d+)}.zup{bee:0|1|(x*)}",
                                  debug=True)
-    result = scanner("backbone1.bn1.blarp22.zup0")
+    result = scanner("duck1.bn1.blarp22.zup0")
     assert result == dict(a='bn', bee='0')
-    result = scanner("backbone98.conv1.blarp22.zupxxxx")
-    assert result == dict(a='conv', bee='xxxx')
-    for invalid in ["backbone1", "backbone1.c1.blarp22.zup0", "backbone1.bn1.blarp22.zup",
-                    "backbone1.conv1.blarp22.zupyyy"]:
+    result = scanner("duck98.conv1.blarp22.zupxx")
+    assert result == dict(a='conv', bee='xx')
+    for invalid in ["duck1", "duck1.c1.blarp22.zup0", "duck1.bn1.blarp22.zup",
+                    "duck1.conv1.blarp22.zupxxy"]:
         with pytest.raises(arpeggio.NoMatch):
             scanner(invalid)
 
