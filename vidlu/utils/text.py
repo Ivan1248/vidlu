@@ -9,11 +9,11 @@ from arpeggio import RegExMatch as R
 # @formatter:off
 # [...] is disjunction, (...) is conjunction
 def const(): return R(r"[\w\.]*")
+def ident(): return R(r"\w+")
+
 def re_pattern(): return R(r"\([^\)]*\)")
 def pattern(): return [const, re_pattern]
 def or_pattern(): return pattern, ZeroOrMore('|', pattern)
-def ident(): return R(r"\w+")
-
 def var_pattern(): return ':', or_pattern
 def input_var(): return ident, Optional(var_pattern)
 def scanner_expr(): return OneOrMore([pattern, ('{', [input_var, var_pattern], '}')]), EOF()
@@ -32,6 +32,12 @@ class _ScannerWriterVisitorBase(PTNodeVisitor):
         if self.debug: print(f"const: {node.value}")
         return node.value
 
+    def visit_ident(self, node, children):
+        if self.debug: print(f"ident: {node.value}")
+        return node.value
+
+
+class _ScannerExprVisitor(_ScannerWriterVisitorBase):
     def visit_re_pattern(self, node, children):
         if self.debug: print(f"re_pattern: {node.value}")
         return R(node.value[1:-1])
@@ -44,12 +50,6 @@ class _ScannerWriterVisitorBase(PTNodeVisitor):
         if self.debug: print(f"or_pattern: {children}")
         return list(children)
 
-    def visit_ident(self, node, children):
-        if self.debug: print(f"ident: {node.value}")
-        return node.value
-
-
-class _ScannerExprVisitor(_ScannerWriterVisitorBase):
     def visit_var_pattern(self, node, children):
         if self.debug: print(f"var_pattern: {children}")
         return children[0]
