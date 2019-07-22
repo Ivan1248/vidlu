@@ -17,7 +17,7 @@ A deep learning library for research with emphasis on computer vision, based on 
   - [X] training
     - [X] inductive bias (mostly) disentangled from the model
     - [X] customizable training (inductive bias) configurations
-    - [X] logging, checkpoints, resuming interupted training
+    - [X] logging, checkpoints, resuming interrupted training
     - [ ] pretrained parameter loading: ResNet, DenseNet
     - [X] supervised training
     - [X] adversarial training
@@ -29,8 +29,9 @@ A deep learning library for research with emphasis on computer vision, based on 
       - [ ] RevNet, iRevNet, VGG
       - [X] other: BagNet
     - semantic segmentation
+      - [X] SwifNnet
       - [X] basic segmentation head and loss
-    - [ ] Ladder DenseNet, SwiftNet
+      - [ ] Ladder DenseNet
     - [ ] variational inference
       - [ ] stochastic model parts
     - [ ] VAE
