@@ -3,6 +3,7 @@ import shutil
 import multiprocessing
 from argparse import Namespace
 from functools import partialmethod
+from pathlib import Path
 
 import torch
 from tqdm import tqdm
@@ -28,85 +29,13 @@ def compute_pixel_mean_std(dataset, progress_bar=False):
     return mean, np.sqrt(var)  # pixel mean, pixel standard deviation
 
 
-"""
-class LazyImageStatisticsComputer:
-    def __init__(self, dataset, cache_dir, max_sample_size=10000):
-        self.dataset = dataset
-        if len(self.dataset) > max_sample_size:
-            self.dataset = self.dataset.permute()[:max_sample_size]
-        self.initialized = multiprocessing.Value('i', 0)
-        self.single_channel = len(np.array(dataset[0].x).shape) == 2
-        value_type = multiprocessing.Value if self.single_channel else multiprocessing.Array
-        self._mean, self._std = (value_type('f', x) for x in compute_pixel_mean_std(dataset[:2]))
-        self.cache_dir = f"{cache_dir}/dataset-statistics"
-        self.cache_path = f"{self.cache_dir}/{dataset.identifier}.txt"
-
-    @property
-    def stats(self):
-        self._initialize_if_necessary()
-        mean, std = ((self._mean.item, self._std.item) if self.single_channel
-                     else (np.array(self._mean), np.array(self._std)))
-        return NameDict(mean=mean, std=std)
-
-    def _initialize(self):
-        mean_std = None
-        if os.path.exists(self.cache_path):
-            try:
-                mean_std = np.loadtxt(self.cache_path)
-            except:
-                os.remove(self.cache_path)
-        if mean_std is None:
-            print(f"Computing dataset statistics for {self.dataset.name}")
-            mean_std = compute_pixel_mean_std(self.dataset, progress_bar=True)
-            os.makedirs(self.cache_dir, exist_ok=True)
-            np.savetxt(self.cache_path, mean_std, fmt='%12.8f')
-        if self.single_channel:
-            self._mean.item, self._std.item = mean_std
-        else:
-            self._mean[:], self._std[:] = mean_std
-
-    def _initialize_if_necessary(self):
-        with self.initialized.get_lock():
-            if not self.initialized.value:  # lazy
-                self._initialize()
-                self.initialized.value = True
-
-
-class LazyDatasetInfoModifier:  # TODO
-    def __init__(self, dataset, lazy_info_name, func):
-        self.dataset = dataset
-        self.lazy_info_name = lazy_info_name
-        self.func = func
-        self.initialized = multiprocessing.Value('i', 0)
-
-    def __call__(self):
-        with self.initialized.get_lock():
-            if not self.initialized.value:  # lazy
-                self._initialize()
-                self.initialized.value = True
-
-    def _initialize(self):
-        if self.lazy_info_name not in self.dataset.info.cache:
-            print(f"Computing {self.lazy_info_name} for {self.dataset.name}")
-            self.dataset.info.cache[self.lazy_info_name] = NameDict(**self.func(self.dataset))
-
-
-def lazily_add_statistics(dataset, max_sample_size=10000):
-    if len(dataset) > max_sample_size:
-        dataset = dataset.permute()[:max_sample_size]
-    return LazyDatasetInfoModifier(dataset, 'statistics',
-                                   lambda ds: compute_pixel_mean_std(ds, progress_bar=True))
-"""
-
-
 # Cached dataset with normalized inputs ############################################################
 
 def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
     def compute_pixel_mean_std_d(ds):
         return Namespace(**dict(zip(['mean', 'std'], compute_pixel_mean_std(ds, True))))
-
     ds_with_info = parted_dataset.trainval.info_cache_hdd(
-        dict(standardization=compute_pixel_mean_std_d), cache_dir)
+        dict(standardization=compute_pixel_mean_std_d), Path(cache_dir) / 'dataset_statistics')
     return parted_dataset.with_transform(
         lambda ds: ds.info_cache(
             dict(standardization=lambda ds: ds_with_info.info.cache['standardization'])))
