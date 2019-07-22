@@ -239,7 +239,7 @@ class Dataset(Sequence):
         ds.map_fields(dict(x1=func1, ..., xn=funcn)) does the same as
         ds.map(lambda r: Record(x1=func1(r.x_1), ..., xn=funcn(r.xn), x(n+1)=identity, ...))
 
-        It is useful when using multiprocessing, which uses pickling which
+        It is useful when using multiprocessing, which uses pickling, which
         doesn't support pickling of lambdas.
         """
         return self.map(FieldsMap(field_to_func, record_factory), func_name=func_name, **kwargs)
@@ -479,7 +479,7 @@ class HDDCacheDataset(Dataset):
 
 
 class InfoCacheDataset(Dataset):  # TODO
-    def __init__(self, dataset, name_to_func, **kwargs):
+    def __init__(self, dataset, name_to_func, verbose=True, **kwargs):
         self.names_str = ', '.join(name_to_func.keys())
         modifier = f"info_cache({self.names_str})"
         self.initialized = multiprocessing.Value('i', 0)  # must be before super
@@ -487,6 +487,7 @@ class InfoCacheDataset(Dataset):  # TODO
         info.cache = NameDict(info.get('cache', NameDict()))
         super().__init__(modifiers=modifier, data=dataset, info=info, **kwargs)
         self.name_to_func = name_to_func
+        self.verbose = verbose
 
     @property
     def info(self):
@@ -499,7 +500,9 @@ class InfoCacheDataset(Dataset):  # TODO
         self._info = value
 
     def _get_info_cache(self):
-        print(f"{type(self).__name__}: computing {self.names_str} for {self.data.identifier}")
+        if self.verbose:
+            print(f"{type(self).__name__}: computing/loading {self.names_str}"
+                  + f" for {self.data.identifier}")
         info_cache = dict()
         for n, f in self.name_to_func.items():
             info_cache[n] = f(self.data)
@@ -537,7 +540,6 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
                 self.cache_file.unlink()
                 raise
         else:
-            print(f"HDDInfoCacheDataset: Computing {self.names_str} for {self.data.identifier}")
             info_cache = super()._get_info_cache()
             self._store_info_cache(info_cache)
             return info_cache
