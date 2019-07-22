@@ -76,7 +76,7 @@ class CarliniWagnerLoss(nn.Module):
         :return: CW loss value.
         """
         num_classes = input.size(1)
-        label_mask = to_one_hot(target, num_classes=num_classes).float()
+        label_mask = one_hot(target, num_classes=num_classes).float()
         correct_logit = torch.sum(label_mask * input, dim=1)
         wrong_logit = torch.max((1. - label_mask) * input, dim=1)[0]
         loss = -F.relu(correct_logit - wrong_logit + 50.).sum()
