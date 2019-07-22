@@ -19,7 +19,7 @@ for m in range(numel_max_order_of_magnitude + 1):
 
         for i, p in enumerate(ps):
             # norms[i] += [(x.norm(p) / (x.size(0) ** (1 / p))).item()]
-            norms[i] += [x.abs().pow_(p).mean().pow_(1 / p).item()]
+            norms[i] += [x.abs().pow_(p).mean().pow_(1 / p).item()]  # scalable norm
             #norms[i] += [(x.abs().pow_(p).mean().pow_(1 / p)/ (x.size(0) ** (1 / p))).item()]
     for i, p in enumerate(ps):
         norms[i] /= sample_count
