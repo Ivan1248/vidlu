@@ -63,7 +63,7 @@ head.logits.orig
 backbone.{a:conv|bn}1
 backbone.backbone_intermediate.module.root.{a:bn->norm}.orig
 
-backbone.layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}
+backbone.layer{a}.{b}.{c:conv|bn}{d}
 backbone.backbone_intermediate.module.features.unit{`int(a)-1`}_{b}.branchout.block.{c:bn->norm}{`int(d)-1`}.orig
 
 backbone.layer{a}.{b}.downsample.{c:0|1}
@@ -135,15 +135,18 @@ func[X] ::= '`' PYTHON_EXPRESSION[X] '`'
 
 ----
 
-pattern ::= constant | regex_pattern
-constant ::= [\w\.]*
-regex_pattern ::= '(' REGEX ')'
 
-input_expr ::= input_expr | input_expr | pattern | '{' input_var '}'
-input_var ::= identifier | identifier ':' pattern
+input_expr ::= input_expr input_expr | pattern | '{' input_var '}'  
+pattern ::= constant | regex_pattern                                
+constant ::= [\w\.]*                                                
+regex_pattern ::= '(' REGEX ')'                                     
+input_var ::= identifier | identifier ':' or_pattern                 
+or_pattern ::= or_pattern '|' pattern | pattern                          
 
-output_expr ::= output_expr | output_expr | constant | '{' translator '}'
+output_expr ::= output_expr output_expr | constant | '{' translator '}'
 translator ::= identifier | dict_translator | func_translator
 dict_translator ::= identifier ':' dict_translation
 dict_translation ::= dict_translation '|' dict_translation | pattern '->' constant
 func_translator ::= '`' PYTHON_EXPRESSION '`'
+
+def format_scan(string):

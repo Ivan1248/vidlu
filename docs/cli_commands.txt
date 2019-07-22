@@ -14,18 +14,20 @@ python run.py train
 python run.py train
 -d "Cifar10-train,val" --input_prep "standardize(Cifar10-train,)" -m "ResNet,backbone_f=t(depth=18,small_input=True)" -t ResNetCifarTrainer --metrics ""
 
-
-
-
-
-
-python run.py train "cifar10{train,val}" standardize "ResNet,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
-python run.py train "cifar10{train,val}" div255      "ResNet,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
+python run.py train "cifar10{train,val}" standardize "ResNetV2,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
+python run.py train "cifar10{train,val}" div255      "ResNetV2,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
 
 python run.py train "cifar10{train,val}" div255 "DenseNet,backbone_f=t(depth=121,small_input=True)" "Trainer,**configs.resnet_cifar"
 
+# SwiftNet pretrained on Cityscapes
+python run.py train "cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "Trainer,**{**configs.swiftnet,'epoch_count':40}" --params swiftnet,swiftnet_ss_cs.pt
+python run.py train "cityscapes{train,val}" standardize "ClassificationModel,backbone_f=modules.other.swiftnet.resnet18,init=lambda *a,**k: None" "Trainer,**configs.swiftnet" --params swiftnet_orig,swiftnet_ss_cs.pt
 
-Adversarial training
-"cifar10{train,val}"     div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'attack_f':partial(configs.madry_cifar10_attack, step_count=10)}"
-"cifar10{trainval,test}" div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'attack_f':partial(configs.madry_cifar10_attack, step_count=10)}"
-"cifar10{trainval,test}" div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'train_step':configs.AdversarialTrainStep(True),'attack_f':partial(configs.madry_cifar10_attack, step_count=10,stop_on_success=True)}"
+# Adversarial training
+"cifar10{train,val}"     div255 "ResNetV2,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'attack_f':partial(configs.madry_cifar10_attack, step_count=10)}"
+"cifar10{trainval,test}" div255 "ResNetV2,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'attack_f':partial(configs.madry_cifar10_attack, step_count=10)}"
+python run.py train "cifar10{trainval,test}" div255 "ResNet,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,'train_step':configs.AdversarialTrainStep(True),'attack_f':partial(configs.madry_cifar10_attack, step_count=10,stop_on_success=True)}"
+## Swiftnet
+python run.py train "cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "AdversarialTrainer,**{**configs.swiftnet,'epoch_count':40, 'batch_size':1, **configs.adversarial,'train_step':configs.AdversarialTrainStep(False),'attack_f':partial(configs.madry_cifar10_attack, step_count=40, eps=48/255, clip_bounds=None, )}" --params swiftnet,swiftnet_ss_cs.pt
+
+
