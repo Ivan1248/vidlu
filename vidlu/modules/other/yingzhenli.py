@@ -1,5 +1,3 @@
-from collections import Callable
-
 from vidlu.modules.elements import Sequential
 
 

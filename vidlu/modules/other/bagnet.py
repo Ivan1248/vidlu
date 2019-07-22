@@ -62,8 +62,7 @@ class _Bottleneck(nn.Module):
 
 
 class BagNet(nn.Module):
-
-    def __init__(self, block, layers, small_input=True, strides=[1, 2, 2, 2], kernel3=[0, 0, 0, 0], num_classes=1000,
+    def __init__(self, block, layers, small_input=True, strides=(1, 2, 2, 2,), kernel3=(0, 0, 0, 0,), num_classes=1000,
                  avg_pool=True):
         self.inplanes = 64
         super(BagNet, self).__init__()
