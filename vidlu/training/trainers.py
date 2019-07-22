@@ -11,9 +11,9 @@ from torch import nn
 from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 
 from vidlu import modules
-import vidlu.modules.utils
 from vidlu.data import Record
 from vidlu.data_utils import DataLoader
+from vidlu.modules import get_submodule
 from vidlu.utils.func import default_args, params, Empty
 from vidlu.utils.collections import NameDict
 from vidlu.training.engine import Engine
@@ -55,7 +55,7 @@ class Evaluator:
     model: Callable = Missing
     loss_f: InitVar[Callable] = Missing
     prepare_batch: Callable = default_prepare_batch
-    data_loader_f: Callable = partial(DataLoader, batch_size=1, num_workers=2)
+    data_loader_f: Callable = partial(DataLoader, batch_size=1, num_workers=4)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=dict)
     get_outputs: Callable = get_outputs
@@ -113,16 +113,18 @@ class Evaluator:
 class Trainer(Evaluator):
     state_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
 
-    weight_decay: float = Missing
-    optimizer_f: InitVar[callable] = Missing
-    epoch_count: int = Missing
-    lr_scheduler_f: InitVar[callable] = partial(LambdaLR, lr_lambda=lambda e: 1)
-    train_step: Callable = Missing
+    weight_decay: float = Missing  # R
+    optimizer_f: InitVar[Callable] = Missing  # O
+    epoch_count: int = Missing  # O
+    lr_scheduler_f: InitVar[Callable] = partial(LambdaLR, lr_lambda=lambda e: 1)  # O
+    train_step: Callable = Missing  # O
+    jitter: Callable = None  # D
+    fine_tuning: InitVar[Mapping] = None  # RO
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f):
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, fine_tuning):
         super().__post_init__(loss_f)
         if params(optimizer_f).weight_decay not in [0, Empty]:
             raise ValueError("The parameter weight_decay of optimizer_f should be unassigned.")
@@ -131,18 +133,24 @@ class Trainer(Evaluator):
                 raise ValueError(
                     "The parameter epoch_count of lr_scheduler_f should be unassigned.")
             lr_scheduler_f = partial(lr_scheduler_f, epoch_count=self.epoch_count)
-        self.optimizer = optimizer_f(params=self.model.parameters(), weight_decay=self.weight_decay)
+        lr = params(optimizer_f).lr
+        parameters = (self.model.parameters() if self.fine_tuning is None else
+                      [dict(params=self.model.parameters())]
+                      + [dict(params=get_submodule(self.model, k).parameters(), lr=f * lr)
+                         for k, f in fine_tuning.items()])
+        self.optimizer = optimizer_f(parameters, weight_decay=self.weight_decay)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
         self.train_step = partial(self.train_step, self)
 
-        self.training = Engine(lambda e, b: self.train_step(b))
+        self.training = t = Engine(lambda e, b: self.train_step(b))
         # TODO: move lr_scheduler.step() to epoch_completed for PyTorch 1.1.0
-        self.training.epoch_started.add_handler(lambda e: self.lr_scheduler.step())
-        self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
-        self.training.iteration_completed.add_handler(self._update_metrics)
+        t.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
+        t.epoch_started.add_handler(lambda e: self._reset_metrics())
+        t.iteration_completed.add_handler(self._update_metrics)
 
     def train(self, dataset, restart=False):
-        data_loader = self.data_loader_f(dataset, drop_last=True)
+        data_loader = self.data_loader_f(dataset.map(self.jitter) if self.jitter else dataset,
+                                         drop_last=True)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def state_dict(self):
@@ -159,8 +167,8 @@ class AdversarialTrainer(Trainer):
 
     attack: object = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, attack_f):
-        super().__post_init__(loss_f, optimizer_f, lr_scheduler_f)
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, fine_tuning, attack_f):
+        super().__post_init__(loss_f, optimizer_f, lr_scheduler_f, fine_tuning)
         if attack_f is Missing:
             raise ValueError(f"`{type(self).__name__}` missing argument `attack_f`.")
         self.attack = attack_f(model=self.model, **(
