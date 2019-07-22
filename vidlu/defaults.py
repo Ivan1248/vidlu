@@ -1,73 +1,75 @@
 import inspect
 import warnings
 from functools import partial
+import numpy as np
 
-from ignite import metrics
-
-from vidlu.data import Record
 from vidlu.models import DiscriminativeModel, Autoencoder
-from vidlu.modules import components
-from vidlu.modules import loss
-from vidlu.problem import Problem
-from vidlu.training.metrics import FuncMetric, ClassificationMetrics, ClassificationMetricsAdv
+
+from vidlu.problem import (Classification, SemanticSegmentation, DepthRegression,
+                           get_problem_type)
 from vidlu.training.trainers import Trainer, AdversarialTrainer
-from vidlu.utils.func import ArgTree
+from vidlu.utils.func import ArgTree, params
 
 
 # Problem ######################################################################
 
-def get_problem(dataset):
+def get_problem_from_dataset(dataset):
     if 'problem' not in dataset.info:
         raise ValueError("Unknown problem.")
-    return Problem(dataset.info.problem)
+    problem_type = get_problem_type(dataset.info.problem)
+
+    def get_attribute(k):
+        if k in dataset.info:
+            return dataset.info[k]
+        elif k == 'y_shape':
+            return tuple(dataset[0].y.shape)
+        else:
+            raise KeyError()
+
+    args = {k: get_attribute(k) for k in params(problem_type)}
+    return problem_type(**args)
 
 
 # Model ############################################################################################
 
-def get_model_argtree(model_class, dataset):
-    problem = get_problem(dataset)
+def get_model_argtree(model_class, problem):
+    from vidlu.modules import components
+
     if inspect.isclass(model_class):
         if issubclass(model_class, DiscriminativeModel):
-            if problem == Problem.CLASSIFICATION:
+            if type(problem) is Classification:
                 return ArgTree(
-                    head_f=partial(components.ClassificationHead, class_count=dataset.info.class_count))
-            elif problem == Problem.SEMANTIC_SEGMENTATION:
+                    head_f=partial(components.ClassificationHead,
+                                   class_count=problem.class_count))
+            elif type(problem) is SemanticSegmentation and not isinstance(
+                    params(model_class).head_f, components.SegmentationHead):
                 return ArgTree(
-                    head_f=partial(components.SegmentationHead, class_count=dataset.info.class_count,
-                                   shape=dataset[0].y.shape))
-            elif problem == Problem.DEPTH_REGRESSION:
+                    head_f=partial(components.SegmentationHead,
+                                   class_count=problem.class_count,
+                                   shape=problem.y_shape))
+            elif type(problem) is DepthRegression:
                 return ArgTree(
-                    head_f=partial(components.RegressionHead, shape=dataset[0].y.shape))
-            elif problem == Problem.OTHER:
-                return ArgTree()
+                    head_f=partial(components.RegressionHead, shape=problem.y_shape))
+            else:
+                raise ValueError("Invalid problem type.")
         elif issubclass(model_class, Autoencoder):
             return ArgTree()
     elif model_class.__module__.startswith('torchvision.models'):
-        if problem == Problem.CLASSIFICATION:
-            return ArgTree(num_classes=dataset.info.class_count)
-    warnings.warn(f"get_default_argtree: Unknown model type {model_class}")
-    return ArgTree()
-
-
-# Training data jittering and model input perparation ##############################################
-
-def get_jitter(dataset):
-    from vidlu.transforms.jitter import cifar_jitter, rand_hflip
-    if any(dataset.name.lower().startswith(x) for x in ['cifar', 'cifar100', 'tinyimagenet']):
-        return lambda r: Record(x=cifar_jitter(r.x), y=r.y)
-    elif dataset.info['problem'] == 'semseg':
-        return lambda r: Record(zip(['x', 'y'], rand_hflip(r.x, r.y)))
+        if isinstance(problem, Classification):
+            return ArgTree(num_classes=problem.class_count)
     else:
-        return lambda x: x
+        raise ValueError(f"get_model_argtree: Unknown model type {model_class}")
 
 
 # Trainer/Evaluator ################################################################################
 
 def get_trainer_argtree(trainer_class, dataset):
-    problem = get_problem(dataset)
+    from vidlu.modules import loss
+
+    problem = get_problem_from_dataset(dataset)
     argtree = ArgTree()
     if issubclass(trainer_class, Trainer):
-        if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
+        if isinstance(problem, (Classification, SemanticSegmentation)):
             argtree.update(ArgTree(loss_f=partial(loss.SoftmaxCrossEntropyLoss, ignore_index=-1)))
         if issubclass(trainer_class, AdversarialTrainer):
             pass  # it will be ovderridden anyway with the attack
@@ -80,25 +82,27 @@ def get_trainer_argtree(trainer_class, dataset):
 
 # Metrics ##########################################################################################
 
-def get_metrics(trainer, dataset):
-    problem = get_problem(dataset)
-    if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
+def get_metrics(trainer, problem):
+    from ignite import metrics
+    from vidlu.training.metrics import (FuncMetric, ClassificationMetrics,
+                                        ClassificationMetricsAdversarial)
+
+    if isinstance(problem, (Classification, SemanticSegmentation)):
         ret = [partial(FuncMetric, func=lambda iter_output: iter_output.loss, name='loss'),
-               partial(ClassificationMetrics, class_count=dataset.info.class_count)]
+               partial(ClassificationMetrics, class_count=problem.class_count)]
         if isinstance(trainer, AdversarialTrainer):
-            ret.append(partial(ClassificationMetricsAdv, class_count=dataset.info.class_count))
-    elif problem == Problem.DEPTH_REGRESSION:
+            ret.append(partial(ClassificationMetricsAdversarial, class_count=problem.class_count))
+    elif isinstance(problem, DepthRegression):
         ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
-    elif problem == Problem.OTHER:
+    else:
+        warnings.warn(f"get_metrics: There are no default metrics for problem {type(problem)}.")
         ret = []
     return ret
 
 
-def get_metric_args(dataset):
-    problem = get_problem(dataset)
-    if problem in [Problem.CLASSIFICATION, Problem.SEMANTIC_SEGMENTATION]:
-        return dict(class_count=dataset.info.class_count)
-    elif problem == Problem.DEPTH_REGRESSION:
+def get_metric_args(problem):
+    if isinstance(problem, (Classification, SemanticSegmentation)):
+        return dict(class_count=problem.class_count)
+    elif isinstance(problem, DepthRegression):
         return {}
-    elif problem == Problem.OTHER:
-        return {}
+    return {}

@@ -1,19 +1,19 @@
 import warnings
 import re
-from dataclasses import dataclass
-from functools import partial, wraps
+from functools import partial
 
 import torch
-import dill
+from torch.nn import Identity
 
 from vidlu import defaults, models
-from vidlu.data import Record, Dataset, DatasetFactory
-from vidlu.data_utils import CachingDatasetFactory
-from vidlu.transforms import image as T
-from vidlu.utils.collections import NameDict
+from vidlu.data import DatasetFactory
+from vidlu.data_utils import CachingDatasetFactory, DataLoader
+from vidlu.modules import Func
+from vidlu.problem import Supervised
+from vidlu.transforms import image as imt
 from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
-                              ArgTree, params, Empty, default_args, functree, identity)
-from vidlu.utils import tree
+                              ArgTree, params, Empty, default_args, identity)
+from vidlu.utils import tree, text
 
 t = ArgTree  # used in arg/evaluation
 
@@ -73,7 +73,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None):
     """
 
     Args:
-        datasets_str (str): a string representing the datasets.
+        data_str (str): a string representing the datasets.
         datasets_dir: directory with
         cache_dir:
 
@@ -104,56 +104,75 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
-def get_input_preparation(input_prep_str, dataset):
-    from vidlu.transforms.input_preparation import prepare_input_label
+def get_input_preparation(dataset):
+    from vidlu.transforms.input_preparation import prepare_input, prepare_label
     fields = tuple(dataset[0].keys())
     if fields == ('x', 'y'):
-        if input_prep_str == "standardize":
-            stand = dataset.info.cache['standardization']
-            transform = T.Standardize(mean=torch.from_numpy(stand.mean),
-                                      std=torch.from_numpy(stand.std))
-        elif input_prep_str == "div255":
-            transform = T.Div(255)
-        elif input_prep_str == "nop":
-            transform = identity
-        return lambda ds: ds.map_fields(dict(
-            x=T.Compose(T.ToTorch(), T.HWCToCHW(), T.To(dtype=torch.float), transform),
-            y=prepare_input_label), func_name=input_prep_str)
+        return lambda ds: ds.map_fields(dict(x=prepare_input, y=prepare_label),
+                                        func_name='prepare')
     raise ValueError(f"Unknown record format: {fields}.")
 
 
 # Model ############################################################################################
 
+def get_input_adapter(input_adapter_str, problem, data_statistics=None):
+    if isinstance(problem, Supervised):
+        if input_adapter_str == "standardize":
+            return Func(imt.Standardize(mean=torch.from_numpy(data_statistics.mean),
+                                        std=torch.from_numpy(data_statistics.std)))
+        elif input_adapter_str == "div255":
+            return Func(imt.Div(255))
+        elif input_adapter_str == "id":
+            return Identity()
+    raise NotImplementedError()
+
+
 # noinspection PyUnresolvedReferences,PyUnusedLocal
-def get_model(model_str: str, dataset, device=None, verbosity=1):
+def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
+              dataset=None, device=None, verbosity=1):
     import torch.nn  # used in model_str/evaluation
     from vidlu import modules  # used in model_str/evaluation
     from vidlu.modules import loss
     import vidlu.modules.components as C
     import torchvision.models as tvmodels
-    from vidlu.data_utils import DataLoader
+
+    if dataset is None and (problem is None or init_input is None):
+        raise ValueError("get_model: If dataset is None, problem and init_input need to be given.")
+
+    if problem is None:
+        problem = defaults.get_problem_from_dataset(dataset)
+    if init_input is None and dataset is not None:
+        init_input = batch_x = next(iter(DataLoader(dataset, batch_size=2)))[0]
+        init_input = dataset[0].x.unsqueeze(0)
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
     model_class = getattr(models, model_name) if hasattr(models, model_name) else eval(model_name)
-    argtree = defaults.get_model_argtree(model_class, dataset)
+    argtree = defaults.get_model_argtree(model_class, problem)
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) == 1 else ArgTree()
     argtree.update(argtree_arg)
-    model_f = argtree_hard_partial(model_class, **argtree)
+    model_f = argtree_hard_partial(
+        model_class,
+        **argtree,
+        input_adapter=get_input_adapter(
+            input_adapter_str,
+            problem=problem,
+            data_statistics=None if dataset is None else dataset.info.cache['standardization']))
 
     print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
 
     model = model_f()
     model.eval()
-    batch_x = next(iter(DataLoader(dataset, batch_size=2)))[0]
+
     if hasattr(model, 'initialize'):
-        model.initialize(batch_x)
+        model.initialize(init_input)
     else:
-        model(batch_x)
         warnings.warn("The model does not have an initialize method.")
+        model(init_input)
     if device is not None:
         model.to(device)
+
     return model
 
 
@@ -166,7 +185,7 @@ get_model.help = \
 "configs.supervised,configs.classification,configs.resnet_cifar"
 
 
-# Trainer and metrics ##############################################################################
+# Training and evaluation ##########################################################################
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_trainer(trainer_str: str, dataset, model, verbosity=1):
@@ -175,6 +194,7 @@ def get_trainer(trainer_str: str, dataset, model, verbosity=1):
     from vidlu.training import trainers, configs
     from vidlu.training.adversarial import attacks
     from vidlu.utils.misc import fuse
+    from vidlu.transforms import jitter
 
     trainer_name, *argtree_arg = (x.strip() for x in trainer_str.strip().split(',', 1))
     trainer_class = getattr(trainers, trainer_name)
@@ -198,25 +218,32 @@ get_trainer.help = \
      + ' Instead of ArgTree(...), t(...) can be used.'
      + ' Example: "ResNetCifarTrainer"')
 
+"""
+def get_pretrained_params(model, params_name, params_dir):
+    return defaults.get_pretrained_params(model, params_name, params_dir)
+"""
+
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
-def get_metrics(metrics_str: str, trainer, dataset):
+def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
     from vidlu.training import metrics
 
-    default_metrics = defaults.get_metrics(trainer, dataset)
+    if problem is None:
+        if dataset is None:
+            raise ValueError("get_metrics: either the dataset argument"
+                             + " or the problem argument need to be given.")
+        problem = defaults.get_problem_from_dataset(dataset)
+
+    default_metrics = defaults.get_metrics(trainer, problem)
 
     metrics_str = metrics_str.strip()
     metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
     additional_metrics = [getattr(metrics, name) for name in metric_names]
 
     def add_missing_args(metric_f):
-        dargs = defaults.get_metric_args(dataset)
+        dargs = defaults.get_metric_args(problem)
         missing = [p for p in params(metric_f) if p is Empty]
         return (partial(metric_f, **{p: dargs[p] for p in missing}) if len(missing) > 0
                 else metric_f)
 
     return list(map(add_missing_args, default_metrics + additional_metrics))
-
-
-def get_pretrained_params(pretrained_params_str):
-    pass
