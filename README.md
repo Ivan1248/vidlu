@@ -29,8 +29,8 @@ A deep learning library for research with emphasis on computer vision, based on 
       - [ ] RevNet, iRevNet, VGG
       - [X] other: BagNet
     - semantic segmentation
-      - [X] SwifNnet
       - [X] basic segmentation head and loss
+      - [X] SwiftNet
       - [ ] Ladder DenseNet
     - [ ] variational inference
       - [ ] stochastic model parts
