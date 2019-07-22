@@ -169,23 +169,22 @@ def AttributeCheckingMeta(*, invalid_value):
 # Mappings
 
 
-def fuse(*dicts, overridable=None, non_overridable=None, ignore_if_equal=True, factory=None):
-    if overridable is not None and non_overridable is not None:
-        raise ValueError("Only one of `overridable` and `non_overridable` lists can be provided.")
+def fuse(*dicts, overriding=None, ignore_if_equal=True, factory=None):
     factory = factory or type(dicts[0])
 
-    if overridable is None and non_overridable is None:
+    if overriding is None and ignore_if_equal is False:
         return factory(*dicts)
-
-    def key_not_overridable(k):
-        return k in non_overridable if overridable is None else k not in overridable
 
     result = factory(**dicts[0])
     for d in dicts[1:]:
         for k, v in d.items():
-            if k in result and key_not_overridable(k) and not (ignore_if_equal and result[k] is v):
+            if k in result and not (ignore_if_equal and result[k] is v):
                 raise RuntimeError(f"Key '{k}' is already assigned.")
             result[k] = v
+
+    overriding = overriding or factory()
+    result.update(overriding)
+
     return result
 
 
@@ -194,3 +193,14 @@ def update_existing_items(dest, src, copy=False):
         dest = dest.copy()
     dest.update({k: v for k, v in src.items() if k in dest})
     return dest
+
+
+# module importer
+
+class Meta(type):
+    def __getattr__(cls, key):
+        return __import__(key)
+
+        
+class Importer:
+    __metaclass__ = Meta
