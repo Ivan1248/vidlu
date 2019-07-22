@@ -4,6 +4,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 import functools
 from functools import reduce
+from typing import Union
 
 import torch
 from torch import nn
@@ -13,7 +14,7 @@ import numpy as np
 from vidlu.modules.utils import try_get_module_name_from_call_stack
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
-from vidlu.utils.func import params, tryable
+from vidlu.utils.func import params, tryable, identity
 
 from . import utils
 
@@ -176,20 +177,6 @@ class Module(*_extended(nn.Module, ABC)):
         return (self.__class__.__name__ + "("
                 + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
 
-    @property
-    def device(self):
-        param = next(self.parameters(), None)
-        return None if param is None else param[0].device
-
-    def load_state_dict(self, state_dict_or_path, strict=True):
-        """Handle a path being given instead of a file. (preferred since it
-        automatically maps to the correct device). Taken from MagNet."""
-        from pathlib import Path
-        sd = state_dict_or_path
-        if isinstance(sd, (str, Path)):
-            sd = torch.load(sd, map_location=self.device)
-        return super().load_state_dict(sd, strict=strict)
-
 
 def _to_sequential_init_args(*args, **kwargs):
     if len(kwargs) > 0:
@@ -251,11 +238,6 @@ class Sequential(*_extended(nn.Sequential)):
 class ModuleTable(Sequential):
     def forward(self, *input):
         raise NotImplementedError
-
-
-class Identity(Module):
-    def forward(self, x):
-        return x
 
 
 # Branching, parallel and reduction ################################################################
@@ -320,6 +302,12 @@ class Sum(Module):
 
     @tuple_to_varargs_method
     def forward(self, *inputs):
+        shape = inputs[0].shape
+        for oo in inputs[1:]:
+            if oo.shape != shape:
+                print(try_get_module_name_from_call_stack(self),
+                      ' '.join(str(tuple(x.shape)) for x in inputs))
+                breakpoint()
         y = inputs[0].clone()
         for x in inputs[1:]:
             y += x
@@ -381,7 +369,7 @@ class WrappedModule(Module):
 
 class Conv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
-                 bias=True, in_channels=None):
+                 bias=True, in_channels=None, padding_mode='zeros'):
         super().__init__()
         self.args.padding = (_get_conv_padding(padding, kernel_size, dilation)
                              if isinstance(padding, str) else padding)
@@ -533,7 +521,19 @@ class Dropout2d(_DropoutNd):
 
 # Utilities ########################################################################################
 
-def parameter_count(module):
+class Adapter(Module):
+    def __init__(self, module_or_factory, input_adapter=None, output_adapter=None):
+        super().__init__()
+        mof = module_or_factory
+        self.module = mof if isinstance(mof, nn.Module) else mof()
+        self.input_adapter = input_adapter or identity
+        self.output_adapter = output_adapter or identity
+
+    def forward(self, *args, **kwargs):
+        return self.output_adapter(self.module(self.input_adapter(*args, **kwargs)))
+
+
+def parameter_count(module) -> Namespace:
     from numpy import prod
 
     trainable, non_trainable = 0, 0
@@ -547,7 +547,7 @@ def parameter_count(module):
     return Namespace(trainable=trainable, non_trainable=non_trainable)
 
 
-def get_submodule(root_module, path: str):
+def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
     """
     Returns a submodule of `root_module` that corresponds to `path`. It works
     for other attributes (e.g. Parameters) too.
@@ -556,7 +556,9 @@ def get_submodule(root_module, path: str):
         path (Tensor): a string with the name of the module module relative to
         `root_module`
     """
-    for name in [tryable(int, default_value=n)(n) for n in path.split('.')]:
+    if isinstance(path, str):
+        path = path.split('.')
+    for name in [tryable(int, default_value=n)(n) for n in path]:
         if isinstance(name, str):
             root_module = getattr(root_module, name)
         elif isinstance(name, int):
@@ -565,14 +567,17 @@ def get_submodule(root_module, path: str):
 
 
 def split_on_module(root_module, split_path: str, include_left=False):
-    next_name, *path_remainder = split_path.split('.', maxsplit=1)
+    if isinstance(split_path, str):
+        split_path = split_path.split('.')
+    next_name, path_remainder = split_path[0], split_path[1:]
     if len(path_remainder) > 0:
         path_remainder = path_remainder[0]
     else:
         if isinstance(root_module, Sequential):
-            # TODO
+            start = root_module[:next_name]
+            return Sequential(split_on_module())
+        else:
             raise NotImplementedError()
-            return Sequential
 
 
 def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
@@ -626,9 +631,10 @@ class IntermediateOutputsModuleWrapper(Module):
         self.module = module
         self.handles, self.outputs = None, None
 
-    """def __del__(self):
-        for h in self.handles:
-            h.remove()"""
+    # TODO: why is it called?
+    # def __del__(self):
+    #    for h in self.handles:
+    #        h.remove()
 
     def post_build(self, *args, **kwargs):
         def create_hook(idx):
@@ -644,4 +650,6 @@ class IntermediateOutputsModuleWrapper(Module):
     def forward(self, *input):
         self.outputs = [None] * len(self.args.submodule_paths)
         output = self.module(*input)
-        return output, tuple(self.outputs)
+        outputs = self.outputs
+        self.outputs = None
+        return output, tuple(outputs)
