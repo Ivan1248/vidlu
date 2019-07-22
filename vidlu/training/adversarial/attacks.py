@@ -177,7 +177,8 @@ def rand_init_delta(x, p, eps, bounds, batch=False):
         else:
             delta = ops.random.uniform_sample_from_p_ball(p, x.shape, **kw)
         delta = delta.mul_(eps)
-        return torch.clamp(x + delta, *bounds) - x
+
+        return x + delta if bounds is None else torch.clamp(x + delta, *bounds) - x
 
 
 # PGD ##############################################################################################
@@ -257,11 +258,13 @@ def perturb_iterative(x, y, predict, step_count, eps, step_size, loss, grad_prep
             if p == np.inf:  # try with restrict_norm instead of sign, mul
                 delta += pgrad.mul_(step_size)
                 delta.set_(ops.batch.project_to_p_ball(delta, eps, p=p))
-                delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
+                if clip_bounds is not None:
+                    delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
             elif p in [1, 2]:  # try with restrict_norm_by_scaling instead of restrict_norm
                 raise NotImplementedError("use pgrad, todo")
                 delta += ops.batch.project_to_p_ball(delta.grad, 1, p=p).mul_(step_size)
-                delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
+                if clip_bounds is not None:
+                    delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
                 if eps is not None:
                     delta.set_(ops.batch.project_to_p_ball(delta, eps, p=p))  # !!
             else:
@@ -281,7 +284,8 @@ def perturb_iterative(x, y, predict, step_count, eps, step_size, loss, grad_prep
                 indices = origins[i][successes[i + 1]]
                 delta[indices] = deltas[i][successes[i + 1]]
         # print(step, ", ".join(time_strings) + f"; total: {sum(times):.2f}")
-    return torch.clamp(x + delta, *clip_bounds)
+    x_adv = x + delta
+    return x_adv if clip_bounds is None else torch.clamp(x + delta, *clip_bounds)
 
 
 class PGDAttack(Attack):
