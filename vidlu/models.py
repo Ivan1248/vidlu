@@ -117,8 +117,9 @@ class Model(modules.Module):
 
 
 class SeqModel(modules.Sequential):
-    def __init__(self, seq, init):
-        super().__init__(seq)
+    def __init__(self, seq, init, input_adapter=None):
+        inpad = {} if input_adapter is None else dict(input_adapter=input_adapter)
+        super().__init__(**inpad, **seq)
         self._init = init
 
     initialize = Model.initialize
@@ -127,8 +128,9 @@ class SeqModel(modules.Sequential):
 # Discriminative models ############################################################################
 
 class DiscriminativeModel(SeqModel):
-    def __init__(self, backbone_f, head_f, init):
-        super().__init__(seq=dict(backbone=backbone_f(), head=head_f()), init=init)
+    def __init__(self, backbone_f, head_f, init, input_adapter=None):
+        super().__init__(seq=dict(backbone=backbone_f(), head=head_f()), init=init,
+                         input_adapter=input_adapter)
 
 
 class ClassificationModel(DiscriminativeModel):
@@ -160,8 +162,8 @@ class SwiftNet(DiscriminativeModel):
     def __init__(self,
                  backbone_f=partial(resnet_v1_backbone, base_width=64),
                  intermediate_paths=tuple(f"features.unit{i}_{j}.sum"
-                                          for i, j in zip(range(3), [1] * 3)),
-                 ladder_width=128, head_f=com.heads.SegmentationHead):
+                                          for i, j in zip(range(3), [1] * 3)),  # TODO
+                 ladder_width=128, head_f=com.heads.SegmentationHead, input_adapter=None):
         """
 
         intermediate_paths contains all but the last block?
@@ -177,16 +179,18 @@ class SwiftNet(DiscriminativeModel):
                                             ladder_width=ladder_width,
                                             context_f=partial(
                                                 com.DenseSPP, bottleneck_size=128, level_size=42,
-                                                out_size=128, grid_sizes=(8, 4, 2))),
-                         head_f=head_f,
-                         init=partial(initialization.kaiming_resnet, module=Reserved))
+                                                out_size=128, grid_sizes=(8, 4, 2)),
+                                            up_blend_f=partial(com.LadderUpsampleBlend,
+                                                               pre_blending='sum'),
+                                            post_activation=True),
+                         head_f=partial(head_f, pre_activation=False, kernel_size=3),
+                         init=partial(initialization.kaiming_resnet, module=Reserved),
+                         input_adapter=input_adapter)
 
 
 class LadderDensenet(DiscriminativeModel):
-    def __init__(self,
-                 backbone_f=partial(densenet_backbone),
-                 intermediate_paths=None,
-                 ladder_width=128, head_f=com.heads.SegmentationHead):
+    def __init__(self, backbone_f=partial(densenet_backbone), intermediate_paths=None,
+                 ladder_width=128, head_f=Empty, input_adapter=None):
         """
 
         intermediate_paths contains all but the last block?
@@ -205,7 +209,8 @@ class LadderDensenet(DiscriminativeModel):
                                             intermediate_paths=intermediate_paths,
                                             ladder_width=ladder_width),
                          head_f=head_f,
-                         init=partial(initialization.kaiming_resnet, module=Reserved))
+                         init=partial(initialization.kaiming_resnet, module=Reserved),
+                         input_adapter=input_adapter)
 
 
 # Autoencoders #####################################################################################

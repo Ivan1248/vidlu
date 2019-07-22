@@ -5,7 +5,7 @@ from torch import nn
 import numpy as np
 
 from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Sequential, Branching, Parallel,
-                           Reduce, Identity, Sum, IntermediateOutputsModuleWrapper)
+                           Reduce, Sum, IntermediateOutputsModuleWrapper)
 from vidlu.utils.collections import NameDict
 
 torch.no_grad()
@@ -71,7 +71,7 @@ class TestSequentialBranchingParallelReduce:
             assert m(l) == sum(l)
 
     def test_combined(self):
-        m = Sequential(branch=Branching(id=Identity(),
+        m = Sequential(branch=Branching(id=nn.Identity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(mul2=Func(lambda x: 2 * x),
                                      mul3=Func(lambda x: x * 3)),
@@ -80,7 +80,7 @@ class TestSequentialBranchingParallelReduce:
             assert m(torch.tensor(i)) == 2 * i + 3 * i ** 2
 
     def test_intermediate(self):
-        m = Sequential(branch=Branching(id=Identity(),
+        m = Sequential(branch=Branching(id=nn.Identity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(add2=Func(lambda x: x + 2),
                                      mul3=Func(lambda x: x * 3)),

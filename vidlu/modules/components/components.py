@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from vidlu.modules.elements import (Module, Sequential, ModuleTable, Conv, MaxPool, Linear, Func,
-                                    AvgPool, Sum, Concat, Identity, Branching, Parallel)
+                                    AvgPool, Sum, Concat, Branching, Parallel)
 import vidlu.modules.elements as E
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
@@ -185,7 +185,7 @@ class DenseSPP(Module):
         self.grid_sizes = grid_sizes
         self.upsample = upsample
         self.input_block = block_f(base_width=bottleneck_size)  # reduces the number of channels
-        self.pyramid_blocks = ModuleTable(
+        self.pyramid = ModuleTable(
             {f'block{i}': block_f(base_width=level_size) for i in range(len(grid_sizes))})
         self.fuse_block = block_f(base_width=out_size)
         self.square_grid = square_grid
@@ -196,7 +196,7 @@ class DenseSPP(Module):
 
         x = self.input_block(x)
         levels = [x]
-        for pyr_block, grid_size in zip(self.pyramid_blocks, self.grid_sizes):
+        for pyr_block, grid_size in zip(self.pyramid, self.grid_sizes):
             if not self.square_grid:  # keep aspect ratio
                 grid_size = (grid_size, max(1, round(ar * grid_size)))
             x_pooled = F.adaptive_avg_pool2d(x, grid_size)  # TODO: x vs levels[-1]
@@ -221,33 +221,35 @@ class LadderUpsampleBlend(Sequential):
         if pre_blending not in self._pre_blendings:
             raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
                              + f"It should be one of {tuple(self._pre_blendings.keys())}.")
-        self.args.block_f = Reserved.partial(blend_block_f, width_factors=[1])
+        block_f = Reserved.partial(blend_block_f, width_factors=[1])
+        self.args.block_f = block_f
+
+        self.pre_blend = self._pre_blendings[pre_blending]()
+        self.blend = block_f(base_width=out_channels, kernel_sizes=[3])
 
     def build(self, x, skip):
-        a = self.args
-        self.add_modules(
-            parallel=Parallel(
-                upsample=Resize(size=skip.shape[2:], mode='bilinear'),
-                project=Reserved.partial(a.block_f, base_width=x.shape[1])(kernel_sizes=[1])),
-            pre_blend=self._pre_blendings[a.pre_blending](),
-            blend=a.block_f(base_width=a.out_channels, kernel_sizes=[3]))
+        self.project = Reserved.partial(self.args.block_f, base_width=x.shape[1])(kernel_sizes=[1])
 
     def forward(self, x, skip):
-        return super().forward((x, skip))
+        # resize is not defined in build because it depends on skip.shape
+        x_up = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        skip_proj = self.project(skip)
+        b = self.pre_blend(x_up, skip_proj)
+        return self.blend(b)
 
 
 class KresoLadder(Module):
-    def __init__(self, width, upsample_blend_f=LadderUpsampleBlend):
+    def __init__(self, width, up_blend_f=LadderUpsampleBlend):
         super().__init__()
 
-    def build(self, inputs):
-        self.upsample_blends = nn.ModuleList(
-            [self.args.upsample_blend_f(self.args.width) for _ in range(len(inputs) - 1)])
+    def build(self, x, skips):
+        self.up_blends = nn.ModuleList(
+            [self.args.up_blend_f(self.args.width) for _ in range(len(skips))])
 
-    def forward(self, skips):
-        ups = [skips[0]]
-        for upbl, skip in zip(self.upsample_blends, skips):
-            ups.append(upbl(ups[-1], skip))
+    def forward(self, x, skips):
+        ups = [x]
+        for upbl, skip in zip(self.up_blends, skips):
+            ups.append(upbl(ups[-1], skip))  # TODO: remove detach
         return ups[-1]
 
 
@@ -262,26 +264,29 @@ class KresoContext(Sequential):
 
 class KresoLadderNet(Module):
     def __init__(self, backbone_f, intermediate_paths, ladder_width, context_f=DenseSPP,
-                 upsample_blend_f=LadderUpsampleBlend):
+                 up_blend_f=LadderUpsampleBlend, post_activation=False):
         super().__init__()
-        self.backbone_intermediate = E.IntermediateOutputsModuleWrapper(backbone_f(),
-                                                                        intermediate_paths)
+        self.backbone = E.IntermediateOutputsModuleWrapper(backbone_f(),
+                                                           intermediate_paths)
         self.context = context_f()
-        self.ladder = KresoLadder(ladder_width, upsample_blend_f)
-        defaults = default_args(default_args(upsample_blend_f).blend_block_f)
-        self.norm, self.act = defaults.norm_f(), defaults.act_f()
+        self.ladder = KresoLadder(ladder_width, up_blend_f)
+        defaults = default_args(default_args(up_blend_f).blend_block_f)
+        if post_activation:
+            self.norm, self.act = defaults.norm_f(), defaults.act_f()
 
     def forward(self, x):
-        backbone_outputs = self.backbone_intermediate(x)
-        ladder_inputs = (self.context(backbone_outputs[0]),) + backbone_outputs[1][::-1]
-        return self.act(self.norm(self.ladder(ladder_inputs)))
+        context_input, skips = self.backbone(x)
+        context = self.context(context_input)
+        skips = skips[::-1]
+        ladder_output = self.ladder(context, skips)
+        return self.act(self.norm(ladder_output)) if self.args.post_activation else ladder_output
 
 
 # ResNetV1 #########################################################################################
 
 def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
     if stride == 1 and in_width == out_width:
-        return Identity()
+        return nn.Identity()
     else:
         if dim_change in ('proj', 'conv3'):
             k = 3 if dim_change == 'conv3' else 1
@@ -292,39 +297,6 @@ def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
             pad = [0] * 5 + [out_width - in_width]
             return Sequential(pool=AvgPool(stride, stride),
                               pad=Func(partial(F.pad, pad=pad, mode='constant')))
-
-
-"""
-class ResNetV1UnitOld(Module):
-    def __init__(self, block_f=partial(PostactBlock, omit_first_preactivation=Reserved),
-                 dim_change='proj'):
-        _check_block_args(block_f)
-        super().__init__()
-        if dim_change not in ['pad', 'proj', 'conv3']:
-            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
-        self.block = Reserved.call(block_f, omit_first_preactivation=False)[:-1]
-        self.last_act = default_args(block_f).act_f()
-        self.shortcut = None
-
-    def build(self, x):
-        block_args = default_args(self.args.block_f)
-        out_width = block_args.base_width * block_args.width_factors[-1]
-        stride = block_args.stride
-        if stride == 1 and x.shape[1] == out_width:
-            self.shortcut = Identity()
-        else:
-            if self.args.dim_change in ('proj', 'conv3'):
-                k = 3 if self.args.dim_change == 'conv3' else 1
-                self.shortcut = Conv(out_width, kernel_size=k, stride=stride, padding='half',
-                                     bias=False)
-            else:
-                pad = [0] * 5 + [out_width - x.shape[1]]
-                self.shortcut = Sequential(pool=AvgPool(stride, stride),
-                                           pad=Func(partial(F.pad, pad=pad, mode='constant')))
-
-    def forward(self, x):
-        return self.last_act(self.block(x) + self.shortcut(x))
-"""
 
 
 class ResNetV1Unit(Sequential):
@@ -343,7 +315,7 @@ class ResNetV1Unit(Sequential):
         block_f = self.args.block_f
         block = Reserved.call(block_f)[:-1]  # block without the last activation
         self.add_modules(
-            branchout=Branching(
+            branching=Branching(
                 shortcut=shortcut,
                 block=block),
             sum=Sum(),
@@ -402,7 +374,7 @@ def _check_block_args(block_f):
 
 def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change):
     if stride == 1 and in_width == out_width:
-        return Identity()
+        return nn.Identity()
     else:
         if dim_change in ('proj', 'conv3'):
             k = 3 if dim_change == 'conv3' else 1
@@ -434,7 +406,7 @@ class ResNetV2UnitOld(Module):
 
 
 class ResNetV2Unit(Sequential):
-    def __init__(self, block_f=PreactBlock,                 dim_change='proj'):
+    def __init__(self, block_f=PreactBlock, dim_change='proj'):
         _check_block_args(block_f)
         super().__init__()
         if dim_change not in ['pad', 'proj', 'conv3']:
@@ -450,7 +422,7 @@ class ResNetV2Unit(Sequential):
         out_width = block_args.base_width * block_args.width_factors[-1]
         stride = block_args.stride
         if stride == 1 and in_width == out_width:
-            self.add_module(branching=Branching(shortcut=Identity(), block=block))
+            self.add_module(branching=Branching(shortcut=nn.Identity(), block=block))
         else:
             shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, dim_change)
             self.add_modules(preact=block[:'conv0'],
@@ -489,6 +461,7 @@ class ResNetV2Backbone(ResNetV1Backbone):
                              block_f=default_args(ResNetV2Groups).block_f,
                              dim_change=default_args(ResNetV2Groups).dim_change,
                              groups_f=ResNetV2Groups)
+
 
 
 # DenseNet #########################################################################################
