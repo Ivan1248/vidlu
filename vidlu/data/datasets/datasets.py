@@ -59,7 +59,7 @@ def load_image_with_downsampling(path, downsampling):
     return img
 
 
-def load_segmentation_with_downsampling(path, downsampling, id_to_label=dict(),
+def load_segmentation_with_downsampling(path, downsampling, id_to_label=None,
                                         dtype=np.int8):
     """ Loads and optionally translates segmentation labels.
 
@@ -73,6 +73,8 @@ def load_segmentation_with_downsampling(path, downsampling, id_to_label=dict(),
     Returns:
         A 2D array.
     """
+    if id_to_label is None:
+        id_to_label = dict()
     if not isinstance(downsampling, int):
         raise ValueError("`downsampling` must be an `int`.")
 
@@ -582,6 +584,7 @@ class Cityscapes(Dataset):
         self._images_dir = Path(f'{data_dir}/leftImg8bit/{subset}')
         self._labels_dir = Path(f'{data_dir}/gtFine/{subset}')
         self._image_list = [x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]
+        self._image_list = list(sorted(self._image_list))
         self._label_list = [str(x)[:-len(IMG_SUFFIX)] + LAB_SUFFIX for x in self._image_list]
 
         info = dict(problem='semantic_segmentation', class_count=19,
@@ -591,12 +594,12 @@ class Cityscapes(Dataset):
         super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):
-        ip = self._images_dir / self._image_list[idx]
-        lp = self._labels_dir / self._label_list[idx]
-        df = self._downsampling
+        im_path = self._images_dir / self._image_list[idx]
+        lab_path = self._labels_dir / self._label_list[idx]
+        d = self._downsampling
         return _make_record(
-            x_=lambda: load_image_with_downsampling(ip, df),
-            y_=lambda: load_segmentation_with_downsampling(lp, df, self._id_to_label))
+            x_=lambda: load_image_with_downsampling(im_path, d),
+            y_=lambda: load_segmentation_with_downsampling(lab_path, d, self._id_to_label))
 
     def __len__(self):
         return len(self._image_list)
