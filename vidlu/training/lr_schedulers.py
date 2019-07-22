@@ -67,7 +67,7 @@ class ScalableLambdaLR(lr_scheduler.LambdaLR):
 
     def __init__(self, optimizer, lr_lambda, epoch_count,
                  last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
-        if not isinstance(lr_lambda, list) and not isinstance(lr_lambda, tuple):
+        if not isinstance(lr_lambda, (list, tuple)):
             lr_lambda = [lr_lambda] * len(optimizer.param_groups)
         lr_lambda = [lambda e: ll(e / epoch_count) for ll in lr_lambda]
         super().__init__(optimizer=optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
