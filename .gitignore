@@ -183,3 +183,7 @@ venv.bak/
 
 # vscode
 .vscode/
+
+
+# other
+vidlu/libs
