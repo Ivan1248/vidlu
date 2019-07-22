@@ -1,6 +1,8 @@
+from dataclasses import dataclass
+
 import pytest
-from functools import partial
-from vidlu.utils.func import Empty, default_args, params
+from functools import partial, wraps
+from vidlu.utils.func import Empty, default_args, params, func_to_class, class_to_func
 
 
 class TestHardPartial:
@@ -100,3 +102,60 @@ class TestHardPartial:
             assert bar_decorator(lambda a, b: (a, b))(1) == (1, 2)
             with pytest.raises(TypeError):
                 assert bar_decorator(lambda a, b: (a, b))()
+
+
+class TestFuncToClassAndClassToFunc:
+    def test_func_to_class(self):
+        def carry_thing(x, destination, swallow_type='african'):
+            return x, destination, swallow_type
+
+        CarryThing = func_to_class(carry_thing)
+        assert CarryThing.__name__ == "CarryThing"
+        assert CarryThing.__module__ == carry_thing.__module__
+
+        assert CarryThing(destination='Goat')('coconut') == carry_thing('coconut', 'Goat')
+
+        CarryThing2 = func_to_class(carry_thing, 2, name="CarryThing2")
+
+        assert (CarryThing2('European')('holy hand grenade', 'Caerbannog')
+                == carry_thing('holy hand grenade', 'Caerbannog', 'European'))
+
+    def test_class_to_func(self):
+        @dataclass
+        class CarryThing:
+            destination: str
+            swallow_type: str = 'african'
+
+            def __call__(self, x):
+                return x, self.destination, self.swallow_type
+
+        carry_thing = class_to_func(CarryThing)
+        assert carry_thing.__name__ == "carry_thing"
+        assert carry_thing.__module__ == CarryThing.__module__
+
+        assert carry_thing('coconut', 'Antioch') == CarryThing('Antioch')('coconut')
+
+    def test_func_to_class_to_func_to_class(self):
+        def carry_thing1(x, destination, swallow_type='african'):
+            return x, destination, swallow_type
+
+        CarryThing1 = func_to_class(carry_thing1)
+        carry_thing2 = class_to_func(CarryThing1)
+        CarryThing2 = func_to_class(carry_thing2)
+
+        assert (carry_thing1('coconut', 'Antioch')
+                == carry_thing2('coconut', 'Antioch')
+                == CarryThing1('Antioch')('coconut')
+                == CarryThing2('Antioch')('coconut'))
+
+    def test_func_to_class_wraps(self):
+        def carry_thing(x, destination, swallow_type='african'):
+            return x, destination, swallow_type
+
+        @wraps(carry_thing)
+        def carry_thing_wrapper(x, *a, **k):
+            return carry_thing(x, *a, **k)
+
+        CarryThing = func_to_class(carry_thing_wrapper)
+
+        assert CarryThing(destination='Caerbannog')('rabbit') == carry_thing('rabbit', 'Caerbannog')

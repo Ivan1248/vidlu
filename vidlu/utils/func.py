@@ -4,6 +4,7 @@ from inspect import signature
 from functools import partialmethod, partial, reduce, wraps
 import itertools
 
+from vidlu.utils.text import to_snake_case, to_pascal_case
 from .collections import NameDict
 from vidlu.utils import tree, misc
 
@@ -381,3 +382,75 @@ class Reserved:  # placeholder to mark parameters that shouldn't be assigned / a
     def call(func, **kwargs):
         """Calls func only if all supplied arguments are Reserved."""
         return Reserved.partial(func, **kwargs)()
+
+
+def multiinput(func):
+    @wraps(func)
+    def wrapper(x, *a, **k):
+        if isinstance(x, tuple):
+            return tuple(func(x_, *a, **k) for x_ in x)
+        return func(x, *a, **k)
+
+    return wrapper
+
+
+def multiinput_method(func):
+    @wraps(func)
+    def wrapper(self, x, *a, **k):
+        if isinstance(x, tuple):
+            return tuple(func(self, x_, *a, **k) for x_ in x)
+        return func(self, x, *a, **k)
+
+    return wrapper
+
+
+def func_to_class(func, call_params_count=1, name=None):
+    from inspect import signature, Parameter
+    name = name or to_pascal_case(func.__name__)  # PascalCase
+    pnames = list(signature(func).parameters.keys())
+
+    call_pnames = pnames[0:call_params_count]
+    init_pnames = pnames[call_params_count:]
+
+    exec(f"""
+class {name}:
+    func=func
+    def __init__(self, {', '.join(init_pnames)}):
+        self.args=dict({', '.join(k + '=' + k for k in init_pnames)})
+    def __call__(self, {', '.join(call_pnames)}):
+        return func({', '.join(call_pnames)}, **self.args)""",
+         {'func': func}, locals())
+    class_ = locals()[name]
+    defargs = default_args(func)
+    defaults = tuple(defargs.values())  # works for decorated procedures
+    if tuple(defargs.keys()) != tuple(init_pnames[len(init_pnames) - len(defargs):]):
+        raise NotImplementedError("Cannot convert a functools.partial into a class "
+                                  + "if there are unassigned arguments after assigned arguments.\n"
+                                  + f"The signature is {params(func)}")
+    if defaults:
+        split = max(0, len(defaults) - len(init_pnames))  # avoiding split = -len(init_pnames)
+        class_.__init__.__defaults__ = defaults[split:]  # rightmost arguments go to __init__
+        class_.__call__.__defaults__ = defaults[0:split]  # not to get [0:-0] with -len(init_pnames)
+    class_.__module__ = func.__module__
+    return class_
+
+
+def class_to_func(class_, name=None):
+    if len(default_args(class_.__call__)) > 0:
+        raise ValueError("The `__call__` method of the class should have no default arguments.")
+    from inspect import signature, Parameter
+    name = name or to_snake_case(class_.__name__)
+    init_pnames = list(signature(class_).parameters.keys())
+    call_pnames = list(signature(class_.__call__).parameters.keys())[1:]
+    pnames = call_pnames + init_pnames
+
+    exec(f"""
+def {name}({', '.join(pnames)}):
+    return class_({', '.join(init_pnames)})({', '.join(call_pnames)})""",
+         {'class_': class_}, locals())
+    func = locals()[name]
+    func.__defaults__ = class_.__init__.__defaults__
+    if class_.__init__.__defaults__ is None and len(default_args(class_.__init__)) > 0:
+        raise NotImplementedError("Not implemented for decorated __init__.")
+    func.__module__ = class_.__module__
+    return func
