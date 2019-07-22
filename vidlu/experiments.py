@@ -1,20 +1,21 @@
 from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
-import warnings
+from pathlib import Path
 
 import torch
-import numpy as np
+from vidlu.data import Dataset
+from IPython import embed
 
-from vidlu import gpu_utils, factories, defaults
+from vidlu import gpu_utils, factories, defaults, parameter_loading
+from vidlu.data import Record
 from vidlu.modules import parameter_count
 from vidlu.training.checkpoint_manager import CheckpointManager
-from vidlu.utils.func import Empty
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils import tree
-from vidlu.utils.misc import try_input, query_yes_no
+from vidlu.utils.misc import try_input
 
 
 # TODO: logger instead of verbosity
@@ -22,10 +23,11 @@ from vidlu.utils.misc import try_input, query_yes_no
 @dataclass
 class TrainingExperimentFactoryArgs:
     data: str
-    input_prep: str
+    input_adapter: str
     model: str
     trainer: str
     metrics: str
+    params: str
     experiment_suffix: str
     resume: bool
     device: torch.device
@@ -34,41 +36,41 @@ class TrainingExperimentFactoryArgs:
 
 # Data #############################################################################################
 
-def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, input_prep_str):
+def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     data = factories.get_data(data_str, datasets_dir, cache_dir)
-    data_flat = tree.flatten(data)
-    if len(data_flat) != 2:
+    datasets = tree.flatten(data)
+    if len(datasets) != 2:
         raise ValueError(f'There must be exactly 2 datasets in "{data_str}"')
-    ds_train, ds_test = dict(data_flat).values()
-    ds_train = ds_train.map(defaults.get_jitter(ds_train))
-    ds_train_jittered = ds_train.map(defaults.get_jitter(ds_train))
+    ds_train, ds_test = dict(datasets).values()
 
-    prepare_input = factories.get_input_preparation(input_prep_str, ds_train)
+    prepare_input = factories.get_input_preparation(ds_train)
     if not callable(prepare_input):
         raise RuntimeError("Not supported.")
-    # if len(prepare_input) not in [1, len(data)]:
-    #    raise ValueError("The number of input_preparation transforms should be"
-    #                     + " either 1 or the number of different datasets (not subsets).")
-    # data_flat = [((name, sub), ds.map(prepare_input[name])) for name, subsets in data.items() for
-    #             sub, ds in subsets]
 
-    # ds_train, ds_train_jittered, ds_test = (ds.map(prepare_input, func_name=input_prep_str)
-    #                                        for ds in [ds_train, ds_train_jittered, ds_test])
-    ds_train, ds_train_jittered, ds_test = map(prepare_input,
-                                               [ds_train, ds_train_jittered, ds_test])
+    ds_train, ds_test = map(prepare_input, [ds_train, ds_test])
 
-    return Namespace(train=ds_train, train_jittered=ds_train_jittered, test=ds_test)
+    return Namespace(train=ds_train, test=ds_test)
 
 
 # Model ############################################################################################
 
-def get_model(model_str: str, ds_train, device, verbosity):
-    model = factories.get_model(model_str, dataset=ds_train, verbosity=verbosity)
+def get_model(model_str: str, input_adapter_str, ds_train, device, verbosity):
+    model = factories.get_model(model_str, input_adapter_str=input_adapter_str, dataset=ds_train,
+                                verbosity=verbosity)
+
     model.to(device=device)
     if verbosity > 1:
         print(model)
     print('Parameter count:', parameter_count(model))
     return model
+
+
+# Parameters #######################################################################################
+
+def load_parameters(model, params_str, params_dir):
+    model_name, params_name = params_str.split(',')
+    state_dict = parameter_loading.get_parameters(model_name, Path(params_dir) / params_name)
+    model.load_state_dict(state_dict)
 
 
 # Training loop actions ############################################################################
@@ -98,11 +100,8 @@ def define_training_loop_actions(trainer, cpman, data, logger):
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
     @trainer.evaluation.iteration_completed.add_handler
-    def on_eval_iteration_completed(es):
+    def on_eval_iteration_completed(state):
         nonlocal trainer, data
-        from pathlib import Path
-        from vidlu.utils.presentation import visualization
-        from IPython import embed
 
         optional_input = try_input()
         if optional_input is not None:
@@ -157,9 +156,9 @@ class TrainingExperiment:
                 a.device = torch.device(
                     gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
         with indent_print('Initializing data...'):
-            data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE, a.input_prep)
+            data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
         with indent_print('Initializing model...'):
-            model = get_model(a.model, data.train, a.device, a.verbosity)
+            model = get_model(a.model, a.input_adapter, data.train, a.device, a.verbosity)
         with indent_print('Initializing trainer and evaluation...'):
             trainer = factories.get_trainer(a.trainer, model=model, dataset=data.train,
                                             verbosity=a.verbosity)
@@ -175,4 +174,40 @@ class TrainingExperiment:
             logger.print_all()
             model.to(device=a.device)
 
+        if a.params is not None:
+            load_parameters(model, params_str=a.params, params_dir=dirs.PRETRAINED)
+
         return TrainingExperiment(model, trainer, data, logger, cpman)
+
+
+def ikmo_get_cityscapes_val(datasets_dir, cache_dir):
+    from pathlib import Path
+    from torchvision.transforms import Compose
+
+    from vidlu.libs.swiftnet.data import Cityscapes as IKCityscapes
+
+    from vidlu.libs.swiftnet.data.transform import Open, RemapLabels, Normalize, Tensor
+    from vidlu.libs.swiftnet.data.mux.transform import Pyramid, SetTargetSize
+
+    data_path = Path("/home/igrubisic/data/datasets/Cityscapes")
+
+    # mydata = Cityscapes(data_path, subset="val")
+    ts = (2048, 1024)
+    ikdata = IKCityscapes(
+        data_path,
+        subset="val",
+        transforms=Compose([Open(),
+                            RemapLabels(IKCityscapes.map_to_id, IKCityscapes.num_classes),
+                            Pyramid(alphas=[1.]),
+                            SetTargetSize(target_size=ts,
+                                          target_size_feats=(ts[0] // 4, ts[1] // 4)),
+                            Normalize(scale=255, mean=IKCityscapes.mean, std=IKCityscapes.std),
+                            Tensor(),
+                            ]))
+
+    def remap_labels(y):
+        y[y == 19] = -1
+        return y
+
+    return Dataset(data=ikdata).map(
+        lambda x: Record(x=x['image'], y=remap_labels(x['labels'])))
