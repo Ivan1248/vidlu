@@ -8,9 +8,9 @@ import torchvision.transforms as tvt
 import torchvision.transforms.functional as F
 from . import numpy as npt
 
-
 # Maybe have 1 class per transform, like in torchvision, instead of TRANSFORMERS
 # Type and format checking #########################################################################
+
 
 def is_pil_image(img):
     return isinstance(img, Image.Image)
@@ -25,6 +25,7 @@ def is_numpy_image(img):
 
 
 # Conversion #######################################################################################
+
 
 def pil_to_torch(img):
     """Converts a PIL Image to a Torch tensor with HWC (not CHW) layout with
@@ -104,11 +105,11 @@ def numpy_to_pil(npimg, mode=None):
             expected_mode = 'I;16'
         elif npimg.dtype == np.int32:
             expected_mode = 'I'
-        elif npimg.dtype == np.float32:
-            expected_mode = 'F'
+        #elif npimg.dtype == np.float32:
+        #    expected_mode = 'F'
         if mode is not None and mode != expected_mode:
-            raise ValueError(f"Incorrect mode ({mode}) supplied for input type {np.dtype}."
-                             + f" Should be {expected_mode}")
+            raise ValueError(f"Incorrect mode ({mode}) supplied for input type {np.dtype}." +
+                             f" Should be {expected_mode}")
         mode = expected_mode
     elif npimg.shape[2] == 4:
         permitted_4_channel_modes = ['RGBA', 'CMYK']
@@ -199,14 +200,15 @@ class ImageTransformer(Transformer):
 
 
 class NumPyImageTransformer(ImageTransformer):
+
     def __init__(self, item, layout='HWC'):
         if layout != 'HWC':
             raise ValueError('The memory layout of the array should be HWC.')
         super().__init__(item, layout)
 
     def to_numpy(self, dtype=None):
-        return (self if dtype is None or dtype == self.item.dtype
-                else np.array(self.item, dtype=dtype))
+        return (self if dtype is None or dtype == self.item.dtype else np.array(
+            self.item, dtype=dtype))
 
     def to_pil(self, mode=None):
         return PILImageTransformer(numpy_to_pil(self.item, mode=mode))
@@ -222,6 +224,7 @@ class NumPyImageTransformer(ImageTransformer):
 
 
 class PILImageTransformer(ImageTransformer):
+
     def to_numpy(self, dtype=None, copy=False):
         return NumPyImageTransformer(pil_to_numpy(self.item, dtype=dtype, copy=copy))
 
@@ -248,18 +251,19 @@ class PILImageTransformer(ImageTransformer):
 
 
 class TorchImageTransformer(ImageTransformer):
+
     def to_numpy(self):
         return NumPyImageTransformer(torch_to_numpy(self.item), layout=self.layout)
 
     def to_pil(self, mode=None):
         if self.layout != 'HWC':
-            raise ValueError("Cannot convert array with layout CHW to PIL."
-                             + " Use chw_to_hwc first.")
+            raise ValueError("Cannot convert array with layout CHW to PIL." +
+                             " Use chw_to_hwc first.")
         return PILImageTransformer(torch_to_pil(self.item, mode=mode))
 
     def to_torch(self, dtype=None):
-        return (self if dtype is None or dtype == self.item.dtype
-                else torch.tensor(self.item, dtype=dtype))
+        return (self if dtype is None or dtype == self.item.dtype else torch.tensor(
+            self.item, dtype=dtype))
 
     def hwc_to_chw(self):
         if self.layout == 'HWC':
@@ -297,8 +301,8 @@ class TorchImageTransformer(ImageTransformer):
         self.transform(partial(tvt.functional.resize, size=size, interpolation=interpolation))
 
     def scale(self, factor, interpolation=2):
-        self.resize((np.array(self.x.shape[:2]) * factor).astype(np.int),
-                    interpolation=interpolation)
+        self.resize(
+            (np.array(self.x.shape[:2]) * factor).astype(np.int), interpolation=interpolation)
 
 
 def image_transformer(x):

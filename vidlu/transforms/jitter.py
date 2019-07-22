@@ -1,24 +1,41 @@
 import random
+from dataclasses import dataclass
+from functools import partial
 
 from .transformers import image_transformer
+from .image import RandomCrop, RandomHFlip, Pad
+from vidlu.utils.func import compose
 
 
-def cifar_jitter(x):
-    pilt = image_transformer(x).to_pil()
-    return pilt.rand_crop(pilt.item.size, padding=4).rand_hflip().item
+class SegmentationJitter:
+    def __call__(self, x):
+        return self.apply(x)
+
+    def apply(self, x):
+        raise NotImplementedError()
 
 
-def rand_hflip(*arrays, p=0.5):
-    """
-    Args:
-        *arrays: fields of a single example, e.g. image and its segmentation.
-        p (float): flip probability.
+class ClassificationJitter:
+    def __call__(self, x):
+        return self.apply_input(x[0]), self.apply_label(x[1])
 
-    Returns:
-        An array or a tuple of arrays.
-    """
-    if p < random.random:
-        arrays = [image_transformer(a).hflip() for a in arrays]
-    if len(arrays) == 1:
-        return arrays[0]
-    return arrays[0] if len(arrays) == 1 else arrays
+    def apply_input(self, x):
+        return x
+
+    def apply_label(self, y):
+        return y
+
+
+####################################################################################################
+
+class CifarJitter(ClassificationJitter):
+    def apply_input(self, x):
+        return compose(Pad(4), RandomCrop(x[0].shape[-2:]), RandomHFlip())(x)
+
+
+@dataclass
+class CityscapesJitter(SegmentationJitter):
+    crop_shape: tuple = (768, 768)
+
+    def apply(self, x):
+        return compose(RandomCrop(self.crop_shape), RandomHFlip())(x)

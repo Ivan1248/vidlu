@@ -1,12 +1,17 @@
 from dataclasses import dataclass
-from functools import partial
-from typing import Any
+import random
+from random import randint
 
+import cv2
+from torch import Tensor
+import torch.nn.functional as nnF
 from PIL import Image
 import numpy as np
 import torch
 import torchvision.transforms as tvt
-import torchvision.transforms.functional as F
+import torchvision.transforms.functional as tvtF
+
+from vidlu.utils.func import func_to_class, class_to_func, multiinput
 from . import numpy as npt
 
 
@@ -47,13 +52,11 @@ class Compose(object):
         return img
 
     def __repr__(self):
-        format_string = self.__class__.__name__ + '('
-        for t in self.transforms:
-            format_string += '\n'
-            format_string += '    {0}'.format(t)
-        format_string += '\n)'
-        return format_string
+        return (f"{self.__class__.__name__}(\n    "
+                + "\n    ".join(repr(t) for t in self.transforms) + "\n)")
 
+
+# Conversions ######################################################################################
 
 def pil_to_torch(img):
     """Converts a PIL Image to a Torch tensor with HWC (not CHW) layout with
@@ -88,16 +91,6 @@ def pil_to_torch(img):
         return timg.view(img.size[1], img.size[0], nchannel)
 
 
-class ToTorch:
-    def __call__(self, x):
-        if is_numpy_image(x):
-            return numpy_to_torch(x)
-        elif is_pil_image(x):
-            return pil_to_torch(x)
-        else:
-            raise TypeError()
-
-
 class PILToTorch:
     __call__ = staticmethod(pil_to_torch)
 
@@ -107,6 +100,19 @@ numpy_to_torch = torch.from_numpy
 
 class NumPyToTorch:
     __call__ = staticmethod(torch.from_numpy)
+
+
+def to_torch(x):
+    if is_numpy_image(x):
+        return numpy_to_torch(x)
+    elif is_pil_image(x):
+        return pil_to_torch(x)
+    else:
+        raise TypeError()
+
+
+class ToTorch:
+    __call__ = staticmethod(to_torch)
 
 
 def torch_to_numpy(arr):
@@ -211,6 +217,8 @@ class TorchToPIL:
         return torch_to_pil(img, mode=self.mode)
 
 
+# NumPy ############################################################################################
+
 class NumPyCenterCrop:
     def __init__(self, output_size, fill=0, padding_mode='constant'):
         self.kwargs = {k: v for k, v in locals().items() if
@@ -225,9 +233,23 @@ class NumPyHFlip:
         return np.fliplr(x)
 
 
+def numpy_segmentation_edge_distance_transform(segmentation, class_count=None):
+    present_classes = np.unique(segmentation)
+    if class_count is None:
+        class_count = present_classes[-1]
+    distances = np.full([class_count] + list(segmentation.shape), -1, dtype=np.float32)
+    for i in present_classes if present_classes[0] >= 0 else present_classes[1:]:
+        class_mask = segmentation == i
+        distances[i][class_mask] = cv2.distanceTransform(
+            np.uint8(class_mask), cv2.DIST_L2, maskSize=5)[class_mask]
+    return distances
+
+
+# PIL ##############################################################################################
+
 class PILHFlip:
     def __call__(self, x):
-        return F.hflip(x)
+        return tvtF.hflip(x)
 
 
 PILCenterCrop = tvt.CenterCrop
@@ -236,15 +258,37 @@ PILPad = tvt.Pad
 PILRandomCrop = tvt.RandomCrop
 PILRandHFlip = tvt.RandomHorizontalFlip
 
+PILResize = tvt.Resize
+
+
+class PILRescale:
+    def __init__(self, factor, interpolation=2):
+        self.resize = PILResize(size=(np.array(self.x.shape[:2]) * factor).astype(np.int),
+                                interpolation=interpolation)
+
+    def __call__(self, x):
+        return self.resize(x)
+
+
+# Torch ############################################################################################
+# layout: CHW
+
+@multiinput
+def hwc_to_chw(x):
+    return x.permute(2, 0, 1)
+
 
 class HWCToCHW:
-    def __call__(self, x):
-        return x.permute(2, 0, 1)
+    __call__ = staticmethod(hwc_to_chw)  # keywords: call, copy, ...
+
+
+@multiinput
+def chw_to_hwc(x):
+    return x.permute(1, 2, 0)
 
 
 class CHWToHWC:
-    def __call__(self, x):
-        return x.permute(1, 2, 0)
+    __call__ = staticmethod(chw_to_hwc)  # keywords: call, copy, ...
 
 
 class To:
@@ -255,28 +299,35 @@ class To:
         return x.to(*self.args, **self.kwargs)
 
 
-@dataclass
-class Mul:
-    factor: Any
-
-    def __call__(self, x):
-        return x * self.factor
+@multiinput
+def mul(x, factor):
+    return x * factor
 
 
-@dataclass
-class Div:
-    divisor: Any
+Mul = func_to_class(mul)
 
-    def __call__(self, x):
-        return x / self.divisor
+
+@multiinput
+def div(x, divisor):
+    return x / divisor
+
+
+Div = func_to_class(div)
 
 
 class Standardize:
     def __init__(self, mean, std):
+        #breakpoint()
+        #mean, std = torch.tensor([0.485, 0.456, 0.406]) * 255, torch.tensor(
+        #    [0.229, 0.224, 0.225]) * 255
         self.mean, self.std = mean.view(-1, 1, 1), std.view(-1, 1, 1)
 
     def __call__(self, x):
-        return (x - self.mean.to(dtype=x.dtype)) / self.std.to(dtype=x.dtype)
+        return (x - self.mean.to(dtype=x.dtype, device=x.device)) / self.std.to(dtype=x.dtype,
+                                                                                device=x.device)
+
+
+standardize = class_to_func(Standardize)
 
 
 class Destandardize:
@@ -287,13 +338,98 @@ class Destandardize:
         return x * self.std + self.mean
 
 
-Resize = tvt.Resize
+destandardize = class_to_func(Destandardize)
 
 
-class Scale:
-    def __init__(self, factor, interpolation=2):
-        self.resize = Resize(size=(np.array(self.x.shape[:2]) * factor).astype(np.int),
-                             interpolation=interpolation)
+@multiinput
+def resize(x, size: tuple, mode: str = 'nearest', align_corners: bool = False):
+    unsq = [None] * (4 - x.shape)
+    return nnF.interpolate(x[unsq], size=size, mode=mode, align_corners=align_corners).view_as(x)
 
-    def __call__(self, x):
-        return self.resize(x)
+
+Resize = func_to_class(resize)
+
+
+@multiinput
+def rescale(x, scale: float, mode: str = 'nearest', align_corners: bool = False):
+    unsq = [None] * (4 - x.shape)
+    return nnF.interpolate(x[unsq], scale_factor=scale, mode=mode,
+                           align_corners=align_corners).view_as(x)
+
+
+Rescale = func_to_class(rescale)
+
+
+@multiinput
+def pad(x, padding, mode='constant'):
+    if isinstance(padding, int):
+        padding = (padding,) * 4
+    additional_dims = [None] * (4 - len(x.shape))
+    return nnF.pad(x[additional_dims], padding, mode=mode)[(0,) * len(additional_dims)]
+
+
+Pad = func_to_class(pad)
+
+
+@multiinput
+def crop(x, location: tuple, size: tuple):
+    """Crops an image.
+
+    Args:
+        x (Tensor or tuple): Input image (or tuple of images), a CHW array.
+        location (int): Top left point of the cropping area
+        size (int): size.
+
+    Returns:
+        An array containing the cropped image.
+    """
+    y0, x0 = location
+    h, w = size
+    return x[..., y0:y0 + h, x0:x0 + w]
+
+
+Crop = func_to_class(crop)
+
+
+@multiinput
+def hflip(x: Tensor) -> Tensor:
+    return x.flip(-1)  # CHW
+
+
+HFlip = func_to_class(hflip, name="HFlip")
+
+
+def random_crop(x: Tensor, size: tuple) -> Tensor:
+    """Randomly crops an image.
+
+    Args:
+        x (Tensor or tuple): Source image (or tuple of images).
+        w (int): Width.
+        h (int): Height.
+
+    Returns:
+        An array containing the randomly cropped image.
+    """
+    *_, h_, w_ = x.shape
+    h, w = size
+    y0, x0 = randint(0, h_ - h), randint(0, w_ - w)
+    return crop(x, (y0, x0), size)
+
+
+RandomCrop = func_to_class(random_crop)
+
+
+def random_hflip(x: Tensor, p=0.5) -> Tensor:
+    return hflip(x) if random.random() < p else x
+
+
+RandomHFlip = func_to_class(random_hflip)
+
+# create classes equivalent to functions, e.g. RandomCrop(w, h)(x) == random_crop(x, w, h)
+_this = (lambda: None).__module__
+# for func in [f for k, f in locals().items() if hasattr(f, '__module__') and f.__module__ == _this]:
+#    class_ = func_to_class(func)
+#    exec(f"{class_.__name__} = class_")
+
+__all__ = [k for k, v in locals().items()
+           if hasattr(v, '__module__') and v.__module__ == _this and not k[0] == '_']
