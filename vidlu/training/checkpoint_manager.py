@@ -57,7 +57,7 @@ class CheckpointManager(object):
     STATE_FILENAME = 'state.pth'
     PROGRESS_INFO_FILENAME = 'progress.info'
     EXPERIMENT_INFO_FILENAME = 'experiment.info'
-    SUMMARY_FILENAME = 'log.txt'
+    SUMMARY_FILENAME = 'summary.p'
 
     def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_saved=1,
                  resume=False, remove_old=False):
