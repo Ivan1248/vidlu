@@ -16,10 +16,13 @@ class ClassificationHead(Sequential):
 
 
 class SegmentationHead(Sequential):
-    def __init__(self, class_count, shape):
-        super().__init__(logits=Conv(class_count, kernel_size=1),
-                         upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',
-                                               align_corners=False)))
+    def __init__(self, class_count, shape, kernel_size=1, pre_activation=False, norm_f=D.norm_f,
+                 act_f=D.act_f):
+        pre_act = dict(act=act_f(), norm=norm_f()) if pre_activation else {}
+        super().__init__(
+            **pre_act,
+            logits=Conv(class_count, kernel_size=kernel_size, padding='half'),
+            upsample=Func(partial(F.interpolate, size=shape, mode='bilinear', align_corners=False)))
 
 
 class TCSegmentationHead(Sequential):
