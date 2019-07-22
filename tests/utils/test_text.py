@@ -5,17 +5,24 @@ import pytest
 from vidlu.utils import text
 
 
-def test_format_scanner():
-    scanner = text.FormatScanner("duck(\d+).{a:conv|bn}1.blarp{:va|(\d+)}.zup{bee:0|1|(x*)}",
-                                 debug=True)
-    result = scanner("duck1.bn1.blarp22.zup0")
+def test_format_scanner_full_match():
+    scanner = text.FormatScanner("duck(\d+).{a:conv|bn}1.float{:va|(\d+)}.zup{bee:0|1|(x*)}",
+                                 full_match=True, debug=True)
+    result = scanner("duck1.bn1.float22.zup0")
     assert result == dict(a='bn', bee='0')
-    result = scanner("duck98.conv1.blarp22.zupxx")
+    result = scanner("duck98.conv1.float22.zupxx")
     assert result == dict(a='conv', bee='xx')
-    for invalid in ["duck1", "duck1.c1.blarp22.zup0", "duck1.bn1.blarp22.zup",
-                    "duck1.conv1.blarp22.zupxxy"]:
-        with pytest.raises(arpeggio.NoMatch):
+    result = scanner("duck98.conv1.float22.zup")
+    assert result == dict(a='conv', bee='')
+    for invalid in ["duck1", "duck1.c1.float22.zup0", "duck1.conv1.float22.zupxxy"]:
+        with pytest.raises(Exception):
             scanner(invalid)
+
+
+def test_format_scanner_non_full_match():
+    scanner = text.FormatScanner("onu{a:(.)}.{bee:(.+?)}.carrying(air|)", full_match=False, debug=True)
+    result = scanner("coconut.laden.carrying.airspeed")
+    assert result == dict(a='t', bee='laden')
 
 
 def test_format_writer():
@@ -29,7 +36,9 @@ def test_format_writer():
 
 
 def test_format_translator():
-    translator = text.FormatTranslator(
-        input_format="backbone.layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}{e:(.*)}",
-        output_format="backbone.unit{`int(a)-1`}_{b}.{c:bn->norm}{`int(d)-1`}.orig{e}")
+    input_format = "backbone.layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}{e}"
+    output_format = "backbone.unit{`int(a)-1`}_{b}.{c:bn->norm}{`int(d)-1`}.orig{e}"
+    translator = text.FormatTranslator(input_format, output_format)
+    assert translator("backbone.layer4.0.bn1.bias") == "backbone.unit3_0.norm0.orig.bias"
+    translator = text.FormatTranslator(input_format[:-1] + ":(.*)}", output_format)
     assert translator("backbone.layer4.0.bn1.bias") == "backbone.unit3_0.norm0.orig.bias"

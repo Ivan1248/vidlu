@@ -1,4 +1,5 @@
 from argparse import Namespace
+import re
 
 import arpeggio
 from arpeggio import (Optional, ZeroOrMore, OneOrMore, EOF, ParserPython, PTNodeVisitor,
@@ -38,17 +39,25 @@ class _ScannerWriterVisitorBase(PTNodeVisitor):
 
 
 class _ScannerExprVisitor(_ScannerWriterVisitorBase):
+    def visit_const(self, node, children):
+        if self.debug: print(f"const: {node.value}")
+        return re.escape(node.value)
+
+    def visit_ident(self, node, children):
+        if self.debug: print(f"ident: {node.value}")
+        return re.escape(node.value)
+
     def visit_re_pattern(self, node, children):
         if self.debug: print(f"re_pattern: {node.value}")
-        return R(node.value[1:-1])
+        return '(?:' + node.value[1:-1] + ')'
 
     def visit_pattern(self, node, children):
         if self.debug: print(f"re_pattern: {node.value}")
-        return tuple(children) if len(children) > 1 else children[0]
+        return ''.join(children) if len(children) > 1 else children[0]
 
     def visit_or_pattern(self, node, children):
         if self.debug: print(f"or_pattern: {children}")
-        return list(children)
+        return '(?:' + '|'.join(children) + ')'
 
     def visit_var_pattern(self, node, children):
         if self.debug: print(f"var_pattern: {children}")
@@ -56,21 +65,18 @@ class _ScannerExprVisitor(_ScannerWriterVisitorBase):
 
     def visit_input_var(self, node, children):
         if self.debug: print(f"input_var: {children}")
-        var_name = children[0]
-        pattern = R(".") if len(children) == 1 else children[1]
-        return Namespace(var_name=var_name, pattern=pattern)
+        return Namespace(var_name=children[0], pattern=".*?" if len(children) == 1 else children[1])
 
     def visit_scanner_expr(self, node, children):
         if self.debug: print("input_expr {}".format(children))
-        pattern = tuple()
-        var_to_index = dict()
+        pattern = []
+        vars = []
         for c in children:
             if isinstance(c, Namespace):
-                n = len(pattern)
-                var_to_index[c.var_name] = n
-                c = c.pattern
-            pattern += (c,)
-        return pattern, var_to_index
+                vars.append(c.var_name)
+                c = f"({c.pattern})"
+            pattern.append(c)
+        return ''.join(pattern), vars
 
 
 class _WriterExprVisitor(_ScannerWriterVisitorBase):
@@ -96,7 +102,11 @@ class _WriterExprVisitor(_ScannerWriterVisitorBase):
 
     def visit_py_translator(self, node, children):
         if self.debug: print(f"py_translator: {node}")
-        return eval(f"str((lambda {self.vars_str}: {node.value[1:-1]})())")
+        try:
+            return eval(f"str((lambda {self.vars_str}: {node.value[1:-1]})())")
+        except NameError as e:
+            raise NameError(f'{e}. Cannot evaluate "{node.value[1:-1]}".'
+                            + f' Available variables: {self.vars_str}.')
 
     def translator(self, node, children):
         if self.debug: print(f"translator: {node}")
@@ -107,18 +117,39 @@ class _WriterExprVisitor(_ScannerWriterVisitorBase):
         return list(children)
 
 
+class NoMatchError(Exception):
+    def __init__(self, message, inner_exception=None):
+        super().__init__(message)
+        self.inner_exception = inner_exception
+
+    def __str__(self):
+        if self.inner_exception is not None:
+            return str(self.inner_exception)
+        else:
+            return super().__str__()
+
+
 class FormatScanner:
-    def __init__(self, format, debug=False):
+    def __init__(self, format, full_match=True, debug=False):
+        self.format = format
         format_parser = arpeggio.ParserPython(scanner_expr)
-        format_parse_tree = format_parser.parse(format)
-        input_pattern, self.var_to_index = visit_parse_tree(format_parse_tree,
-                                                            _ScannerExprVisitor(debug=debug))
-        input_pattern += (EOF(),)
-        self.input_parser = arpeggio.ParserPython(lambda: input_pattern)
+        try:
+            format_parse_tree = format_parser.parse(format)
+        except arpeggio.NoMatch as ex:
+            raise NoMatchError(inner_exception=ex)
+        input_pattern, self.var_names = visit_parse_tree(format_parse_tree,
+                                                         _ScannerExprVisitor(debug=debug))
+        self.full_match = full_match
+        input_pattern = input_pattern + "$" if full_match else ".*?" + input_pattern
+        self.regex = re.compile(input_pattern)
 
     def __call__(self, input):
-        parsed = self.input_parser.parse(input)
-        return {k: parsed[ind].value for k, ind in self.var_to_index.items()}
+        parsed = (self.regex.fullmatch if self.full_match else self.regex.match)(input)
+        if parsed is None:
+            raise NoMatchError(f'The input string\n  "{input}"\n does not match the format\n'
+                               + f'  "{self.format}"\n  (regex: {self.regex.pattern})')
+        var_values = parsed.groups()
+        return dict(zip(self.var_names, var_values))
 
     def try_scan(self, input):
         try:
@@ -127,10 +158,17 @@ class FormatScanner:
             return None
 
 
+def scan(format, input):
+    return FormatScanner(format)(input)
+
+
 class FormatWriter:
     def __init__(self, format, debug=False):
         self.debug = debug
-        format_parser = arpeggio.ParserPython(writer_expr)
+        try:
+            format_parser = arpeggio.ParserPython(writer_expr)
+        except arpeggio.NoMatch as ex:
+            raise NoMatchError(inner_exception=ex)
         self.format_parse_tree = format_parser.parse(format)
 
     def __call__(self, **vars_):
@@ -140,8 +178,8 @@ class FormatWriter:
 
 
 class FormatTranslator:
-    def __init__(self, input_format, output_format, debug=False):
-        self.scanner = FormatScanner(input_format)
+    def __init__(self, input_format, output_format, full_match=True, debug=False):
+        self.scanner = FormatScanner(input_format, full_match=full_match)
         self.writer = FormatWriter(output_format)
 
     def __call__(self, input, **additional_vars):
@@ -151,5 +189,14 @@ class FormatTranslator:
     def try_translate(self, input, **additional_vars):
         try:
             return self(input, **additional_vars)
-        except arpeggio.NoMatch as ex:
+        except NoMatchError as ex:
             return None
+
+
+def to_snake_case(identifier):
+    identifier = re.sub(r"([A-Z]+)([A-Z][a-z])", r'\1_\2', identifier)
+    identifier = re.sub(r"([a-z\d])([A-Z])", r'\1_\2', identifier)
+    return identifier.lower()
+
+def to_pascal_case(identifier):
+    return ''.join(x.title() for x in identifier.split('_'))
