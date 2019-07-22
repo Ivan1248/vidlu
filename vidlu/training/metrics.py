@@ -1,11 +1,14 @@
+from argparse import Namespace
+
 import numpy as np
-from sklearn.metrics import confusion_matrix
+import torch
+
+from vidlu.ops import one_hot
 
 EPS = 1e-8
 
 
 # from dlu #########################################################################################
-
 
 class AccumulatingMetric:
     def reset(self):
@@ -36,47 +39,114 @@ class FuncMetric(AccumulatingMetric):
         return {self.name: self._sum / self._n}
 
 
+def multiclass_confusion_matrix(true, pred, class_count):
+    """ Computes a multiclass confusion matrix.
+
+    Args:
+        true (Tensor): a vector of integers representing true classes.
+        pred (Tensor): a vector of integers representing predicte classes.
+        class_count (int):
+
+    Returns:
+        A confusion matrix with shape (class_count, class_count).
+    """
+    with torch.no_grad():
+        pred = one_hot(pred, class_count, dtype=torch.int64)
+        cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.int64, device='cpu')
+        for c in range(class_count):
+            cm[c, :] = pred[true == c, :].sum(0)
+        return cm
+
+
+def soft_multiclass_confusion_matrix(true, pred, class_count):
+    """ Computes a soft multiclass confusion matrix from probabilities.
+
+    Args:
+        true (Tensor): a vector of integers representing true classes.
+        pred (Tensor): an array consisting of vectors representing predicted class
+            probabilities.
+        class_count (int):
+
+    Returns:
+        A soft confusion matrix with shape (class_count, class_count)
+    """
+    with torch.no_grad():
+        cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.float64, device='cpu')
+        for c in range(class_count):
+            cm[c, :] = pred[true == c, :].sum(0)
+        return cm
+
+
+def compute_classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
+    """ Computes macro-averaged classification evaluation metrics based on the
+        accumulated confusion matrix and clears the confusion matrix.
+
+    Args:
+        cm (np.array): a confusion matrix.
+        returns (Sequence): a list of metrics that should be returned.
+        eps (float): a number to add to the denominator to avoid division by 0.
+
+    Returns:
+        A dictionary with computed classification evaluation metrics.
+    """
+    tp = np.diag(cm)
+    actual_pos = cm.sum(axis=1)
+    pos = cm.sum(axis=0) + eps
+    fp = pos - tp
+
+    with np.errstate(divide='ignore', invalid='ignore'):
+        P = tp / pos
+        R = tp / actual_pos
+        F1 = 2 * P * R / (P + R)
+        IoU = tp / (actual_pos + fp)
+    P, R, F1, IoU = map(np.nan_to_num, [P, R, F1, IoU])  # 0 where tp=0
+    mP, mR, mF1, mIoU = map(np.mean, [P, R, F1, IoU])
+    A = tp.sum() / pos.sum()
+    locs = locals()
+    return dict((x, locs[x]) for x in returns)
+
+
 class ClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count):
         self.class_count = class_count
-        self.cm = np.zeros([class_count] * 2)
-        self.labels = np.arange(class_count)
-        self.active = False
+        self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False)
+        self.class_count = class_count
 
     def reset(self):
-        self.cm.fill(0)
+        self.cm.fill_(0)
 
     def update(self, iter_output):
-        true = iter_output.target.flatten().int().cpu().numpy()
-        pred = iter_output.outputs.hard_prediction.flatten().int().cpu().numpy()
-        self.cm += confusion_matrix(true, pred, labels=self.labels)
+        true = iter_output.target.flatten()
+        pred = iter_output.outputs.hard_prediction.flatten()
+        self.cm += multiclass_confusion_matrix(true, pred, self.class_count)
 
     def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
-        # Computes macro-averaged classification evaluation metrics based on the
-        # accumulated confusion matrix and clears the confusion matrix.
-        tp = np.diag(self.cm)
-        actual_pos = self.cm.sum(axis=1)
-        pos = self.cm.sum(axis=0) + eps
-        fp = pos - tp
-
-        with np.errstate(divide='ignore', invalid='ignore'):
-            P = tp / pos
-            R = tp / actual_pos
-            F1 = 2 * P * R / (P + R)
-            IoU = tp / (actual_pos + fp)
-        P, R, F1, IoU = map(np.nan_to_num, [P, R, F1, IoU])  # 0 where tp=0
-
-        mP, mR, mF1, mIoU = map(np.mean, [P, R, F1, IoU])
-        A = tp.sum() / pos.sum()
-        locs = locals()
-        return dict((x, locs[x]) for x in returns)
+        return compute_classification_metrics(self.cm.cpu().numpy(), returns=returns, eps=eps)
 
 
-class ClassificationMetricsAdv(ClassificationMetrics):
+class SoftClassificationMetrics(ClassificationMetrics):
+    def __init__(self, class_count):
+        self.class_count = class_count
+        self.cm = torch.zeros([class_count] * 2, dtype=torch.float64, requires_grad=False)
+        self.class_count = class_count
+
+    def reset(self):
+        self.cm.fill_(0)
+
     def update(self, iter_output):
-        true = iter_output.target.flatten().int().cpu().numpy()
-        pred = iter_output.outputs_adv.hard_prediction.flatten().int().cpu().numpy()
-        self.cm += confusion_matrix(true, pred, labels=self.labels)
+        with torch.no_grad():
+            true = iter_output.target.flatten()
+            pred = iter_output.outputs.probs.permute(0, 2, 3, 1)
+            pred = pred.flatten().view(-1, pred.shape[-1])
+            self.cm += soft_multiclass_confusion_matrix(true, pred, self.class_count)
+
+    def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
+        return compute_classification_metrics(self.cm.cpu().numpy(), returns=returns, eps=eps)
+
+
+class ClassificationMetricsAdversarial(ClassificationMetrics):
+    def update(self, iter_output):
+        super().update(Namespace(target=iter_output.target, outputs=iter_output.outputs_adv))
 
     def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
         return {f"{k}_adv": v for k, v in super().compute(returns=returns).items()}
