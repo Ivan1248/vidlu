@@ -22,9 +22,11 @@ def train(args):
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
-    print(('Continuing' if args.resume else 'Starting') + ' training:...')
+    print('Evaluating initially...')
+    e.trainer.eval(e.data.test)
 
-    e.trainer.train(e.data.train_jittered, restart=False)
+    print(('Continuing' if args.resume else 'Starting') + ' training...')
+    e.trainer.train(e.data.train, restart=False)
     e.trainer.eval(e.data.train)
 
     e.cpman.remove_old_checkpoints()
@@ -49,12 +51,13 @@ def test(args):
 def add_standard_arguments(parser):
     # learner configuration
     parser.add_argument("data", type=str, help=factories.get_data.help)
-    parser.add_argument("input_prep", type=str, default=Empty,
-                        help='A string representing input preparation, e.g. "standardize", "div255".')
+    parser.add_argument("input_adapter", type=str, default=Empty,
+                        help='A string representing input adaptation to the model, '
+                             + 'e.g. "standardize", "div255".')
     parser.add_argument("model", type=str, help=factories.get_model.help)
     parser.add_argument("trainer", type=str, help=factories.get_trainer.help)
-    parser.add_argument("--parameters", type=str, default=None,
-                        help='A comma-separated list of metrics.')
+    parser.add_argument("--params", type=str, default=None,
+                        help='The name of the file containing parameters.')
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
     # device
