@@ -11,13 +11,12 @@ weaker_tols = dict(rtol=1e-4, atol=1e-05)
 
 
 class TestBatchops:
-
-    def test_norm(self):
+    def test_norm(self):  # in PyTorch 1.1.0 the test doesn't pass for float32
         shapes = [(4, 1), (5, 3, 7), (1, 100, 100), (2, 1000, 1000)]
         ps = [0, 0.5, 1, 2, 7, 11, np.inf]
         for p in ps:
             for s in shapes:
-                x = torch.zeros(s).uniform_(-1, 2)
+                x = torch.zeros(s, dtype=torch.float64).uniform_(-1, 2)
                 x /= x.numel() ** (1 / (p + 1e-1))
                 norms = batch.norm(x, p)
                 for i, e in enumerate(x):  # bug in torch.norm in pytorch <= 1.0.0
