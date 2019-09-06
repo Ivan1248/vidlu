@@ -14,7 +14,7 @@ from vidlu import modules
 from vidlu.data import Record
 from vidlu.data_utils import DataLoader
 from vidlu.modules import get_submodule
-from vidlu.utils.func import default_args, params, Empty
+from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
 from vidlu.training.engine import Engine
 
@@ -36,12 +36,8 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 # Evaluator and trainer ############################################################################
 
 
-def get_outputs(self, *x):
-    model = self.model
-    if hasattr(model, 'get_outputs'):
-        return model.get_outputs(*x)
-    prediction = model(*x)
-    return prediction, NameDict(prediction=prediction)
+def extend_output(output, *x):
+    return output, NameDict(prediction=output)
 
 
 class Missing:
@@ -58,7 +54,7 @@ class Evaluator:
     data_loader_f: Callable = partial(DataLoader, batch_size=1, num_workers=4)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=dict)
-    get_outputs: Callable = get_outputs
+    extend_output: Callable = extend_output
     eval_step: Callable = Missing
 
     loss: Callable = dc.field(init=False)
@@ -68,7 +64,6 @@ class Evaluator:
                                      device=modules.utils.get_device(self.model),
                                      non_blocking=False)
         self.eval_step = partial(self.eval_step, self)
-        self.get_outputs = partial(self.get_outputs, self)
         self.loss = loss_f()
         metrics = self.metrics
         self.metrics = dict()
@@ -143,7 +138,6 @@ class Trainer(Evaluator):
         self.train_step = partial(self.train_step, self)
 
         self.training = t = Engine(lambda e, b: self.train_step(b))
-        # TODO: move lr_scheduler.step() to epoch_completed for PyTorch 1.1.0
         t.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
         t.epoch_started.add_handler(lambda e: self._reset_metrics())
         t.iteration_completed.add_handler(self._update_metrics)
@@ -164,15 +158,23 @@ class Trainer(Evaluator):
 @dataclass
 class AdversarialTrainer(Trainer):
     attack_f: InitVar[callable] = Missing
+    eval_attack_f: InitVar[callable] = None
 
     attack: object = dc.field(init=False)
+    eval_attack: object = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, fine_tuning, attack_f):
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, fine_tuning, attack_f,
+                      eval_attack_f):
         super().__post_init__(loss_f, optimizer_f, lr_scheduler_f, fine_tuning)
         if attack_f is Missing:
             raise ValueError(f"`{type(self).__name__}` missing argument `attack_f`.")
         self.attack = attack_f(model=self.model, **(
             dict(loss=self.loss) if params(attack_f)['loss'] is Empty else {}))
+        if isinstance(eval_attack_f, ArgTree):
+            eval_attack_f = argtree_partial(attack_f, eval_attack_f)
+        eval_attack_f = eval_attack_f or attack_f
+        self.eval_attack = eval_attack_f(model=self.model, **(
+            dict(loss=self.loss) if params(eval_attack_f)['loss'] is Empty else {}))
 
 
 # GAN ##############################################################################################

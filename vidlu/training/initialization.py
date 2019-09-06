@@ -19,7 +19,9 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
     if zero_init_residual:
         found = 0
         for m in module.modules():
-            if isinstance(m, (com.ResNetV2Unit, com.ResNetV1Unit)):
+            # break #
+            if isinstance(m, (com.ResNetV1Unit)):
+                # not com.ResNetV2Unit because it seems not to work better
                 block = m.branching.block
                 last_bn = [c for c in block.children() if isinstance(c, mod.BatchNorm)][-1]
                 nn.init.constant_(last_bn.orig.weight, 1e-16)

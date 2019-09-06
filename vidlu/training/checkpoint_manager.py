@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass, InitVar
 from pathlib import Path
 import shutil
 from argparse import Namespace
@@ -7,6 +8,34 @@ import warnings
 import torch
 
 from vidlu.utils.path import create_file_atomic
+
+
+class FileNames:
+    STATE = 'state.pth'
+    PROGRESS_INFO = 'progress.info'
+    EXPERIMENT_INFO = 'experiment.info'
+    SUMMARY = 'summary.p'
+
+
+def _save(self, path, obj):
+    create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
+
+
+@dataclass
+class Checkpoint:
+    state: dict
+    experiment_desc: dict
+    progress_info: dict
+    summary: dict
+
+    def save(self, path):
+        for k, v in vars(self).items():
+            self._save(path / getattr(FileNames, k.upper()), v)
+
+    @classmethod
+    def load(cls, path):
+        return cls(**{k: torch.load(path / getattr(FileNames, k.upper()))
+                      for k, v in cls.__annotations__.items()})
 
 
 class CheckpointManager(object):
@@ -54,10 +83,6 @@ class CheckpointManager(object):
         >>> os.listdir('/tmp/states')
         ['lin33_1', 'lin33_2']
     """
-    STATE_FILENAME = 'state.pth'
-    PROGRESS_INFO_FILENAME = 'progress.info'
-    EXPERIMENT_INFO_FILENAME = 'experiment.info'
-    SUMMARY_FILENAME = 'summary.p'
 
     def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_saved=1,
                  resume=False, remove_old=False):
@@ -105,20 +130,20 @@ class CheckpointManager(object):
         name = self._index_to_name(self._index)
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
-        self._save(path / self.STATE_FILENAME, state)
-        self._save(path / self.PROGRESS_INFO_FILENAME, Namespace(index=self._index))
-        self._save(path / self.EXPERIMENT_INFO_FILENAME, self.experiment_desc)
-        self._save(path / self.SUMMARY_FILENAME, summary)
+        self._save(path / FileNames.STATE, state)
+        self._save(path / FileNames.PROGRESS_INFO, Namespace(index=self._index))
+        self._save(path / FileNames.EXPERIMENT_INFO, self.experiment_desc)
+        self._save(path / FileNames.SUMMARY, summary)
         self.saved.append(name)
 
         self.remove_old_checkpoints()
 
     def load_last(self):
         path = self.last_checkpoint_path
-        self._index = torch.load(path / self.PROGRESS_INFO_FILENAME).index
-        self.experiment_desc = torch.load(path / self.EXPERIMENT_INFO_FILENAME)
-        state = torch.load(path / self.STATE_FILENAME)
-        summary = torch.load(path / self.SUMMARY_FILENAME)
+        self._index = torch.load(path / FileNames.PROGRESS_INFO).index
+        self.experiment_desc = torch.load(path / FileNames.EXPERIMENT_INFO)
+        state = torch.load(path / FileNames.STATE)
+        summary = torch.load(path / FileNames.SUMMARY)
         self._required_resuming = False
         return state, summary
 
