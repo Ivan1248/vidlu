@@ -201,6 +201,23 @@ class Meta(type):
     def __getattr__(cls, key):
         return __import__(key)
 
-        
+
 class Importer:
     __metaclass__ = Meta
+
+
+# trace_calls
+
+def trace_calls():
+    def tracefunc(frame, event, arg, indent=[0]):
+        if event == "call":
+            indent[0] += 2
+            print("-" * indent[0] + "> call function", frame.f_code.co_name)
+        elif event == "return":
+            print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
+            indent[0] -= 2
+        return tracefunc
+
+    import sys
+
+    sys.settrace(tracefunc)
