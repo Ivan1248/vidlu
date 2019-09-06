@@ -40,13 +40,17 @@ def get_gpu_statuses(measurement_count=1, measuring_interval=1.0):
                          mem_total=mem_total, mem_used=mem_used, mem_free=mem_total - mem_used,
                          processes=samples[-1].processes)
 
+    gpus = nvidia_smi()['gpu']
+    if not isinstance(nvidia_smi()['gpu'], list):  # in case there is only 1 GPU
+        gpus = [gpus]
+
     return [Namespace(name=gpu['product_name'],
                       gpu_util=float(gpu['utilization']['gpu_util'].split()[0]) / 100,
                       mem_total=int(gpu['fb_memory_usage']['total'].split()[0]),
                       mem_used=int(gpu['fb_memory_usage']['used'].split()[0]),
                       mem_free=int(gpu['fb_memory_usage']['free'].split()[0]),
                       processes=get_processes(gpu))
-            for gpu in nvidia_smi()['gpu']]
+            for gpu in gpus]
 
 
 def get_first_available_cuda_gpu(max_gpu_util, min_mem_free, no_processes=True):
