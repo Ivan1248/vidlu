@@ -30,11 +30,12 @@ class TrainingExperimentFactoryArgs:
     params: str
     experiment_suffix: str
     resume: bool
+    redo: bool
     device: torch.device
     verbosity: int
 
 
-# Data #############################################################################################
+# Component factories (or factory wrappers) ########################################################
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     data = factories.get_data(data_str, datasets_dir, cache_dir)
@@ -52,20 +53,14 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     return Namespace(train=ds_train, test=ds_test)
 
 
-# Model ############################################################################################
-
 def get_model(model_str: str, input_adapter_str, ds_train, device, verbosity):
     model = factories.get_model(model_str, input_adapter_str=input_adapter_str, dataset=ds_train,
-                                verbosity=verbosity)
-
-    model.to(device=device)
+                                device=device, verbosity=verbosity)
     if verbosity > 1:
         print(model)
     print('Parameter count:', parameter_count(model))
     return model
 
-
-# Parameters #######################################################################################
 
 def load_parameters(model, params_str, params_dir):
     model_name, params_name = params_str.split(',')
@@ -73,13 +68,11 @@ def load_parameters(model, params_str, params_dir):
     model.load_state_dict(state_dict)
 
 
-# Training loop actions ############################################################################
-
 def define_training_loop_actions(trainer, cpman, data, logger):
     @trainer.training.epoch_started.add_handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
-                   + f" ({es.batch_count} batches, lr={trainer.lr_scheduler.get_lr()})")
+                   + f" ({es.batch_count} batches, lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
 
     @trainer.training.epoch_completed.add_handler
     def on_epoch_completed(_):
@@ -107,21 +100,20 @@ def define_training_loop_actions(trainer, cpman, data, logger):
         if optional_input is not None:
             try:
                 exec(optional_input)
-            except:
-                print(f'Cannot execute "{optional_input}".')
-                pass
+            except Exception as ex:
+                print(f'Cannot execute "{optional_input}"\n{ex}.')
 
     @trainer.training.iteration_completed.add_handler
     def on_iteration_completed(es):
         if es.iteration % es.batch_count % (max(1, es.batch_count // 5)) == 0:
-            report_metrics(es)
+            remaining = es.batch_count - es.iteration % es.batch_count
+            if remaining >= es.batch_count // 5 or remaining == 0:
+                report_metrics(es)
 
         on_eval_iteration_completed(es)
 
     trainer.evaluation.epoch_completed.add_handler(partial(report_metrics, is_validation=True))
 
-
-# Checkpoint manager ###############################################################################
 
 def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
     a = training_args
@@ -132,7 +124,7 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     print('Experiment ID:', experiment_id)
     return CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
                              experiment_desc=training_args, resume=a.resume,
-                             remove_old=expsuff == '_' and not a.resume)
+                             remove_old=a.redo or (expsuff == '_' and not a.resume))
 
 
 # Experiment #######################################################################################
@@ -155,6 +147,7 @@ class TrainingExperiment:
             if a.device is None:
                 a.device = torch.device(
                     gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+            print(f"device: {a.device}")
         with indent_print('Initializing data...'):
             data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
         with indent_print('Initializing model...'):

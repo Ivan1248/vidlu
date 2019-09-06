@@ -84,14 +84,15 @@ def get_trainer_argtree(trainer_class, dataset):
 
 def get_metrics(trainer, problem):
     from ignite import metrics
-    from vidlu.training.metrics import (FuncMetric, ClassificationMetrics,
-                                        ClassificationMetricsAdversarial)
+    import vidlu.training.metrics as m
 
     if isinstance(problem, (Classification, SemanticSegmentation)):
-        ret = [partial(FuncMetric, func=lambda iter_output: iter_output.loss, name='loss'),
-               partial(ClassificationMetrics, class_count=problem.class_count)]
+        ret = [partial(m.FuncMetric, func=lambda iter_output: iter_output.loss, name='loss'),
+               partial(m.ClassificationMetrics, class_count=problem.class_count)]
         if isinstance(trainer, AdversarialTrainer):
-            ret.append(partial(ClassificationMetricsAdversarial, class_count=problem.class_count))
+            ret.append(partial(m.with_renamed_returns(m.ClassificationMetrics, 'adv'),
+                               hard_prediction_name="other_outputs_adv.hard_prediction",
+                               class_count=problem.class_count))
     elif isinstance(problem, DepthRegression):
         ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
     else:
