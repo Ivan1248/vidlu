@@ -15,23 +15,52 @@ def fuse_images(im1, im2, a=0.5):
     return a * im1 + (1 - a) * im2
 
 
-def scale01(img):
+def scale_min_max(img):
     return (img - np.min(img)) / (np.max(img) - np.min(img))
 
 
-def colorify_label(lab, colors):
-    plab = np.empty(list(lab.shape) + [3])
-    for i in range(lab.shape[0]):
-        for j in range(lab.shape[1]):
-            plab[i, j, :] = colors[lab[i, j]]
+def colorify_segmentation(seg, colors):
+    plab = np.empty(list(seg.shape) + [3])
+    for i in range(seg.shape[0]):
+        for j in range(seg.shape[1]):
+            plab[i, j, :] = colors[seg[i, j]]
     return plab
 
 
-def compose(images_in_array):
-    if type(images_in_array[0]) is not list:
-        images_in_array = [images_in_array]
+class Composer:
+    def __init__(self, format=[0]):
+        """
 
-    rows = [np.concatenate(row, axis=1) for row in images_in_array]
+        Args:
+            format:
+
+        Example:
+            >>> format = lambda x: [[x[0], None], [fuse_images(x[0],x[1]), x[1]]]
+        """
+        self.format = format
+
+    def __call__(self, images):
+        image_matrix = format(images)
+
+
+def composef(images, format):
+    """
+
+    Args:
+        format:
+
+    Example:
+        >>> format = lambda x: [[x[0], None], [fuse_images(x[0],x[1]), x[1]]]
+    """
+    images_array = format(images)
+    return compose(images_array)
+
+
+def compose(images_array):
+    if type(images_array[0]) is not list:
+        images_array = [images_array]
+
+    rows = [np.concatenate(row, axis=1) for row in images_array]
     return np.concatenate(rows, axis=0)
 
 
@@ -106,7 +135,7 @@ class Viewer:
 
         def make_valid(im):
             if np.min(im) < 0 or np.max(im) > 0:
-                return scale01(im)
+                return scale_min_max(im)
             return im
 
         plot = lambda ax, im: ax.imshow(make_valid(im)) if len(im.shape) == 3 else ax.imshow(im)
@@ -134,10 +163,10 @@ def view_predictions_2(dataset, infer=None, save_dir=None):
             if np.issubdtype(pred.dtype, np.floating):
                 return pred
             else:
-                return colorify_label(pred + 1, colors)
+                return colorify_segmentation(pred + 1, colors)
 
         img, lab = datapoint
-        return [scale01(img)] + list(map(process, [lab] + list(infer(img))))
+        return [scale_min_max(img)] + list(map(process, [lab] + list(infer(img))))
 
     if save_dir is not None:
         from skimage.io import imsave
@@ -169,7 +198,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
     def get_frame(datapoint):
         img, lab = datapoint
         classification = np.shape(lab) == ()
-        img_scal = scale01(img)
+        img_scal = scale_min_max(img)
         black = img_scal * 0
         comp_arr = [[img_scal, black]]
 
@@ -179,13 +208,13 @@ def view_predictions(dataset, infer=None, save_dir=None):
                 shape = list(pred_disp.shape) + [3]
                 pred_disp = np.repeat(pred_disp, 3, axis=-1)
                 pred_disp = np.reshape(pred_disp, shape)
-                pred_disp = scale01(pred_disp)
+                pred_disp = scale_min_max(pred_disp)
             else:
-                pred_disp = colorify_label(pred_disp + 1, colors)
+                pred_disp = colorify_segmentation(pred_disp + 1, colors)
 
             def _get_class_representative():
                 cr = get_class_representative(pred)
-                return black if cr is None else scale01(cr)
+                return black if cr is None else scale_min_max(cr)
 
             pred_img = (_get_class_representative() if classification
                         else fuse_images(img_scal, pred_disp))
@@ -207,7 +236,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
         bar = np.zeros((bar_height, bar_width), dtype=np.int8)
         for i in range(len(colors)):
             bar[i * step:(i + 1) * step, 1:] = len(colors) - 1 - i
-        bar = colorify_label(bar, colors)
+        bar = colorify_segmentation(bar, colors)
 
         return compose([comp, bar])
 
@@ -230,8 +259,8 @@ def plot_curves(curves):
     axes = plt.gca()
     axes.set_ylim([0, 1])
     axes.grid(color='0.9', linestyle='-', linewidth=1)
-    for name, curve in curves.items():
-        plt.plot(curve, label=name, linewidth=1)
+    for name, (x, y) in curves.items():
+        plt.plot(x, y, label=name, linewidth=1)
     plt.xlabel("broj završenih epoha")
     plt.legend()
     plt.show()

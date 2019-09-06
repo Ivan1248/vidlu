@@ -78,3 +78,28 @@ def convert(tree, out_tree_type, in_tree_type=None, convert_empty_trees=True,
         return v
 
     return out_tree_type(**{k: recurse(v) for k, v in tree.items()})
+
+
+def map(tree, func, tree_type=None):
+    tree_type = tree_type or type(tree)
+    return tree_type(**{k: map(v, func, tree_type) if isinstance(v, tree_type) else func(v)
+                        for k, v in tree.items()})
+
+
+def to_dot(tree, label="ROOT", graph=None, parent=None, tree_type=None, max_label_length=999999999):
+    tree_type = tree_type or type(tree)
+    import pydot
+    def elipsis(s):
+        return (s[:max_label_length] + '..') if len(s) > max_label_length else s
+
+    graph = graph or pydot.Dot(graph_type='digraph', rankdir='LR')
+    graph.add_node(pydot.Node(id(tree), label=elipsis(f"{label}"), shape="box"))
+    for k, v in tree.items():
+        if isinstance(v, tree_type):
+            to_dot(v, label=k, graph=graph, parent=tree, tree_type=tree_type)
+            graph.add_edge(pydot.Edge(id(tree), id(v)))
+        else:
+            id_ = hash((id(tree), id(k)))
+            graph.add_node(pydot.Node(id_, label=elipsis(f"{k}={v}"), shape="box"))
+            graph.add_edge(pydot.Edge(id(tree), id_))
+    return graph
