@@ -9,6 +9,7 @@ import numpy as np
 from _context import vidlu
 from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
+from vidlu.training.checkpoint_manager import CheckpointManager
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
 
@@ -22,8 +23,9 @@ def train(args):
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
-    print('Evaluating initially...')
-    e.trainer.eval(e.data.test)
+    if not args.no_init_test:
+        print('Evaluating initially...')
+        e.trainer.eval(e.data.test)
 
     print(('Continuing' if args.resume else 'Starting') + ' training...')
     e.trainer.train(e.data.train, restart=False)
@@ -35,8 +37,22 @@ def train(args):
 
 
 def test(args):
-    e = TrainingExperiment.from_args(
+    te = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+
+    print('Starting evaluation (test/val):...')
+    te.trainer.eval(te.data.test)
+    print('Starting evaluation (train):...')
+    te.trainer.eval(te.data.train)
+
+    te.cpman.remove_old_checkpoints()
+
+
+def test_trained(args):
+    cpman = CheckpointManager(dirs.SAVED_STATES, args.experiment)
+    e = TrainingExperiment.from_args(
+        call_with_args_from_dict(TrainingExperimentFactoryArgs,
+                                 {**args.__dict__, **dict(resume=True, redo=False)}), dirs=dirs)
 
     print('Starting evaluation (test/val):...')
     e.trainer.eval(e.data.test)
@@ -48,7 +64,7 @@ def test(args):
 
 # Argument parsing #################################################################################
 
-def add_standard_arguments(parser):
+def add_standard_arguments(parser, func):
     # learner configuration
     parser.add_argument("data", type=str, help=factories.get_data.help)
     parser.add_argument("input_adapter", type=str, default=Empty,
@@ -66,22 +82,32 @@ def add_standard_arguments(parser):
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
                              + " with the same configuration.")
-    parser.add_argument("-r", "--resume", action='store_true',
-                        help="Resume training from the last checkpoint of the same experiment.")
+    if func is train:
+        parser.add_argument("-r", "--resume", action='store_true',
+                            help="Resume training from the last checkpoint of the same experiment.")
+        parser.add_argument("--redo", action='store_true',
+                            help="Delete the data of an experiment with the same name.")
+    parser.add_argument("--no_init_test", action='store_true',
+                        help="Skip testing before training.")
     parser.add_argument("-s", "--seed", type=str, default=53,
                         help="RNG seed for experiment reproducibility. Useless on GPU.")
     # reporting
     parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.",
                         default=1)
-    parser.set_defaults(func=train)
+    parser.set_defaults(func=func)
 
 
 parser = argparse.ArgumentParser(description='Experiment running script')
 subparsers = parser.add_subparsers()
+
 parser_train = subparsers.add_parser("train")
-add_standard_arguments(parser_train)
+add_standard_arguments(parser_train, train)
+
 parser_test = subparsers.add_parser("test")
-add_standard_arguments(parser_test)
+add_standard_arguments(parser_test, test)
+
+parser_test_trained = subparsers.add_parser("test_trained")
+add_standard_arguments(parser_test_trained, test_trained)
 
 args = parser.parse_args()
 

@@ -2,7 +2,8 @@ import argparse
 
 from _context import vidlu
 from vidlu.data.misc import pickle_sizeof
-from vidlu.transforms import image_transformer
+from vidlu.transforms import image, jitter
+from vidlu.transforms.image import to_pil
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
 from vidlu import defaults
@@ -40,5 +41,5 @@ if args.augment:
 if args.permute:
     ds = ds.permute()
 
-view_predictions(ds.map(lambda r: (image_transformer(r.x).to_pil(mode='RGB').to_numpy().item, r.y)),
+view_predictions(ds.map(lambda r: (image.to_pil(mode='RGB').to_numpy().item, r.y)),
                  infer=lambda x: ds[0][1])

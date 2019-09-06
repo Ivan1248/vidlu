@@ -17,21 +17,21 @@ def run(data: str, model: str, trainer: str, evaluation: str = None, device='', 
     """
     print(locals())
 
+@torch.no_grad()
 def rand_init_delta(delta, ord, eps):
-    with torch.no_grad():
-        if isinstance(eps, torch.Tensor):
-            assert len(eps) == len(delta)
+    if isinstance(eps, torch.Tensor):
+        assert len(eps) == len(delta)
 
-        delta.uniform_(-1, 1) * delta.numel() ** (1 / ord)
-        if ord == np.inf:
-            delta.mul_(eps)
-        elif ord in [1, 2]:
-            delta = batchops.restrict_norm(delta, eps, ord)
-        else:
-            error = "Only ord = inf and ord = 2 have been implemented"
-            raise NotImplementedError(error)
+    delta.uniform_(-1, 1) * delta.numel() ** (1 / ord)
+    if ord == np.inf:
+        delta.mul_(eps)
+    elif ord in [1, 2]:
+        delta = batchops.restrict_norm(delta, eps, ord)
+    else:
+        error = "Only ord = inf and ord = 2 have been implemented"
+        raise NotImplementedError(error)
 
-        return delta
+    return delta
 
 def main():
     delta=torch.zeros(100)

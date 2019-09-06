@@ -1,8 +1,9 @@
 import argparse
 
-# noinspection PyUnusedImport
+# noinspection PyUnresolvedReferences
 import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
 
+# noinspection PyUnresolvedReferences
 from _context import vidlu
 from vidlu.training.checkpoint_manager import CheckpointManager
 from vidlu.utils.path import to_valid_path
