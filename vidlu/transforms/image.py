@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import random
 from random import randint
+from typing import Union, Sequence
 
 import cv2
 from torch import Tensor
@@ -217,6 +218,15 @@ class TorchToPIL:
         return torch_to_pil(img, mode=self.mode)
 
 
+def to_pil(x, mode=None):
+    if is_torch_image(x):
+        return torch_to_pil(x, mode=mode)
+    elif is_numpy_image(x):
+        return numpy_to_pil(x, mode=mode)
+    else:
+        raise ValueError("The input is neither a Torch nor a NumPy array.")
+
+
 # NumPy ############################################################################################
 
 class NumPyCenterCrop:
@@ -317,25 +327,26 @@ Div = func_to_class(div)
 
 class Standardize:
     def __init__(self, mean, std):
-        #breakpoint()
-        #mean, std = torch.tensor([0.485, 0.456, 0.406]) * 255, torch.tensor(
+        # breakpoint()
+        # mean, std = torch.tensor([0.485, 0.456, 0.406]) * 255, torch.tensor(
         #    [0.229, 0.224, 0.225]) * 255
         self.mean, self.std = mean.view(-1, 1, 1), std.view(-1, 1, 1)
 
     def __call__(self, x):
-        return (x - self.mean.to(dtype=x.dtype, device=x.device)) / self.std.to(dtype=x.dtype,
-                                                                                device=x.device)
+        fmt = dict(dtype=x.dtype, device=x.device)
+        return (x - self.mean.to(**fmt)) / self.std.to(**fmt)
 
 
 standardize = class_to_func(Standardize)
 
 
 class Destandardize:
-    def __init__(self, mean, std, dtype):
-        self.mean, self.std = mean, std
+    def __init__(self, mean, std):
+        self.mean, self.std = mean.view(-1, 1, 1), std.view(-1, 1, 1)
 
     def __call__(self, x):
-        return x * self.std + self.mean
+        fmt = dict(dtype=x.dtype, device=x.device)
+        return x * self.std.to(**fmt) + self.mean.to(**fmt)
 
 
 destandardize = class_to_func(Destandardize)
@@ -385,7 +396,9 @@ def crop(x, location: tuple, size: tuple):
     """
     y0, x0 = location
     h, w = size
-    return x[..., y0:y0 + h, x0:x0 + w]
+    orig_shape = x.shape
+    r = x.view(-1, *orig_shape[-2:])[:, y0:y0 + h, x0:x0 + w]
+    return r.view(orig_shape[:-2] + r.shape[-2:])
 
 
 Crop = func_to_class(crop)
@@ -399,7 +412,7 @@ def hflip(x: Tensor) -> Tensor:
 HFlip = func_to_class(hflip, name="HFlip")
 
 
-def random_crop(x: Tensor, size: tuple) -> Tensor:
+def random_crop(x: Union[Tensor, Sequence], size: tuple) -> Tensor:
     """Randomly crops an image.
 
     Args:
@@ -410,7 +423,7 @@ def random_crop(x: Tensor, size: tuple) -> Tensor:
     Returns:
         An array containing the randomly cropped image.
     """
-    *_, h_, w_ = x.shape
+    _, h_, w_ = (x if isinstance(x, Tensor) else x[0]).shape
     h, w = size
     y0, x0 = randint(0, h_ - h), randint(0, w_ - w)
     return crop(x, (y0, x0), size)

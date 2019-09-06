@@ -18,5 +18,5 @@ def prepare_label(y):
     return y  # DataLoader will convert it to Torch
 
 
-def prepare_input(x):
-    return compose(imt.to_torch, imt.hwc_to_chw, imt.To(dtype=torch.float))(x)
+def prepare_input_image(x):
+    return compose(imt.to_torch, imt.hwc_to_chw, imt.To(dtype=torch.float), imt.Div(255))(x)

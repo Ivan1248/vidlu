@@ -18,7 +18,7 @@ from vidlu.utils.collections import NameDict
 
 # Standardization ##################################################################################
 
-def compute_pixel_mean_std(dataset, progress_bar=False):
+def compute_pixel_mean_std(dataset, scale01=False, progress_bar=False):
     pbar = tqdm if progress_bar else lambda x: x
     mvn = np.array([(x.mean((0, 1)), x.var((0, 1)), np.prod(x.shape[:2]))
                     for x in pbar(dataset.map(lambda r: np.array(r.x)))])
@@ -26,29 +26,22 @@ def compute_pixel_mean_std(dataset, progress_bar=False):
     ws = ns / ns.sum()  # image weights (pixels in image / pixels in all images)
     mean = ws.dot(means)  # mean pixel
     var = vars.mean(0) + ws.dot(means ** 2) - mean ** 2  # pixel variance
-    return mean, np.sqrt(var)  # pixel mean, pixel standard deviation
+    std = np.sqrt(var)  # pixel standard deviation
+    return mean / 255, std / 255 if scale01 else mean, std
 
 
 # Cached dataset with normalized inputs ############################################################
 
 def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
     def compute_pixel_mean_std_d(ds):
-        return Namespace(**dict(zip(['mean', 'std'], compute_pixel_mean_std(ds, True))))
+        return Namespace(**dict(zip(['mean', 'std'],
+                                    compute_pixel_mean_std(ds, scale01=True, progress_bar=True))))
+
     ds_with_info = parted_dataset.trainval.info_cache_hdd(
         dict(standardization=compute_pixel_mean_std_d), Path(cache_dir) / 'dataset_statistics')
     return parted_dataset.with_transform(
         lambda ds: ds.info_cache(
             dict(standardization=lambda ds: ds_with_info.info.cache['standardization'])))
-
-    """
-    imstat = LazyImageStatisticsComputer(parted_dataset.trainval, cache_dir)
-
-    def transform(ds):
-        ds.info.cache.standardization = NameDict(**imstat.stats, standardized=False)
-        return ds
-
-    return parted_dataset.with_transform(transform)
-    """
 
 
 def cache_data_lazily(parted_dataset, cache_dir):
