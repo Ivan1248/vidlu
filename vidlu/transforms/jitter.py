@@ -1,8 +1,5 @@
-import random
 from dataclasses import dataclass
-from functools import partial
 
-from .transformers import image_transformer
 from .image import RandomCrop, RandomHFlip, Pad
 from vidlu.utils.func import compose
 
@@ -38,4 +35,4 @@ class CityscapesJitter(SegmentationJitter):
     crop_shape: tuple = (768, 768)
 
     def apply(self, x):
-        return compose(RandomCrop(self.crop_shape), RandomHFlip())(x)
+        return compose(RandomCrop(self.crop_shape), RandomHFlip())(tuple(x))
