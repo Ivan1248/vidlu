@@ -137,6 +137,12 @@ class ClassificationModel(DiscriminativeModel):
     pass
 
 
+class SegmentationModel(DiscriminativeModel):
+    def forward(self, x, shape='same'):
+        h = self.backbone(x)
+        return self.head(h, shape=x.shape[-2:] if 'same' else shape)
+
+
 class ResNetV1(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
                              backbone_f=partial(resnet_v1_backbone, base_width=64),
@@ -158,7 +164,7 @@ class DenseNet(ClassificationModel):
                              init=partial(initialization.kaiming_densenet, module=Reserved))
 
 
-class SwiftNet(DiscriminativeModel):
+class SwiftNet(SegmentationModel):
     def __init__(self,
                  backbone_f=partial(resnet_v1_backbone, base_width=64),
                  intermediate_paths=tuple(f"features.unit{i}_{j}.sum"
@@ -183,7 +189,7 @@ class SwiftNet(DiscriminativeModel):
                                             up_blend_f=partial(com.LadderUpsampleBlend,
                                                                pre_blending='sum'),
                                             post_activation=True),
-                         head_f=partial(head_f, pre_activation=False, kernel_size=3),
+                         head_f=partial(head_f, kernel_size=3),
                          init=partial(initialization.kaiming_resnet, module=Reserved),
                          input_adapter=input_adapter)
 

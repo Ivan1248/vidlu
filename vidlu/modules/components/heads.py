@@ -4,7 +4,7 @@ from functools import partial
 from torch import nn
 from torch.nn import functional as F
 
-from vidlu.modules import Sequential, Linear, Conv, Func
+from vidlu.modules import Module, Sequential, Linear, Conv, Func
 
 from . import _default_factories as D
 
@@ -15,14 +15,27 @@ class ClassificationHead(Sequential):
                          logits=Linear(class_count))
 
 
-class SegmentationHead(Sequential):
-    def __init__(self, class_count, shape, kernel_size=1, pre_activation=False, norm_f=D.norm_f,
+class FixedSizeSegmentationHead(Sequential):
+    def __init__(self, class_count, shape=None, kernel_size=1, pre_activation=False,
+                 norm_f=D.norm_f,
                  act_f=D.act_f):
         pre_act = dict(act=act_f(), norm=norm_f()) if pre_activation else {}
         super().__init__(
             **pre_act,
             logits=Conv(class_count, kernel_size=kernel_size, padding='half'),
             upsample=Func(partial(F.interpolate, size=shape, mode='bilinear', align_corners=False)))
+
+
+class SegmentationHead(Module):
+    def __init__(self, class_count, shape=None, kernel_size=1,
+                 interpolate=partial(F.interpolate, mode='bilinear', align_corners=False)):
+        super().__init__()
+        self.logits = Conv(class_count, kernel_size=kernel_size, padding='half')
+        self.interpolate = interpolate
+        self.shape = shape
+
+    def forward(self, x, shape=None):
+        return self.interpolate(self.logits(x), shape or self.shape)
 
 
 class TCSegmentationHead(Sequential):
