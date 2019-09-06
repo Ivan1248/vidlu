@@ -36,9 +36,19 @@ A deep learning library for research with emphasis on computer vision, based on 
       - [ ] stochastic model parts
     - [ ] VAE
     - [ ] flow-based generative models
+    - [ ] natural gradient variational inference 
   - adversarial attacks
     - [X] single step gradient
     - [X] PGD/BIM
+      - [X] stop on success
+      - [X] free adversarial training
     - [ ] CW
     - [ ] DDN (arXiv:1811.09600)
     - [ ] Frank-Wolfe constrained optimization
+
+
+## Generally useful ideas
+- `vidlu.modules` with modules that automatically infer input shape after the 
+first forward pass (like in [MXNet](http://mxnet.incubator.apache.org/) and 
+[MagNet](https://github.com/MagNet-DL/magnet))
+- `with_intermediate_outputs` in `vidlu.modules.elements`, which can obtain intermediate node outputs using `register_forward_hook`
