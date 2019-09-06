@@ -189,6 +189,11 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
+class RevIdentity(nn.Identity):
+    def reverse(self, y):
+        return y
+
+
 class Sequential(*_extended(nn.Sequential)):
     """
     A wrapper around torch.nn.Sequential to enable passing a dict as the only
@@ -230,8 +235,6 @@ class Sequential(*_extended(nn.Sequential)):
             input = modules[0](*input)
             for module in modules[1:]:
                 input = module(input)
-        else:
-            breakpoint()
         return input
 
 
@@ -434,6 +437,42 @@ class BatchNorm(WrappedModule):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
 
 
+class GhostBatchNorm(BatchNorm):
+    # Based on https://myrtle.ai/how-to-train-your-resnet-8-bag-of-tricks/
+    def __init__(self, batch_size, eps=1e-5, momentum=0.1, affine=True,
+                 track_running_stats=True,
+                 num_features=None):
+        super().__init__(eps=eps, momentum=momentum, affine=affine,
+                         track_running_stats=track_running_stats, num_features=num_features)
+        self.batch_size = batch_size
+
+    def build(self, x):
+        self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
+        num_splits = x.shape[0] // self.args.batch_size
+        if num_splits * self.args.batch_size < x.shape[0]:
+            raise RuntimeError(f"The size of tha input batch ({x.shape[0]}) must be divisible by"
+                               + f" `batch_size` ({self.args.batch_size}).")
+        self.register_buffer('running_mean', torch.zeros(self.orig.num_features * num_splits))
+        self.register_buffer('running_var', torch.ones(self.orig.num_features * num_splits))
+        self.running_mean = self.running_mean.view(num_splits, self.num_features).mean(
+            dim=0).repeat(num_splits)
+        self.running_var = self.running_var.view(num_splits, self.num_features).mean(dim=0).repeat(
+            num_splits)
+        self.num_splits = num_splits
+
+    def forward(self, input):
+        if self.training or not self.track_running_stats:
+            N, C, *S = input.shape
+            return F.batch_norm(
+                input.view(-1, C * self.num_splits, *S), self.running_mean, self.running_var,
+                self.weight.repeat(self.num_splits), self.bias.repeat(self.num_splits),
+                True, self.momentum, self.eps).view(input.shape)
+        else:
+            return F.batch_norm(
+                input, self.running_mean[:self.num_features], self.running_var[:self.num_features],
+                self.weight, self.bias, False, self.momentum, self.eps)
+
+
 '''
 # Wrap remaining torch.nn classes
 
@@ -469,6 +508,17 @@ class Func(Module):
 
     def forward(self, *args, **kwargs):
         return self._func(*args, **kwargs)
+
+
+class RevFunc(Func):
+    def __init__(self, func, func_inv=None):
+        super().__init__(func)
+        self._func_inv = func_inv or None
+
+    def reverse(self, y):
+        if not self._func_inv:
+            raise RuntimeError("The inverse function is not defined.")
+        return self._func_inv(y)
 
 
 """
@@ -557,7 +607,7 @@ def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
         `root_module`
     """
     if isinstance(path, str):
-        path = path.split('.')
+        path = path.split('.') if path != '' else []
     for name in [tryable(int, default_value=n)(n) for n in path]:
         if isinstance(name, str):
             root_module = getattr(root_module, name)
@@ -570,25 +620,28 @@ def split_on_module(root_module, split_path: str, include_left=False):
     if isinstance(split_path, str):
         split_path = split_path.split('.')
     next_name, path_remainder = split_path[0], split_path[1:]
-    if len(path_remainder) > 0:
-        path_remainder = path_remainder[0]
+    if len(path_remainder) == 0:
+        return root_module
     else:
         if isinstance(root_module, Sequential):
-            start = root_module[:next_name]
-            return Sequential(split_on_module())
+            split_index = root_module.index(next_name)
+            left, right = root_module[:split_index + 1], root_module[split_index:]
+            left[root_module], right[root_module] = split_on_module(left[root_module],
+                                                                    path_remainder)
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"Splitting not implemented for module type {type(root_module)}")
 
 
 def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
-    """
-    Creates a function extending `root_module.forward` so that a pair containing
-    th output of `root_module.forward` as well as well as a list of intermediate
-    outputs as defined in `submodule_paths`.
+    """Creates a function extending `root_module.forward` so that a pair
+    containing the output of `root_module.forward` as well as well as a list of
+    intermediate outputs as defined in `submodule_paths`.
+
     Arguments:
         root_module (Module): a module.
         submodule_paths (List[str]): a list of names (relative to `root_module`)
         of modules the outputs of which you want to get.
+
     Example:
         >>> module(x)
         tensor(...)
