@@ -2,6 +2,7 @@ from argparse import Namespace
 
 import numpy as np
 import torch
+from functools import wraps
 
 from vidlu.ops import one_hot
 
@@ -19,6 +20,13 @@ class AccumulatingMetric:
 
     def compute(self):
         raise NotImplementedError()
+
+
+def _get_iter_output(iter_output, name):
+    path = name.split('.')
+    for part in path:
+        iter_output = iter_output[part]
+    return iter_output
 
 
 class FuncMetric(AccumulatingMetric):
@@ -39,6 +47,7 @@ class FuncMetric(AccumulatingMetric):
         return {self.name: self._sum / self._n}
 
 
+@torch.no_grad()
 def multiclass_confusion_matrix(true, pred, class_count):
     """ Computes a multiclass confusion matrix.
 
@@ -50,14 +59,14 @@ def multiclass_confusion_matrix(true, pred, class_count):
     Returns:
         A confusion matrix with shape (class_count, class_count).
     """
-    with torch.no_grad():
-        pred = one_hot(pred, class_count, dtype=torch.int64)
-        cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.int64, device='cpu')
-        for c in range(class_count):
-            cm[c, :] = pred[true == c, :].sum(0)
-        return cm
+    pred = one_hot(pred, class_count, dtype=torch.int64)
+    cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.int64, device='cpu')
+    for c in range(class_count):
+        cm[c, :] = pred[true == c, :].sum(0)
+    return cm
 
 
+@torch.no_grad()
 def soft_multiclass_confusion_matrix(true, pred, class_count):
     """ Computes a soft multiclass confusion matrix from probabilities.
 
@@ -70,11 +79,10 @@ def soft_multiclass_confusion_matrix(true, pred, class_count):
     Returns:
         A soft confusion matrix with shape (class_count, class_count)
     """
-    with torch.no_grad():
-        cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.float64, device='cpu')
-        for c in range(class_count):
-            cm[c, :] = pred[true == c, :].sum(0)
-        return cm
+    cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.float64, device='cpu')
+    for c in range(class_count):
+        cm[c, :] = pred[true == c, :].sum(0)
+    return cm
 
 
 def compute_classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
@@ -107,17 +115,19 @@ def compute_classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'),
 
 
 class ClassificationMetrics(AccumulatingMetric):
-    def __init__(self, class_count):
+    def __init__(self, class_count, target_name="target",
+                 hard_prediction_name="other_outputs.hard_prediction"):
         self.class_count = class_count
         self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False)
-        self.class_count = class_count
+        self.target_name = target_name
+        self.hard_prediction_name = hard_prediction_name
 
     def reset(self):
         self.cm.fill_(0)
 
     def update(self, iter_output):
-        true = iter_output.target.flatten()
-        pred = iter_output.outputs.hard_prediction.flatten()
+        true = _get_iter_output(iter_output, self.target_name).flatten()
+        pred = _get_iter_output(iter_output, self.hard_prediction_name).flatten()
         self.cm += multiclass_confusion_matrix(true, pred, self.class_count)
 
     def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
@@ -125,28 +135,40 @@ class ClassificationMetrics(AccumulatingMetric):
 
 
 class SoftClassificationMetrics(ClassificationMetrics):
-    def __init__(self, class_count):
+    def __init__(self, class_count, target_name="target", probs_name="other_outputs.probs"):
+        super().__init__()
         self.class_count = class_count
         self.cm = torch.zeros([class_count] * 2, dtype=torch.float64, requires_grad=False)
-        self.class_count = class_count
+        self.target_name = target_name
+        self.probs_name = probs_name
 
-    def reset(self):
-        self.cm.fill_(0)
-
+    @torch.no_grad()
     def update(self, iter_output):
-        with torch.no_grad():
-            true = iter_output.target.flatten()
-            pred = iter_output.outputs.probs.permute(0, 2, 3, 1)
-            pred = pred.flatten().view(-1, pred.shape[-1])
-            self.cm += soft_multiclass_confusion_matrix(true, pred, self.class_count)
+        true = _get_iter_output(iter_output, self.target_name).flatten()
+        pred = _get_iter_output(iter_output, self.probs_name).permute(0, 2, 3, 1)
+        pred = pred.flatten().view(-1, pred.shape[-1])
+        self.cm += soft_multiclass_confusion_matrix(true, pred, self.class_count)
 
     def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
         return compute_classification_metrics(self.cm.cpu().numpy(), returns=returns, eps=eps)
 
 
+def with_renamed_returns(metric_class, suffix):
+    class MetricReturnsSuffixWrapper(metric_class):
+        @wraps(metric_class.compute)
+        def compute(self, *args, **kwargs):
+            return {f"{k}_{suffix}": v for k, v in super().compute(*args, **kwargs).items()}
+
+        def __getattr__(self, item):
+            return getattr(self.metric, item)
+
+    return MetricReturnsSuffixWrapper
+
+
 class ClassificationMetricsAdversarial(ClassificationMetrics):
     def update(self, iter_output):
-        super().update(Namespace(target=iter_output.target, outputs=iter_output.outputs_adv))
+        super().update(
+            Namespace(target=iter_output.target_adv, other_outputs=iter_output.other_outputs_adv))
 
     def compute(self, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
         return {f"{k}_adv": v for k, v in super().compute(returns=returns).items()}
