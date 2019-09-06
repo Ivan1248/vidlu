@@ -3,16 +3,15 @@ import re
 from functools import partial
 
 import torch
-from torch.nn import Identity
 
 from vidlu import defaults, models
 from vidlu.data import DatasetFactory
 from vidlu.data_utils import CachingDatasetFactory, DataLoader
-from vidlu.modules import Func
+import vidlu.modules  as m
 from vidlu.problem import Supervised
 from vidlu.transforms import image as imt
 from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
-                              ArgTree, params, Empty, default_args, identity)
+                              ArgTree, params, Empty, default_args, identity, EscapedArgTree)
 from vidlu.utils import tree, text
 
 t = ArgTree  # used in arg/evaluation
@@ -105,10 +104,10 @@ get_data.help = \
 
 
 def get_input_preparation(dataset):
-    from vidlu.transforms.input_preparation import prepare_input, prepare_label
+    from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
     fields = tuple(dataset[0].keys())
     if fields == ('x', 'y'):
-        return lambda ds: ds.map_fields(dict(x=prepare_input, y=prepare_label),
+        return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
                                         func_name='prepare')
     raise ValueError(f"Unknown record format: {fields}.")
 
@@ -116,22 +115,38 @@ def get_input_preparation(dataset):
 # Model ############################################################################################
 
 def get_input_adapter(input_adapter_str, problem, data_statistics=None):
+    """ Returns a bijective module to be inserted before the model to scale
+    inputs.
+
+    For images, it is assumed that the input elements are in range 0 to 1.
+
+    Args:
+        input_adapter_str: a string in {"standardize", "id"}
+        problem (ProblemInfo):
+        data_statistics (optional): a namespace containing the mean and the standard
+            deviation ("std") of the training dataset.
+
+    Returns:
+        A torch module.
+    """
     if isinstance(problem, Supervised):
         if input_adapter_str == "standardize":
-            return Func(imt.Standardize(mean=torch.from_numpy(data_statistics.mean),
-                                        std=torch.from_numpy(data_statistics.std)))
-        elif input_adapter_str == "div255":
-            return Func(imt.Div(255))
-        elif input_adapter_str == "id":
-            return Identity()
+            stats = dict(mean=torch.from_numpy(data_statistics.mean),
+                         std=torch.from_numpy(data_statistics.std))
+            return m.RevFunc(imt.Standardize(**stats), imt.Destandardize(**stats))
+        elif input_adapter_str == "id":  # min 0, max 1 is expected for images
+            return m.RevIdentity()
+        else:
+            raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}")
     raise NotImplementedError()
 
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               dataset=None, device=None, verbosity=1):
-    import torch.nn  # used in model_str/evaluation
-    from vidlu import modules  # used in model_str/evaluation
+    # imports available for evals
+    import torch.nn
+    from vidlu import modules as m
     from vidlu.modules import loss
     import vidlu.modules.components as C
     import torchvision.models as tvmodels
@@ -152,6 +167,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     argtree = defaults.get_model_argtree(model_class, problem)
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) == 1 else ArgTree()
     argtree.update(argtree_arg)
+
     model_f = argtree_hard_partial(
         model_class,
         **argtree,
@@ -189,6 +205,7 @@ get_model.help = \
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_trainer(trainer_str: str, dataset, model, verbosity=1):
+    # imports available for evals
     from torch import optim
     from torch.optim import lr_scheduler
     from vidlu.training import trainers, configs
@@ -203,7 +220,6 @@ def get_trainer(trainer_str: str, dataset, model, verbosity=1):
     if 'optimizer_f' in argtree_args and 'weight_decay' in default_args(argtree_args.optimizer_f):
         raise ValueError("The `weight_decay` argument should be passed to the trainer instead of"
                          + " the optimizer.")
-
     argtree.update(argtree_args)
     trainer_f = argtree_hard_partial(trainer_class, **argtree)
 
