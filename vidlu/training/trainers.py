@@ -14,6 +14,7 @@ from vidlu import modules
 from vidlu.data import Record
 from vidlu.data_utils import DataLoader
 from vidlu.modules import get_submodule
+from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
 from vidlu.training.engine import Engine
@@ -104,43 +105,55 @@ class Evaluator:
 # Trainer ##########################################################################################
 
 
+def fine_tuning_optimizer_maker(trainer, fine_tuning):
+    # optimizer_f should have not parameters assigned
+    lr = params(trainer.optimizer_f).lr
+    parameters = [dict(params=trainer.model.parameters())] + [
+        dict(params=get_submodule(trainer.model, k).parameters(), lr=f * lr)
+        for k, f in fine_tuning.items()]
+    return trainer.optimizer_f(parameters, weight_decay=trainer.weight_decay)
+
+
 @dataclass
 class Trainer(Evaluator):
     state_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
 
-    weight_decay: float = Missing  # R
-    optimizer_f: InitVar[Callable] = Missing  # O
+    weight_decay: float = None  # R
+    optimizer_f: InitVar[Callable] = None  # O
     epoch_count: int = Missing  # O
-    lr_scheduler_f: InitVar[Callable] = partial(LambdaLR, lr_lambda=lambda e: 1)  # O
+    lr_scheduler_f: InitVar[Callable] = ConstLR  # O
     train_step: Callable = Missing  # O
     jitter: Callable = None  # D
-    fine_tuning: InitVar[Mapping] = None  # RO
+    optimizer_maker: InitVar[Callable] = None
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, fine_tuning):
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker):
         super().__post_init__(loss_f)
-        if params(optimizer_f).weight_decay not in [0, Empty]:
-            raise ValueError("The parameter weight_decay of optimizer_f should be unassigned.")
+
+        if optimizer_maker is None:
+            if self.weight_decay is None:
+                self.weight_decay = params(optimizer_f).weight_decay
+            elif params(optimizer_f).weight_decay not in [0, Empty]:
+                raise ValueError("The parameter weight_decay of optimizer_f should be unassigned.")
+            self.optimizer = optimizer_f(self.model.parameters(), weight_decay=self.weight_decay)
+        else:
+            self.optimizer = optimizer_maker(self)
+
         if 'epoch_count' in params(lr_scheduler_f):
             if params(lr_scheduler_f).epoch_count is not Empty:
                 raise ValueError(
                     "The parameter epoch_count of lr_scheduler_f should be unassigned.")
             lr_scheduler_f = partial(lr_scheduler_f, epoch_count=self.epoch_count)
-        lr = params(optimizer_f).lr
-        parameters = (self.model.parameters() if self.fine_tuning is None else
-                      [dict(params=self.model.parameters())]
-                      + [dict(params=get_submodule(self.model, k).parameters(), lr=f * lr)
-                         for k, f in fine_tuning.items()])
-        self.optimizer = optimizer_f(parameters, weight_decay=self.weight_decay)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
+
         self.train_step = partial(self.train_step, self)
 
-        self.training = t = Engine(lambda e, b: self.train_step(b))
-        t.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
-        t.epoch_started.add_handler(lambda e: self._reset_metrics())
-        t.iteration_completed.add_handler(self._update_metrics)
+        self.training = Engine(lambda e, b: self.train_step(b))
+        self.training.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
+        self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
+        self.training.iteration_completed.add_handler(self._update_metrics)
 
     def train(self, dataset, restart=False):
         data_loader = self.data_loader_f(dataset.map(self.jitter) if self.jitter else dataset,

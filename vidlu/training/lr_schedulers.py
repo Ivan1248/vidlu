@@ -85,6 +85,38 @@ class ScalableMultiStepLR(MultiStepLR):
         super().__init__(optimizer, milestones=[round(m * epoch_count) for m in milestones],
                          gamma=gamma, last_epoch=last_epoch)
 
+class ConstLR(lr_scheduler._LRScheduler):
+    """Decays the learning rate of each parameter group by gamma every
+    step_size epochs. Notice that such decay can happen simultaneously with
+    other changes to the learning rate from outside this scheduler. When
+    last_epoch=-1, sets initial lr as lr.
+
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        step_size (int): Period of learning rate decay.
+        gamma (float): Multiplicative factor of learning rate decay.
+            Default: 0.1.
+        last_epoch (int): The index of last epoch. Default: -1.
+
+    Example:
+        >>> # Assuming optimizer uses lr = 0.05 for all groups
+        >>> # lr = 0.05     if epoch < 30
+        >>> # lr = 0.005    if 30 <= epoch < 60
+        >>> # lr = 0.0005   if 60 <= epoch < 90
+        >>> # ...
+        >>> scheduler = StepLR(optimizer, step_size=30, gamma=0.1)
+        >>> for epoch in range(100):
+        >>>     train(...)
+        >>>     validate(...)
+        >>>     scheduler.step()
+    """
+
+    def __init__(self, optimizer ,last_epoch=-1):
+        super().__init__(optimizer, last_epoch)
+
+    def get_lr(self):
+        return [group['lr'] for group in self.optimizer.param_groups]
+
 
 class ScalableLambdaLR(lr_scheduler.LambdaLR):
     """Sets the learning rate of each parameter group to the initial lr
