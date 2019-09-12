@@ -1,28 +1,23 @@
-python run.py train
-
-"MNIST{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True)" ResNetCifarTrainer
-"whitenoise{train,test}" "ResNet,backbone_f=t(depth=18,small_input=True),head_f=partial(vidlu.nn.components.classification_head,10)" ResNetCifarTrainer "accuracy"
-
-"Cifar10{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True)" ResNetCifarTrainer ""
-
-"Cifar10{train,val}" "ResNet,backbone_f=t(depth=18,small_input=True),init=t(zero_init_residual=False)" ResNetCifarTrainer ""
-"Cifar10{train,val}" "ResNet,backbone_f=t(depth=10,small_input=True,base_width=4)" ResNetCifarTrainer ""
-"Cifar10{train,val}" "DiscriminativeModel,backbone_f=c.VGGBackbone,init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
-"Cifar10{train,val}" "SmallImageClassifier" "SmallImageClassifierTrainer,data_loader_f=t(num_workers=4)" "" -v 2
-"Cifar10{train,val}" "DiscriminativeModel,backbone_f=partial(c.PreactBlock,kernel_sizes=[3,3,3],base_width=64,width_factors=[1,1,1]),init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
-
-python run.py train
--d "Cifar10-train,val" --input_prep "standardize(Cifar10-train,)" -m "ResNet,backbone_f=t(depth=18,small_input=True)" -t ResNetCifarTrainer --metrics ""
-
+python run.py train "MNIST{train,val}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
+python run.py train "whitenoise{train,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True),head_f=partial(vidlu.nn.components.classification_head,10)" "Trainer,**configs.resnet_cifar" "accuracy"
+python run.py train "cifar10{train,val}" id "SmallImageClassifier" "SmallImageClassifierTrainer,data_loader_f=t(num_workers=4)" "" -v 2
+python run.py train "cifar10{train,val}" id "DiscriminativeModel,backbone_f=partial(c.PreactBlock,kernel_sizes=[3,3,3],base_width=64,width_factors=[1,1,1]),init=partial(init.kaiming_resnet)" ResNetCifarTrainer ""
 python run.py train "cifar10{train,val}" standardize "ResNetV2,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
 python run.py train "cifar10{train,val}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
-
 python run.py train "cifar10{train,val}" id "DenseNet,backbone_f=t(depth=121,small_input=True)" "Trainer,**configs.resnet_cifar"
 
 
 # SwiftNet pretrained on Cityscapes
 python run.py train "cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "Trainer,**{**configs.swiftnet,'epoch_count':40}" --params swiftnet,swiftnet_ss_cs.pt
 python run.py train "cityscapes{train,val}" standardize "ClassificationModel,backbone_f=modules.other.swiftnet.resnet18,init=lambda *a,**k: None" "Trainer,**configs.swiftnet" --params swiftnet_orig,swiftnet_ss_cs.pt
+
+# CIFAR
+python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "Trainer,**configs.resnet_cifar"
+python run.py train "cifar10{trainval,test}" id "WideResNet,backbone_f=t(depth=28,width_factor=10,small_input=True)" "Trainer,**configs.resnet_cifar"
+python run.py train "cifar10{trainval,test}" id "DenseNet,backbone_f=t(depth=121,small_input=True)" "Trainer,**configs.densenet_cifar"
+
+# Multistep step
+python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)"  "Trainer,**{**configs.resnet_cifar,**dict(train_step=configs.SupervisedTrainMultiStep(8),epoch_count=200/8)}"
 
 # semantic segmentation
 ## Swiftnet
@@ -32,20 +27,24 @@ python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,s
 ## ResNet
 python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,**dict(attack_f=partial(configs.madry_cifar10_attack,step_count=7),eval_attack_f=EscapedArgTree(t(step_count=20,stop_on_success=True)))}"
 python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,**dict(train_step=configs.AdversarialTrainStep(True),attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True),eval_attack_f=EscapedArgTree(t(step_count=20)))}"
-
-python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,**dict(attack_f=partial(configs.madry_cifar10_attack,step_count=7),train_step=configs.AdversarialTrainMultiStep(),epoch_count=25)}"
+python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "AdversarialTrainer,**{**configs.resnet_cifar,**configs.adversarial,**dict(attack_f=partial(configs.madry_cifar10_attack,step_count=7),eval_attack_f=partial(configs.madry_cifar10_attack,step_count=20),train_step=configs.AdversarialTrainMultiStep(),epoch_count=25)}"
 
 ## Swiftnet
 python run.py train "cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "AdversarialTrainer,**{**configs.swiftnet,'epoch_count':40, 'batch_size':1, **configs.adversarial,'train_step':configs.AdversarialTrainStep(False),'attack_f':partial(configs.madry_cifar10_attack, step_count=40, eps=48/255, clip_bounds=None, )}" --params swiftnet,swiftnet_ss_cs.pt
 
-# CIFAR
-python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)"  "Trainer,**configs.resnet_cifar"
-python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=50,small_input=True)"  "Trainer,**configs.resnet_cifar"
-python run.py train "cifar10{trainval,test}" id "DenseNet,backbone_f=t(depth=121,small_input=True)" "Trainer,**configs.densenet_cifar"
-
-python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)"  "Trainer,**{**configs.resnet_cifar,**dict(train_step=configs.SupervisedTrainMultiStep(8),epoch_count=200/8)}"
-
+# Tent activations
+python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=C.Tent))" "AdversarialTrainer,**{**configs.wrn_cifar_tent,**configs.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True)"
+python run.py train "mnist{trainval,test}" id "MNISTNet,backbone_f=t(act_f=C.Tent,use_bn=False)" "AdversarialTrainer,**{**configs.mnistnet_tent,**configs.adversarial,**dict(attack_f=attacks.DummyAttack,eval_attack_f=configs.mnistnet_tent_eval_attack)}"
 
 # show_summary.py
 
 python show_summary.py /home/igrubisic/data/states/cifar10\{trainval\,test\}/ResNetV2\,backbone_f\=t\(depth\=18\,small_input\=True\)/Trainer\,++\{++configs.resnet_cifar\,++dict\(train_step\=configs.SupervisedTrainMultiStep\(8\)\,epoch_count\=200/8\)\}/train_eval_after_multistep/25/summary.p
+
+
+
+
+
+
+
+
+

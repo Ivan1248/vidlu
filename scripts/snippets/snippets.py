@@ -115,6 +115,7 @@ with torch.no_grad():
         import numpy as np
         import matplotlib.pyplot as plt
         npimg = img.detach().cpu().numpy()
+        plt.close()
         plt.imshow(np.transpose(npimg, (1,2,0)), interpolation='nearest')
     N = 16
     adv = state.output.x_adv[:N]
@@ -138,4 +139,53 @@ with torch.no_grad():
     predicted_class_representatives = list(map(class_repr.__getitem__, pred[:N]))
 
 show(make_grid(sum((list(x) for x in [clean, adv, diff, fooled, predicted_class_representatives]), []), nrow=len(adv)))
+
+
+# tent hyperparameters WRN
+from torch import optim
+delta_params = [v for k, v in trainer.model.named_parameters() if k.endswith('delta')]
+other_params = [v for k, v in trainer.model.named_parameters() if not k.endswith('delta')]
+trainer.optimizer=optim.Adam([dict(params=other_params), dict(params=delta_params, weight_decay=0.12)], lr=1e-3, weight_decay=1e-6)
+for m in trainer.model.modules():
+    if hasattr(m, 'max_delta'):
+        print(m.max_delta, m.delta)
+        m.max_delta=1.0
+        m.min_delta=0.05
+
+for m in trainer.model.modules():
+    if 'ReLU' in str(type(m)):
+        print(type(m))
+
+# tent adversairal example visualization pre-code
+state=torch.load('/home/igrubisic/data/states/cifar10{trainval,test}/ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=C.Tent))/AdversarialTrainer,++{++configs.wrn_cifar_tent,++configs.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True)/_/91/state.pth')
+trainer.model.load_state_dict(state['model'])
+from vidlu.training.configs import *
+trainer.eval_attack = madry_cifar10_attack(trainer.model, step_count=50,eps=40/255)
+
+
+"""
+from torch import optim
+delta_params = [v for k, v in trainer.model.named_parameters() if k.endswith('delta')]
+other_params = [v for k, v in trainer.model.named_parameters() if not k.endswith('delta')]
+trainer.optimizer=optim.SGD([dict(params=other_params), dict(params=delta_params, weight_decay=4e-2)], lr=1e-3, momentum=0.9, weight_decay=5e-4)"""
+
+
+# activations
+from vidlu.modules import with_intermediate_outputs
+for i in range(4):
+    print((tuple(with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.output.x)[1].values())[0]!=0).float().mean())
+
+from vidlu.modules import with_intermediate_outputs
+for i in range(4):
+    print((tuple(with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1].values())[0]).float())
+
+from vidlu.modules import with_intermediate_outputs
+for i in range(4):
+    print((tuple(with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1].values())[0]>0.5).float().mean())
+
+
+from vidlu.modules import with_intermediate_outputs
+for k, v in trainer.model.named_buffers():
+    if 'bias' in k:
+        print(v)
 

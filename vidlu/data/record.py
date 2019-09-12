@@ -64,7 +64,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
             raise ValueError("Record keys must be strings.")
         self._dict = dict_
 
-    def __getattr__(self, key):
+    def __getattr__(self, key):  # TODO: add __dir__
         return self[key]
 
     def __getitem__(self, key):

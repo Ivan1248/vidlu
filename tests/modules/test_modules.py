@@ -5,7 +5,8 @@ from torch import nn
 import numpy as np
 
 from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Sequential, Branching, Parallel,
-                           Reduce, Sum, IntermediateOutputsModuleWrapper)
+                           Reduce, Sum, with_intermediate_outputs, deep_split, deep_join,
+                           RevIdentity)
 from vidlu.utils.collections import NameDict
 
 torch.no_grad()
@@ -71,7 +72,7 @@ class TestSequentialBranchingParallelReduce:
             assert m(l) == sum(l)
 
     def test_combined(self):
-        m = Sequential(branch=Branching(id=nn.Identity(),
+        m = Sequential(branch=Branching(id=nn.BIjectiveIdentity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(mul2=Func(lambda x: 2 * x),
                                      mul3=Func(lambda x: x * 3)),
@@ -80,19 +81,20 @@ class TestSequentialBranchingParallelReduce:
             assert m(torch.tensor(i)) == 2 * i + 3 * i ** 2
 
     def test_intermediate(self):
-        m = Sequential(branch=Branching(id=nn.Identity(),
+        m = Sequential(branch=Branching(id=RevIdentity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(add2=Func(lambda x: x + 2),
                                      mul3=Func(lambda x: x * 3)),
                        sum=Sum())
-        iamw = IntermediateOutputsModuleWrapper(m, ["branch.id", "para.mul3", "para"])
+        inter = ["branch.id", "para.mul3", "para"]
+        iomw = with_intermediate_outputs(m, inter)
         for i in range(5):
             id = i
             add2 = i + 2
             mul3 = 3 * i ** 2
             para = (add2, mul3)
             sum_ = add2 + mul3
-            assert iamw(torch.tensor(i)) == (sum_, (id, mul3, para))
+            assert iomw(torch.tensor(i)) == (sum_, dict(zip(inter, [id, mul3, para])))
 
 
 class TestConv:
@@ -151,3 +153,23 @@ class TestBatchNorm:
         bn = BatchNorm().eval()
         bn(torch.randn(4, 2, 3, 4, 5))
         assert isinstance(bn.orig, nn.BatchNorm3d)
+
+
+class TestDeepSplit:
+    def test_deep_split(self):
+        module = Sequential(a=Linear(8),
+                            b=Sequential(
+                                a=Sequential(
+                                    a=Linear(9),
+                                    b=Linear(10),
+                                    c=Linear(11)),
+                                b=Linear(12)),
+                            c=Sequential(
+                                a=Linear(13)))
+        x = torch.randn((4, 8))
+        module(x)
+        for path in ['', 'a', 'b', 'c', 'b.a', 'b.b', 'c.a', 'b.a.b', ]:
+            left, right = deep_split(module, path)
+            rejoined = deep_join(left, right)
+            assert str(rejoined) == str(module)
+            assert torch.all(rejoined(x) == module(x))
