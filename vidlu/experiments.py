@@ -44,11 +44,9 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
         raise ValueError(f'There must be exactly 2 datasets in "{data_str}"')
     ds_train, ds_test = dict(datasets).values()
 
-    prepare_input = factories.get_input_preparation(ds_train)
-    if not callable(prepare_input):
-        raise RuntimeError("Not supported.")
+    prepare = factories.get_data_preparation(ds_train)
 
-    ds_train, ds_test = map(prepare_input, [ds_train, ds_test])
+    ds_train, ds_test = map(prepare, [ds_train, ds_test])
 
     return Namespace(train=ds_train, test=ds_test)
 

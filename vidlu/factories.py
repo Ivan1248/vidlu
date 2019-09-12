@@ -103,7 +103,7 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
-def get_input_preparation(dataset):
+def get_data_preparation(dataset):
     from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
     fields = tuple(dataset[0].keys())
     if fields == ('x', 'y'):
@@ -158,7 +158,6 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         problem = defaults.get_problem_from_dataset(dataset)
     if init_input is None and dataset is not None:
         init_input = batch_x = next(iter(DataLoader(dataset, batch_size=2)))[0]
-        init_input = dataset[0].x.unsqueeze(0)
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
