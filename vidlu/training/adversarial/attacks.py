@@ -76,6 +76,7 @@ class BackwardCallbackArgs:
     output: torch.Tensor
     loss: torch.Tensor
     grad: torch.Tensor
+    step: int = None
 
 
 class InputAttack:
@@ -163,8 +164,8 @@ class DummyAttack(InputAttack):
     def _perturb(self, x, y=None, backward_callback=None):
         output, loss, grad = self._get_output_loss_grad(x, y)
         if backward_callback is not None:
-            backward_callback(
-                BackwardCallbackArgs(x=x, y=y, output=output, x_adv=x, loss=loss, grad=grad))
+            backward_callback(BackwardCallbackArgs(x=x, y=y, output=output, x_adv=x, loss=loss,
+                                                 grad=grad))
         return x
 
 
@@ -265,8 +266,8 @@ def perturb_iterative(x, y, model, step_count, eps, step_size, loss, grad_prepro
         xs, ys, deltas = [x], [y], [delta]
         success_masks, origin, origins = [], torch.arange(len(x)), []
 
-    #success_steps = []
-    #n = len(x)
+    # success_steps = []
+    # n = len(x)
 
     step = -1  # for debugging with step_count == 0
     for step in range(step_count):
@@ -278,12 +279,12 @@ def perturb_iterative(x, y, model, step_count, eps, step_size, loss, grad_prepro
         delta.grad.zero_()
         if backward_callback:
             backward_callback(
-                BackwardCallbackArgs(x=x, y=y, output=output, x_adv=x, loss=loss, grad=grad))
+                BackwardCallbackArgs(x=x, y=y, output=output, x_adv=x, loss=loss, grad=grad, step=step))
 
         if stop_on_success:
             with torch.no_grad():
                 success_mask = is_success_for_stopping(output, y)
-                #success_steps += [step] * success_mask.sum().item()
+                # success_steps += [step] * success_mask.sum().item()
                 fail_mask = success_mask == False  # success_mask is an array, thus == should be used
                 if not fail_mask.all():  # keep the already succesful adversarial examples unchanged
                     success_masks.append(success_mask)
@@ -310,8 +311,8 @@ def perturb_iterative(x, y, model, step_count, eps, step_size, loss, grad_prepro
     else:
         step += 1
 
-    #print(f"{(success_steps + len(x)) / n:.2f}")
-    #print(success_steps)
+    # print(f"{(success_steps + len(x)) / n:.2f}")
+    # print(success_steps)
 
     if stop_on_success:
         success_masks[-1].fill_(True)
