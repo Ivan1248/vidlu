@@ -1,1 +1,1 @@
-from . import swiftnet
+from . import swiftnet, mnistnet

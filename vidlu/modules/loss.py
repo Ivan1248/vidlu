@@ -22,11 +22,13 @@ def _l2_normalize(d, eps=1e-8):
 class VATLoss(nn.Module):
     # copied from https://github.com/lyakaap/VAT-pytorch/ and modified
 
-    def __init__(self, xi=10.0, eps=1.0, iter_count=1):
+    def __init__(self, xi=1e-6, eps=1.0, iter_count=1):  #
         """VAT loss
-        :param xi: hyperparameter of VAT (default: 10.0)
-        :param eps: hyperparameter of VAT (default: 1.0)
-        :param iteration_count: iteration times of computing adv noise (default: 1)
+
+        Args:
+            xi: xi hyperparameter for the finite difference approximation
+            eps: perturbation norm
+            iter_count: number of iterations for generating perturbations
         """
         super().__init__()
         self.xi = xi
@@ -40,10 +42,10 @@ class VATLoss(nn.Module):
                     pred = F.softmax(model(x), dim=1)
 
             # prepare random unit tensor
-            d = _l2_normalize(torch.rand(x.shape, device=x.device))
+            d = _l2_normalize(torch.rand(x.shape, device=x.device).sub_(0.5))
 
-            def get_kl_div(r_adv):
-                pred_hat = model(x + r_adv)
+            def get_kl_div(r):
+                pred_hat = model(x + r)
                 logp_hat = F.log_softmax(pred_hat, dim=1)
                 return F.kl_div(logp_hat, pred, reduction='batchmean')
 

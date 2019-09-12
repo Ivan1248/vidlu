@@ -1,10 +1,8 @@
 import inspect
 import warnings
 from functools import partial
-import numpy as np
 
-from vidlu.models import DiscriminativeModel, Autoencoder
-
+from vidlu.models import DiscriminativeModel, Autoencoder, MNISTNet
 from vidlu.problem import (Classification, SemanticSegmentation, DepthRegression,
                            get_problem_type)
 from vidlu.training.trainers import Trainer, AdversarialTrainer
@@ -38,18 +36,18 @@ def get_model_argtree(model_class, problem):
     if inspect.isclass(model_class):
         if issubclass(model_class, DiscriminativeModel):
             if type(problem) is Classification:
-                return ArgTree(
-                    head_f=partial(components.ClassificationHead,
-                                   class_count=problem.class_count))
+                if model_class in [MNISTNet]:
+                    return ArgTree(head_f=partial(components.ClassificationHead1D,
+                                                  class_count=problem.class_count))
+                return ArgTree(head_f=partial(components.ClassificationHead,
+                                              class_count=problem.class_count))
             elif type(problem) is SemanticSegmentation and not isinstance(
                     params(model_class).head_f, components.SegmentationHead):
-                return ArgTree(
-                    head_f=partial(components.SegmentationHead,
-                                   class_count=problem.class_count,
-                                   shape=problem.y_shape))
+                return ArgTree(head_f=partial(components.SegmentationHead,
+                                              class_count=problem.class_count,
+                                              shape=problem.y_shape))
             elif type(problem) is DepthRegression:
-                return ArgTree(
-                    head_f=partial(components.RegressionHead, shape=problem.y_shape))
+                return ArgTree(head_f=partial(components.RegressionHead, shape=problem.y_shape))
             else:
                 raise ValueError("Invalid problem type.")
         elif issubclass(model_class, Autoencoder):
@@ -90,7 +88,7 @@ def get_metrics(trainer, problem):
         ret = [partial(m.FuncMetric, func=lambda iter_output: iter_output.loss, name='loss'),
                partial(m.ClassificationMetrics, class_count=problem.class_count)]
         if isinstance(trainer, AdversarialTrainer):
-            ret.append(partial(m.with_renamed_returns(m.ClassificationMetrics, 'adv'),
+            ret.append(partial(m.with_suffix(m.ClassificationMetrics, 'adv'),
                                hard_prediction_name="other_outputs_adv.hard_prediction",
                                class_count=problem.class_count))
     elif isinstance(problem, DepthRegression):

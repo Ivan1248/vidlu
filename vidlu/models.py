@@ -5,6 +5,7 @@ import torch
 from vidlu import modules
 from vidlu.training import initialization
 from vidlu.modules import components as com
+from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, default_args)
 
 
@@ -20,7 +21,6 @@ def resnet_v1_backbone(depth, base_width=default_args(com.ResNetV1Backbone).base
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
     bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
-    dim_change_arg = dim_change
     group_lengths, (ksizes, width_factors, dim_change) = {
         10: ([1] * 4, basic),  # [1] bw 64
         18: ([2] * 4, basic),  # [1] bw 64
@@ -34,7 +34,7 @@ def resnet_v1_backbone(depth, base_width=default_args(com.ResNetV1Backbone).base
     }[depth]
     return backbone_f(base_width=base_width, small_input=small_input, group_lengths=group_lengths,
                       width_factors=width_factors, block_f=partial(block_f, kernel_sizes=ksizes),
-                      dim_change=dim_change_arg or dim_change)
+                      dim_change=dim_change)
 
 
 resnet_v2_backbone = partial(resnet_v1_backbone,
@@ -45,10 +45,9 @@ resnet_v2_backbone = partial(resnet_v1_backbone,
 
 def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
                          block_f=default_args(resnet_v2_backbone).block_f):
-    zagoruyko_depth = depth
-
     group_count, ksizes = 3, [3, 3]
     group_depth = (group_count * len(ksizes))
+    zagoruyko_depth = depth
     blocks_per_group = (zagoruyko_depth - 4) // group_depth
     depth = blocks_per_group * group_depth + 4
     assert zagoruyko_depth == depth, \
@@ -158,10 +157,19 @@ class WideResNet(ResNetV2):
     __init__ = partialmethod(ResNetV2.__init__, backbone_f=wide_resnet_backbone)
 
 
+WRN = WideResNet
+
+
 class DenseNet(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
                              backbone_f=densenet_backbone,
                              init=partial(initialization.kaiming_densenet, module=Reserved))
+
+
+class MNISTNet(ClassificationModel):
+    __init__ = partialmethod(DiscriminativeModel.__init__,
+                             backbone_f=mnistnet.MNISTNetBackbone,
+                             init=partial(initialization.kaiming_mnistnet, module=Reserved))
 
 
 class SwiftNet(SegmentationModel):

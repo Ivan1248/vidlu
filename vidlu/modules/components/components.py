@@ -23,6 +23,27 @@ def _call_no_inplace(module_f):
     return module_f()
 
 
+# Activations ######################################################################################
+
+
+class Tent(Module):
+    def __init__(self, channelwise=False, delta_range=(0.05, 1.)):
+        super().__init__()
+        self.channelwise = channelwise
+        self.min_delta, self.max_delta = delta_range
+
+    def build(self, x):
+        self.delta = nn.Parameter(
+            torch.ones(x.shape[1]) if self.channelwise else torch.tensor(self.max_delta))
+
+    def forward(self, x):
+        with torch.no_grad():
+            self.delta.clamp_(self.min_delta, self.max_delta)
+        delta = self.delta.view(list(self.delta.shape) + [1] * (len(x.shape) - 2))
+        #return F.relu(delta - (x - delta).abs())  # centered at delta
+        return F.relu(delta - x.abs())
+
+
 # ResNet/DenseNet root block #######################################################################
 
 class RootBlock(Sequential):
@@ -463,7 +484,6 @@ class ResNetV2Backbone(ResNetV1Backbone):
                              groups_f=ResNetV2Groups)
 
 
-
 # DenseNet #########################################################################################
 
 class DenseTransition(Sequential):
@@ -757,3 +777,5 @@ class AAEDiscriminator(Sequential):
             self.add_module(f'act{i}', act_f())
         self.add_module('logits', Linear(2))
         self.add_module('probs', nn.Softmax(dim=1))
+
+# MNIST-Net (Rozsa)
