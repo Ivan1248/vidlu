@@ -111,7 +111,6 @@ def to_torch(x):
     else:
         raise TypeError()
 
-
 class ToTorch:
     __call__ = staticmethod(to_torch)
 
