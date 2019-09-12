@@ -331,7 +331,10 @@ class Concat(Module):
 def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.Module:
     if in_channels_name in args and args[in_channels_name] is None:
         args[in_channels_name] = input.shape[1]
-    layer_func = nn.__getattribute__(f"{name}{len(input.shape) - 2}d")
+    dim = 2 if len(input.shape) == 4 else 1 if len(input.shape) == 2 else None
+    if dim is None:
+        raise ValueError(f"Cannot infer {name} dimension from input shape.")
+    layer_func = nn.__getattribute__(f"{name}{dim}d")
     for k, v in params(layer_func).items():
         if k not in args:
             raise ValueError(f"Missing argument: {k}.")
@@ -599,12 +602,12 @@ def parameter_count(module) -> Namespace:
 
 def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
     """
-    Returns a submodule of `root_module` that corresponds to `path`. It works
+    Returns a submodule of `root` that corresponds to `path`. It works
     for other attributes (e.g. Parameters) too.
     Arguments:
         root_module (Module): a module.
         path (Tensor): a string with the name of the module module relative to
-        `root_module`
+        `root`
     """
     if isinstance(path, str):
         path = path.split('.') if path != '' else []
@@ -616,30 +619,52 @@ def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
     return root_module
 
 
-def split_on_module(root_module, split_path: str, include_left=False):
+def join_sequentials(a, b):
+    return Sequential(**{k: v for k, v in a.named_children()},
+                      **{k: v for k, v in b.named_children()})
+
+
+def deep_split(root: nn.Module, split_path: Union[list, str]):
     if isinstance(split_path, str):
-        split_path = split_path.split('.')
+        split_path = [] if split_path == '' else split_path.split('.')
+    if len(split_path) == 0:
+        return root, Sequential()
     next_name, path_remainder = split_path[0], split_path[1:]
-    if len(path_remainder) == 0:
-        return root_module
+    if isinstance(root, Sequential):
+        split_index = root.index(next_name)
+        left, right = root[:split_index + 1], root[split_index + int(len(path_remainder) == 0):]
+        if len(path_remainder) > 0:
+            left[-1] = deep_split(left[-1], path_remainder)[0]
+            right[0] = deep_split(right[0], path_remainder)[1]
+        return left, right
     else:
-        if isinstance(root_module, Sequential):
-            split_index = root_module.index(next_name)
-            left, right = root_module[:split_index + 1], root_module[split_index:]
-            left[root_module], right[root_module] = split_on_module(left[root_module],
-                                                                    path_remainder)
-        else:
-            raise NotImplementedError(f"Splitting not implemented for module type {type(root_module)}")
+        raise NotImplementedError(f"Splitting not implemented for module type {type(root)}")
 
 
-def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
-    """Creates a function extending `root_module.forward` so that a pair
-    containing the output of `root_module.forward` as well as well as a list of
+def deep_join(left: nn.Module, right: nn.Module):
+    if not type(left) is type(right):
+        raise ValueError("Both modules must be of the same type.")
+    if not isinstance(left, Sequential):
+        raise NotImplementedError(f"Joining not implemented for module type {type(left)}")
+
+    def index_to_name(module, index):
+        return list(module.named_children())[index][0]
+
+    if len(left) * len(right) == 0 or index_to_name(left, -1) != index_to_name(right, 0):
+        return join_sequentials(left, right)
+    left = left[:]
+    left[-1] = deep_join(left[-1], right[0])
+    return join_sequentials(left, right[1:])
+
+
+def with_intermediate_outputs(root: nn.Module, submodule_paths: list):
+    """Creates a function extending `root.forward` so that a pair
+    containing the output of `root.forward` as well as well as a list of
     intermediate outputs as defined in `submodule_paths`.
 
     Arguments:
-        root_module (Module): a module.
-        submodule_paths (List[str]): a list of names (relative to `root_module`)
+        root (Module): a module.
+        submodule_paths (List[str]): a list of names (relative to `root`)
         of modules the outputs of which you want to get.
 
     Example:
@@ -649,7 +674,9 @@ def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
         >>> module_wio(x)
         tensor(...), {'backbone': tensor(...), 'head.logits': tensor(...)}
     """
-    submodules = [get_submodule(root_module, p) for p in submodule_paths]
+    if isinstance(submodule_paths, str):
+        submodule_paths = [submodule_paths]
+    submodules = [get_submodule(root, p) for p in submodule_paths]
 
     def forward(*args):
         outputs = [None] * len(submodule_paths)
@@ -661,7 +688,7 @@ def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
             return hook
 
         handles = [m.register_forward_hook(create_hook(i)) for i, m in enumerate(submodules)]
-        output = root_module(*args)
+        output = root(*args)
         for h in handles:
             h.remove()
         return output, dict(zip(submodule_paths, outputs))
@@ -669,16 +696,17 @@ def with_intermediate_outputs(root_module: nn.Module, submodule_paths: list):
     return forward
 
 
+'''
 class IntermediateOutputsModuleWrapper(Module):
     def __init__(self, module, submodule_paths):
         """
-        Creates a function extending `root_module.forward` so that a pair containing
-        th output of `root_module.forward` as well as well as a list of intermediate
+        Creates a function extending `root.forward` so that a pair containing
+        th output of `root.forward` as well as well as a list of intermediate
         outputs as defined in `submodule_paths`.
         Arguments:
-            root_module (Module): a module.
+            root (Module): a module.
             submodule_paths (List[str]): a list of module names relative to
-            `root_module`.
+            `root`.
         """
         super().__init__()
         self.module = module
@@ -706,3 +734,4 @@ class IntermediateOutputsModuleWrapper(Module):
         outputs = self.outputs
         self.outputs = None
         return output, tuple(outputs)
+'''
