@@ -15,6 +15,11 @@ class ClassificationHead(Sequential):
                          logits=Linear(class_count))
 
 
+class ClassificationHead1D(Sequential):
+    def __init__(self, class_count):
+        super().__init__(logits=Linear(class_count))
+
+
 class FixedSizeSegmentationHead(Sequential):
     def __init__(self, class_count, shape=None, kernel_size=1, pre_activation=False,
                  norm_f=D.norm_f,
