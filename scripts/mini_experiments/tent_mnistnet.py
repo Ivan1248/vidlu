@@ -4,13 +4,14 @@ from pathlib import Path
 
 import torch
 from torch import optim, nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from _context import vidlu
 from vidlu.data.datasets import MNIST
 from vidlu import models
 from vidlu import factories
-from vidlu.modules import components
+from vidlu.modules import components, Module
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
 from vidlu.training import AdversarialTrainer, configs, adversarial, initialization, metrics
 from vidlu.utils import misc, indent_print, logger
@@ -25,23 +26,39 @@ data = dict(**{k: prepare(v) for k, v in data.items()})
 
 
 # Model
+class Tent(Module):  # copied from components.Tent
+    def __init__(self, channelwise=False, delta_range=(0.05, 1.)):
+        super().__init__()
+        self.channelwise = channelwise
+        self.min_delta, self.max_delta = delta_range
+
+    def build(self, x):
+        self.delta = nn.Parameter(
+            torch.ones(x.shape[1]) if self.channelwise else torch.tensor(self.max_delta))
+
+    def forward(self, x):
+        with torch.no_grad():
+            self.delta.clamp_(self.min_delta, self.max_delta)
+        delta = self.delta.view(list(self.delta.shape) + [1] * (len(x.shape) - 2))
+        #return F.relu(delta - (x - delta).abs())  # centered at delta
+        return F.relu(delta - x.abs())
+
+
 class MNISTNetTentModel(models.SeqModel):
     def __init__(self):
         super().__init__(
             seq=dict(
                 backbone=MNISTNetBackbone(
-                    act_f=partial(components.Tent, channelwise=False, delta_range=(0.05, 1.)),
+                    act_f=partial(Tent, channelwise=False, delta_range=(0.05, 1.)),
                     use_bn=True),
                 head=components.heads.ClassificationHead1D(10)),
             init=initialization.kaiming_mnistnet)
 
 
 model = MNISTNetTentModel()
-model(next(iter(DataLoader(data['train'], batch_size=2)))[0])  # infer input dimensions
-model.to(device='cuda:0')
-
-
-# model.initialize()
+device = torch.device('cuda:0')
+model.initialize(next(iter(DataLoader(data['train'], batch_size=2)))[0])
+model.to(device)
 
 
 # Trainer
@@ -83,7 +100,7 @@ def define_training_loop_actions(trainer, data, logger):
                    + f" ({es.batch_count} batches, lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
 
     @trainer.training.epoch_completed.add_handler
-    def on_epoch_completed(_):
+    def on_epoch_completed(ts):
         """Evaluation on the test (validation) set after each epoch."""
         trainer.eval(data['test'])
 
@@ -101,11 +118,9 @@ def define_training_loop_actions(trainer, data, logger):
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
     @trainer.evaluation.iteration_completed.add_handler
-    def on_eval_iteration_completed(state):
-        """This is for interaction during training and evaluation, e.g. by
-        entering "embed()" followed by ENTER while training opens the IPython
-        shell.
-        """
+    def on_eval_iteration_completed(es):
+        """This is for interaction during training and evaluation, e.g. entering
+        "embed()" and pressing ENTER opens the IPython shell."""
         nonlocal trainer, data
         from IPython import embed
 
@@ -117,13 +132,13 @@ def define_training_loop_actions(trainer, data, logger):
                 print(f'Cannot execute "{optional_input}"\n{ex}.')
 
     @trainer.training.iteration_completed.add_handler
-    def on_iteration_completed(s):
-        if s.iteration % s.batch_count % (max(1, s.batch_count // 5)) == 0:
-            remaining = s.batch_count - s.iteration % s.batch_count
-            if remaining >= s.batch_count // 5 or remaining == 0:
-                report_metrics(s)
+    def on_iteration_completed(ts):
+        if ts.iteration % ts.batch_count % (max(1, ts.batch_count // 5)) == 0:
+            remaining = ts.batch_count - ts.iteration % ts.batch_count
+            if remaining >= ts.batch_count // 5 or remaining == 0:
+                report_metrics(ts)
 
-        on_eval_iteration_completed(s)
+        on_eval_iteration_completed(ts)
 
     trainer.evaluation.epoch_completed.add_handler(partial(report_metrics, is_validation=True))
 
@@ -131,6 +146,9 @@ def define_training_loop_actions(trainer, data, logger):
 logger = logger.Logger()
 define_training_loop_actions(trainer, data, logger)
 
+logger.log("Evaluating initially...")
 trainer.eval(data['test'])
+logger.log("Starting training...")
 trainer.train(data['train'])
+logger.log("Evaluating on training data...")
 trainer.eval(data['train'])
