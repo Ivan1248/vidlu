@@ -198,8 +198,9 @@ class CleanResultCallback:
 
     def __call__(self, r):
         if self.result is None:
-            self.result = NameDict(
-                zip(("output", "other_outputs"), self.extend_output(r.output)), loss=r.loss)
+            self.result = NameDict({
+                **vars(r),
+                **dict(zip(("output", "other_outputs"), self.extend_output(r.output)))})
 
 
 def first_output_callback(output_ref: list):
@@ -233,6 +234,20 @@ class CleanAdversarialTrainBiStep:
 
 
 class AdversarialTrainStep:
+    """ Adversarial training step.
+
+    It calls `trainer.model.eval()`, `trainer.attack.perturb` with
+    `1 - clean_proportion` of input examples, and the corresponding labels
+    if `virtual` is `False`. Then makes a training step with adversarial
+    examples mixed with clean examples, depending on `clean_proprotion`.
+
+    Args:
+        clean_proportion (float): The proprtion of input examples that should be
+            turned into adversarial examples in each step.
+        virtual (bool): whether virtual advarsarial examples should be used
+            (using the predicted label).
+    """
+
     def __init__(self, clean_proportion=0, virtual=False):
         self.clean_proportion = clean_proportion
         self.virtual = virtual
@@ -279,13 +294,14 @@ class AdversarialTrainMultiStep:
 
         def step(r):
             nonlocal clean_result, x, self
-            clean_result = clean_result or r
+            if clean_result is None:
+                clean_result = r
             if r.step % self.update_period == 0:
                 trainer.optimizer.step()
                 trainer.optimizer.zero_grad()
 
         (trainer.model.train if self.train_mode else trainer.model.eval)()
-        with disable_tracking_bn_stats() if self.train_mode else contextlib.suppress():
+        with disable_tracking_bn_stats(trainer.model) if self.train_mode else contextlib.suppress():
             x_adv = trainer.attack.perturb(x, *(() if self.virtual else (y,)),
                                            backward_callback=step)
 
@@ -394,11 +410,11 @@ def autoencoder_train_step(trainer, batch):
 # Adversarial attacks
 
 madry_cifar10_attack = partial(attacks.PGDAttack,
-                               eps=8 / 255,
-                               step_size=2 / 255,
-                               grad_preprocessing='sign',
-                               step_count=10,  # TODO: change
-                               clip_bounds=(0, 1))
+                                    eps=8 / 255,
+                                    step_size=2 / 255,
+                                    grad_preprocessing='sign',
+                                    step_count=10,  # TODO: change
+                                    clip_bounds=(0, 1))
 
 virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
                                      get_prediction='hard')
@@ -490,3 +506,49 @@ swiftnet = dict(  # custom, TODO: crops
     batch_size=14,
     fine_tuning={'backbone.backbone': 1 / 4},
     jitter=jitter.CityscapesJitter())
+
+mnistnet = dict(  # as in www.arxiv.org/abs/1603.05027
+    **classification,
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, nesterov=True, weight_decay=Empty),
+    weight_decay=1e-4,
+    epoch_count=50,
+    lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
+    batch_size=128)
+
+mnistnet_tent = dict(
+    **classification,
+    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=Empty),
+    weight_decay=1e-4,
+    epoch_count=40,
+    lr_scheduler_f=None,
+    batch_size=100
+)
+
+mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
+                                    eps=0.3,
+                                    step_size=0.1,
+                                    grad_preprocessing='sign',
+                                    step_count=40,  # TODO: change
+                                    clip_bounds=(0, 1),
+                                    stop_on_success=True)
+
+## special
+
+wrn_cifar_tent = fuse(
+    wrn_cifar,
+    overriding=dict(optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=Empty),
+                    weight_decay=1e-4)
+)
+
+resnet_cifar_adversarial_esos = fuse(  # as in www.arxiv.org/abs/1603.05027
+    resnet_cifar,
+    dict(attack_f=partial(madry_cifar10_attack, step_count=7),
+         eval_attack_f=partial(madry_cifar10_attack, step_count=10, stop_on_success=True)),
+    overriding=adversarial
+)
+
+resnet_cifar_adversarial_multistep_esos = fuse(  # as in www.arxiv.org/abs/1603.05027
+    resnet_cifar_adversarial_esos,
+    overriding=dict(train_step=AdversarialTrainMultiStep(train_mode=False, update_period=8),
+                    epoch_count=25)
+)
