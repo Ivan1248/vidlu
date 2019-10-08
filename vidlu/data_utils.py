@@ -1,19 +1,15 @@
-import os
 import shutil
-import multiprocessing
 from argparse import Namespace
 from functools import partialmethod
 from pathlib import Path
-
-import torch
-from tqdm import tqdm
 import warnings
 
 import numpy as np
+import torch
+from tqdm import tqdm
 
 from vidlu.data import DatasetFactory, default_collate
-from vidlu.utils import path
-from vidlu.utils.collections import NameDict
+from vidlu.utils import path, func
 
 
 # Standardization ##################################################################################
@@ -44,23 +40,25 @@ def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
             dict(standardization=lambda ds: ds_with_info.info.cache['standardization'])))
 
 
-def cache_data_lazily(parted_dataset, cache_dir):
-    elem_size = parted_dataset.trainval.approx_example_sizeof()
-    size = elem_size
+def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
+    elem_size = parted_dataset.trainval.approx_example_size()
+    size = elem_size * sum(len(ds) for _, ds in parted_dataset.top_level_items())
     free_space = shutil.disk_usage(cache_dir).free
-    dataset_space_proportion = size / free_space
+    space_left = size - free_space
 
     def transform(ds):
         ds_cached = ds.cache_hdd(f"{cache_dir}/datasets")
         has_been_cached = path.get_size(ds_cached.cache_dir) > size * 0.1
-        if has_been_cached or dataset_space_proportion < 0.5:
+        if has_been_cached or space_left >= min_free_space:
             ds = ds_cached
         else:
             ds_cached.delete_cache()
             del ds_cached
-            warnings.warn(f'The dataset {ds.identifier} will not be cached because it is too large.'
-                          + f' Available space: {free_space / 2 ** 30} GiB.'
-                          + f' Data size: {elem_size * len(ds)} GiB (subset), {size} GiB (all).')
+            warnings.warn(f'The dataset {ds.identifier} will not be cached because there is not'
+                          + f' much space left.'
+                          + f'\nAvailable space: {free_space / 2 ** 30:.3f} GiB.'
+                          + f'\nData size: {elem_size * len(ds) / 2 ** 30:.3f} GiB (subset),'
+                          + f' {size / 2 ** 30:.3f} GiB (all).')
         return ds
 
     return parted_dataset.with_transform(transform)
@@ -80,8 +78,8 @@ class CachingDatasetFactory(DatasetFactory):
         return cache_data_lazily(pds, self.cache_dir)
 
 
-# DataLoader class with collate function that supports Record examples
+# DataLoader class with collate function that supports Record examples #############################
 
 class DataLoader(torch.utils.data.DataLoader):
-    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, shuffle=True,
-                             collate_fn=default_collate, drop_last=True)
+    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, collate_fn=default_collate)
+    
