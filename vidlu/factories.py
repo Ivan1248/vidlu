@@ -1,18 +1,16 @@
 import warnings
 import re
 from functools import partial
+from pathlib import Path
+from argparse import Namespace
 
 import torch
 
-from vidlu import defaults, models
-from vidlu.data import DatasetFactory
+from vidlu import defaults, models, parameters
 from vidlu.data_utils import CachingDatasetFactory, DataLoader
-import vidlu.modules  as m
-from vidlu.problem import Supervised
-from vidlu.transforms import image as imt
+from vidlu.utils import tree
 from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
                               ArgTree, params, Empty, default_args, identity, EscapedArgTree)
-from vidlu.utils import tree, text
 
 t = ArgTree  # used in arg/evaluation
 
@@ -79,9 +77,11 @@ def get_data(data_str: str, datasets_dir, cache_dir=None):
     Returns:
 
     """
+    from vidlu import data
+
     name_options_subsets_tuples = parse_data_str(data_str)
 
-    get_parted_dataset = DatasetFactory(datasets_dir)
+    get_parted_dataset = data.DatasetFactory(datasets_dir)
     if cache_dir is not None:
         get_parted_dataset = CachingDatasetFactory(get_parted_dataset, cache_dir,
                                                    add_statistics=True)
@@ -114,7 +114,7 @@ def get_data_preparation(dataset):
 
 # Model ############################################################################################
 
-def get_input_adapter(input_adapter_str, problem, data_statistics=None):
+def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
     """ Returns a bijective module to be inserted before the model to scale
     inputs.
 
@@ -129,13 +129,20 @@ def get_input_adapter(input_adapter_str, problem, data_statistics=None):
     Returns:
         A torch module.
     """
+    import vidlu.modules as M
+    from vidlu.problem import Supervised
+    from vidlu.transforms import image as imt
     if isinstance(problem, Supervised):
-        if input_adapter_str == "standardize":
-            stats = dict(mean=torch.from_numpy(data_statistics.mean),
-                         std=torch.from_numpy(data_statistics.std))
-            return m.RevFunc(imt.Standardize(**stats), imt.Destandardize(**stats))
+        if input_adapter_str.startswith("standardize"):
+            if input_adapter_str == "standardize":
+                stats = dict(mean=torch.from_numpy(data_statistics.mean),
+                             std=torch.from_numpy(data_statistics.std))
+            else:
+                stats = eval("dict(" + input_adapter_str[len("standardize("):])
+                stats = {k: torch.tensor(v) for k, v in stats.items()}
+            return M.RevFunc(imt.Standardize(**stats), imt.Destandardize(**stats))
         elif input_adapter_str == "id":  # min 0, max 1 is expected for images
-            return m.RevIdentity()
+            return M.RevIdentity()
         else:
             raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}")
     raise NotImplementedError()
@@ -145,10 +152,9 @@ def get_input_adapter(input_adapter_str, problem, data_statistics=None):
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               dataset=None, device=None, verbosity=1):
     # imports available for evals
-    import torch.nn
-    from vidlu import modules as m
-    from vidlu.modules import loss
-    import vidlu.modules.components as C
+    from torch import nn
+    import vidlu.modules as M
+    import vidlu.modules.components as mc
     import torchvision.models as tvmodels
 
     if dataset is None and (problem is None or init_input is None):
@@ -157,7 +163,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     if problem is None:
         problem = defaults.get_problem_from_dataset(dataset)
     if init_input is None and dataset is not None:
-        init_input = batch_x = next(iter(DataLoader(dataset, batch_size=2)))[0]
+        init_input = batch_x = next(iter(DataLoader(dataset, batch_size=1)))[0]
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
@@ -180,6 +186,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model = model_f()
     model.eval()
 
+    if device is not None:
+        model.to(device)
+        init_input = init_input.to(device)
     if hasattr(model, 'initialize'):
         model.initialize(init_input)
     else:
@@ -187,6 +196,10 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         model(init_input)
     if device is not None:
         model.to(device)
+
+    if verbosity > 1:
+        print(model)
+    print('Parameter count:', M.parameter_count(model))
 
     return model
 
@@ -200,14 +213,71 @@ get_model.help = \
 "configs.supervised,configs.classification,configs.resnet_cifar"
 
 
+# Initial pre-trained parameters ###################################################################
+
+def _parse_parameter_translation_string(params_str):
+    module_re = fr'\w+(?:\.\w+)*'
+    regex = re.compile(
+        fr'(?P<translator>[\w]+)(?:\[(?P<src_dict>{module_re})\])?(?:\((?P<src_module>{module_re})\))?'
+        + fr'(?:,(?P<dest_module>{module_re}))?(?::(?P<file>.+))?')
+    m = regex.fullmatch(params_str.strip())
+    if m is None:
+        raise ValueError('`params_str` does not match the pattern'
+                         + ' "translator[[src_dict]][(src_module)][,dest_module][:file]".')
+    return Namespace(
+        **{k: m.group(k) or '' for k in
+           ['translator', 'src_dict', 'src_module', 'dest_module', 'file']})
+
+
+def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
+    """Loads pretrained parameters into a model (or its submodule) from a file.
+
+    Args:
+        params_str (str): a string in the format
+            "translator[(src_module)][,dest_module][:file]", where "translator"
+            represents the function for loading and translating parameter names,
+            "src_module" (optional) is for extracting a part of parameters (with
+            translated names) with a common submodule and represents the
+            submodule name, "dest_module" (optional) represents the name of the
+            submodule that the parameters are to be loaded in, "file" represents
+            the file name (with extension) that the parameters are to be loaded
+            from. The "src_module" substring is is removed from the beginning of
+            translated parameter names and the "dest_module" is added added
+            instead.
+        state_dict: a dictionary with parameters. It should be provided if there
+            is no file path at the end of `params_str`.
+        params_dir: the directory that the file with parameters is in.
+    """
+    p = _parse_parameter_translation_string(params_str)
+    # load the state and filter and remove `src_module` from module names
+    if not ((state_dict is None) ^ (p.file == '')):
+        raise RuntimeError('Either state_dict should be provided or params_str should contain the'
+                           + ' parameters file path at the end of `params_str`.')
+    if p.file != '':
+        path = Path(p.file)
+        if not path.is_absolute():
+            path = Path(params_dir) / p.file
+        state_dict = parameters.get_translated_parameters(p.translator, path, subdict=p.src_dict)
+    else:
+        state_dict = parameters.get_translated_parameters(p.translator, state_dict,
+                                                          subdict=p.src_dict)
+    if len(p.src_module) > 0:
+        start = f'{p.dest_module}.' if len(p.dest_module) > 0 else ''
+        state_dict = {start + k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
+                      if k.startswith(p.src_module)}
+    return state_dict
+
+
 # Training and evaluation ##########################################################################
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
-def get_trainer(trainer_str: str, dataset, model, verbosity=1):
+def get_trainer(trainer_str: str, *, dataset, model, verbosity=1):
     # imports available for evals
     from torch import optim
     from torch.optim import lr_scheduler
-    from vidlu.training import trainers, configs
+    from vidlu.training import trainers
+    import vidlu.training.adversarial as ta
+    import vidlu.training.configs as tc
     from vidlu.training.adversarial import attacks
     from vidlu.utils.misc import fuse
     from vidlu.transforms import jitter
