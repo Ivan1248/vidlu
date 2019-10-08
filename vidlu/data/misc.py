@@ -24,13 +24,6 @@ def pickle_sizeof(obj):
 
 # Collate ##########################################################################################
 
-def default_collate(batch, array_type='torch'):
-    collate = torch_collate if array_type == 'torch' else numpy_collate
-    if type(batch[0]) is Record:
-        return Record(collate(tuple(dict(d.items()) for d in batch)))
-    return collate(batch)
-
-
 def numpy_collate(batch):
     elem = batch[0]
     elem_type = type(elem)
@@ -49,3 +42,12 @@ def numpy_collate(batch):
         return list(map(numpy_collate, zip(*batch)))
     else:
         raise TypeError(type(elem))
+
+
+def default_collate(batch, array_type='torch'):
+    """A function Like `torch.utils.data.dataloader.default_collate`, but also
+    supports the `vidlu.data.Record` type as a container."""
+    collate = torch_collate if array_type == 'torch' else numpy_collate
+    if type(batch[0]) is Record:
+        return Record(collate(tuple(dict(d.items()) for d in batch)))
+    return collate(batch)
