@@ -81,7 +81,6 @@ def get_trainer_argtree(trainer_class, dataset):
 # Metrics ##########################################################################################
 
 def get_metrics(trainer, problem):
-    from ignite import metrics
     import vidlu.training.metrics as m
 
     if isinstance(problem, (Classification, SemanticSegmentation)):
@@ -92,7 +91,8 @@ def get_metrics(trainer, problem):
                                hard_prediction_name="other_outputs_adv.hard_prediction",
                                class_count=problem.class_count))
     elif isinstance(problem, DepthRegression):
-        ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
+        raise NotImplementedError()
+        # ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
     else:
         warnings.warn(f"get_metrics: There are no default metrics for problem {type(problem)}.")
         ret = []
