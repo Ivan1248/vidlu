@@ -1,16 +1,21 @@
 import inspect
-from argparse import Namespace
+import os
+from pathlib import Path
+import dataclasses as dc
 
 from . import datasets
-from .datasets import *
+from .datasets import Dataset
 from .. import PartedDataset
 
 
-def _info(cls, path=None, default_kwargs=None):
-    return Namespace(cls=cls, path=path, kwargs=default_kwargs or dict())
+@dc.dataclass
+class _DatasetInfo:
+    cls: type(Dataset)  # dataset class (factory)
+    path: os.PathLike = None  # path to the dataset directory (if not synthetic)
+    kwargs: dict = dc.field(default_factory=dict)  # arguments to always be given to cls
 
 
-_ds_to_info = {k.lower(): _info(v, path=getattr(v, 'default_dir', None))
+_ds_to_info = {k.lower(): _DatasetInfo(v, path=getattr(v, 'default_dir', None))
                for k, v in vars(datasets).items()
                if inspect.isclass(v) and issubclass(v, Dataset) and v is not Dataset}
 
