@@ -17,6 +17,7 @@ from vidlu.training import AdversarialTrainer, configs, adversarial, initializat
 from vidlu.utils import misc, indent_print, logger
 
 # Data
+
 data_dir = Path(tempfile.gettempdir()) / 'datasets'
 data_dir.mkdir(exist_ok=True)
 data_dir = data_dir / 'mnist'
@@ -26,6 +27,7 @@ data = dict(**{k: prepare(v) for k, v in data.items()})
 
 
 # Model
+
 class Tent(Module):  # copied from components.Tent
     def __init__(self, channelwise=False, delta_range=(0.05, 1.)):
         super().__init__()
@@ -40,8 +42,8 @@ class Tent(Module):  # copied from components.Tent
         with torch.no_grad():
             self.delta.clamp_(self.min_delta, self.max_delta)
         delta = self.delta.view(list(self.delta.shape) + [1] * (len(x.shape) - 2))
-        #return F.relu(delta - (x - delta).abs())  # centered at delta
-        return F.relu(delta - x.abs())
+        return F.relu(delta - (x - delta).abs())  # centered at delta
+        #return F.relu(delta - x.abs())
 
 
 class MNISTNetTentModel(models.SeqModel):
@@ -67,7 +69,7 @@ def create_optimizer(trainer):
     delta_params = [v for k, v in model.named_parameters() if k.endswith('delta')]
     other_params = [v for k, v in model.named_parameters() if not k.endswith('delta')]
     return optim.Adam([dict(params=other_params), dict(params=delta_params, weight_decay=0.12)],
-                      lr=1e-3, weight_decay=1e-6)
+                      lr=1e-3, weight_decay=0)
 
 
 trainer = AdversarialTrainer(
@@ -145,6 +147,8 @@ def define_training_loop_actions(trainer, data, logger):
 
 logger = logger.Logger()
 define_training_loop_actions(trainer, data, logger)
+
+# Training and evaluation
 
 logger.log("Evaluating initially...")
 trainer.eval(data['test'])
