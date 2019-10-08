@@ -1,6 +1,4 @@
-from itertools import chain
 from typing import Dict, Tuple
-from functools import lru_cache
 from vidlu.utils.func import valmap
 
 from .dataset import Dataset
