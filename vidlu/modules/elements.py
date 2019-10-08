@@ -1,22 +1,23 @@
 from abc import ABC, abstractmethod
 from argparse import Namespace
 from collections import OrderedDict
-from collections.abc import Sequence
 import functools
-from functools import reduce
+from functools import reduce, partial
 from typing import Union
+from collections import Mapping, Sequence
+import itertools
+from os import PathLike
 
 import torch
 from torch import nn
 import torch.functional as F
+from torch.utils.checkpoint import checkpoint
 import numpy as np
 
 from vidlu.modules.utils import try_get_module_name_from_call_stack
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
 from vidlu.utils.func import params, tryable, identity
-
-from . import utils
 
 
 # Module class extensions ##########################################################################
@@ -34,13 +35,7 @@ def _extended_interface(*superclasses):
             super().add_module(name, module)
 
         def add_modules(self, *args, **kwargs):
-            if len(args) == 0:
-                args = kwargs.items()
-                name, module = next(iter(kwargs.items()))
-            elif not len(kwargs) == 0:
-                raise ValueError(
-                    "Either only positional arguments or only keyword arguments can be accepted.")
-            for name, module in args:
+            for name, module in dict(*args, **kwargs).items():
                 super().add_module(name, module)
 
         @property
@@ -51,13 +46,22 @@ def _extended_interface(*superclasses):
         def load_state_dict(self, state_dict_or_path, strict=True):
             """Handle a path being given instead of a file. (preferred since it
             automatically maps to the correct device). Taken from MagNet."""
-            from pathlib import Path
             sd = state_dict_or_path
-            if isinstance(sd, (str, Path)):
+            if isinstance(sd, PathLike):
                 sd = torch.load(sd, map_location=self.device)
             return super().load_state_dict(sd, strict=strict)
 
     return ExtendedInterfaceModExt
+
+
+def _extract_tensors(*args, **kwargs):
+    tensors = []
+    for a in itertools.chain(args, kwargs.values()):
+        if isinstance(a, torch.Tensor):
+            yield a
+        elif isinstance(a, (Mapping, Sequence)):
+            for x in _extract_tensors(a):
+                yield x
 
 
 def _buildable(*superclasses):
@@ -69,17 +73,27 @@ def _buildable(*superclasses):
             self._built = False
 
         def __call__(self, *args, **kwargs):
-            if not self._built:
-                if type(self).build != BuildableModExt.build:
-                    self.build(*args, **kwargs)
-                result = super().__call__(*args, **kwargs)
-                if type(self).post_build != BuildableModExt.post_build:
-                    self.post_build(*args, **kwargs)
+            try:
+                input_tensors = _extract_tensors(*args, **kwargs)
+                device = tryable(lambda: list(input_tensors)[0].device, None)()
+                if not self._built:
+                    if type(self).build != BuildableModExt.build:
+                        self.build(*args, **kwargs)
+                        if device is not None:
+                            self.to(device)
                     result = super().__call__(*args, **kwargs)
-                self._built = True
-            else:
-                result = super().__call__(*args, **kwargs)
-            return result
+                    if type(self).post_build != BuildableModExt.post_build:
+                        self.post_build(*args, **kwargs)
+                        if device is not None:
+                            self.to(device)
+                        result = super().__call__(*args, **kwargs)
+                    self._built = True
+                else:
+                    result = super().__call__(*args, **kwargs)
+                return result
+            except Exception as e:
+                print(f"Error in {try_get_module_name_from_call_stack(self)}, {type(self)}")
+                raise e
 
         def build(self, *args, **kwargs):
             pass
@@ -95,6 +109,24 @@ def _buildable(*superclasses):
             return type(self)(**self.args)
 
     return BuildableModExt
+
+
+def _modifiable(*superclasses):
+    class ModifibleModExt(*superclasses):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.modifiers = {}
+
+        def set_modifiers(self, *args, **kwargs):
+            self.modifiers.update(dict(*args, **kwargs))
+            for k in [k for k, v in self.modifiers.items() if v is None]:
+                del self.modifiers[k]
+            return self
+
+        def _call_with_modifiers(self, name, *input):
+            return self.modifiers.get(name, identity)(getattr(self, name))(*input)
+
+    return ModifibleModExt
 
 
 def _stochastic(*superclasses):
@@ -178,6 +210,11 @@ class Module(*_extended(nn.Module, ABC)):
                 + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
 
 
+class RevIdentity(nn.Identity):
+    def reverse(self, y):
+        return y
+
+
 def _to_sequential_init_args(*args, **kwargs):
     if len(kwargs) > 0:
         if len(args) > 0:
@@ -189,12 +226,7 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-class RevIdentity(nn.Identity):
-    def reverse(self, y):
-        return y
-
-
-class Sequential(*_extended(nn.Sequential)):
+class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
     """
     A wrapper around torch.nn.Sequential to enable passing a dict as the only
     parameter whereas in torch.nn.Sequential only OrderedDict is accepted
@@ -230,12 +262,11 @@ class Sequential(*_extended(nn.Sequential)):
         return children.index(key)
 
     def forward(self, *input):
-        modules = list(self._modules.values())
-        if len(modules) > 0:
-            input = modules[0](*input)
-            for module in modules[1:]:
-                input = module(input)
-        return input
+        if len(self._modules) == 0 and len(input) != 1:
+            raise RuntimeError("A `Sequential` with no children can only accept 1 argument.")
+        for name in self._modules:
+            input = (self._call_with_modifiers(name, *input),)
+        return input[0]
 
 
 class ModuleTable(Sequential):
@@ -243,7 +274,7 @@ class ModuleTable(Sequential):
         raise NotImplementedError
 
 
-# Branching, parallel and reduction ################################################################
+# Fork, parallel and reduction ################################################################
 
 def tuple_to_varargs_method(f):
     @functools.wraps(f)
@@ -256,7 +287,7 @@ def tuple_to_varargs_method(f):
     return wrapper
 
 
-class Branching(ModuleTable):
+class Fork(ModuleTable):
     def forward(self, input):
         return tuple(m(input) for m in self)
 
@@ -310,7 +341,6 @@ class Sum(Module):
             if oo.shape != shape:
                 print(try_get_module_name_from_call_stack(self),
                       ' '.join(str(tuple(x.shape)) for x in inputs))
-                breakpoint()
         y = inputs[0].clone()
         for x in inputs[1:]:
             y += x
@@ -334,11 +364,14 @@ def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.
     dim = 2 if len(input.shape) == 4 else 1 if len(input.shape) == 2 else None
     if dim is None:
         raise ValueError(f"Cannot infer {name} dimension from input shape.")
-    layer_func = nn.__getattribute__(f"{name}{dim}d")
+    name = f"{name}{dim}d"
+    layer_func = nn.__getattribute__(name)
     for k, v in params(layer_func).items():
         if k not in args:
-            raise ValueError(f"Missing argument: {k}.")
-    return layer_func(**args)
+            breakpoint()
+            raise ValueError(f"Missing argument for {name}: {k}.")
+    module = layer_func(**args)
+    return module
 
 
 def _get_conv_padding(padding_type, kernel_size, dilation):
@@ -397,7 +430,7 @@ class MaxPool(WrappedModule):
 
 class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
-                 count_include_pad=True):
+                 count_include_pad=True, divisor_override=None):
         super().__init__()
         self.args.padding = (_get_conv_padding(padding, kernel_size, dilation=1)
                              if isinstance(padding, str) else padding)
@@ -490,7 +523,7 @@ class {typename}(Module):
 """
 
 _already_wrapped_classes = (
-        list(list(zip(*inspect.getmembers(sys.modules[__name__])))[0]) + ['Module'] +
+        list(list(zip(*inspect.getmembers(sys.M[__name__])))[0]) + ['Module'] +
         [f'Conv{t}{d}d' for t in ['', 'Transpose'] for d in {1, 2, 3}])
 
 for name, cls in inspect.getmembers(nn, inspect.isclass):
@@ -501,7 +534,7 @@ for name, cls in inspect.getmembers(nn, inspect.isclass):
 '''
 
 
-# Additional generally useful modules ##############################################################
+# Additional generally useful M ##############################################################
 
 
 class Func(Module):
@@ -522,16 +555,6 @@ class RevFunc(Func):
         if not self._func_inv:
             raise RuntimeError("The inverse function is not defined.")
         return self._func_inv(y)
-
-
-"""
-class Sum(EModuleDict):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def forward(self, *input):
-        return sum(m(*input) for m in self.items())
-"""
 
 
 # Stochastic #######################################################################################
@@ -602,17 +625,21 @@ def parameter_count(module) -> Namespace:
 
 def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
     """
-    Returns a submodule of `root` that corresponds to `path`. It works
+    Returns a submodule of `root_module` that corresponds to `path`. It works
     for other attributes (e.g. Parameters) too.
     Arguments:
         root_module (Module): a module.
-        path (Tensor): a string with the name of the module module relative to
-        `root`
+        path (Tensor): a string with the name of the module relative to
+            `root_module`.
     """
     if isinstance(path, str):
         path = path.split('.') if path != '' else []
     for name in [tryable(int, default_value=n)(n) for n in path]:
         if isinstance(name, str):
+            if not hasattr(root_module, name):
+                raise AttributeError(
+                    f"'{type(root_module).__name__}' has no submodule '{name}'. It has children:"
+                    + f" {', '.join(list(k for k, v in root_module.named_children()))}.")
             root_module = getattr(root_module, name)
         elif isinstance(name, int):
             root_module = root_module[name]
@@ -672,13 +699,20 @@ def with_intermediate_outputs(root: nn.Module, submodule_paths: list):
         tensor(...)
         >>> module_wio = with_intermediate_outputs(module, 'backbone', 'head.logits')
         >>> module_wio(x)
-        tensor(...), {'backbone': tensor(...), 'head.logits': tensor(...)}
+        tensor(...), (tensor(...), tensor(...))
     """
     if isinstance(submodule_paths, str):
         submodule_paths = [submodule_paths]
-    submodules = [get_submodule(root, p) for p in submodule_paths]
 
-    def forward(*args):
+    def get_submodules(): return [get_submodule(root, p) for p in submodule_paths]
+
+    @functools.wraps(root)
+    def wrapper(*args, **kwargs):
+        submodules = tryable(get_submodules, None)()
+        if submodules is None:  # in case the module is not yet built
+            root(*args, **kwargs)
+            submodules = get_submodules()
+
         outputs = [None] * len(submodule_paths)
 
         def create_hook(idx):
@@ -688,16 +722,17 @@ def with_intermediate_outputs(root: nn.Module, submodule_paths: list):
             return hook
 
         handles = [m.register_forward_hook(create_hook(i)) for i, m in enumerate(submodules)]
-        output = root(*args)
+        output = root(*args, **kwargs)
         for h in handles:
             h.remove()
-        return output, dict(zip(submodule_paths, outputs))
 
-    return forward
+        return output, outputs
+
+    return wrapper
 
 
-'''
 class IntermediateOutputsModuleWrapper(Module):
+
     def __init__(self, module, submodule_paths):
         """
         Creates a function extending `root.forward` so that a pair containing
@@ -712,10 +747,10 @@ class IntermediateOutputsModuleWrapper(Module):
         self.module = module
         self.handles, self.outputs = None, None
 
-    # TODO: why is it called?
-    # def __del__(self):
-    #    for h in self.handles:
-    #        h.remove()
+    def __del__(self):
+        if self.handles is not None:
+            for h in self.handles:
+                h.remove()
 
     def post_build(self, *args, **kwargs):
         def create_hook(idx):
@@ -728,10 +763,22 @@ class IntermediateOutputsModuleWrapper(Module):
         self.handles = [m.register_forward_hook(create_hook(i))
                         for i, m in enumerate(submodules)]
 
-    def forward(self, *input):
+    def forward(self, *args, **kwargs):
         self.outputs = [None] * len(self.args.submodule_paths)
-        output = self.module(*input)
+        output = self.module(*args, **kwargs)
         outputs = self.outputs
         self.outputs = None
         return output, tuple(outputs)
-'''
+
+
+class CheckpointingModuleWrapper(Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self, *args):
+        return checkpoint(self.module, *args)
+
+
+def checkpointed(module):
+    return partial(checkpoint, module)
