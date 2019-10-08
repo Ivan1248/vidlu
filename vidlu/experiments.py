@@ -5,17 +5,17 @@ from pathlib import Path
 
 import torch
 from vidlu.data import Dataset
-from IPython import embed
+import torch.nn as nn
 
-from vidlu import gpu_utils, factories, defaults, parameter_loading
+
+from vidlu import gpu_utils, factories
 from vidlu.data import Record
-from vidlu.modules import parameter_count
-from vidlu.training.checkpoint_manager import CheckpointManager
+from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils import tree
-from vidlu.utils.misc import try_input
+from vidlu.utils.misc import try_input, CMTimer
 
 
 # TODO: logger instead of verbosity
@@ -43,30 +43,12 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     if len(datasets) != 2:
         raise ValueError(f'There must be exactly 2 datasets in "{data_str}"')
     ds_train, ds_test = dict(datasets).values()
-
     prepare = factories.get_data_preparation(ds_train)
-
     ds_train, ds_test = map(prepare, [ds_train, ds_test])
-
     return Namespace(train=ds_train, test=ds_test)
 
 
-def get_model(model_str: str, input_adapter_str, ds_train, device, verbosity):
-    model = factories.get_model(model_str, input_adapter_str=input_adapter_str, dataset=ds_train,
-                                device=device, verbosity=verbosity)
-    if verbosity > 1:
-        print(model)
-    print('Parameter count:', parameter_count(model))
-    return model
-
-
-def load_parameters(model, params_str, params_dir):
-    model_name, params_name = params_str.split(',')
-    state_dict = parameter_loading.get_parameters(model_name, Path(params_dir) / params_name)
-    model.load_state_dict(state_dict)
-
-
-def define_training_loop_actions(trainer, cpman, data, logger):
+def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
     @trainer.training.epoch_started.add_handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
@@ -90,8 +72,11 @@ def define_training_loop_actions(trainer, cpman, data, logger):
                            + f'{format((iter - 1) % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
+    # noinspection PyUnresolvedReferences
     @trainer.evaluation.iteration_completed.add_handler
     def on_eval_iteration_completed(state):
+        from IPython import embed
+        from vidlu.utils.presentation import visualization
         nonlocal trainer, data
 
         optional_input = try_input()
@@ -115,7 +100,8 @@ def define_training_loop_actions(trainer, cpman, data, logger):
 
 def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
     a = training_args
-    learner_name = to_valid_path(f"{a.model}/{a.trainer}")
+    learner_name = to_valid_path(f"{a.model}/{a.trainer}"
+                                 + (f"/{a.params}" if a.params else ""))
     expsuff = a.experiment_suffix or "_"
     experiment_id = f'{a.data}/{learner_name}/{expsuff}'
     print('Learner name:', learner_name)
@@ -126,9 +112,6 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
 
 
 # Experiment #######################################################################################
-import torch.nn as nn
-from vidlu.training import Trainer
-
 
 @dataclass
 class TrainingExperiment:
@@ -140,6 +123,9 @@ class TrainingExperiment:
 
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
+        for d in ['DATASETS', 'CACHE', 'SAVED_STATES', 'PRETRAINED']:
+            if getattr(dirs, d) is None or not Path(getattr(dirs, d)).is_dir():
+                raise NotADirectoryError(f"dirs.{d}={getattr(dirs, d)} is not a directory.")
         a = training_args
         with indent_print("Selecting device..."):
             if a.device is None:
@@ -147,9 +133,15 @@ class TrainingExperiment:
                     gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
             print(f"device: {a.device}")
         with indent_print('Initializing data...'):
-            data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
+            with CMTimer() as t:
+                data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
+            print(f"Data initialized in {t.interval:.2f} s.")
         with indent_print('Initializing model...'):
-            model = get_model(a.model, a.input_adapter, data.train, a.device, a.verbosity)
+            with CMTimer() as t:
+                model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
+                                            dataset=data.train, device=a.device,
+                                            verbosity=a.verbosity)
+            print(f"Model initialized in {t.interval:.2f} s.")
         with indent_print('Initializing trainer and evaluation...'):
             trainer = factories.get_trainer(a.trainer, model=model, dataset=data.train,
                                             verbosity=a.verbosity)
@@ -160,17 +152,17 @@ class TrainingExperiment:
         define_training_loop_actions(trainer, cpman, data, logger)
 
         if a.resume:
-            for obj, state in zip([trainer, logger], cpman.load_last()):
+            for obj, state in zip([trainer, logger], cpman.load_last(map_location=a.device)):
                 obj.load_state_dict(state)
             logger.print_all()
-            model.to(device=a.device)
-
-        if a.params is not None:
-            load_parameters(model, params_str=a.params, params_dir=dirs.PRETRAINED)
-
+        elif a.params is not None:
+            model.load_state_dict(
+                factories.get_translated_parameters(params_str=a.params,
+                                                    params_dir=dirs.PRETRAINED))
         return TrainingExperiment(model, trainer, data, logger, cpman)
 
 
+# TODO: remove
 def ikmo_get_cityscapes_val(datasets_dir, cache_dir):
     from pathlib import Path
     from torchvision.transforms import Compose
@@ -193,8 +185,7 @@ def ikmo_get_cityscapes_val(datasets_dir, cache_dir):
                             SetTargetSize(target_size=ts,
                                           target_size_feats=(ts[0] // 4, ts[1] // 4)),
                             Normalize(scale=255, mean=IKCityscapes.mean, std=IKCityscapes.std),
-                            Tensor(),
-                            ]))
+                            Tensor()]))
 
     def remap_labels(y):
         y[y == 19] = -1
