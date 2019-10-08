@@ -47,35 +47,35 @@ print(repr(np.array(trainer.metrics['ClassificationMetrics'].cm, dtype=np.int64)
 print(trainer.metrics['ClassificationMetrics'].compute())
 
 # hooks
-trainer.model.backbone.features.unit0_0.branching.block.norm1.orig.weight
-trainer.model.backbone.features.unit0_0.branching.block.norm1.orig.weight.grad
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.orig.weight
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.orig.weight.grad
 pp = {n: p for n, p in trainer.model.named_parameters() if torch.all(p == 0)}
 print('\n'.join(pp.keys()))
 
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_forward_hook(
     lambda s, inp, out, trainer=trainer: print(
-        trainer.model.backbone.features.unit0_0.branching.block.norm1.orig.weight))
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_forward_hook(
+        trainer.model.backbone.bulk.unit0_0.fork.block.norm1.orig.weight))
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_forward_hook(
     lambda s, inp, out, trainer=trainer: print(
-        trainer.model.backbone.features.unit0_0.branching.block.norm1.orig.bias))
+        trainer.model.backbone.bulk.unit0_0.fork.block.norm1.orig.bias))
 
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_forward_hook(
     lambda s, inp, out: print(inp[0].abs().max()))
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_forward_hook(
     lambda s, inp, out: print(inp[0].grad))
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_forward_hook(
     lambda s, inp, out: print(inp[0].grad, out.grad))
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_forward_hook(
     lambda s, inp, out: print(out))
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_backward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_backward_hook(
     lambda s, ig, og: print(ig[0].grad, og))
-trainer.model.backbone.features.unit0_0.branching.block.norm1.register_backward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.norm1.register_backward_hook(
     lambda s, ig, og: print(og))
-trainer.model.backbone.features.unit0_0.branching.block.act1.register_backward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.act1.register_backward_hook(
     lambda s, ig, og: print(ig[0].abs().sum()))
-trainer.model.backbone.features.unit0_0.branching.block.act1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.act1.register_forward_hook(
     lambda s, inp, out: print(inp[0].abs().max()))
-trainer.model.backbone.features.unit0_0.branching.block.act1.register_forward_hook(
+trainer.model.backbone.bulk.unit0_0.fork.block.act1.register_forward_hook(
     lambda s, inp, out: print((inp[0] > 0).float().mean()))
 
 
@@ -157,7 +157,7 @@ for m in trainer.model.modules():
         print(type(m))
 
 # tent adversairal example visualization pre-code
-state=torch.load('/home/igrubisic/data/states/cifar10{trainval,test}/ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=C.Tent))/AdversarialTrainer,++{++configs.wrn_cifar_tent,++configs.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True)/_/91/state.pth')
+state=torch.load('/home/igrubisic/data/states/cifar10{trainval,test}/ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=mc.Tent))/AdversarialTrainer,++{++configs.wrn_cifar_tent,++configs.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True)/_/91/state.pth')
 trainer.model.load_state_dict(state['model'])
 from vidlu.training.configs import *
 trainer.eval_attack = madry_cifar10_attack(trainer.model, step_count=50,eps=40/255)
@@ -173,15 +173,15 @@ trainer.optimizer=optim.SGD([dict(params=other_params), dict(params=delta_params
 # activations
 from vidlu.modules import with_intermediate_outputs
 for i in range(4):
-    print((tuple(with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.output.x)[1].values())[0]!=0).float().mean())
+    print((with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.output.x)[1][0]!=0).float().mean())
 
 from vidlu.modules import with_intermediate_outputs
 for i in range(4):
-    print((tuple(with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1].values())[0]).float())
+    print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][0]).float())
 
 from vidlu.modules import with_intermediate_outputs
 for i in range(4):
-    print((tuple(with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1].values())[0]>0.5).float().mean())
+    print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][0]>0.5).float().mean())
 
 
 from vidlu.modules import with_intermediate_outputs
