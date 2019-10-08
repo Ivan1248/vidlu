@@ -2,7 +2,6 @@ import numpy as np
 import torch
 
 from vidlu.utils.func import compose
-from .transformers import image_transformer, is_numpy_image, is_pil_image, is_torch_image
 from . import image as imt
 
 

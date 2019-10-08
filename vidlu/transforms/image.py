@@ -111,6 +111,7 @@ def to_torch(x):
     else:
         raise TypeError()
 
+
 class ToTorch:
     __call__ = staticmethod(to_torch)
 
@@ -326,9 +327,6 @@ Div = func_to_class(div)
 
 class Standardize:
     def __init__(self, mean, std):
-        # breakpoint()
-        # mean, std = torch.tensor([0.485, 0.456, 0.406]) * 255, torch.tensor(
-        #    [0.229, 0.224, 0.225]) * 255
         self.mean, self.std = mean.view(-1, 1, 1), std.view(-1, 1, 1)
 
     def __call__(self, x):

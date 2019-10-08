@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-
+from vidlu import ops
 from vidlu.utils.torch import disable_tracking_bn_stats, save_grads
 
 # Cross entropy ####################################################################################
@@ -78,7 +78,7 @@ class CarliniWagnerLoss(nn.Module):
         :return: CW loss value.
         """
         num_classes = input.size(1)
-        label_mask = one_hot(target, num_classes=num_classes).float()
+        label_mask = ops.one_hot(target, num_classes, dtype=torch.float)
         correct_logit = torch.sum(label_mask * input, dim=1)
         wrong_logit = torch.max((1. - label_mask) * input, dim=1)[0]
         loss = -F.relu(correct_logit - wrong_logit + 50.).sum()

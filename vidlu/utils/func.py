@@ -66,11 +66,11 @@ def freeze_nonempty_args(func):
     return hard_partial(func, **{k: v for k, v in default_args(func) if v is not Empty})
 
 
-def tryable(func, default_value):
+def tryable(func, default_value, error_type=Exception):
     def try_(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except:
+        except error_type:
             return default_value
 
     return try_
@@ -143,7 +143,7 @@ def partial_with_args_from_dict(func, dict):
 
 # parameters/arguments #############################################################################
 
-def parameter_count(func) -> int:
+def param_count(func) -> int:
     if not callable(func):
         raise ValueError("The argument should be a function.")
     return len(signature(func).parameters)
