@@ -1,6 +1,5 @@
 import subprocess
 import warnings
-
 import xmltodict
 from argparse import Namespace
 import os
@@ -13,6 +12,9 @@ def nvidia_smi():
     xml_output = subprocess.Popen(['nvidia-smi', '-q', '-x'], stdout=subprocess.PIPE) \
         .communicate()[0]
     return xmltodict.parse(xml_output)['nvidia_smi_log']
+
+def set_cuda_visible_devices(arg):
+    os.environ['CUDA_VISIBLE_DEVICES'] = arg
 
 
 def get_gpu_statuses(measurement_count=1, measuring_interval=1.0):
@@ -69,7 +71,7 @@ def get_first_available_cuda_gpu(max_gpu_util, min_mem_free, no_processes=True):
     return best_idx, statuses, availabilities
 
 
-def get_first_available_device(max_gpu_util=0.2, min_mem_free=4000, no_processes=True, verbosity=0):
+def get_first_available_device(max_gpu_util=0.3, min_mem_free=4000, no_processes=True, verbosity=0):
     try:
         device_idx, statuses, availabilities = get_first_available_cuda_gpu(
             max_gpu_util, min_mem_free, no_processes=no_processes)
