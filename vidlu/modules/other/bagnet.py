@@ -2,7 +2,7 @@ import torch.nn as nn
 import math
 from torch.utils import model_zoo
 
-from vidlu.modules.components import RootBlock
+from vidlu.modules.components import StandardRootBlock
 
 import os
 
@@ -70,7 +70,7 @@ class BagNet(nn.Module):
         #                       bias=False)
         #self.conv2 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0,
         #                       bias=False)
-        self.root = RootBlock(64, small_input)
+        self.root = StandardRootBlock(64, small_input)
         self.bn1 = nn.BatchNorm2d(64, momentum=0.001)
         self.relu = nn.ReLU(inplace=True)
         self.layer1 = self._make_layer(block, 64, layers[0], stride=strides[0], kernel3=kernel3[0],

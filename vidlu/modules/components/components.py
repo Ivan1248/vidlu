@@ -6,7 +6,7 @@ from torch import nn
 from torch.nn import functional as F
 
 from vidlu.modules.elements import (Module, Sequential, ModuleTable, Conv, MaxPool, Linear, Func,
-                                    AvgPool, Sum, Concat, Branching, Parallel)
+                                    AvgPool, Sum, Concat, Fork, Parallel)
 import vidlu.modules.elements as E
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
@@ -27,7 +27,7 @@ def _call_no_inplace(module_f):
 
 
 class Tent(Module):
-    def __init__(self, channelwise=False, delta_range=(0.05, 1.)):
+    def __init__(self, inplace=False, channelwise=False, delta_range=(0.05, 1.)):
         super().__init__()
         self.channelwise = channelwise
         self.min_delta, self.max_delta = delta_range
@@ -40,13 +40,13 @@ class Tent(Module):
         with torch.no_grad():
             self.delta.clamp_(self.min_delta, self.max_delta)
         delta = self.delta.view(list(self.delta.shape) + [1] * (len(x.shape) - 2))
-        #return F.relu(delta - (x - delta).abs())  # centered at delta
+        # return F.relu(delta - (x - delta).abs())  # centered at delta
         return F.relu(delta - x.abs())
 
 
 # ResNet/DenseNet root block #######################################################################
 
-class RootBlock(Sequential):
+class StandardRootBlock(Sequential):
     """Standard ResNet/DenseNet root block.
 
     Args:
@@ -63,7 +63,7 @@ class RootBlock(Sequential):
         else:
             super().__init__(conv=Conv(out_channels, 7, stride=2, padding='half', bias=False),
                              norm=norm_f(),
-                             activation=act_f(),
+                             act=act_f(),
                              pool=MaxPool(3, stride=2, padding='half'))
 
 
@@ -284,11 +284,12 @@ class KresoContext(Sequential):
 
 
 class KresoLadderNet(Module):
-    def __init__(self, backbone_f, intermediate_paths, ladder_width, context_f=DenseSPP,
+    def __init__(self, backbone_f, laterals, ladder_width, context_f=DenseSPP,
                  up_blend_f=LadderUpsampleBlend, post_activation=False):
         super().__init__()
-        self.backbone = E.IntermediateOutputsModuleWrapper(backbone_f(),
-                                                           intermediate_paths)
+        self.laterals = laterals
+        # self.backbone = E.IntermediateOutputsModuleWrapper(backbone_f(), laterals)
+        self.backbone = backbone_f()
         self.context = context_f()
         self.ladder = KresoLadder(ladder_width, up_blend_f)
         defaults = default_args(default_args(up_blend_f).blend_block_f)
@@ -296,10 +297,10 @@ class KresoLadderNet(Module):
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
 
     def forward(self, x):
-        context_input, skips = self.backbone(x)
+        # context_input, skips = self.backbone(x)
+        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
         context = self.context(context_input)
-        skips = skips[::-1]
-        ladder_output = self.ladder(context, skips)
+        ladder_output = self.ladder(context, laterals[::-1])
         return self.act(self.norm(ladder_output)) if self.args.post_activation else ladder_output
 
 
@@ -336,7 +337,7 @@ class ResNetV1Unit(Sequential):
         block_f = self.args.block_f
         block = Reserved.call(block_f)[:-1]  # block without the last activation
         self.add_modules(
-            branching=Branching(
+            fork=Fork(
                 shortcut=shortcut,
                 block=block),
             sum=Sum(),
@@ -379,10 +380,10 @@ class ResNetV1Backbone(Sequential):
         _check_block_args(block_f)
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         super().__init__(
-            root=RootBlock(base_width, small_input, **norm_act_args),
-            features=groups_f(group_lengths, base_width=base_width,
-                              width_factors=width_factors,
-                              block_f=block_f, dim_change=dim_change))
+            root=StandardRootBlock(base_width, small_input, **norm_act_args),
+            bulk=groups_f(group_lengths, base_width=base_width,
+                          width_factors=width_factors,
+                          block_f=block_f, dim_change=dim_change))
 
 
 # ResNetV2 #########################################################################################
@@ -443,11 +444,11 @@ class ResNetV2Unit(Sequential):
         out_width = block_args.base_width * block_args.width_factors[-1]
         stride = block_args.stride
         if stride == 1 and in_width == out_width:
-            self.add_module(branching=Branching(shortcut=nn.Identity(), block=block))
+            self.add_module(fork=Fork(shortcut=nn.Identity(), block=block))
         else:
             shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, dim_change)
             self.add_modules(preact=block[:'conv0'],
-                             branching=Branching(shortcut=shortcut, block=block['conv0':]))
+                             fork=Fork(shortcut=shortcut, block=block['conv0':]))
         self.add_module(sum=Sum())
 
 
@@ -540,8 +541,8 @@ class DenseNetBackbone(Sequential):
                  compression=default_args(DenseSequence).compression,
                  block_f=default_args(DenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
-                         features=DenseSequence(growth_rate, db_lengths, compression, block_f))
+        super().__init__(root=StandardRootBlock(2 * growth_rate, small_input, **norm_act_args),
+                         bulk=DenseSequence(growth_rate, db_lengths, compression, block_f))
 
 
 # MDenseNet ########################################################################################
@@ -614,8 +615,8 @@ class MDenseNetBackbone(Sequential):
                  compression=default_args(MDenseSequence).compression,
                  block_f=default_args(MDenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
-                         features=MDenseSequence(growth_rate, db_lengths, compression, block_f))
+        super().__init__(root=StandardRootBlock(2 * growth_rate, small_input, **norm_act_args),
+                         bulk=MDenseSequence(growth_rate, db_lengths, compression, block_f))
 
 
 # FDenseNet ########################################################################################
@@ -678,8 +679,8 @@ class FDenseNetBackbone(Sequential):
                  compression=default_args(FDenseSequence).compression,
                  block_f=default_args(FDenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        super().__init__(root=RootBlock(2 * growth_rate, small_input, **norm_act_args),
-                         features=FDenseSequence(growth_rate, db_lengths, compression, block_f))
+        super().__init__(root=StandardRootBlock(2 * growth_rate, small_input, **norm_act_args),
+                         bulk=FDenseSequence(growth_rate, db_lengths, compression, block_f))
 
 
 # VGG ##############################################################################################

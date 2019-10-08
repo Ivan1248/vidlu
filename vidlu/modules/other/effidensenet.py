@@ -99,16 +99,16 @@ class DenseNet(nn.Module):
 
         # First convolution
         if small_inputs:
-            self.features = nn.Sequential(OrderedDict([
+            self.bulk = nn.Sequential(OrderedDict([
                 ('conv0', nn.Conv2d(3, num_init_features, kernel_size=3, stride=1, padding=1, bias=False)),
             ]))
         else:
-            self.features = nn.Sequential(OrderedDict([
+            self.bulk = nn.Sequential(OrderedDict([
                 ('conv0', nn.Conv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False)),
             ]))
-            self.features.add_module('norm0', nn.BatchNorm2d(num_init_features))
-            self.features.add_module('relu0', nn.ReLU(inplace=True))
-            self.features.add_module('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1,
+            self.bulk.add_module('norm0', nn.BatchNorm2d(num_init_features))
+            self.bulk.add_module('relu0', nn.ReLU(inplace=True))
+            self.bulk.add_module('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1,
                                                            ceil_mode=False))
 
         # Each denseblock
@@ -122,16 +122,16 @@ class DenseNet(nn.Module):
                 drop_rate=drop_rate,
                 efficient=efficient,
             )
-            self.features.add_module('denseblock%d' % (i + 1), block)
+            self.bulk.add_module('denseblock%d' % (i + 1), block)
             num_features = num_features + num_layers * growth_rate
             if i != len(block_config) - 1:
                 trans = _Transition(num_input_features=num_features,
                                     num_output_features=int(num_features * compression))
-                self.features.add_module('transition%d' % (i + 1), trans)
+                self.bulk.add_module('transition%d' % (i + 1), trans)
                 num_features = int(num_features * compression)
 
         # Final batch norm
-        self.features.add_module('norm_final', nn.BatchNorm2d(num_features))
+        self.bulk.add_module('norm_final', nn.BatchNorm2d(num_features))
 
         # Linear layer
         self.classifier = nn.Linear(num_features, num_classes)
@@ -149,7 +149,7 @@ class DenseNet(nn.Module):
                 param.data.fill_(0)
 
     def forward(self, x):
-        features = self.features(x)
+        features = self.bulk(x)
         out = F.relu(features, inplace=True)
         out = F.avg_pool2d(out, kernel_size=self.avgpool_size).view(features.size(0), -1)
         out = self.classifier(out)
