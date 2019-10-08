@@ -1,8 +1,6 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
-from functools import partial
 
 mem = [torch.cuda.max_memory_allocated()]
 d = []
