@@ -1,7 +1,7 @@
 from collections.abc import Sequence, KeysView, ValuesView, ItemsView
 from functools import reduce
 
-from vidlu.utils.func import parameter_count
+from vidlu.utils.func import param_count
 
 
 # Record
@@ -9,9 +9,10 @@ from vidlu.utils.func import parameter_count
 class _LazyField:
     __slots__ = "get"
 
-    def __init__(self, get):
-        if parameter_count(get) != 0:
-            raise ValueError("get should be callable with no parameters.")
+    def __init__(self, get, *args):
+        if param_count(get) not in [0, 1]:
+            raise ValueError("get should be a callable with either 0 (simple lazy evaluation) or 1"
+                             +" parameter (in case of referring back to the 'Record' object).")
         self.get = get
 
 
@@ -46,10 +47,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
 
     __slots__ = "_dict"
 
-    instance_count = 0
-
     def __init__(self, *args, **kwargs):
-        Record.instance_count += 1
         if len(args) > 1:
             raise ValueError("All arguments but the first one must be keyword arguments."
                              + " The optional positional argument can only be a Record or Mapping.")
@@ -80,7 +78,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
                 key = tuple(self.keys())[key]
             val = self._dict[key]
             if isinstance(val, _LazyField):
-                val = self._dict[key] = val.get()
+                val = self._dict[key] = val.get() if param_count(val.get) == 0 else val.get(self)
             return val
 
     def __iter__(self):  # returns values, Iterable
