@@ -58,6 +58,14 @@ def create_file_atomic(path, save_action):
         os.rename(tmp.name, path)
 
 
+def read_text(path):
+    return Path(path).open("r").read()
+
+
+def read_lines(path):
+    return Path(path).open("r").readlines()
+
+
 def write_text(path, text, append=False):
     Path(path).open("w").write(text)
 
