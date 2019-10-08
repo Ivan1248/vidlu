@@ -2,13 +2,19 @@ import logging
 import time
 from collections import defaultdict
 import warnings
-
-from ignite._utils import _to_hours_mins_secs
+from vidlu.utils.collections import NameDict
 
 from vidlu.utils.misc import Event
 
 
-class State(object):
+def _to_hours_mins_secs(time_taken):
+    """Convert seconds to hours, mins, and seconds."""
+    mins, secs = divmod(time_taken, 60)
+    hours, mins = divmod(mins, 60)
+    return hours, mins, secs
+
+
+class State(NameDict):
     """An object that is used to pass internal and user-defined state between event handlers"""
 
     def __init__(self, **kwargs):
@@ -21,10 +27,6 @@ class State(object):
         self.batch = None
         self.batch_count = None
         self.update(**kwargs)
-
-    def update(self, **kwargs):
-        for k, v in kwargs.items():
-            setattr(self, k, v)
 
 
 class Engine(object):
@@ -100,6 +102,7 @@ class Engine(object):
             self.iteration_started(self.state)
             self.state.output = self._process_function(self, batch)
             self.iteration_completed(self.state)
+            del self.state.batch, self.state.output
             if self.should_terminate or self.should_terminate_single_epoch:
                 self.should_terminate_single_epoch = False
                 break
