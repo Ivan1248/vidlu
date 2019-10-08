@@ -2,8 +2,8 @@ import warnings
 
 from torch import nn
 
-from vidlu.modules import components as com
-from vidlu.modules import elements as mod
+import vidlu.modules.components as mc
+import vidlu.modules as M
 
 
 def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
@@ -19,14 +19,13 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
     if zero_init_residual:
         found = 0
         for m in module.modules():
-            # break #
-            if isinstance(m, (com.ResNetV1Unit)):
-                # not com.ResNetV2Unit because it seems not to work better
-                block = m.branching.block
-                last_bn = [c for c in block.children() if isinstance(c, mod.BatchNorm)][-1]
+            if isinstance(m, (mc.ResNetV1Unit)):
+                found += 1
+                # not mc.ResNetV2Unit because it seems not to work better
+                last_bn = [c for c in m.fork.block.children() if isinstance(c, M.BatchNorm)][-1]
                 nn.init.constant_(last_bn.orig.weight, 1e-16)
         if not found:
-            warnings.warn("Batch normalization modules for residual zero-init not found.")
+            warnings.warn("Batch normalization module for residual zero-init not found.")
 
 
 def kaiming_densenet(module, nonlinearity='relu'):
