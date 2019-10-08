@@ -83,7 +83,7 @@ class _WriterExprVisitor(_ScannerWriterVisitorBase):
     def __init__(self, vars_, **kwargs):
         super().__init__(**kwargs)
         self.vars = vars_
-        self.vars_str = ','.join(f"{k}='{v}'" for k, v in vars_.items())
+        self.vars_str = ', '.join(f"{k}='{v}'" for k, v in vars_.items())
 
     def visit_dict_translation(self, node, children):
         if self.debug: print(f"dict_translation: {children}")
@@ -178,25 +178,52 @@ class FormatWriter:
 
 
 class FormatTranslator:
-    def __init__(self, input_format, output_format, full_match=True, debug=False):
+    def __init__(self, input_format, output_format, full_match=True, error_on_no_match=False):
         self.scanner = FormatScanner(input_format, full_match=full_match)
         self.writer = FormatWriter(output_format)
+        self.error_on_no_match = error_on_no_match
 
     def __call__(self, input, **additional_vars):
-        vars_ = self.scanner(input)
-        return self.writer(**vars_, **additional_vars)
-
-    def try_translate(self, input, **additional_vars):
         try:
-            return self(input, **additional_vars)
+            vars_ = self.scanner(input)
+            return self.writer(**vars_, **additional_vars)
         except NoMatchError as ex:
+            if self.error_on_no_match:
+                raise
             return None
+
+
+class FormatTranslatorCascade:
+    def __init__(self, input_output_format_pairs, error_on_no_match=True):
+        self.input_output_format_pairs = tuple(input_output_format_pairs)
+        self.translators = [FormatTranslator(inp, out, full_match=True)
+                            for inp, out in input_output_format_pairs]
+        self.error_on_no_match = error_on_no_match
+
+    def __call__(self, input):
+        for t in self.translators:
+            output = t(input)
+            if output is not None:
+                return output
+        if not self.error_on_no_match:
+            return input
+        messages = []
+        for (inp, out), t in zip(self.input_output_format_pairs, self.translators):
+            try:
+                t(input)
+            except NoMatchError as ex:
+                messages.append((inp, str(ex)))
+        if self.error_on_no_match:
+            messages = '\n'.join(
+                f"  {i}. {inp} -> {err}\n" for i, (inp, err) in enumerate(messages))
+            raise NoMatchError(f'Input "{input}" matches no input format.\n{messages}')
 
 
 def to_snake_case(identifier):
     identifier = re.sub(r"([A-Z]+)([A-Z][a-z])", r'\1_\2', identifier)
     identifier = re.sub(r"([a-z\d])([A-Z])", r'\1_\2', identifier)
     return identifier.lower()
+
 
 def to_pascal_case(identifier):
     return ''.join(x.title() for x in identifier.split('_'))
