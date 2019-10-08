@@ -13,19 +13,17 @@ from pathlib import Path
 import shutil
 import warnings
 import multiprocessing
-import json
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
-from .record import Record
-from .misc import default_collate, pickle_sizeof
-
 from vidlu.utils.misc import slice_len, query_yes_no
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
-from vidlu.utils.func import identity
+
+from .record import Record
+from .misc import default_collate, pickle_sizeof
 
 
 # Helpers ######################################################################
@@ -148,7 +146,7 @@ class Dataset(Sequence):
     def get_example(self, idx):  # This can be overridden
         return self.data[idx]
 
-    def approx_example_sizeof(self, sample_count=30):
+    def approx_example_size(self, sample_count=4):
         return pickle_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
 
     def batch(self, batch_size, **kwargs):  # Element type is tuple
@@ -428,7 +426,8 @@ class HDDCacheDataset(Dataset):
     # Caches the whole dataset on HDD
     __slots__ = ('cache_dir', 'separate_fields', 'keys')
 
-    def __init__(self, dataset, cache_dir, separate_fields=True, **kwargs):
+    def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=4,
+                 **kwargs):
         modifier = 'cache_hdd' + ('_s' if separate_fields else '')
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
         self.cache_dir = to_valid_path(Path(cache_dir) / self.identifier)
@@ -439,7 +438,6 @@ class HDDCacheDataset(Dataset):
                     f"If `separate_fields == True`, the element type must be `Record`.")
             self.keys = list(self.data[0].keys())
         os.makedirs(self.cache_dir, exist_ok=True)
-        consistency_check_sample_count = 16
         for i in range(consistency_check_sample_count):
             ii = i * len(dataset) // consistency_check_sample_count
             if pickle.dumps(dataset[ii]) != pickle.dumps(self[ii]):
