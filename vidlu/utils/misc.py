@@ -1,15 +1,16 @@
+from contextlib import contextmanager
 import select
 import sys
 import platform
 import os
 import hashlib
-import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+import time
+import contextlib
 
 from tqdm import tqdm
-
-from . import func
+import urllib.request
 
 
 # Slicing ##########################################################################################
@@ -33,12 +34,11 @@ class Event:
     def remove_handler(self, handler):
         self.handlers.remove(handler)
 
-    def handler(self):
-        def decorator(f):
-            self.add_handler(f)
-            return f
-
-        return decorator
+    @contextlib.contextmanager
+    def temporary_handler(self, handler):
+        self.add_handler(handler)
+        yield handler
+        self.remove_handler(handler)
 
     def __call__(self, *args, **kwargs):
         for handler in self.handlers:
@@ -188,6 +188,10 @@ def fuse(*dicts, overriding=None, ignore_if_equal=True, factory=None):
     return result
 
 
+def dict_difference(a, b):
+    return type(a)({k: v for k, v in a.items() if k not in b})
+
+
 def update_existing_items(dest, src, copy=False):
     if copy:
         dest = dest.copy()
@@ -221,3 +225,18 @@ def trace_calls():
     import sys
 
     sys.settrace(tracefunc)
+
+
+# context manager timer
+
+class CMTimer:
+    def __init__(self, time_func=time.time):
+        self.time_func = time_func
+
+    def __enter__(self):
+        self.start = self.time_func()
+        return self
+
+    def __exit__(self, *args):
+        self.end = self.time_func()
+        self.interval = self.end - self.start
