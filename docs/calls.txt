@@ -1,0 +1,91 @@
+ve   vidlu.experiments
+vf   vidlu.factories
+vd   vidlu.data
+vdu  vidlu.data_utils
+vuf  vidlu.utils.func
+vut  vidlu.utils.tree
+vmc  vidlu.modules.components
+vt   vidlu.training
+vtm  vidlu.training.metrics
+vtc  vidlu.training.configs
+vp   vidlu.parameters
+
+defaults vidlu.defaults
+problem  vidlu.problem
+
+------------------------------------------------
+Calls in a typical python run.py.train execution
+------------------------------------------------
+
+e <- ve.TrainingExperiment.from_args
+  torch.device
+  ve.get_prepared_data_for_trainer
+    vf.get_data
+      get_parted_dataset <- vd.DatasetFactory
+      |1 get_parted_dataset <- vdu.CachingDatasetFactory
+      get_parted_dataset
+        vd.PartedDataset
+        ?1 add_image_statistics_to_info_lazily
+          compute_pixel_mean_std
+          vd.Dataset.info_cache_hdd
+            vd.dataset.HDDInfoCacheDataset
+          vd.PartedDataset.with_transform  # vd.Dataset.cache_hdd
+            vd.dataset.HDDCacheDataset
+        cache_data_lazily
+          vd.PartedDataset.with_transform
+    vut.flatten
+    prepare <- vf.get_data_preparation
+    prepare
+  model <- vf.get_model
+    defaults.get_problem_from_dataset
+    vdu.DataLoader  # for init_input
+    model_class <- vm.getattr
+    defaults.get_model_argtree
+      vmc.*Head
+      problem.*
+      vuf.ArgTree
+    vuf.ArgTree
+    vuf.ArgTree.update
+    vf.get_input_adapter
+    model_f <- vuf.argtree_hard_partial
+    model <- model_f
+    model.initialize | model
+    model.to
+  vf.get_trainer
+    vt.getattr
+    defaults.get_trainer_argtree
+    vuf.ArgTree
+    vuf.ArgTree.update
+    trainer_f <- vuf.argtree_hard_partial
+  vf.get_metrics
+    defaults.get_problem_from_dataset
+    defaults.get_metrics
+      vtm.*Metric*
+    defaults.get_metric_args
+  ve.Logger
+  ve.get_checkpoint_manager
+    vt.CheckpointManager
+  ve.define_training_loop_actions
+  ?torch.nn-Module.load_state_dict
+  ?vf.get_translated_parameters
+    vp.get_translated_parameters
+      torch.load
+      vp.translate
+        vp.translate_*
+  ?torch.nn-Module.load_state_dict
+  model.load_state_dict
+  ve.TrainingExperiment
+
+e.trainer.eval / vt.Trainer.eval
+  vt.Evaluator.eval
+    vt.Evaluator.data_loader_f
+    vt.engine.Engine.run
+      torch.data.DataLoader
+        vd.HDDCacheDataset.__getitem__
+          vd.HDDInfoCacheDataset.__getitem__
+            vd.datasets.*.__getitem__
+        data_utils.default_collate
+      vt.Evaluator.eval_step / vtc.*_eval_step
+        vt.Evaluator.prepare_batch / vt.default_prepare_batch
+          torch.Tensor.to
+

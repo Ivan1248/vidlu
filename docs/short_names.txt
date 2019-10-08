@@ -1,0 +1,15 @@
+dc   dataclasses
+
+M    vidlu.modules
+mc   vidlu.modules.components
+T    vidlu.training
+ta   vidlu.training.adversarial
+tc   vidlu.training.configs
+t    vidlu.utils.func.ArgTree  # in vidlu.factories
+o    vidlu.ops
+ob   vidlu.ops.batch
+
+Longer short names:
+tvmodels torchvision.models
+models   vidlu.models
+trainers vidlu.training.trainers
