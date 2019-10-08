@@ -1,14 +1,15 @@
-import collections
 from functools import partial
 import contextlib
+from dataclasses import dataclass
 
 import torch
 from torch import optim
-from torch.optim import lr_scheduler
 
+from vidlu.data import Record
+from vidlu.modules import get_submodule
 from vidlu.transforms import jitter
 from vidlu.utils.func import default_args, params, Empty
-from vidlu.utils.misc import fuse
+from vidlu.utils.misc import fuse, dict_difference
 from vidlu.utils.collections import NameDict
 from vidlu.utils.torch import fuse_tree_batches, disable_tracking_bn_stats
 from .adversarial import attacks
@@ -22,10 +23,27 @@ def classification_extend_output(output):
     if not isinstance(output, torch.Tensor):
         raise ValueError("The output must ba a `torch.Tensor`.")
     logits = output
-    log_probs = logits.log_softmax(1)
-    probs = log_probs.exp()
-    return logits, NameDict(output=logits, log_probs=log_probs,
-                            probs=probs, hard_prediction=logits.argmax(1))
+    return logits, Record(output=logits, log_probs_=lambda: logits.log_softmax(1),
+                          probs_=lambda r: r.log_probs.exp(), hard_prediction_=lambda: logits.argmax(1))
+
+
+# Optimizer makers
+
+@dataclass
+class FineTuningOptimizerMaker:
+    finetuning: dict
+
+    def __call__(self, trainer, optimizer_f, **kwargs):
+        groups = {
+            k: {f'{k}.{k_}': p for k_, p in get_submodule(trainer.model, k).named_parameters()}
+            for k in self.finetuning}
+        remaining = dict(trainer.model.named_parameters())
+        for g in groups.values():
+            remaining = dict_difference(remaining, g)
+        lr = params(optimizer_f).lr
+        params_ = ([dict(params=groups[k].values(), lr=f * lr) for k, f in self.finetuning.items()]
+                   + [dict(params=remaining.values())])
+        return optimizer_f(params_, weight_decay=trainer.weight_decay, **kwargs)
 
 
 # Training/evaluation steps ########################################################################
@@ -42,7 +60,7 @@ def supervised_eval_step(trainer, batch):
     return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item())
 
 
-def _supervised_train_step_p(trainer, x, y):
+def _supervised_train_step_x_y(trainer, x, y):
     trainer.model.train()
     trainer.optimizer.zero_grad()
     output, other_outputs = trainer.extend_output(trainer.model(x))
@@ -53,7 +71,7 @@ def _supervised_train_step_p(trainer, x, y):
 
 
 def supervised_train_step(trainer, batch):
-    return _supervised_train_step_p(trainer, *trainer.prepare_batch(batch))
+    return _supervised_train_step_x_y(trainer, *trainer.prepare_batch(batch))
 
 
 ## Supervised multistep
@@ -127,7 +145,7 @@ class SupervisedSlidingBatchTrainStep:
         if self.prev_x_y is None:  # the first batch
             self.prev_x_y = x_y
             self.start_index = stride
-            return _supervised_train_step_p(trainer, *x_y)
+            return _supervised_train_step_x_y(trainer, *x_y)
 
         x, y = [torch.cat([a, b], dim=0) for a, b in zip(self.prev_x_y, x_y)]
         starts = list(range(self.start_index, len(x) - n + 1, stride))
@@ -210,42 +228,23 @@ def first_output_callback(output_ref: list):
             output_ref.append(r)
 
 
-class CleanAdversarialTrainBiStep:
-    def __init__(self, adversarial_only=False, virtual=False):
-        self.adversarial_only = adversarial_only
-        self.virtual = virtual
-
-    def __call__(self, trainer, batch):
-        x, y = trainer.prepare_batch(batch)
-
-        crc = CleanResultCallback(trainer.extend_output)
-        if not self.adversarial_only:
-            crc.result = supervised_train_step(trainer, batch)
-
-        trainer.model.eval()  # adversarial examples are generated in eval mode
-        x_adv = trainer.attack.perturb(x, *(() if self.virtual else (y,)),
-                                       backward_callback=crc)
-
-        result_adv = _supervised_train_step_p(trainer, x_adv, y)
-        return NameDict(x=x, output=crc.result.output, target=y,
-                        other_outputs=crc.result.other_outputs, loss=crc.result.loss,
-                        x_adv=x_adv, output_adv=result_adv.output,
-                        other_outputs_adv=result_adv.other_outputs, loss_adv=result_adv.loss)
-
-
 class AdversarialTrainStep:
-    """ Adversarial training step.
+    """ Adversarial training step with the option to keep a the batch partially
+    clean.
 
     It calls `trainer.model.eval()`, `trainer.attack.perturb` with
     `1 - clean_proportion` of input examples, and the corresponding labels
     if `virtual` is `False`. Then makes a training step with adversarial
-    examples mixed with clean examples, depending on `clean_proprotion`.
+    examples mixed with clean examples, depending on `clean_proportion`.
+
+    'mean' reduction is assumed for the loss.
+
 
     Args:
-        clean_proportion (float): The proprtion of input examples that should be
-            turned into adversarial examples in each step.
-        virtual (bool): whether virtual advarsarial examples should be used
-            (using the predicted label).
+        clean_proportion (float): The proportion of input examples that should
+            not be turned into adversarial examples in each step. Default: 0.
+        virtual (bool): A value determining whether virtual adversarial examples
+            should be used (using the predicted label).
     """
 
     def __init__(self, clean_proportion=0, virtual=False):
@@ -257,8 +256,7 @@ class AdversarialTrainStep:
         cln_count = round(self.clean_proportion * len(x))
         cln_proportion = cln_count / len(x)
         split = lambda a: (a[:cln_count], a[cln_count:])
-        x_c, x_a = split(x)
-        y_c, y_a = split(y)
+        (x_c, x_a), (y_c, y_a) = split(x), split(y)
 
         crc = CleanResultCallback(trainer.extend_output)
         trainer.model.eval()  # adversarial examples are generated in eval mode
@@ -266,20 +264,91 @@ class AdversarialTrainStep:
                                        backward_callback=crc)
         trainer.model.train()
         trainer.optimizer.zero_grad()
-        output, other_outputs = trainer.extend_output(trainer.model(torch.cat([x_c, x_adv], dim=0)))
+
+        output, other_outputs = trainer.extend_output(trainer.model(torch.cat((x_c, x_adv), dim=0)))
         output_c, output_adv = split(output)
         loss_adv = trainer.loss(output_adv, y_a)
         loss_c = trainer.loss(output_c, y_c) if len(y_c) > 0 else 0
-        # 'mean' reduction is assumed for the loss
         (cln_proportion * loss_c + (1 - cln_proportion) * loss_adv).backward()
+
         trainer.optimizer.step()
 
         other_outputs_adv = NameDict({k: a[cln_count:] for k, a in other_outputs.items()})
-
         return NameDict(x=x, output=crc.result.output, target=y,
                         other_outputs=crc.result.other_outputs, loss=crc.result.loss,
                         x_adv=x_adv, target_adv=y_a, output_adv=output_adv,
                         other_outputs_adv=other_outputs_adv, loss_adv=loss_adv.item())
+
+
+class AdversarialCombinedLossTrainStep:
+    """A training step that first performs an optimization on an weighted
+    combination of the standard loss and the adversarial loss.
+
+    Args:
+        use_attack_loss (bool): A value determining whether the loss function
+            from the attack (`trainer.attack.loss`) should be used as the
+            adversarial loss instead of the standard loss function
+            (`trainer.loss`).
+        clean_weight (float): The weight of the clean loss, a number
+            normally between 0 and 1. Default: 0.5.
+        adv_weight (float): The weight of the clean loss, a number normally
+            between 0 and 1. If no value is provided (`None`), it is computed as
+            `1 - clean_loss_weight`.
+        virtual (bool): A value determining whether virtual adversarial examples
+            should be used (using the predicted label).
+    """
+
+    def __init__(self, use_attack_loss, clean_weight=0.5, adv_weight=None, virtual=False):
+        self.use_attack_loss = use_attack_loss
+        self.clean_loss_weight = clean_weight
+        self.adv_loss_weight = 1 - clean_weight if adv_weight is None else adv_weight
+        self.virtual = virtual
+
+    def __call__(self, trainer, batch):
+        x, y = trainer.prepare_batch(batch)
+
+        trainer.model.eval()  # adversarial examples are generated in eval mode
+        x_adv = trainer.attack.perturb(x, *(() if self.virtual else (y,)))
+
+        trainer.model.train()
+        trainer.optimizer.zero_grad()
+
+        output_c, other_outputs_c = trainer.extend_output(trainer.model(x))
+        loss_c = trainer.loss(output_c, y)
+        output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
+        loss_adv = (trainer.attack if self.use_attack_loss else trainer).loss(output_adv, y)
+        loss = self.clean_loss_weight * loss_c + self.adv_loss_weight * loss_adv
+        loss.backward()
+
+        trainer.optimizer.step()
+
+        return NameDict(x=x, output=output_c, target=y, other_outputs=other_outputs_c, loss=loss_c,
+                        x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
+                        loss_adv=loss_adv.item())
+
+
+class AdversarialBiTrainStep:
+    """A training step that first performs an optimization step on a clean batch
+    and then on the batch turned into adversarial examples.
+
+    Args:
+        virtual (bool): A value determining whether virtual adversarial examples
+            should be used (using the predicted label).
+    """
+
+    def __init__(self, virtual=False):
+        self.virtual = virtual
+
+    def __call__(self, trainer, batch):
+        x, y = trainer.prepare_batch(batch)
+        clean_result = _supervised_train_step_x_y(trainer, x, y)
+        trainer.model.eval()  # adversarial examples are generated in eval mode
+        x_adv = trainer.attack.perturb(x, *(() if self.virtual else (y,)))
+        result_adv = _supervised_train_step_x_y(trainer, x_adv, y)
+        return NameDict(x=x, output=clean_result.output, target=y,
+                        other_outputs=clean_result.other_outputs, loss=clean_result.loss,
+                        x_adv=x_adv, output_adv=result_adv.output,
+                        other_outputs_adv=result_adv.other_outputs, loss_adv=result_adv.loss)
 
 
 class AdversarialTrainMultiStep:
@@ -353,6 +422,7 @@ class VATTrainStep:
 
 def adversarial_eval_step(trainer, batch):
     trainer.model.eval()
+
     x, y = trainer.prepare_batch(batch)
 
     with torch.no_grad():
@@ -410,11 +480,11 @@ def autoencoder_train_step(trainer, batch):
 # Adversarial attacks
 
 madry_cifar10_attack = partial(attacks.PGDAttack,
-                                    eps=8 / 255,
-                                    step_size=2 / 255,
-                                    grad_preprocessing='sign',
-                                    step_count=10,  # TODO: change
-                                    clip_bounds=(0, 1))
+                               eps=8 / 255,
+                               step_size=2 / 255,
+                               grad_preprocessing='sign',
+                               step_count=10,  # TODO: change
+                               clip_bounds=(0, 1))
 
 virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
                                      get_prediction='hard')
@@ -438,6 +508,12 @@ adversarial_free = dict(
     eval_step=adversarial_eval_step,  # TODO
     train_step=AdversarialTrainMultiStep())
 
+vat = dict(
+    eval_step=adversarial_eval_step,
+    train_step=AdversarialCombinedLossTrainStep(use_attack_loss=True, clean_weight=1, adv_weight=1),
+    attack_f=attacks
+)
+
 classification = dict(
     **supervised,
     extend_output=classification_extend_output)
@@ -453,7 +529,7 @@ resnet_cifar = dict(  # as in www.arxiv.org/abs/1603.05027
     epoch_count=200,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
     batch_size=128,
-    jitter=jitter.CifarJitter())
+    jitter=jitter.CifarPadRandomCropHFlip())
 
 resnet_cifar_cosine = fuse(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar,
@@ -478,7 +554,7 @@ densenet_cifar = dict(  # as in www.arxiv.org/abs/1608.06993
     epoch_count=100,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
     batch_size=64,
-    jitter=jitter.CifarJitter())
+    jitter=jitter.CifarPadRandomCropHFlip())
 
 small_image_classifier = dict(  # as in www.arxiv.org/abs/1603.05027
     **classification,
@@ -486,26 +562,46 @@ small_image_classifier = dict(  # as in www.arxiv.org/abs/1603.05027
     optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9),
     epoch_count=50,
     batch_size=64,
-    jitter=jitter.CifarJitter())
+    jitter=jitter.CifarPadRandomCropHFlip())
 
-ladder_densenet = dict(  # custom, TODO: crops
+ladder_densenet = dict(
     **classification,
     weight_decay=1e-4,
     optimizer_f=partial(optim.SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
     lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
     epoch_count=40,
     batch_size=4,
-    jitter=jitter.CityscapesJitter())
+    optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 4}),
+    jitter=jitter.SegRandomHFlip())
 
-swiftnet = dict(  # custom, TODO: crops
+swiftnet = dict(
     **classification,
-    weight_decay=1e-4,  # za imagenet 4 puta manje, tj. 16 puta uz množenje s korakom učenja
+    weight_decay=1e-4,  # za imagenet 4 puta manje, tj. 16 puta uz množenje r korakom učenja
     optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=Empty),
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
     batch_size=14,
-    fine_tuning={'backbone.backbone': 1 / 4},
-    jitter=jitter.CityscapesJitter())
+    eval_batch_size=8,
+    optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 4}),
+    jitter=jitter.SegRandomCropHFlip((768, 768)))
+
+swiftnet_camvid = fuse(
+    swiftnet,
+    overriding=dict(
+        lr_scheduler_f=partial(CosineLR, eta_min=1e-7),
+        epoch_count=250,  # 600
+        jitter=jitter.SegRandomCropHFlip((448, 448))))  # 448
+
+semseg_basic = dict(
+    **classification,
+    weight_decay=1e-4,
+    optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=Empty),
+    lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
+    epoch_count=40,
+    batch_size=8,
+    eval_batch_size=8,  # max 12?
+    optimizer_maker=FineTuningOptimizerMaker({'backbone': 1 / 4}),
+    jitter=jitter.SegRandomCropHFlip((768, 768)))
 
 mnistnet = dict(  # as in www.arxiv.org/abs/1603.05027
     **classification,
@@ -521,8 +617,7 @@ mnistnet_tent = dict(
     weight_decay=1e-4,
     epoch_count=40,
     lr_scheduler_f=None,
-    batch_size=100
-)
+    batch_size=100)
 
 mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
                                     eps=0.3,
@@ -537,18 +632,15 @@ mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
 wrn_cifar_tent = fuse(
     wrn_cifar,
     overriding=dict(optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=Empty),
-                    weight_decay=1e-4)
-)
+                    weight_decay=1e-4))
 
 resnet_cifar_adversarial_esos = fuse(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar,
     dict(attack_f=partial(madry_cifar10_attack, step_count=7),
          eval_attack_f=partial(madry_cifar10_attack, step_count=10, stop_on_success=True)),
-    overriding=adversarial
-)
+    overriding=adversarial)
 
 resnet_cifar_adversarial_multistep_esos = fuse(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar_adversarial_esos,
     overriding=dict(train_step=AdversarialTrainMultiStep(train_mode=False, update_period=8),
-                    epoch_count=25)
-)
+                    epoch_count=25))
