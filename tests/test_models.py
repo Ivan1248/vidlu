@@ -1,7 +1,7 @@
 import torch
 import torchvision
 
-from vidlu import factories, problem, parameter_loading
+from vidlu import factories, problem, parameters
 from vidlu.utils import text
 
 torch.no_grad()
@@ -17,7 +17,7 @@ def compare_with_torchvision(mymodelname, tvmodelname):
 
     tsd = tv_model.state_dict()
 
-    params = parameter_loading.translate_parameters(
+    params = parameters.translate(
         text.scan("{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a'], tsd)
     vidlu_model.load_state_dict(params)
 

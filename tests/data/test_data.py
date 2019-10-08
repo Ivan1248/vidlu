@@ -51,6 +51,11 @@ class TestRecord:
         r4.evaluate()
         assert str(r4) == "Record(a=3, b=2, c=4)"
 
+    def test_record_reflexive(self):
+        r5 = Record(a=2, b_=lambda: 3, c_=lambda r: r.a * r.b, d_=lambda r: r.c - r.b)
+        r5.evaluate()
+        assert str(r5) == "Record(a=2, b=3, c=6, d=3)"
+
 
 class TestDataset:
     def test_dataset_length(self):

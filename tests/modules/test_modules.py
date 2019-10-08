@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Sequential, Branching, Parallel,
+from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Sequential, Fork, Parallel,
                            Reduce, Sum, with_intermediate_outputs, deep_split, deep_join,
                            RevIdentity)
 from vidlu.utils.collections import NameDict
@@ -35,9 +35,9 @@ class TestModule:
     def test_scoped_sequential(self):
         x = torch.ones(4, 522)
         inner = Sequential(lin1=Linear(8), lin2=Sequential(Linear(5)))
-        m = Sequential(inner=inner)
-        m(x)
-        assert m in [p for p, cname in inner.parents]
+        M = Sequential(inner=inner)
+        M(x)
+        assert M in [p for p, cname in inner.parents]
         assert inner in [p for p, cname in inner.lin1.parents]
     """
 
@@ -49,14 +49,14 @@ class TestFunc:
         assert torch.all(node(x) == x ** 2)
 
 
-class TestSequentialBranchingParallelReduce:
+class TestSequentialForkParallelReduce:
     def test_sequential(self):
         m = Sequential(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
         for i in range(100):
             assert m(torch.tensor(i)) == (i + 1) * 3
 
-    def test_branching(self):
-        m = Branching(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
+    def test_fork(self):
+        m = Fork(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
         for i in range(100):
             assert m(torch.tensor(i)) == ((i + 1), 3 * i)
 
@@ -72,7 +72,7 @@ class TestSequentialBranchingParallelReduce:
             assert m(l) == sum(l)
 
     def test_combined(self):
-        m = Sequential(branch=Branching(id=nn.BIjectiveIdentity(),
+        m = Sequential(fork=Fork(id=nn.BIjectiveIdentity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(mul2=Func(lambda x: 2 * x),
                                      mul3=Func(lambda x: x * 3)),
@@ -81,12 +81,12 @@ class TestSequentialBranchingParallelReduce:
             assert m(torch.tensor(i)) == 2 * i + 3 * i ** 2
 
     def test_intermediate(self):
-        m = Sequential(branch=Branching(id=RevIdentity(),
+        m = Sequential(fork=Fork(id=RevIdentity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(add2=Func(lambda x: x + 2),
                                      mul3=Func(lambda x: x * 3)),
                        sum=Sum())
-        inter = ["branch.id", "para.mul3", "para"]
+        inter = ["fork.id", "para.mul3", "para"]
         iomw = with_intermediate_outputs(m, inter)
         for i in range(5):
             id = i
@@ -94,7 +94,7 @@ class TestSequentialBranchingParallelReduce:
             mul3 = 3 * i ** 2
             para = (add2, mul3)
             sum_ = add2 + mul3
-            assert iomw(torch.tensor(i)) == (sum_, dict(zip(inter, [id, mul3, para])))
+            assert iomw(torch.tensor(i)) == (sum_, [id, mul3, para])
 
 
 class TestConv:
