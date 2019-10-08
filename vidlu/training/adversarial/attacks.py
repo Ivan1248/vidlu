@@ -1,21 +1,20 @@
-from argparse import Namespace
+from collections import Callable
+import dataclasses as dc
 from dataclasses import dataclass
-from functools import partial
-import time
+from functools import partial, wraps
+from numbers import Number
+from typing import Union
 
 import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch import optim
-from tqdm import trange
 
 from vidlu.modules.loss import SoftmaxCrossEntropyLoss
 from vidlu import ops
 from vidlu.utils.misc import Event
 
-
-# Attack implementations are based on AdverTorch (https://github.com/BorealisAI/advertorch)
 
 def _predict_hard(output):
     """Compute predicted labels given `x`. Used to prevent label leaking
@@ -48,28 +47,33 @@ def _predict_soft(output, temperature=1):
     return F.softmax(output if temperature == 1 else output / temperature, dim=1)
 
 
-@dataclass
-class ClassificationIsSuccess:
-    targeted: bool = False
+# PredictionMatchIndicator
 
-    def __call__(self, output, label) -> torch.Tensor:
-        incorrect = output.argmax(dim=1) != label
-        return not incorrect if self.targeted else incorrect
+class PredictionMatchIndicator:
+    def __call__(self, state) -> torch.Tensor:  # -> BoolTensor
+        raise NotImplemented()
 
 
 @dataclass
-class LossThresholdIsSuccess:
+class ClassMatches(PredictionMatchIndicator):
+    def __call__(self, state) -> torch.Tensor:
+        return state.output.argmax(dim=1) == state.y
+
+
+@dataclass
+class LossIsBelowThreshold(PredictionMatchIndicator):
     threshold: float
-    loss: callable = SoftmaxCrossEntropyLoss()
-    targeted: bool = False
+    loss: callable = None
 
-    def __call__(self, output, label) -> torch.Tensor:
-        high_loss = self.loss(output, label) > self.threshold
-        return not high_loss if self.targeted else high_loss
+    def __call__(self, state) -> torch.Tensor:
+        loss = state.loss if self.loss is None else self.loss(state.output, state.y)
+        return loss < self.threshold
 
+
+# AttackState
 
 @dataclass
-class BackwardCallbackArgs:
+class AttackState:
     x: torch.Tensor
     y: torch.Tensor
     x_adv: torch.Tensor
@@ -79,47 +83,55 @@ class BackwardCallbackArgs:
     step: int = None
 
 
-class InputAttack:
+# get_prediction
+
+_get_prediction_wiki = dict(
+    soft=_predict_soft,
+    hard=_predict_hard)
+
+
+# Attack
+
+@dataclass
+class Attack:
     """Adversarial attack (input attack) base class.
 
     Args:
         model: a model.
         loss: a loss function that is increased by perturbing the input. It
             should be the negative loss if the attack is to be targeted.
-        tergeted (bool):
+            Reduction should be 'mean' because the loss might be used for
+            updating model parameters or on dense prediction tasks.
+
         get_prediction (Tensor -> Tensor): a function that¸turns the output of
-            the model into the predicted label that can be used as the
-            second argument in the loss. Default: a function that returns a
-            (hard) classifier prediction -- argmax over dimension 1 of the
-            output.
+            the model into the predicted label that can be used as the second
+            argument in the loss. Default: a function that returns a (hard)
+            classifier prediction -- arggmax over dimension 1 of the output.
 
     Note:
         If `minimize_loss=True`, the base class constructor wraps `loss` so
         that the loss is multiplied by -1 so that subclasses thus don't have to
-        check whether they need to maximize or minimize loss.
-        When calling the base constructor, `clip_interval` should be set to
-        `None` (default) if the output of `_predict` doesn't have to be clipped.
+        check whether they need to maximize or minimize loss. When calling the
+        base constructor, `clip_interval` should be set to `None` (default) if
+        the output of `_predict` doesn't have to be clipped.
     """
+    model: nn.Module
+    loss: Callable = dc.field(default_factory=partial(SoftmaxCrossEntropyLoss, ignore_index=-1))
+    minimize: bool = False
+    clip_bounds: tuple = None
+    get_prediction: Callable = _predict_hard
+    matches: Callable = dc.field(default_factory=ClassMatches)
 
-    def __init__(self, model, loss=None, clip_bounds=None, is_success=None,
-                 get_prediction=None):
-        if type(self._perturb) == InputAttack._perturb:
+    on_virtual_output_computed = Event()
+
+    def __post_init__(self):
+        if type(self._perturb) == Attack._perturb:
             raise RuntimeError("The `_perturb` (not `perturb`) method should be overridden in"
                                + "f subclass `{type(self).__name__}`.")
-        self.model = model
-        # reduction should be 'mean' because the loss might be used for updating
-        # model parameters or on dense prediction tasks
-        self.loss = SoftmaxCrossEntropyLoss(ignore_index=-1) if loss is None else loss
         if hasattr(self.loss, 'reduction') and 'mean' not in self.loss.reduction:
             raise ValueError("Loss should be averaged over the batch.")
-        self.clip_bounds = clip_bounds
-        self.get_prediction = (
-            _predict_hard if get_prediction is None
-            else {'soft': _predict_soft, 'hard': _predict_hard}[get_prediction] if isinstance(
-                get_prediction, str)
-            else get_prediction)
-        self.is_success = ClassificationIsSuccess() if is_success is None else is_success
-        self.perturb_completed = Event()  # TODO: remove?
+        if isinstance(self.get_prediction, str):
+            self.get_prediction = _get_prediction_wiki[self.get_prediction]
 
     def perturb(self, x, y=None, **kwargs):
         """Generates an adversarial example.
@@ -134,11 +146,13 @@ class InputAttack:
         """
         if y is None:
             with torch.no_grad():
-                y = self.get_prediction(self.model(x))
-        x_adv = self._perturb(x.detach().clone(), y.detach().clone(), **kwargs)
+                output = self.model(x)
+                y = self.get_prediction(output)
+                self.on_virtual_output_computed(dict(output=output, y=y))
+        x_adv = self._perturb(x.detach(), y.detach(), **kwargs)
         if self.clip_bounds is not None:
             x_adv = self._clip(x_adv)
-        self.perturb_completed(Namespace(x=x, y=y, x_adv=x_adv))
+
         return x_adv
 
     def _get_output_loss_grad(self, x, y):
@@ -156,36 +170,24 @@ class InputAttack:
         raise NotImplementedError()
 
 
-class DummyAttack(InputAttack):
-    def __init__(self, model, loss=None, clip_bounds=None, is_success=None,
-                 get_prediction=None):
-        super().__init__(model, loss, clip_bounds, is_success, get_prediction)
-
+class DummyAttack(Attack):
     def _perturb(self, x, y=None, backward_callback=None):
         output, loss, grad = self._get_output_loss_grad(x, y)
         if backward_callback is not None:
-            backward_callback(BackwardCallbackArgs(x=x, y=y, output=output, x_adv=x, loss=loss,
-                                                 grad=grad))
+            backward_callback(AttackState(x=x, y=y, output=output, x_adv=x, loss=loss,
+                                          grad=grad))
         return x
 
 
 # GradientSignAttack ###############################################################################
 
-class GradientSignAttack(InputAttack):
+@dataclass
+class GradientSignAttack(Attack):
     """
     One step fast gradient sign method (Goodfellow et al, 2014).
     Paper: https://arxiv.org/abs/1412.6572
     """
-
-    def __init__(self, model, loss=None, clip_bounds=None, is_success=None,
-                 get_prediction=None, eps=0.3):
-        """Create an instance of the GradientSignAttack.
-
-        Args:
-            eps (float or Tensor): attack step size.
-        """
-        super().__init__(model, loss, clip_bounds, is_success, get_prediction)
-        self.eps = eps
+    eps: float = 8 / 255
 
     def _perturb(self, x, y=None):
         output, loss, grad = self._get_output_loss_grad(x, y)
@@ -216,60 +218,119 @@ def rand_init_delta(x, p, eps, bounds, batch=False):
     return x + delta if bounds is None else torch.clamp(x + delta, *bounds) - x
 
 
-# PGD ##############################################################################################
+# Iterative ########################################################################################
 
-def _get_grad_preprocessing(name, norm_p=np.inf):
+def _get_grad_preprocessing(name):
     if name == 'sign':
         return lambda g: g.sign()
-    elif name == 'normalize':
-        return lambda g: g / ops.batch.norm(g, norm_p, keep_dims=True)
+    elif name.startswith('normalize'):
+        if '_' in name:
+            p = name.split('_', 1)[1]
+            p = np.inf if p == 'inf' else eval(p)
+        else:
+            p = 2
+        return lambda g: g / ops.batch.norm(g, p, keep_dims=True)
     elif 'raw':  # multiplies ift by batch size because the loss is averaged
         return lambda g: g * len(g)
 
 
-def perturb_iterative(x, y, model, step_count, eps, step_size, loss, grad_preprocessing='sign',
-                      delta_init=None, p=np.inf, clip_bounds=(0, 1), is_success_for_stopping=None,
-                      backward_callback=None):
+class AttackStepUpdate:
+    def __call__(self, delta, grad, x):
+        raise NotImplementedError()
+
+    def finish(self, delta, x):
+        return delta
+
+
+class DummyUpdate(AttackStepUpdate):
+    def __call__(self, delta, grad, x):
+        return delta
+
+
+@dataclass
+class PGDUpdate(AttackStepUpdate):
+    """PGD step update
+    Args:
+        step_size: attack step size per iteration.
+        eps: maximum distortion.
+        grad_preprocessing (Union[Callable, str] =): preprocessing of gradient
+            before multiplication with step_size.'sign' for gradient sign,
+            'normalize' for p-norm normalization.
+        project_or_p (Union[Number, type(np.inf), Callable]): a function that
+            constrains the perturbation to the threat model or a number
+            determining the p ot the p-ball to project to..
+    """
+    step_size: float
+    eps: float
+    grad_preprocessing: Union[Callable, str] = torch.sign
+    project_or_p: dc.InitVar[Union[Number, type(np.inf), Callable]] = np.inf
+
+    project: Callable = dc.field(init=False)
+
+    def __post_init__(self, project_or_p):
+        self.project = (partial(ops.batch.project_to_p_ball, p=project_or_p)
+                        if isinstance(project_or_p, (Number, type(np.inf)))
+                        else project_or_p)
+        if isinstance(self.grad_preprocessing, str):
+            self.grad_preprocessing = _get_grad_preprocessing(self.grad_preprocessing)
+
+    def __call__(self, delta, grad, x):
+        pgrad = self.grad_preprocessing(grad)
+        delta += pgrad.mul_(self.step_size)
+        delta.set_(self.project(delta, self.eps))  # TODO: check for p in {1, 2}
+        return delta
+
+
+@dataclass
+class VATUpdate(AttackStepUpdate):
+    xi: float  # optimization perturation size
+    eps: float  # final perturbation size
+    p: Number
+
+    def __call__(self, delta, grad, x):
+        return delta.set_(ops.batch.normalize_by_norm(grad, self.p).mul_(self.xi))
+
+    def finish(self, delta, x):
+        return delta.set_(ops.batch.normalize_by_norm(delta, self.p).mul_(self.eps))
+
+
+def perturb_iterative(x, y, model, step_count, update, loss, minimize=False, delta_init=None,
+                      clip_bounds=(0, 1), matches=None, backward_callback=None):
     """Iteratively maximizes the loss over the input. It is a shared method for
     iterative attacks including IterativeGradientSign, LinfPGD, etc.
 
     Args:
-        x: inputs.
-        y: input labels.
-        model: forward pass function.
-        step_count: number of iterations.
-        eps: maximum distortion.
-        step_size: attack step size per iteration.
+        x: Inputs.
+        y: Input labels.
+        model: Forward pass function.
+        step_count: Number of iterations.
+        update (procedure): A `AttackStepUpdate` object defining a single
+            perturbation update in an iteration, and optionally a finish
+            function applied to the perturbation after thelast optimization
+            step.
         loss: loss function.
-        grad_preprocessing (str): preprocessing of gradient before
-            multiplication with step_size.'sign' for gradient sign, 'normalize'
-            for p-norm normalization.
-        delta_init (optional): initial delta.
-        p (optional): the order of maximum distortion (inf or 2).
-        clip_bounds (optional): mininum and maximum value pair.
-        is_success_for_stopping (optional): a function that determines whether
-            the attack is successful example-wise based on the predictions and
-            the true labels. If it None, step_count of iterations is performed
-            on every example.
+        minimize (bool): Whether the attack should miniimize the loss.
+        delta_init (optional): Initial delta.
+        clip_bounds (optional): Mininum and maximum input value pair.
+        matches (optional): a function that determines whether the attack is
+            successful example-wise based on the predictions and the true
+            labels. If it None, step_count of iterations is performed on every
+            example.
+        backward_callback: TODO
 
     Returns:
         Perturbed inputs.
     """
-    stop_on_success = is_success_for_stopping is not None
+    stop_on_success = matches is not None
     loss_fn = loss
-    grad_preprocessing = _get_grad_preprocessing(grad_preprocessing, p)
+    backward_callback = backward_callback or (lambda x: None)
 
-    delta = torch.zeros_like(x)  # if delta_init is None else delta_init
+    delta = torch.zeros_like(x) if delta_init is None else delta_init.detach().clone()
     delta.requires_grad_()
 
     if stop_on_success:
-        xs, ys, deltas = [x], [y], [delta]
-        success_masks, origin, origins = [], torch.arange(len(x)), []
+        x_all, y_all, delta_all, index = x, y, delta.detach().clone(), torch.arange(len(x))
 
-    # success_steps = []
-    # n = len(x)
-
-    step = -1  # for debugging with step_count == 0
     for step in range(step_count):
         x_adv = x + delta
         output = model(x_adv)
@@ -277,84 +338,88 @@ def perturb_iterative(x, y, model, step_count, eps, step_size, loss, grad_prepro
         loss.backward()
         grad = delta.grad.detach().clone()
         delta.grad.zero_()
-        if backward_callback:
-            backward_callback(
-                BackwardCallbackArgs(x=x, y=y, output=output, x_adv=x, loss=loss, grad=grad, step=step))
 
-        if stop_on_success:
-            with torch.no_grad():
-                success_mask = is_success_for_stopping(output, y)
-                # success_steps += [step] * success_mask.sum().item()
-                fail_mask = success_mask == False  # success_mask is an array, thus == should be used
-                if not fail_mask.all():  # keep the already succesful adversarial examples unchanged
-                    success_masks.append(success_mask)
-                    origin = origin[fail_mask]  # indices of images in the current batch
-                    origins.append(origin)
-                    x, y = x[fail_mask], y[fail_mask]
+        state = AttackState(x=x, y=y, output=output, x_adv=x, loss=loss, grad=grad, step=step)
+        backward_callback(state)
+
+        with torch.no_grad():
+            if stop_on_success:
+                success_mask = matches(state) if minimize else ~matches(state)
+                if success_mask.any():  # keep the already succesful adversarial examples unchanged
+                    fail_mask = ~success_mask
+                    delta_all[index[success_mask]] = delta[success_mask]
+                    x, y, index, grad = (a[fail_mask] for a in [x, y, index, grad])
                     delta = delta[fail_mask].detach().clone().requires_grad_()
-                    grad = grad[fail_mask]
-                    xs.append(x)
-                    ys.append(y)
-                    deltas.append(delta)
                     if success_mask.all():
                         break  # stop when all adversarial examples are successful
 
-        with torch.no_grad():
-            pgrad = grad_preprocessing(grad)
-            delta += pgrad.mul_(step_size)
-            if p not in [np.inf, 1, 2]:
-                raise NotImplementedError(f"Not implemented for p = {p}.")
-            delta.set_(ops.batch.project_to_p_ball(delta, eps, p=p))  # TODO: check for p in {1, 2}
+            delta = update(delta, grad.neg_() if minimize else grad, x=x)
             if clip_bounds is not None:
                 delta.set_((x + delta).clamp_(*clip_bounds).sub_(x))
 
-    else:
-        step += 1
-
-    # print(f"{(success_steps + len(x)) / n:.2f}")
-    # print(success_steps)
-
     if stop_on_success:
-        success_masks[-1].fill_(True)
-        with torch.no_grad():
-            x, delta = xs.pop(0), deltas.pop(0)
-            for i in range(len(success_masks) - 1):
-                indices = origins[i][success_masks[i + 1]]
-                delta[indices] = deltas[i][success_masks[i + 1]]
+        delta_all[index] = delta
+        x, delta = x_all, delta_all
 
-    x_adv = x + delta
-    return x_adv if clip_bounds is None else torch.clamp(x + delta, *clip_bounds)
+    x_adv = x + delta  # clipping already done
+    return x_adv
 
 
-class PGDAttack(InputAttack):
-    def __init__(self, model, loss=None, clip_bounds=None, is_success=None,
-                 get_prediction=_predict_hard, eps=8 / 255, step_count=40, step_size=2 / 255,
-                 grad_preprocessing='sign', rand_init=True, p=np.inf, stop_on_success=False):
-        """The PGD attack (Madry et al., 2017).
+@dataclass
+class PGDAttack(Attack):
+    """The PGD attack (Madry et al., 2017).
 
-        The attack performs nb_iter steps of size eps_iter, while always staying
-        within eps from the initial point.
-        Paper: https://arxiv.org/pdf/1706.06083.pdf
+    The attack performs nb_iter steps of size eps_iter, while always staying
+    within eps from the initial point.
+    Paper: https://arxiv.org/pdf/1706.06083.pdf
 
-        See the documentation of perturb_iterative.
-        """
-        super().__init__(model, loss, clip_bounds, is_success, get_prediction)
-        self.eps = eps
-        self.step_count = step_count
-        self.step_size = step_size
-        self.rand_init = rand_init
-        self.grad_preprocessing = grad_preprocessing
-        self.p = p
-        self.stop_on_success = stop_on_success
+    See the documentation of perturb_iterative.
+    """
+    eps: float = 8 / 255
+    step_size: float = 2 / 255
+    step_count: int = 40
+    grad_preprocessing: str = 'sign'
+    rand_init: bool = True
+    p: float = np.inf
+    stop_on_success: bool = False
 
     def _perturb(self, x, y=None, backward_callback=None):
         delta_init = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
                       else torch.zeros_like(x))
+        update = PGDUpdate(step_size=self.step_size, eps=self.eps,
+                           grad_preprocessing=self.grad_preprocessing, project_or_p=self.p)
+
         return perturb_iterative(
-            x, y, self.model, step_count=self.step_count, eps=self.eps, step_size=self.step_size,
-            loss=self.loss, grad_preprocessing=self.grad_preprocessing, p=self.p,
-            clip_bounds=self.clip_bounds, delta_init=delta_init,
-            is_success_for_stopping=self.is_success if self.stop_on_success else None,
+            x, y, self.model, step_count=self.step_count, update=update, loss=self.loss,
+            minimize=self.minimize, clip_bounds=self.clip_bounds, delta_init=delta_init,
+            matches=self.matches if self.stop_on_success else None,
+            backward_callback=backward_callback)
+
+
+@dataclass
+class VATAttack(Attack):
+    """The PGD attack (Madry et al., 2017).
+
+    The attack performs nb_iter steps of size eps_iter, while always staying
+    within eps from the initial point.
+    Paper: https://arxiv.org/pdf/1706.06083.pdf
+
+    See the documentation of perturb_iterative.
+    """
+    eps: float = 8 / 255
+    xi: float = 2 / 255
+    step_count: int = 1
+    p: Number = 2
+
+    def _perturb(self, x, y=None, backward_callback=None):
+        delta_init = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
+                      else torch.zeros_like(x))
+        update = VATUpdate(xi=self.xi, eps=self.eps, p=self.p)
+
+        return perturb_iterative(
+            x, y, self.model, step_count=self.step_count, update=update, loss=self.loss,
+            minimize=self.minimize, clip_bounds=self.clip_bounds, delta_init=delta_init,
+            matches=self.matches if self.stop_on_success else None,
             backward_callback=backward_callback)
 
 
@@ -391,8 +456,8 @@ def get_carlini_loss(targeted, confidence_threshold):
     return carlini_loss
 
 
-class CarliniWagnerL2Attack(InputAttack):
-    def __init__(self, model, loss=None, clip_bounds=None, is_success=None,
+class CarliniWagnerL2Attack(Attack):
+    def __init__(self, model, loss=None, clip_bounds=None, matches=None,
                  get_prediction=_predict_hard, distance_fn=ops.batch.l2_distace_sqr,
                  num_classes=None, confidence=0,
                  learning_rate=0.01, binary_search_steps=9, max_iter=10000, abort_early=True,
@@ -413,7 +478,7 @@ class CarliniWagnerL2Attack(InputAttack):
                                       " function other than the default. Setting loss manually"
                                       " is not effective.")
         loss = loss or get_carlini_loss()
-        super().__init__(model, loss, clip_bounds, is_success, get_prediction)
+        super().__init__(model, loss, clip_bounds, matches, get_prediction)
 
         self.distance_fn = distance_fn
         self.learning_rate = learning_rate
@@ -446,7 +511,7 @@ class CarliniWagnerL2Attack(InputAttack):
             if pred == INVALID_LABEL:
                 return pred.new_zeros(pred.shape).byte()
 
-        return self.is_success(pred, label)
+        return self.matches(pred, label)
 
     def _forward_and_update_delta(self, optimizer, x_atanh, delta, y_onehot, loss_coeffs):
         optimizer.zero_grad()
@@ -539,3 +604,16 @@ class CarliniWagnerL2Attack(InputAttack):
                                      coeff_lower_bound)
 
         return final_advs
+
+
+# DDN ##############################################################################################
+
+@dataclass
+class DDNAttack(Attack):
+    eps_init: float = 8 / 255
+    step_size: float = 2 / 255
+    max_step_count: int = 40
+    gamma: float = 0.1
+    grad_preprocessing: str = 'sign'
+    rand_init: bool = True
+    p: float = np.inf
