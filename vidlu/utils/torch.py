@@ -35,3 +35,6 @@ def fuse_tree_batches(*args, tree_type=None):
     return tree_type(zip(keys, values))
 
 
+def reset_cuda():
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
