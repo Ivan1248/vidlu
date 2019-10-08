@@ -85,6 +85,7 @@ def soft_multiclass_confusion_matrix(true, pred, class_count):
     return cm
 
 
+@torch.no_grad()
 def compute_classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
     """ Computes macro-averaged classification evaluation metrics based on the
         accumulated confusion matrix and clears the confusion matrix.
@@ -127,6 +128,7 @@ class ClassificationMetrics(AccumulatingMetric):
     def reset(self):
         self.cm.fill_(0)
 
+    @torch.no_grad()
     def update(self, iter_output):
         true = _get_iter_output(iter_output, self.target_name).flatten()
         pred = _get_iter_output(iter_output, self.hard_prediction_name).flatten()
