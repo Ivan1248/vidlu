@@ -11,7 +11,8 @@ from vidlu.utils.path import create_file_atomic
 
 
 class FileNames:
-    STATE = 'state.pth'
+    MODEL_STATE = 'model_state.pth'
+    TRAINING_STATE = 'training_state.pth'
     PROGRESS_INFO = 'progress.info'
     EXPERIMENT_INFO = 'experiment.info'
     SUMMARY = 'summary.p'
@@ -120,8 +121,8 @@ class CheckpointManager(object):
 
     def save(self, state, summary=None):
         if self._required_resuming:
-            raise RuntimeError("Cannot save state before it has been resumed. The `load_last`"
-                               + " method needs to be called before saving to resume the training.")
+            raise RuntimeError("Cannot save state before resuming. The `load_last` method"
+                               + " needs to be called before saving to resume the training.")
         if len(state) == 0:
             raise RuntimeError("There are no objects to checkpoint in `state`.")
 
@@ -130,7 +131,8 @@ class CheckpointManager(object):
         name = self._index_to_name(self._index)
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
-        self._save(path / FileNames.STATE, state)
+        self._save(path / FileNames.MODEL_STATE, state['model'])
+        self._save(path / FileNames.TRAINING_STATE, {k: v for k, v in state.items() if k != 'model'})
         self._save(path / FileNames.PROGRESS_INFO, Namespace(index=self._index))
         self._save(path / FileNames.EXPERIMENT_INFO, self.experiment_desc)
         self._save(path / FileNames.SUMMARY, summary)
@@ -138,11 +140,12 @@ class CheckpointManager(object):
 
         self.remove_old_checkpoints()
 
-    def load_last(self):
+    def load_last(self, map_location=None):
         path = self.last_checkpoint_path
         self._index = torch.load(path / FileNames.PROGRESS_INFO).index
         self.experiment_desc = torch.load(path / FileNames.EXPERIMENT_INFO)
-        state = torch.load(path / FileNames.STATE)
+        state = torch.load(path / FileNames.TRAINING_STATE, map_location=map_location)
+        state['model'] = torch.load(path / FileNames.MODEL_STATE, map_location=map_location)
         summary = torch.load(path / FileNames.SUMMARY)
         self._required_resuming = False
         return state, summary
