@@ -1,5 +1,5 @@
 import collections
-from abc import ABC
+from argparse import Namespace
 from collections import Callable, Mapping
 from functools import partial, lru_cache
 import dataclasses as dc
@@ -8,12 +8,10 @@ from dataclasses import dataclass, InitVar
 from tqdm import tqdm
 import torch
 from torch import nn
-from torch.optim.lr_scheduler import LambdaLR, MultiStepLR
 
-from vidlu import modules
+from vidlu import modules as M
 from vidlu.data import Record
 from vidlu.data_utils import DataLoader
-from vidlu.modules import get_submodule
 from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
@@ -47,36 +45,7 @@ class Missing:
                         + ' value `Missing` has not been assigned a "real" value.')
 
 
-@dataclass
-class Evaluator:
-    model: Callable = Missing
-    loss_f: InitVar[Callable] = Missing
-    prepare_batch: Callable = default_prepare_batch
-    data_loader_f: Callable = partial(DataLoader, batch_size=1, num_workers=4)
-    batch_size: int = 1
-    metrics: dict = dc.field(default_factory=dict)
-    extend_output: Callable = extend_output
-    eval_step: Callable = Missing
-
-    loss: Callable = dc.field(init=False)
-
-    def __post_init__(self, loss_f):
-        self.prepare_batch = partial(self.prepare_batch,
-                                     device=modules.utils.get_device(self.model),
-                                     non_blocking=False)
-        self.eval_step = partial(self.eval_step, self)
-        self.loss = loss_f()
-        metrics = self.metrics
-        self.metrics = dict()
-        if not isinstance(metrics, Mapping):
-            for m in metrics:
-                self.add_metric(m)
-        self.data_loader_f = partial(self.data_loader_f, batch_size=self.batch_size)
-
-        self.evaluation = Engine(lambda e, b: self.eval_step(b))
-        self.evaluation.started.add_handler(lambda _: self._reset_metrics())
-        self.evaluation.iteration_completed.add_handler(self._update_metrics)
-
+class _MetricsMixin:
     def add_metric(self, m):
         self.metrics[type(m).__name__] = m
 
@@ -97,27 +66,48 @@ class Evaluator:
             self._reset_metrics()
         return metric_evals
 
-    def eval(self, dataset):
-        data_loader = tqdm(self.data_loader_f(dataset, drop_last=False))
-        return self.evaluation.run(data_loader)
+
+@dataclass
+class Evaluator(_MetricsMixin):
+    model: Callable = Missing
+    loss_f: InitVar[Callable] = Missing
+    prepare_batch: Callable = default_prepare_batch
+    data_loader_f: Callable = partial(DataLoader, num_workers=4)
+    batch_size: int = 1
+    metrics: dict = dc.field(default_factory=dict)
+    extend_output: Callable = extend_output
+    eval_step: Callable = Missing
+
+    loss: Callable = dc.field(init=False)
+
+    def __post_init__(self, loss_f):
+        self.prepare_batch = partial(self.prepare_batch, device=M.utils.get_device(self.model),
+                                     non_blocking=False)
+        self.eval_step = partial(self.eval_step, self)
+        self.loss = loss_f()
+        self.metrics = dict()
+        if not isinstance(self.metrics, Mapping):
+            for m in self.metrics:
+                self.add_metric(m)
+
+        self.evaluation = Engine(lambda e, b: self.eval_step(b))
+        self.evaluation.started.add_handler(lambda _: self._reset_metrics())
+        self.evaluation.iteration_completed.add_handler(self._update_metrics)
+
+    def eval(self, dataset, batch_size=None):
+        return self.evaluation.run(tqdm(
+            self.data_loader_f(dataset, batch_size=batch_size or self.batch_size, shuffle=False,
+                               drop_last=False)))
 
 
 # Trainer ##########################################################################################
-
-
-def fine_tuning_optimizer_maker(trainer, fine_tuning):
-    # optimizer_f should have not parameters assigned
-    lr = params(trainer.optimizer_f).lr
-    parameters = [dict(params=trainer.model.parameters())] + [
-        dict(params=get_submodule(trainer.model, k).parameters(), lr=f * lr)
-        for k, f in fine_tuning.items()]
-    return trainer.optimizer_f(parameters, weight_decay=trainer.weight_decay)
 
 
 @dataclass
 class Trainer(Evaluator):
     state_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
 
+    eval_batch_size: int = None
     weight_decay: float = None  # R
     optimizer_f: InitVar[Callable] = None  # O
     epoch_count: int = Missing  # O
@@ -125,6 +115,7 @@ class Trainer(Evaluator):
     train_step: Callable = Missing  # O
     jitter: Callable = None  # D
     optimizer_maker: InitVar[Callable] = None
+    extension: object = dc.field(default_factory=Namespace)  # D
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
@@ -139,7 +130,7 @@ class Trainer(Evaluator):
                 raise ValueError("The parameter weight_decay of optimizer_f should be unassigned.")
             self.optimizer = optimizer_f(self.model.parameters(), weight_decay=self.weight_decay)
         else:
-            self.optimizer = optimizer_maker(self)
+            self.optimizer = optimizer_maker(self, optimizer_f)
 
         if 'epoch_count' in params(lr_scheduler_f):
             if params(lr_scheduler_f).epoch_count is not Empty:
@@ -157,8 +148,11 @@ class Trainer(Evaluator):
 
     def train(self, dataset, restart=False):
         data_loader = self.data_loader_f(dataset.map(self.jitter) if self.jitter else dataset,
-                                         drop_last=True)
+                                         batch_size=self.batch_size, shuffle=True, drop_last=True)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
+
+    def eval(self, dataset, batch_size=None):
+        super().eval(dataset, batch_size=self.eval_batch_size)
 
     def state_dict(self):
         return {k: getattr(self, k).state_dict() for k in type(self).state_attrs}
@@ -176,9 +170,9 @@ class AdversarialTrainer(Trainer):
     attack: object = dc.field(init=False)
     eval_attack: object = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, fine_tuning, attack_f,
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker, attack_f,
                       eval_attack_f):
-        super().__post_init__(loss_f, optimizer_f, lr_scheduler_f, fine_tuning)
+        super().__post_init__(loss_f, optimizer_f, lr_scheduler_f, optimizer_maker)
         if attack_f is Missing:
             raise ValueError(f"`{type(self).__name__}` missing argument `attack_f`.")
         self.attack = attack_f(model=self.model, **(
