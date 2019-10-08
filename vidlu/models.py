@@ -2,9 +2,9 @@ from functools import partial, partialmethod
 
 import torch
 
-from vidlu import modules
+import vidlu.modules as M
+import vidlu.modules.components as mc
 from vidlu.training import initialization
-from vidlu.modules import components as com
 from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, default_args)
 
@@ -12,12 +12,12 @@ from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, d
 # Backbones ########################################################################################
 
 
-def resnet_v1_backbone(depth, base_width=default_args(com.ResNetV1Backbone).base_width,
-                       small_input=default_args(com.ResNetV1Backbone).small_input,
-                       block_f=partial(default_args(com.ResNetV1Backbone).block_f,
+def resnet_v1_backbone(depth, base_width=default_args(mc.ResNetV1Backbone).base_width,
+                       small_input=default_args(mc.ResNetV1Backbone).small_input,
+                       block_f=partial(default_args(mc.ResNetV1Backbone).block_f,
                                        kernel_sizes=Reserved),
                        dim_change=None,
-                       backbone_f=com.ResNetV1Backbone):
+                       backbone_f=mc.ResNetV1Backbone):
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
     bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
@@ -38,9 +38,9 @@ def resnet_v1_backbone(depth, base_width=default_args(com.ResNetV1Backbone).base
 
 
 resnet_v2_backbone = partial(resnet_v1_backbone,
-                             block_f=partial(default_args(com.ResNetV2Backbone).block_f,
+                             block_f=partial(default_args(mc.ResNetV2Backbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=com.ResNetV2Backbone)
+                             backbone_f=mc.ResNetV2Backbone)
 
 
 def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
@@ -53,17 +53,17 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
     assert zagoruyko_depth == depth, \
         f"Invalid depth = {zagoruyko_depth} != {depth} = zagoruyko_depth"
 
-    return com.ResNetV2Backbone(base_width=16,
-                                small_input=small_input,
-                                group_lengths=[blocks_per_group] * group_count,
-                                width_factors=[width_factor] * 2,
-                                block_f=partial(block_f, kernel_sizes=ksizes),
-                                dim_change=dim_change)
+    return mc.ResNetV2Backbone(base_width=16,
+                               small_input=small_input,
+                               group_lengths=[blocks_per_group] * group_count,
+                               width_factors=[width_factor] * 2,
+                               block_f=partial(block_f, kernel_sizes=ksizes),
+                               dim_change=dim_change)
 
 
 def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3),
-                      block_f=partial(default_args(com.DenseNetBackbone).block_f,
-                                      kernel_sizes=Reserved), backbone_f=com.DenseNetBackbone):
+                      block_f=partial(default_args(mc.DenseNetBackbone).block_f,
+                                      kernel_sizes=Reserved), backbone_f=mc.DenseNetBackbone):
     # TODO: dropout 0.2
     # dropout if no pds augmentation
     depth_to_group_lengths = {
@@ -93,18 +93,18 @@ def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3)
 
 
 mdensenet_backbone = partial(densenet_backbone,
-                             block_f=partial(default_args(com.MDenseNetBackbone).block_f,
+                             block_f=partial(default_args(mc.MDenseNetBackbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=com.MDenseNetBackbone)
+                             backbone_f=mc.MDenseNetBackbone)
 fdensenet_backbone = partial(densenet_backbone,
-                             block_f=partial(default_args(com.FDenseNetBackbone).block_f,
+                             block_f=partial(default_args(mc.FDenseNetBackbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=com.FDenseNetBackbone)
+                             backbone_f=mc.FDenseNetBackbone)
 
 
 # Models ###########################################################################################
 
-class Model(modules.Module):
+class Model(M.Module):
     def __init__(self, init=None):
         super().__init__()
         self._init = init or (lambda module: None)
@@ -115,7 +115,7 @@ class Model(modules.Module):
         self._init(module=self)
 
 
-class SeqModel(modules.Sequential):
+class SeqModel(M.Sequential):
     def __init__(self, seq, init, input_adapter=None):
         inpad = {} if input_adapter is None else dict(input_adapter=input_adapter)
         super().__init__(**inpad, **seq)
@@ -138,14 +138,27 @@ class ClassificationModel(DiscriminativeModel):
 
 class SegmentationModel(DiscriminativeModel):
     def forward(self, x, shape='same'):
-        h = self.backbone(x)
-        return self.head(h, shape=x.shape[-2:] if 'same' else shape)
+        self.set_modifiers(
+            head=lambda m: lambda h: m(h, shape=x.shape[-2:] if shape == 'same' else shape))
+        result = super().forward(x)
+        self.set_modifiers(head=None)
+        return result
 
 
 class ResNetV1(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
                              backbone_f=partial(resnet_v1_backbone, base_width=64),
                              init=partial(initialization.kaiming_resnet, module=Reserved))
+
+
+class SegResNetV1(SegmentationModel):
+    __init__ = ResNetV1.__init__
+
+    def post_build(self, *args, **kwargs):
+        from torch.utils.checkpoint import checkpoint
+        for unit_name, unit in self.backbone.bulk.named_children():
+            self.backbone.bulk.set_modifiers(
+                **{unit_name: lambda module: partial(checkpoint, module)})
 
 
 class ResNetV2(ClassificationModel):
@@ -175,52 +188,58 @@ class MNISTNet(ClassificationModel):
 class SwiftNet(SegmentationModel):
     def __init__(self,
                  backbone_f=partial(resnet_v1_backbone, base_width=64),
-                 intermediate_paths=tuple(f"features.unit{i}_{j}.sum"
-                                          for i, j in zip(range(3), [1] * 3)),  # TODO
-                 ladder_width=128, head_f=com.heads.SegmentationHead, input_adapter=None):
+                 laterals=tuple(f"bulk.unit{i}_{j}.sum"
+                                for i, j in zip(range(3), [1] * 3)),  # TODO
+                 ladder_width=128, head_f=mc.heads.SegmentationHead, input_adapter=None):
         """
 
-        intermediate_paths contains all but the last block?
+        laterals contains all but the last block?
 
         Args:
             backbone_f:
-            intermediate_paths:
+            laterals:
             ladder_width:
         """
-        super().__init__(backbone_f=partial(com.KresoLadderNet,
+        super().__init__(backbone_f=partial(mc.KresoLadderNet,
                                             backbone_f=backbone_f,
-                                            intermediate_paths=intermediate_paths,
+                                            laterals=laterals,
                                             ladder_width=ladder_width,
                                             context_f=partial(
-                                                com.DenseSPP, bottleneck_size=128, level_size=42,
+                                                mc.DenseSPP, bottleneck_size=128, level_size=42,
                                                 out_size=128, grid_sizes=(8, 4, 2)),
-                                            up_blend_f=partial(com.LadderUpsampleBlend,
+                                            up_blend_f=partial(mc.LadderUpsampleBlend,
                                                                pre_blending='sum'),
                                             post_activation=True),
                          head_f=partial(head_f, kernel_size=3),
                          init=partial(initialization.kaiming_resnet, module=Reserved),
                          input_adapter=input_adapter)
 
+    def post_build(self, *args, **kwargs):
+        from torch.utils.checkpoint import checkpoint
+        for unit_name, unit in self.backbone.backbone.bulk.named_children():
+            self.backbone.backbone.bulk.set_modifiers(
+                **{unit_name: lambda module: partial(checkpoint, module)})
+
 
 class LadderDensenet(DiscriminativeModel):
-    def __init__(self, backbone_f=partial(densenet_backbone), intermediate_paths=None,
+    def __init__(self, backbone_f=partial(densenet_backbone), laterals=None,
                  ladder_width=128, head_f=Empty, input_adapter=None):
         """
 
-        intermediate_paths contains all but the last block?
+        laterals contains all but the last block?
 
         Args:
             backbone_f:
-            intermediate_paths:
+            laterals:
             ladder_width:
         """
-        if intermediate_paths is None:
-            intermediate_paths = tuple(
-                f"features.dense_block{i}.unit{j}.sum"  # TODO: automatic based on backbone
+        if laterals is None:
+            laterals = tuple(
+                f"bulk.dense_block{i}.unit{j}.sum"  # TODO: automatic based on backbone
                 for i, j in zip(range(3), [1] * 3))
-        super().__init__(backbone_f=partial(com.KresoLadderNet,
+        super().__init__(backbone_f=partial(mc.KresoLadderNet,
                                             backbone_f=backbone_f,
-                                            intermediate_paths=intermediate_paths,
+                                            laterals=laterals,
                                             ladder_width=ladder_width),
                          head_f=head_f,
                          init=partial(initialization.kaiming_resnet, module=Reserved),
@@ -244,8 +263,8 @@ class Autoencoder(Model):
 # Adversarial autoencoder
 
 class AdversarialAutoencoder(Autoencoder):
-    def __init__(self, encoder_f=com.AAEEncoder, decoder_f=com.AAEDecoder,
-                 discriminator_f=com.AAEDiscriminator,
+    def __init__(self, encoder_f=mc.AAEEncoder, decoder_f=mc.AAEDecoder,
+                 discriminator_f=mc.AAEDiscriminator,
                  prior_rand_f=partial(torch.randn, std=0.3), init=None):
         super().__init__(encoder_f, decoder_f, init)
         self.discriminator = discriminator_f()
