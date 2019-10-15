@@ -49,7 +49,6 @@ def test(args):
 
 
 def test_trained(args):
-    cpman = CheckpointManager(dirs.SAVED_STATES, args.experiment)
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs,
                                  {**args.__dict__, **dict(resume=True, redo=False)}), dirs=dirs)
