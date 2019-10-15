@@ -1,16 +1,11 @@
 from pathlib import Path
 from torchvision.transforms import Compose
 import numpy as np
-from matplotlib.pyplot import imshow
 from tqdm import tqdm
 
 from _context import vidlu, dirs
 from vidlu.experiments import get_prepared_data_for_trainer
 
-from vidlu.utils.tree import flatten
-
-from vidlu.data.datasets import Cityscapes
-from vidlu.factories import get_data
 from vidlu.libs.swiftnet.data import Cityscapes as IKCityscapes
 
 from vidlu.libs.swiftnet.data.transform import *
