@@ -158,7 +158,7 @@ class AffineCoupling(Module):
         self.scale, self.translate = scale_f(), translate_f()
 
     def forward(self, x1, x2):
-        x1, x1 * self.scale(x1).exp() + self.translate(x1)
+        return x1, x1 * self.scale(x1).exp() + self.translate(x1)
 
     def invert(self, y1, y2):
         return y1, (y2 - self.translate(y1)) * (-self.scale(y1)).exp()
@@ -403,28 +403,6 @@ def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change):
             return Conv(out_width, kernel_size=k, stride=stride, padding='half', bias=False)
         else:
             return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, None)
-
-
-"""
-class ResNetV2UnitOld(Module):
-    def __init__(self, block_f=partial(PreactBlock, omit_first_preactivation=Reserved),
-                 dim_change='proj'):
-        _check_block_args(block_f)
-        super().__init__()
-        if dim_change not in ['pad', 'proj', 'conv3']:
-            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
-        block = Reserved.call(block_f, omit_first_preactivation=False)
-        self.preact = block[:'conv0']
-        self.block = block['conv0':]
-        self.shortcut = None
-        del block
-
-    build = ResNetV1Unit.build
-
-    def forward(self, x):
-        p = self.preact(x)
-        return self.block(p) + self.shortcut(p if self.args.dim_change in ('conv3', 'proj') else x)
-"""
 
 
 class ResNetV2Unit(Sequential):

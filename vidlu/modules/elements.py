@@ -115,16 +115,16 @@ def _modifiable(*superclasses):
     class ModifibleModExt(*superclasses):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self.modifiers = {}
+            self._modifiers = {}
 
         def set_modifiers(self, *args, **kwargs):
-            self.modifiers.update(dict(*args, **kwargs))
-            for k in [k for k, v in self.modifiers.items() if v is None]:
-                del self.modifiers[k]
+            self._modifiers.update(dict(*args, **kwargs))
+            for k in [k for k, v in self._modifiers.items() if v is None]:
+                del self._modifiers[k]
             return self
 
         def _call_with_modifiers(self, name, *input):
-            return self.modifiers.get(name, identity)(getattr(self, name))(*input)
+            return self._modifiers.get(name, identity)(getattr(self, name))(*input)
 
     return ModifibleModExt
 
@@ -193,6 +193,11 @@ def _extended(*superclasses):
     return [e(*superclasses) for e in [_buildable, _extended_interface]]
 
 
+class InvertibleModuleMixin:
+    def inverse(self):
+        raise NotImplementedError()
+
+
 # Core Modules #####################################################################################
 
 class Module(*_extended(nn.Module, ABC)):
@@ -210,9 +215,12 @@ class Module(*_extended(nn.Module, ABC)):
                 + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
 
 
-class RevIdentity(nn.Identity):
+class RevIdentity(nn.Identity, InvertibleModuleMixin):
     def reverse(self, y):
         return y
+
+    def inverse(self):
+        return RevIdentity()
 
 
 def _to_sequential_init_args(*args, **kwargs):
@@ -256,10 +264,8 @@ class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
         return super().__getitem__(idx)
 
     def index(self, key):
-        names, children = list(zip(*self.named_children()))
-        if isinstance(key, str):
-            return names.index(key)
-        return children.index(key)
+        """Returns index of a child module from its name or the module itself."""
+        return list(zip(*self.named_children()))[int(not isinstance(key, str))].index(key)
 
     def forward(self, *input):
         if len(self._modules) == 0 and len(input) != 1:
@@ -267,6 +273,11 @@ class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
         for name in self._modules:
             input = (self._call_with_modifiers(name, *input),)
         return input[0]
+
+    def inverse(self):
+        result = Sequential({k: m.inverse() for k, m in reversed(self._modules.items())})
+        result._modifiers = self._modifiers
+        return result
 
 
 class ModuleTable(Sequential):
@@ -290,6 +301,9 @@ def tuple_to_varargs_method(f):
 class Fork(ModuleTable):
     def forward(self, input):
         return tuple(m(input) for m in self)
+
+    def inverhtose(self):
+        return Fork({k. m.inverse() for k, m in self.named_children()})
 
 
 class Parallel(ModuleTable):
