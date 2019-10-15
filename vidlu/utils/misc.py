@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 import time
 import contextlib
+from multiprocessing.sharedctypes import RawArray
 
 from tqdm import tqdm
 import urllib.request
+import numpy as np
 
 
 # Slicing ##########################################################################################
@@ -230,13 +232,24 @@ def trace_calls():
 # context manager timer
 
 class CMTimer:
+    """Context manager timer"""
+    __slots__ = '_time_func', 'start', 'time'
+
     def __init__(self, time_func=time.time):
-        self.time_func = time_func
+        self._time_func = time_func
 
     def __enter__(self):
-        self.start = self.time_func()
+        self.start = self._time_func()
         return self
 
     def __exit__(self, *args):
-        self.end = self.time_func()
-        self.interval = self.end - self.start
+        self.time = self._time_func() - self.start
+
+
+# shared array
+
+def to_shared_array(x):
+    x_shared = RawArray(np.ctypeslib.as_ctypes_type(x.dtype), x.size)
+    x_shared = np.frombuffer(x_shared, dtype=x.dtype).reshape(x.shape)
+    x_shared[:] = x
+    return x_shared
