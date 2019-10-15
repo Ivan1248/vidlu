@@ -4,12 +4,12 @@ from collections import defaultdict
 import warnings
 from vidlu.utils.collections import NameDict
 
-from vidlu.utils.misc import Event
+from vidlu.utils.misc import Event, CMTimer
 
 
-def _to_hours_mins_secs(time_taken):
+def _to_hours_mins_secs(t):
     """Convert seconds to hours, mins, and seconds."""
-    mins, secs = divmod(time_taken, 60)
+    mins, secs = divmod(t, 60)
     hours, mins = divmod(mins, 60)
     return hours, mins, secs
 
@@ -30,8 +30,9 @@ class State(NameDict):
 
 
 class Engine(object):
-    # Copied from Ignite and modified
     """Runs a given process_function over each batch of a dataset, emitting events as it goes.
+
+    Taken from Ignite (https://pytorch.org/ignite) and modified.
 
     Args:
         process_function (Callable): A function receiving a handle to the engine and the current batch
@@ -94,9 +95,7 @@ class Engine(object):
         self.should_terminate_single_epoch = True
 
     def _run_once_on_dataset(self):
-        start_time = time.time()
-
-        for batch in self.state.dataloader:
+        for batch in self.state.data_loader:
             self.state.iteration += 1
             self.state.batch = batch
             self.iteration_started(self.state)
@@ -106,45 +105,43 @@ class Engine(object):
             if self.should_terminate or self.should_terminate_single_epoch:
                 self.should_terminate_single_epoch = False
                 break
-        time_taken = time.time() - start_time
-        return time_taken
 
     def run(self, data, max_epochs=1, restart=True):
-        """Runs the process_function over the passed data.
+        """Runs the `process_function` over the passed data.
 
         Args:
-            data (Iterable): Collection of batches allowing repeated iteration (e.g., list or `DataLoader`)
+            data (Iterable): 1 or more collections of batches allowing repeated
+                iteration (e.g., list or `DataLoader`).
             max_epochs (int, optional): max epochs to run for (default: 1)
 
         Returns:
             State: output state
         """
-
         if restart or self.state is None:
             self.state.reset(metrics={})
-        self.state.update(dataloader=data, max_epochs=max_epochs, batch_count=len(data))
+
+        self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
 
         self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
-        start_time = time.time()
-        self.started(self.state)
-        if self.state.epoch >= max_epochs:
-            warnings.warn("All epochs are already completed.")
-        while self.state.epoch < max_epochs and not self.should_terminate:
-            self.state.epoch += 1
-            self.epoch_started(self.state)
-            time_taken = self._run_once_on_dataset()
-            hours, mins, secs = _to_hours_mins_secs(time_taken)
-            self._logger.info(
-                f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}")
-            if self.should_terminate:
-                break
-            self.epoch_completed(self.state)
-
-        self.completed(self.state)
-        time_taken = time.time() - start_time
-        hours, mins, secs = _to_hours_mins_secs(time_taken)
+        with CMTimer() as t_run:
+            start_time = time.time()
+            self.started(self.state)
+            if self.state.epoch >= max_epochs:
+                warnings.warn("All epochs are already completed.")
+            while self.state.epoch < max_epochs and not self.should_terminate:
+                self.state.epoch += 1
+                self.epoch_started(self.state)
+                with CMTimer() as t_epoch:
+                    self._run_once_on_dataset()
+                hours, mins, secs = _to_hours_mins_secs(t_epoch.time)
+                self._logger.info(
+                    f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}")
+                if self.should_terminate:
+                    break
+                self.epoch_completed(self.state)
+            self.completed(self.state)
+        hours, mins, secs = _to_hours_mins_secs(t_run.time)
         self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")
-
         return self.state
 
     def state_dict(self):
