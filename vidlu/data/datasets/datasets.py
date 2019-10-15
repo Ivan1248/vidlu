@@ -16,7 +16,7 @@ import torchvision.transforms.functional as tvtf
 from tqdm import tqdm
 
 from .. import Dataset, Record
-from vidlu.utils.misc import download
+from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
 
 from ._cityscapes_labels import labels as cslabels
@@ -207,6 +207,7 @@ class MNIST(Dataset):
         x_path = data_dir / self._files['x_test' if subset == 'test' else 'x_train']
         y_path = data_dir / self._files['y_test' if subset == 'test' else 'y_train']
         self.x, self.y = self.load_array(x_path, x=True), self.load_array(y_path, x=False)
+        self.x, self.y = map(to_shared_array, [self.x, self.y])
         super().__init__(subset=subset, info=dict(class_count=10, problem='classification'))
 
     def download(self, data_dir):
@@ -298,11 +299,14 @@ class Cifar10(Dataset):
             self.x, self.y = test_x, test_y
         else:
             raise ValueError("The value of subset must be in {'train','test'}.")
-        super().__init__(subset=subset, info=dict(class_count=10, problem='classification'), modifiers=['random_labels'] if self.random_labels else None)
+        self.x, self.y = map(to_shared_array, [self.x, self.y])
+        super().__init__(subset=subset,
+                         info=dict(class_count=10, problem='classification', in_ram=True),
+                         modifiers=['random_labels'] if self.random_labels else None)
 
     def get_example(self, idx):
         if self.random_labels:
-            return _make_record(x=self.x[idx], y=self.y[(idx+1) % len(self)])
+            return _make_record(x=self.x[idx], y=self.y[(idx + 1) % len(self)])
         else:
             return _make_record(x=self.x[idx], y=self.y[idx])
 
