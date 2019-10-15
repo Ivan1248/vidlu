@@ -1,6 +1,6 @@
 import collections
 from argparse import Namespace
-from collections import Callable, Mapping
+from collections import Callable, Mapping, Sequence
 from functools import partial, lru_cache
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
@@ -11,7 +11,7 @@ from torch import nn
 
 from vidlu import modules as M
 from vidlu.data import Record
-from vidlu.data_utils import DataLoader
+from vidlu.data_utils import DataLoader, ZipDataLoader
 from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
@@ -53,9 +53,9 @@ class _MetricsMixin:
         for m in self.metrics.values():
             m.reset()
 
-    def _update_metrics(self, es):
+    def _update_metrics(self, state):
         for m in self.metrics.values():
-            m.update(es.output)
+            m.update(state.output)
 
     def get_metric_values(self, *, reset=False):
         metric_evals = dict()
@@ -96,7 +96,7 @@ class Evaluator(_MetricsMixin):
 
     def eval(self, dataset, batch_size=None):
         return self.evaluation.run(tqdm(
-            self.data_loader_f(dataset, batch_size=batch_size or self.batch_size, shuffle=False,
+            self.data_loader_f(dataset, batch_size=batch_size or self.batch_size, shuffle=True,
                                drop_last=False)))
 
 
@@ -115,7 +115,7 @@ class Trainer(Evaluator):
     train_step: Callable = Missing  # O
     jitter: Callable = None  # D
     optimizer_maker: InitVar[Callable] = None
-    extension: object = dc.field(default_factory=Namespace)  # D
+    extension: Sequence = dc.field(default_factory=tuple)  # D
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
@@ -146,13 +146,18 @@ class Trainer(Evaluator):
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
         self.training.iteration_completed.add_handler(self._update_metrics)
 
-    def train(self, dataset, restart=False):
-        data_loader = self.data_loader_f(dataset.map(self.jitter) if self.jitter else dataset,
-                                         batch_size=self.batch_size, shuffle=True, drop_last=True)
+        for e in self.extension:
+            e.initialize(self)
+
+    def train(self, *datasets, restart=False):
+        data_loaders = [self.data_loader_f(ds.map(self.jitter) if self.jitter else ds,
+                                           batch_size=self.batch_size, shuffle=True, drop_last=True)
+                        for ds in datasets]
+        data_loader = data_loaders[0] if len(datasets) == 1 else ZipDataLoader(*data_loaders)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
-    def eval(self, dataset, batch_size=None):
-        super().eval(dataset, batch_size=self.eval_batch_size)
+    def eval(self, *datasets, batch_size=None):
+        super().eval(*datasets, batch_size=self.eval_batch_size)
 
     def state_dict(self):
         return {k: getattr(self, k).state_dict() for k in type(self).state_attrs}
@@ -160,6 +165,13 @@ class Trainer(Evaluator):
     def load_state_dict(self, state_dict):
         for k in type(self).state_attrs:
             getattr(self, k).load_state_dict(state_dict[k])
+
+    def __getattr__(self, item):
+        for e in self.extension:
+            if hasattr(e, item):
+                return getattr(e, item)
+        raise AttributeError(f"Neither the `Trainer` object not its extensions"
+                             + f" have an {item} attribute.")
 
 
 @dataclass
@@ -182,6 +194,40 @@ class AdversarialTrainer(Trainer):
         eval_attack_f = eval_attack_f or attack_f
         self.eval_attack = eval_attack_f(model=self.model, **(
             dict(loss=self.loss) if params(eval_attack_f)['loss'] is Empty else {}))
+
+
+class TrainerExtension:
+    pass
+
+
+class AdversarialTrainingExt(TrainerExtension):
+    def __init__(self, attack_f, eval_attack_f):
+        self.attack_f, self.eval_attack_f = attack_f, eval_attack_f
+
+    def initialize(self, trainer):
+        attack_f, eval_attack_f = self.attack_f, self.eval_attack_f
+        self.attack = attack_f(model=trainer.model, **(
+            dict(loss=trainer.loss) if params(attack_f)['loss'] is Empty else {}))
+        if isinstance(eval_attack_f, ArgTree):
+            eval_attack_f = argtree_partial(attack_f, eval_attack_f)
+        eval_attack_f = eval_attack_f or attack_f
+        self.eval_attack = eval_attack_f(model=trainer.model, **(
+            dict(loss=trainer.loss) if params(eval_attack_f)['loss'] is Empty else {}))
+
+
+class AdversarialTrainingExt(TrainerExtension):
+    def __init__(self, attack_f, eval_attack_f):
+        self.attack_f, self.eval_attack_f = attack_f, eval_attack_f
+
+    def initialize(self, trainer):
+        attack_f, eval_attack_f = self.attack_f, self.eval_attack_f
+        self.attack = attack_f(model=trainer.model, **(
+            dict(loss=trainer.loss) if params(attack_f)['loss'] is Empty else {}))
+        if isinstance(eval_attack_f, ArgTree):
+            eval_attack_f = argtree_partial(attack_f, eval_attack_f)
+        eval_attack_f = eval_attack_f or attack_f
+        self.eval_attack = eval_attack_f(model=trainer.model, **(
+            dict(loss=trainer.loss) if params(eval_attack_f)['loss'] is Empty else {}))
 
 
 # GAN ##############################################################################################

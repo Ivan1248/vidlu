@@ -82,4 +82,16 @@ class CachingDatasetFactory(DatasetFactory):
 
 class DataLoader(torch.utils.data.DataLoader):
     __init__ = partialmethod(torch.utils.data.DataLoader.__init__, collate_fn=default_collate)
-    
+
+
+class ZipDataLoader:
+    __slots__ = '_data_loaders'
+
+    def __init__(self, *data_loaders):
+        self._data_loaders = data_loaders
+
+    def __iter__(self):
+        return zip(*self._data_loaders)
+
+    def __len__(self):
+        return min(len(d) for d in self._data_loaders)
