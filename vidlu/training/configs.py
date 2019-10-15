@@ -24,7 +24,8 @@ def classification_extend_output(output):
         raise ValueError("The output must ba a `torch.Tensor`.")
     logits = output
     return logits, Record(output=logits, log_probs_=lambda: logits.log_softmax(1),
-                          probs_=lambda r: r.log_probs.exp(), hard_prediction_=lambda: logits.argmax(1))
+                          probs_=lambda r: r.log_probs.exp(),
+                          hard_prediction_=lambda: logits.argmax(1))
 
 
 # Optimizer makers
@@ -589,8 +590,15 @@ swiftnet_camvid = fuse(
     swiftnet,
     overriding=dict(
         lr_scheduler_f=partial(CosineLR, eta_min=1e-7),
-        epoch_count=250,  # 600
+        epoch_count=600,  # 600
+        batch_size=12,
         jitter=jitter.SegRandomCropHFlip((448, 448))))  # 448
+
+swiftnet_camvid_scratch = fuse(
+    swiftnet_camvid,
+    overriding=dict(
+        epoch_count=900,
+        optimizer_maker=None))
 
 semseg_basic = dict(
     **classification,
