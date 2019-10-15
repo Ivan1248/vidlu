@@ -10,20 +10,21 @@ from vidlu import defaults, models, parameters
 from vidlu.data_utils import CachingDatasetFactory, DataLoader
 from vidlu.utils import tree
 from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
-                              ArgTree, params, Empty, default_args, identity, EscapedArgTree)
+                              ArgTree, params, Empty, default_args, EscapedArgTree)
 
 t = ArgTree  # used in arg/evaluation
+EscapedArgTree = EscapedArgTree
 
 
 # Factory messages #################################################################################
 
-def print_all_args_message(func):
+def _print_all_args_message(func):
     print("All arguments:")
     print(f"Argument tree of the model ({func.func}):")
     tree.print_tree(ArgTree.from_func(func), depth=1)
 
 
-def print_missing_args_message(func):
+def _print_missing_args_message(func):
     empty_args = list(find_empty_params_deep(func))
     if len(empty_args) != 0:
         print("Unassigned arguments:")
@@ -31,13 +32,13 @@ def print_missing_args_message(func):
             print(f"  {'/'.join(ea)}")
 
 
-def print_args_messages(kind, type_, factory, argtree, verbosity=1):
+def _print_args_messages(kind, type_, factory, argtree, verbosity=1):
     if verbosity > 0:
         print(f'{kind}:', type_.__name__)
         tree.print_tree(argtree, depth=1)
         if verbosity > 1:
-            print_all_args_message(factory)
-        print_missing_args_message(factory)
+            _print_all_args_message(factory)
+        _print_missing_args_message(factory)
 
 
 # Dataset ##########################################################################################
@@ -103,7 +104,8 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
-def get_data_preparation(dataset):
+def get_data_preparation(*datasets):
+    dataset = datasets[0]
     from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
     fields = tuple(dataset[0].keys())
     if fields == ('x', 'y'):
@@ -148,7 +150,7 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
     raise NotImplementedError()
 
 
-# noinspection PyUnresolvedReferences,PyUnusedLocal
+## noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               dataset=None, device=None, verbosity=1):
     # imports available for evals
@@ -181,7 +183,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
             problem=problem,
             data_statistics=None if dataset is None else dataset.info.cache['standardization']))
 
-    print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
+    _print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
 
     model = model_f()
     model.eval()
@@ -223,7 +225,7 @@ def _parse_parameter_translation_string(params_str):
     m = regex.fullmatch(params_str.strip())
     if m is None:
         raise ValueError('`params_str` does not match the pattern'
-                         + ' "translator[[src_dict]][(src_module)][,dest_module][:file]".')
+                         + ' "translator[[<src_dict>]][(<src_module>)][,<dest_module>][!][:file]".')
     return Namespace(
         **{k: m.group(k) or '' for k in
            ['translator', 'src_dict', 'src_module', 'dest_module', 'file']})
@@ -261,11 +263,14 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
     else:
         state_dict = parameters.get_translated_parameters(p.translator, state_dict,
                                                           subdict=p.src_dict)
-    if len(p.src_module) > 0:
-        start = f'{p.dest_module}.' if len(p.dest_module) > 0 else ''
-        state_dict = {start + k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
+    if len(p.src_module) > 0:  # or len(p.dest_module) > 0:
+        # start = f'{p.dest_module}.' if len(p.dest_module) > 0 else ''
+        # state_dict = {start + k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
+        #              if k.startswith(p.src_module)}
+        state_dict = {k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
                       if k.startswith(p.src_module)}
-    return state_dict
+
+    return state_dict, p.dest_module
 
 
 # Training and evaluation ##########################################################################
@@ -292,7 +297,7 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1):
     argtree.update(argtree_args)
     trainer_f = argtree_hard_partial(trainer_class, **argtree)
 
-    print_args_messages('Trainer', trainer_class, trainer_f, argtree, verbosity=verbosity)
+    _print_args_messages('Trainer', trainer_class, trainer_f, argtree, verbosity=verbosity)
 
     return trainer_f(model=model)
 

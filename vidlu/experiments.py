@@ -1,3 +1,4 @@
+import warnings
 from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
@@ -7,14 +8,15 @@ import torch
 from vidlu.data import Dataset
 import torch.nn as nn
 
-
 from vidlu import gpu_utils, factories
 from vidlu.data import Record
+from vidlu.modules import get_submodule
 from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils import tree
+from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import try_input, CMTimer
 
 
@@ -38,14 +40,19 @@ class TrainingExperimentFactoryArgs:
 # Component factories (or factory wrappers) ########################################################
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
+    if ':' in data_str:
+        names, data_str = [x.strip() for x in data_str.split(':')]
+        names = [x.strip() for x in names.split(',')]
+        if not all(x.startswith('train') or x.startswith('test') for x in names):
+            raise ValueError('All dataset identifiers should start with either "train" or "test".'
+                             + f' Some of {names} do not.')
+    else:
+        names = ['train', 'test']
     data = factories.get_data(data_str, datasets_dir, cache_dir)
-    datasets = tree.flatten(data)
-    if len(datasets) != 2:
-        raise ValueError(f'There must be exactly 2 datasets in "{data_str}"')
-    ds_train, ds_test = dict(datasets).values()
-    prepare = factories.get_data_preparation(ds_train)
-    ds_train, ds_test = map(prepare, [ds_train, ds_test])
-    return Namespace(train=ds_train, test=ds_test)
+    datasets = dict(tree.flatten(data)).values()
+    prepare = factories.get_data_preparation(*datasets)
+    datasets = map(prepare, datasets)
+    return NameDict(**dict(zip(names, datasets)))
 
 
 def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
@@ -135,19 +142,23 @@ class TrainingExperiment:
         with indent_print('Initializing data...'):
             with CMTimer() as t:
                 data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
-            print(f"Data initialized in {t.interval:.2f} s.")
+            print(f"Data initialized in {t.time:.2f} s.")
         with indent_print('Initializing model...'):
             with CMTimer() as t:
                 model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
-                                            dataset=data.train, device=a.device,
+                                            dataset=next(iter(data.values())), device=a.device,
                                             verbosity=a.verbosity)
-            print(f"Model initialized in {t.interval:.2f} s.")
+            print(f"Model initialized in {t.time:.2f} s.")
         with indent_print('Initializing trainer and evaluation...'):
-            trainer = factories.get_trainer(a.trainer, model=model, dataset=data.train,
+            trainer = factories.get_trainer(a.trainer, model=model,
+                                            dataset=next(iter(data.values())),
                                             verbosity=a.verbosity)
-            for m in factories.get_metrics(a.metrics, trainer, dataset=data.train):
+            for m in factories.get_metrics(a.metrics, trainer, dataset=next(iter(data.values()))):
                 trainer.add_metric(m())
         logger = Logger()
+        logger.log("Resume command:\n"
+                   + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"' \
+                   + f' -d "{a.device}" --metrics "{a.metrics}" -r')
         cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
         define_training_loop_actions(trainer, cpman, data, logger)
 
@@ -156,40 +167,12 @@ class TrainingExperiment:
                 obj.load_state_dict(state)
             logger.print_all()
         elif a.params is not None:
-            model.load_state_dict(
-                factories.get_translated_parameters(params_str=a.params,
-                                                    params_dir=dirs.PRETRAINED))
+            parameters, dest = factories.get_translated_parameters(params_str=a.params,
+                                                        params_dir=dirs.PRETRAINED)
+            module = get_submodule(model, dest)
+            try:
+                module.load_state_dict(parameters, strict=True)
+            except RuntimeError as ex:
+                warnings.warn(str(ex))
+                module.load_state_dict(parameters, strict=False)
         return TrainingExperiment(model, trainer, data, logger, cpman)
-
-
-# TODO: remove
-def ikmo_get_cityscapes_val(datasets_dir, cache_dir):
-    from pathlib import Path
-    from torchvision.transforms import Compose
-
-    from vidlu.libs.swiftnet.data import Cityscapes as IKCityscapes
-
-    from vidlu.libs.swiftnet.data.transform import Open, RemapLabels, Normalize, Tensor
-    from vidlu.libs.swiftnet.data.mux.transform import Pyramid, SetTargetSize
-
-    data_path = Path("/home/igrubisic/data/datasets/Cityscapes")
-
-    # mydata = Cityscapes(data_path, subset="val")
-    ts = (2048, 1024)
-    ikdata = IKCityscapes(
-        data_path,
-        subset="val",
-        transforms=Compose([Open(),
-                            RemapLabels(IKCityscapes.map_to_id, IKCityscapes.num_classes),
-                            Pyramid(alphas=[1.]),
-                            SetTargetSize(target_size=ts,
-                                          target_size_feats=(ts[0] // 4, ts[1] // 4)),
-                            Normalize(scale=255, mean=IKCityscapes.mean, std=IKCityscapes.std),
-                            Tensor()]))
-
-    def remap_labels(y):
-        y[y == 19] = -1
-        return y
-
-    return Dataset(data=ikdata).map(
-        lambda x: Record(x=x['image'], y=remap_labels(x['labels'])))
