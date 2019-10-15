@@ -160,10 +160,10 @@ def project_to_1_ball(x, r, inplace=False):
     """
     sign = x.sign()
     x = x.abs_() if inplace else x.abs()
-    sorted, _ = x.view(x.shape[0], -1).sort(descending=True)
-    cssmns = sorted.cumsum(dim=1) - r
-    ind = torch.arange(1, sorted.shape[1] + 1, dtype=torch.float)
-    pconds = (sorted * ind) > cssmns
+    sorted_, _ = x.view(x.shape[0], -1).sort(descending=True)
+    cssmns = sorted_.cumsum(dim=1) - r
+    ind = torch.arange(1, sorted_.shape[1] + 1, dtype=torch.float)
+    pconds = (sorted_ * ind) > cssmns
     rhos = x.new_tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
     thetas = x.new_tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
     return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
@@ -234,7 +234,7 @@ def linear_min_on_p_ball(grad, r, p=2):
     elif p == 2:
         return grad.mul(r / norm(grad, p, keep_dims=True))
     elif p == 1:  # only 1 element can be modified in a single update
-        assert False, "mul r"
+        raise NotImplementedError("mul r")
         grad_flat = grad.view(grad.shape[0], -1)
         sol = torch.zeros_like(grad_flat)
         maxinds = torch.argmax(grad.abs().view(grad.shape[0], -1), dim=1)
