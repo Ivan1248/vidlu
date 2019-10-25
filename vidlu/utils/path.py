@@ -34,6 +34,20 @@ def get_size(path):
     return total_size
 
 
+def dir_tree_has_no_files(path: Path):
+    return path.is_dir() and all(dir_tree_has_no_files(c) for c in path.iterdir())
+
+
+def remove_dir_trees_with_no_files(path: Path, verbose=False):
+    children = list(path.iterdir())
+    if path.is_dir() and all(remove_dir_trees_with_no_files(c, verbose) for c in children):
+        if verbose:
+            print('Deleting', path)
+        path.rmdir()
+        return True
+    return False
+
+
 # File #############################################################################################
 
 
