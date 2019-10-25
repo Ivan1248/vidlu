@@ -13,3 +13,6 @@ Longer short names:
 tvmodels torchvision.models
 models   vidlu.models
 trainers vidlu.training.trainers
+
+argument names ending with "_f" are factories,
+e.g. "foo_f" is a factory that produces a "foo" object.
