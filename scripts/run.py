@@ -28,8 +28,11 @@ def train(args):
         e.trainer.eval(e.data.test)
 
     print(('Continuing' if args.resume else 'Starting') + ' training...')
-    e.trainer.train(e.data.train, restart=False)
-    e.trainer.eval(e.data.train)
+    training_datasets = {k: v for k, v in e.data.items() if k.startswith("train")}
+    e.trainer.train(*training_datasets.values(), restart=False)
+    print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
+    for name, ds in training_datasets.items():
+        e.trainer.eval(ds)
 
     e.cpman.remove_old_checkpoints()
 
