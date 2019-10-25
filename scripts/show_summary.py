@@ -62,9 +62,8 @@ scanner_action = [
          eval(f"NameDict(evals=NameDict({evaluation}), epoch={epoch_lr[-1].epoch})"))),
 ]
 
-includes = None if args.include is None else args.include.split(" ")
-excludes = args.exclude.split(" ")
-
+includes = None if args.include is None else args.include.split(",")
+excludes = args.exclude.split(",")
 
 def name_filter(name):
     if includes is None:

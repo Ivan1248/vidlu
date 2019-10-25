@@ -3,13 +3,13 @@ from torch.nn.functional import cross_entropy
 from torch import autograd
 
 from _context import vidlu, dirs
-from vidlu.experiments import TrainingExperiment, get_prepared_data_for_trainer, get_model
+from vidlu.experiments import TrainingExperiment, get_model
 from vidlu import models
 from vidlu.modules import loss
 from vidlu.utils import func
 from vidlu.utils.func import ArgTree as t
 
-from vidlu.factories import get_data
+from vidlu.factories import get_data, get_prepared_data_for_trainer
 
 data = get_prepared_data_for_trainer("cifar10{train,val}", dirs.DATASETS, dirs.CACHE).test
 model = get_model("ResNetV2,backbone_f=t(depth=10, small_input=True)", "id", data,

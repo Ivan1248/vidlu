@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 
 from _context import vidlu, dirs
-from vidlu.experiments import get_prepared_data_for_trainer
+from vidlu.factories import get_prepared_data_for_trainer
 
 from vidlu.libs.swiftnet.data import Cityscapes as IKCityscapes
 

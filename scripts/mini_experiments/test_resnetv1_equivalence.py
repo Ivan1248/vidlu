@@ -13,7 +13,7 @@ from vidlu import factories, models, problem, data, parameters, data_utils, modu
 
 dataset = factories.get_data("TinyImagenet{val}", dirs.DATASETS)['TinyImagenet']['val']
 dataset = factories.get_data_preparation(dataset)(dataset)
-input = next(iter(data_utils.DataLoader(dataset, batch_size=1)))[0]
+input = next(iter(data.DataLoader(dataset, batch_size=1)))[0]
 
 resnet_my = factories.get_model(
     model_str='ResNetV1,backbone_f=t(depth=18,small_input=False)',

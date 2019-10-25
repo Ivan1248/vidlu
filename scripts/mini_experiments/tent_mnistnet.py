@@ -12,6 +12,7 @@ from vidlu.data.datasets import MNIST
 from vidlu import models
 from vidlu import factories
 from vidlu.modules import components, Module
+from vidlu.modules.components import Tent
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
 from vidlu.training import AdversarialTrainer, configs, adversarial, initialization, metrics
 from vidlu.utils import misc, indent_print, logger
@@ -27,24 +28,6 @@ data = dict(**{k: prepare(v) for k, v in data.items()})
 
 
 # Model
-
-class Tent(Module):  # copied from components.Tent
-    def __init__(self, channelwise=False, delta_range=(0.05, 1.)):
-        super().__init__()
-        self.channelwise = channelwise
-        self.min_delta, self.max_delta = delta_range
-
-    def build(self, x):
-        self.delta = nn.Parameter(
-            torch.ones(x.shape[1]) if self.channelwise else torch.tensor(self.max_delta))
-
-    def forward(self, x):
-        with torch.no_grad():
-            self.delta.clamp_(self.min_delta, self.max_delta)
-        delta = self.delta.view(list(self.delta.shape) + [1] * (len(x.shape) - 2))
-        return F.relu(delta - (x - delta).abs())  # centered at delta
-        #return F.relu(delta - x.abs())
-
 
 class MNISTNetTentModel(models.SeqModel):
     def __init__(self):
@@ -86,7 +69,7 @@ trainer = AdversarialTrainer(
     batch_size=100,
     optimizer_maker=create_optimizer)
 
-for m in [metrics.FuncMetric(lambda iter_output: iter_output.loss, name='loss'),
+for m in [metrics.FuncAverageMetric(lambda iter_output: iter_output.loss, name='loss'),
           metrics.ClassificationMetrics(10, metrics=['A']),
           metrics.with_suffix(metrics.ClassificationMetrics, 'adv')(
               10, hard_prediction_name="other_outputs_adv.hard_prediction", metrics=['A'])]:

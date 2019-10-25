@@ -30,6 +30,6 @@ for m in range(numel_max_order_of_magnitude + 1):
 plt.plot(np.log2(ps), (1 / (ps + 1)) ** (1 / ps), label='n=inf')
 plt.xticks(np.log2(ps))
 plt.xlabel("$\log_2(p)$")
-plt.ylabel("$M_p(x_n)$")
+plt.ylabel("$m_p(x_n) = n^{-1/p}|x_n|$")
 plt.legend()
 plt.show()
