@@ -56,13 +56,13 @@ def translate_densenet(state_dict):
     state_dict = translate_dict_keys(
         state_dict,
         {  # backbone
-            r"bulk.{a:conv|norm}0.{e:(.*)}":
+            r"features.{a:conv|norm}0.{e:(.*)}":
                 r"backbone.root.{a}.orig.{e}",
-            r"bulk.denseblock{a:(\d+)}.denselayer{b:(\d+)}.{c:conv|norm}{d:(\d+)}.{e}":
+            r"features.denseblock{a:(\d+)}.denselayer{b:(\d+)}.{c:conv|norm}{d:(\d+)}.{e}":
                 r"backbone.bulk.dense_block{`int(a)-1`}.unit{`int(b)-1`}.block.{c}{`int(d)-1`}.orig.{e}",
-            r"bulk.transition{a:(\d+)}.{b:conv|norm}.{e}":
+            r"features.transition{a:(\d+)}.{b:conv|norm}.{e}":
                 r"backbone.bulk.transition{`int(a)-1`}.{b}.orig.{e}",
-            r"bulk.norm(\d+).{e:(.*)}":  # the number matching the (\d+) (1+number of blocks) is ignored
+            r"features.norm(\d+).{e:(.*)}":  # the number matching the (\d+) (1+number of blocks) is ignored
                 r"backbone.bulk.norm.orig.{e}",
             # logits
             r"classifier.{e:(.*)}":
