@@ -5,7 +5,7 @@ from functools import partial
 from vidlu.models import DiscriminativeModel, Autoencoder, MNISTNet
 from vidlu.problem import (Classification, SemanticSegmentation, DepthRegression,
                            get_problem_type)
-from vidlu.training.trainers import Trainer, AdversarialTrainer
+import vidlu.training as t
 from vidlu.utils.func import ArgTree, params
 
 
@@ -61,35 +61,33 @@ def get_model_argtree(model_class, problem):
 
 # Trainer/Evaluator ################################################################################
 
-def get_trainer_argtree(trainer_class, dataset):
+def get_trainer_args(trainer_extension_fs, dataset):
     from vidlu.modules import loss
 
     problem = get_problem_from_dataset(dataset)
-    argtree = ArgTree()
-    if issubclass(trainer_class, Trainer):
-        if isinstance(problem, (Classification, SemanticSegmentation)):
-            argtree.update(ArgTree(loss_f=partial(loss.SoftmaxCrossEntropyLoss, ignore_index=-1)))
-        if issubclass(trainer_class, AdversarialTrainer):
-            pass  # it will be ovderridden anyway with the attack
-            # if 'map_div255' not in dataset.modifiers:
-            #    raise RuntimeError(
-            #        "Adversarial attacks supported only for element values from interval [0, 1].")
-            # argtree.update(attack_f=ArgTree(clip_bounds=(0, 1)))
-    return argtree
+    args = dict()
+    if isinstance(problem, (Classification, SemanticSegmentation)):
+        args.update(loss_f=partial(loss.NLLLossWithLogits, ignore_index=-1))
+    return args
 
 
 # Metrics ##########################################################################################
 
 def get_metrics(trainer, problem):
-    import vidlu.training.metrics as m
+    import vidlu.training.metrics as tm
 
     if isinstance(problem, (Classification, SemanticSegmentation)):
-        ret = [partial(m.FuncMetric, func=lambda iter_output: iter_output.loss, name='loss'),
-               partial(m.ClassificationMetrics, class_count=problem.class_count)]
-        if isinstance(trainer, AdversarialTrainer):
-            ret.append(partial(m.with_suffix(m.ClassificationMetrics, 'adv'),
+        clf_metric_names = ('A', 'mIoU') if isinstance(problem, SemanticSegmentation) else ('A',)
+        hard_prediction_name = "other_outputs.hard_prediction"
+        ret = [partial(tm.MultipleAverageMetrics, name_filter=lambda k: k.startswith('loss'))]
+        if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
+            ret.append(partial(tm.with_suffix(tm.ClassificationMetrics, 'adv'),
                                hard_prediction_name="other_outputs_adv.hard_prediction",
-                               class_count=problem.class_count))
+                               class_count=problem.class_count, metrics=clf_metric_names))
+        elif any(isinstance(e, t.SemiSupervisedVAT) for e in trainer.extensions):
+            hard_prediction_name = "other_outputs_l.hard_prediction"
+        ret.append(partial(tm.ClassificationMetrics, hard_prediction_name=hard_prediction_name,
+                           class_count=problem.class_count, metrics=clf_metric_names))
     elif isinstance(problem, DepthRegression):
         raise NotImplementedError()
         # ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]

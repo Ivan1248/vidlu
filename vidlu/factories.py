@@ -7,9 +7,12 @@ from argparse import Namespace
 import torch
 
 from vidlu import defaults, models, parameters
-from vidlu.data_utils import CachingDatasetFactory, DataLoader
+from vidlu.data_utils import CachingDatasetFactory
+from vidlu.data import DataLoader
+from vidlu.training import Trainer
 from vidlu.utils import tree
-from vidlu.utils.func import (argtree_hard_partial, find_empty_params_deep,
+from vidlu.utils.collections import NameDict
+from vidlu.utils.func import (argtree_partial, find_empty_params_deep,
                               ArgTree, params, Empty, default_args, EscapedArgTree)
 
 t = ArgTree  # used in arg/evaluation
@@ -41,7 +44,7 @@ def _print_args_messages(kind, type_, factory, argtree, verbosity=1):
         _print_missing_args_message(factory)
 
 
-# Dataset ##########################################################################################
+# Data #############################################################################################
 
 def parse_data_str(data_str):
     def error(msg=""):
@@ -67,7 +70,7 @@ def parse_data_str(data_str):
     return name_options_subsets_tuples
 
 
-def get_data(data_str: str, datasets_dir, cache_dir=None):
+def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
     """
 
     Args:
@@ -114,6 +117,22 @@ def get_data_preparation(*datasets):
     raise ValueError(f"Unknown record format: {fields}.")
 
 
+def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
+    if ':' in data_str:
+        names, data_str = [x.strip() for x in data_str.split(':')]
+        names = [x.strip() for x in names.split(',')]
+        if not all(x.startswith('train') or x.startswith('test') for x in names):
+            raise ValueError('All dataset identifiers should start with either "train" or "test".'
+                             + f' Some of {names} do not.')
+    else:
+        names = ['train', 'test']
+    data = get_data(data_str, datasets_dir, cache_dir)
+    datasets = dict(tree.flatten(data)).values()
+    prepare = get_data_preparation(*datasets)
+    datasets = map(prepare, datasets)
+    return NameDict(**dict(zip(names, datasets)))
+
+
 # Model ############################################################################################
 
 def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
@@ -152,20 +171,20 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
 
 ## noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
-              dataset=None, device=None, verbosity=1):
+              prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
     # imports available for evals
     from torch import nn
     import vidlu.modules as M
     import vidlu.modules.components as mc
     import torchvision.models as tvmodels
 
-    if dataset is None and (problem is None or init_input is None):
-        raise ValueError("get_model: If dataset is None, problem and init_input need to be given.")
+    if prep_dataset is None and (problem is None or init_input is None):
+        raise ValueError("If `prep_dataset` is None, `problem` and `init_input` need to be provided.")
 
     if problem is None:
-        problem = defaults.get_problem_from_dataset(dataset)
-    if init_input is None and dataset is not None:
-        init_input = batch_x = next(iter(DataLoader(dataset, batch_size=1)))[0]
+        problem = defaults.get_problem_from_dataset(prep_dataset)
+    if init_input is None and prep_dataset is not None:
+        init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
@@ -175,13 +194,13 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) == 1 else ArgTree()
     argtree.update(argtree_arg)
 
-    model_f = argtree_hard_partial(
+    model_f = argtree_partial(
         model_class,
         **argtree,
         input_adapter=get_input_adapter(
             input_adapter_str,
             problem=problem,
-            data_statistics=None if dataset is None else dataset.info.cache['standardization']))
+            data_statistics=None if prep_dataset is None else prep_dataset.info.cache['standardization']))
 
     _print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
 
@@ -276,28 +295,26 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 # Training and evaluation ##########################################################################
 
 # noinspection PyUnresolvedReferences,PyUnusedLocal
-def get_trainer(trainer_str: str, *, dataset, model, verbosity=1):
+def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     # imports available for evals
     from torch import optim
     from torch.optim import lr_scheduler
-    from vidlu.training import trainers
     import vidlu.training.adversarial as ta
     import vidlu.training.configs as tc
+    import vidlu.training.extensions as te
+    import vidlu.training.steps as ts
     from vidlu.training.adversarial import attacks
     from vidlu.utils.misc import fuse
     from vidlu.transforms import jitter
 
-    trainer_name, *argtree_arg = (x.strip() for x in trainer_str.strip().split(',', 1))
-    trainer_class = getattr(trainers, trainer_name)
-    argtree = defaults.get_trainer_argtree(trainer_class, dataset)
-    argtree_args = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) == 1 else ArgTree()
-    if 'optimizer_f' in argtree_args and 'weight_decay' in default_args(argtree_args.optimizer_f):
-        raise ValueError("The `weight_decay` argument should be passed to the trainer instead of"
-                         + " the optimizer.")
-    argtree.update(argtree_args)
-    trainer_f = argtree_hard_partial(trainer_class, **argtree)
+    config = eval(f"tc.TrainerConfig({trainer_str})")
+    default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
+    if 'optimizer_f' in config and 'weight_decay' in default_args(config.optimizer_f):
+        raise RuntimeError("The `weight_decay` argument should be passed to the trainer directly"
+                           + " instead of to the optimizer.")
+    trainer_f = partial(Trainer, **tc.to_trainer_args(default_config, config))
 
-    _print_args_messages('Trainer', trainer_class, trainer_f, argtree, verbosity=verbosity)
+    _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
 
     return trainer_f(model=model)
 

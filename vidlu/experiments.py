@@ -5,18 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from vidlu.data import Dataset
 import torch.nn as nn
 
 from vidlu import gpu_utils, factories
-from vidlu.data import Record
 from vidlu.modules import get_submodule
 from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
-from vidlu.utils import tree
-from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import try_input, CMTimer
 
 
@@ -38,21 +34,6 @@ class TrainingExperimentFactoryArgs:
 
 
 # Component factories (or factory wrappers) ########################################################
-
-def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
-    if ':' in data_str:
-        names, data_str = [x.strip() for x in data_str.split(':')]
-        names = [x.strip() for x in names.split(',')]
-        if not all(x.startswith('train') or x.startswith('test') for x in names):
-            raise ValueError('All dataset identifiers should start with either "train" or "test".'
-                             + f' Some of {names} do not.')
-    else:
-        names = ['train', 'test']
-    data = factories.get_data(data_str, datasets_dir, cache_dir)
-    datasets = dict(tree.flatten(data)).values()
-    prepare = factories.get_data_preparation(*datasets)
-    datasets = map(prepare, datasets)
-    return NameDict(**dict(zip(names, datasets)))
 
 
 def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
@@ -141,12 +122,12 @@ class TrainingExperiment:
             print(f"device: {a.device}")
         with indent_print('Initializing data...'):
             with CMTimer() as t:
-                data = get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
+                data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
             print(f"Data initialized in {t.time:.2f} s.")
         with indent_print('Initializing model...'):
             with CMTimer() as t:
                 model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
-                                            dataset=next(iter(data.values())), device=a.device,
+                                            prep_dataset=next(iter(data.values())), device=a.device,
                                             verbosity=a.verbosity)
             print(f"Model initialized in {t.time:.2f} s.")
         with indent_print('Initializing trainer and evaluation...'):
