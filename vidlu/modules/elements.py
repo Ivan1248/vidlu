@@ -234,6 +234,7 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
+# TODO: rename to Seq
 class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
     """
     A wrapper around torch.nn.Sequential to enable passing a dict as the only
@@ -303,7 +304,7 @@ class Fork(ModuleTable):
         return tuple(m(input) for m in self)
 
     def inverhtose(self):
-        return Fork({k. m.inverse() for k, m in self.named_children()})
+        return Fork({k.m.inverse() for k, m in self.named_children()})
 
 
 class Parallel(ModuleTable):
@@ -375,8 +376,8 @@ class Concat(Module):
 def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.Module:
     if in_channels_name in args and args[in_channels_name] is None:
         args[in_channels_name] = input.shape[1]
-    dim = 2 if len(input.shape) == 4 else 1 if len(input.shape) == 2 else None
-    if dim is None:
+    dim = len(input.shape) - 2  # assuming 1 batch and 1 channels dimension
+    if dim not in [1, 2, 3]:
         raise ValueError(f"Cannot infer {name} dimension from input shape.")
     name = f"{name}{dim}d"
     layer_func = nn.__getattribute__(name)
@@ -420,6 +421,7 @@ class WrappedModule(Module):
         return "A" + repr(self.orig)
 
 
+# TODO: Make separate Conv*ds
 class Conv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
                  bias=True, in_channels=None, padding_mode='zeros'):
