@@ -89,7 +89,6 @@ class CheckpointManager(object):
                  resume=False, remove_old=False):
         self.checkpoints_dir = checkpoints_dir
         self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
-        self.experiment_dir.mkdir(parents=True, exist_ok=True)
         self.experiment_str = experiment_name
         self.experiment_desc = experiment_desc or dict()
         self._n_saved = n_saved
@@ -97,6 +96,8 @@ class CheckpointManager(object):
         self._required_resuming = resume
 
         def get_existing_checkpoints():
+            if not self.experiment_dir.exists():
+                return []
             paths = [str(p.stem) for p in self.experiment_dir.iterdir()]
             indexes = map(self._name_to_index, paths)
             index_paths = sorted(zip(indexes, paths), key=lambda x: x[0])

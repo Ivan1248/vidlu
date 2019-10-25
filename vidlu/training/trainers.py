@@ -1,17 +1,15 @@
 import collections
-from argparse import Namespace
+from typing import Union
 from collections import Callable, Mapping, Sequence
-from functools import partial, lru_cache
+from functools import partial
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
 
 from tqdm import tqdm
 import torch
-from torch import nn
 
 from vidlu import modules as M
-from vidlu.data import Record
-from vidlu.data_utils import DataLoader, ZipDataLoader
+from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
 from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
@@ -28,8 +26,12 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
         return _prepare(batch)
     elif isinstance(batch, (collections.Mapping, Record)):
         return type(batch)({k: _prepare(x) for k, x in batch.items()})
+    elif isinstance(batch, BatchTuple):
+        return BatchTuple(default_prepare_batch(b, feature_type, device, non_blocking)
+                          for b in batch)
     elif isinstance(batch, collections.Sequence):
         return type(batch)(_prepare(x) for x in batch)
+    raise TypeError(f"Invalid batch type {type(batch)}")
 
 
 # Evaluator and trainer ############################################################################
@@ -47,21 +49,21 @@ class Missing:
 
 class _MetricsMixin:
     def add_metric(self, m):
-        self.metrics[type(m).__name__] = m
+        self.metrics.append(m)
 
     def _reset_metrics(self):
-        for m in self.metrics.values():
+        for m in self.metrics:
             m.reset()
 
     def _update_metrics(self, state):
-        for m in self.metrics.values():
+        for m in self.metrics:
             m.update(state.output)
 
     def get_metric_values(self, *, reset=False):
         metric_evals = dict()
-        for k, m in self.metrics.items():
+        for m in self.metrics:
             value = m.compute()
-            metric_evals.update(value if isinstance(value, dict) else {k: value.compute()})
+            metric_evals.update(value if isinstance(value, dict) else {m.name: value.compute()})
         if reset:
             self._reset_metrics()
         return metric_evals
@@ -74,7 +76,7 @@ class Evaluator(_MetricsMixin):
     prepare_batch: Callable = default_prepare_batch
     data_loader_f: Callable = partial(DataLoader, num_workers=4)
     batch_size: int = 1
-    metrics: dict = dc.field(default_factory=dict)
+    metrics: dict = dc.field(default_factory=list)
     extend_output: Callable = extend_output
     eval_step: Callable = Missing
 
@@ -85,10 +87,6 @@ class Evaluator(_MetricsMixin):
                                      non_blocking=False)
         self.eval_step = partial(self.eval_step, self)
         self.loss = loss_f()
-        self.metrics = dict()
-        if not isinstance(self.metrics, Mapping):
-            for m in self.metrics:
-                self.add_metric(m)
 
         self.evaluation = Engine(lambda e, b: self.eval_step(b))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
@@ -115,12 +113,13 @@ class Trainer(Evaluator):
     train_step: Callable = Missing  # O
     jitter: Callable = None  # D
     optimizer_maker: InitVar[Callable] = None
-    extension: Sequence = dc.field(default_factory=tuple)  # D
+    extension_fs: InitVar[Sequence] = ()  # D
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
+    extensions: Sequence = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker):
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker, extension_fs):
         super().__post_init__(loss_f)
 
         if optimizer_maker is None:
@@ -146,8 +145,14 @@ class Trainer(Evaluator):
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
         self.training.iteration_completed.add_handler(self._update_metrics)
 
-        for e in self.extension:
+        self.extensions = [e() for e in extension_fs]
+        if len(set(map(type, self.extensions))) < len(self.extensions):
+            raise RuntimeError("Multiple extensions of the same type are not allowed. The types are"
+                               + f"{', '.join([type(e).__name__ for e in self.extensions])}.")
+        for e in self.extensions:
             e.initialize(self)
+
+        self._initialized = True
 
     def train(self, *datasets, restart=False):
         data_loaders = [self.data_loader_f(ds.map(self.jitter) if self.jitter else ds,
@@ -157,7 +162,8 @@ class Trainer(Evaluator):
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None):
-        super().eval(*datasets, batch_size=self.eval_batch_size)
+        super().eval(*datasets,
+                     batch_size=self.eval_batch_size if batch_size is None else batch_size)
 
     def state_dict(self):
         return {k: getattr(self, k).state_dict() for k in type(self).state_attrs}
@@ -166,124 +172,19 @@ class Trainer(Evaluator):
         for k in type(self).state_attrs:
             getattr(self, k).load_state_dict(state_dict[k])
 
-    def __getattr__(self, item):
-        for e in self.extension:
-            if hasattr(e, item):
-                return getattr(e, item)
-        raise AttributeError(f"Neither the `Trainer` object not its extensions"
-                             + f" have an {item} attribute.")
+    def __getattr__(self, key):
+        for e in self.extensions:
+            if hasattr(e, key):
+                return getattr(e, key)
+        raise AttributeError(f'Neither the `Trainer` object nor its extensions'
+                             + f' have a "{key}" attribute.')
 
-
-@dataclass
-class AdversarialTrainer(Trainer):
-    attack_f: InitVar[callable] = Missing
-    eval_attack_f: InitVar[callable] = None
-
-    attack: object = dc.field(init=False)
-    eval_attack: object = dc.field(init=False)
-
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker, attack_f,
-                      eval_attack_f):
-        super().__post_init__(loss_f, optimizer_f, lr_scheduler_f, optimizer_maker)
-        if attack_f is Missing:
-            raise ValueError(f"`{type(self).__name__}` missing argument `attack_f`.")
-        self.attack = attack_f(model=self.model, **(
-            dict(loss=self.loss) if params(attack_f)['loss'] is Empty else {}))
-        if isinstance(eval_attack_f, ArgTree):
-            eval_attack_f = argtree_partial(attack_f, eval_attack_f)
-        eval_attack_f = eval_attack_f or attack_f
-        self.eval_attack = eval_attack_f(model=self.model, **(
-            dict(loss=self.loss) if params(eval_attack_f)['loss'] is Empty else {}))
-
-
-class TrainerExtension:
-    pass
-
-
-class AdversarialTrainingExt(TrainerExtension):
-    def __init__(self, attack_f, eval_attack_f):
-        self.attack_f, self.eval_attack_f = attack_f, eval_attack_f
-
-    def initialize(self, trainer):
-        attack_f, eval_attack_f = self.attack_f, self.eval_attack_f
-        self.attack = attack_f(model=trainer.model, **(
-            dict(loss=trainer.loss) if params(attack_f)['loss'] is Empty else {}))
-        if isinstance(eval_attack_f, ArgTree):
-            eval_attack_f = argtree_partial(attack_f, eval_attack_f)
-        eval_attack_f = eval_attack_f or attack_f
-        self.eval_attack = eval_attack_f(model=trainer.model, **(
-            dict(loss=trainer.loss) if params(eval_attack_f)['loss'] is Empty else {}))
-
-
-class AdversarialTrainingExt(TrainerExtension):
-    def __init__(self, attack_f, eval_attack_f):
-        self.attack_f, self.eval_attack_f = attack_f, eval_attack_f
-
-    def initialize(self, trainer):
-        attack_f, eval_attack_f = self.attack_f, self.eval_attack_f
-        self.attack = attack_f(model=trainer.model, **(
-            dict(loss=trainer.loss) if params(attack_f)['loss'] is Empty else {}))
-        if isinstance(eval_attack_f, ArgTree):
-            eval_attack_f = argtree_partial(attack_f, eval_attack_f)
-        eval_attack_f = eval_attack_f or attack_f
-        self.eval_attack = eval_attack_f(model=trainer.model, **(
-            dict(loss=trainer.loss) if params(eval_attack_f)['loss'] is Empty else {}))
-
-
-# GAN ##############################################################################################
-
-class GANTrainer(Trainer):
-    def __init__(self, model, loss=None, optimizer_f=None, epoch_count=1,
-                 prepare_batch=None, device=None, non_blocking=False):
-        loss = loss or nn.BCELoss()
-        args = {k: v for k, v in locals() if k not in ['self', 'class']}
-        super().__init__(**args)
-
-    @lru_cache(1)
-    def _get_real_labels(self, batch_size):
-        return torch.ones(batch_size, device=self.model.device)
-
-    @lru_cache(1)
-    def _get_fake_labels(self, batch_size):
-        return torch.zeros(batch_size, device=self.model.device)
-
-    def train_step(self, batch):
-        """ Copied from ignite/examples/gan/dcgan and modified"""
-        self.model.train()
-        real = self.prepare_batch(batch)[0]
-        batch_size = real.shape[0]
-        real_labels = self._get_real_labels(batch_size)
-
-        # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z))) ##########
-        discriminator, generator = self.model.discriminator, self.model.generator
-        discriminator.zero_grad()
-
-        # training discriminator with real
-        output = discriminator(real)
-        errD_real = self.loss(output, real_labels)
-        D_real = output.mean().item()
-        errD_real.backward()
-
-        fake = generator(self.model.sample_z(batch_size))
-
-        # training discriminator with fake
-        output = discriminator(fake.detach())
-        errD_fake = self.loss(output, self._get_fake_labels(batch_size))
-        D_fake1 = output.mean().item()
-        errD_fake.backward()
-
-        self.optimizer['D'].step()
-
-        # (2) Update G network: maximize log(D(G(z))) ##########################
-        generator.zero_grad()
-
-        # Update generator. We want to make a step that will make it more likely that D outputs "real"
-        output = discriminator(fake)
-        errG = self.loss(output, real_labels)
-        D_fake2 = output.mean().item()
-
-        errG.backward()
-        self.optimizer['G'].step()
-
-        return NameDict(errD=(errD_real + errD_fake).item(), errG=errG.item(), D_real=D_real,
-                        D_fake1=D_fake1, D_fake2=D_fake2)
+    def __setattr__(self, key, value):
+        if '_initialized' not in self.__dict__:
+            self.__dict__[key] = value
+            return
+        for e in self.extensions.values():
+            if hasattr(e, key):
+                return setattr(e, key, value)
+        raise AttributeError(f'Neither the `Trainer` object nor its extensions'
+                             + f' have a "{key}" attribute.')

@@ -1,10 +1,9 @@
-from argparse import Namespace
-
 import numpy as np
 import torch
 from functools import wraps
 
 from vidlu.ops import one_hot
+from vidlu.utils.num import KleinSum
 
 EPS = 1e-8
 
@@ -27,24 +26,6 @@ def _get_iter_output(iter_output, name):
     for part in path:
         iter_output = iter_output[part]
     return iter_output
-
-
-class FuncMetric(AccumulatingMetric):
-    def __init__(self, func, name=None):
-        self.func = func
-        self.name = name or type(self).__name__
-        self.reset()
-
-    def reset(self):
-        self._sum = 0
-        self._n = EPS
-
-    def update(self, iter_output):
-        self._sum += self.func(iter_output)
-        self._n += 1
-
-    def compute(self):
-        return {self.name: self._sum / self._n}
 
 
 @torch.no_grad()
@@ -138,6 +119,55 @@ class ClassificationMetrics(AccumulatingMetric):
         return compute_classification_metrics(self.cm.cpu().numpy(), returns=self.metrics, eps=eps)
 
 
+class AverageMetric(AccumulatingMetric):
+    def __init__(self, name):
+        self.name = name
+        self.reset()
+
+    def reset(self):
+        self._sum = KleinSum()
+        self._n = EPS
+
+    def update(self, iter_output):
+        self._sum += iter_output[self.name]
+        self._n += 1
+
+    def compute(self):
+        return {self.name: self._sum.get() / self._n}
+
+
+class FuncAverageMetric(AverageMetric):
+    def __init__(self, func, name):
+        self._func = func
+        super().__init__(name)
+
+    def update(self, iter_output):
+        self._sum += self._func(iter_output)
+        self._n += 1
+
+
+class MultipleAverageMetrics(AccumulatingMetric):
+    def __init__(self, name_filter):
+        self.name_filter = name_filter
+        self.metrics = []
+
+    def reset(self):
+        self.metrics = []
+
+    @torch.no_grad()
+    def update(self, iter_output):
+        if len(self.metrics) == 0:
+            self.metrics = [AverageMetric(k) for k in iter_output.keys() if self.name_filter(k)]
+        for m in self.metrics:
+            m.update(iter_output)
+
+    def compute(self):
+        result = dict()
+        for m in self.metrics or ():
+            result.update(m.compute())
+        return result
+
+
 class SoftClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count, target_name="target", probs_name="other_outputs.probs",
                  metrics=('A', 'mP', 'mR', 'mIoU')):
@@ -147,6 +177,9 @@ class SoftClassificationMetrics(AccumulatingMetric):
         self.target_name = target_name
         self.probs_name = probs_name
         self.metrics = metrics
+
+    def reset(self):
+        self.cm.fill_(0)
 
     @torch.no_grad()
     def update(self, iter_output):

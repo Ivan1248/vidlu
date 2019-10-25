@@ -1,5 +1,3 @@
-from functools import partial
-
 from torch.optim import lr_scheduler
 
 from vidlu.utils.func import default_args
