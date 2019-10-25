@@ -5,7 +5,7 @@ import arpeggio
 from arpeggio import (Optional, ZeroOrMore, OneOrMore, EOF, ParserPython, PTNodeVisitor,
                       visit_parse_tree)
 from arpeggio import RegExMatch as R
-
+import vidlu.utils.func as func
 
 # @formatter:off
 # [...] is disjunction, (...) is conjunction
@@ -196,13 +196,14 @@ class FormatTranslator:
 class FormatTranslatorCascade:
     def __init__(self, input_output_format_pairs, error_on_no_match=True):
         self.input_output_format_pairs = tuple(input_output_format_pairs)
-        self.translators = [FormatTranslator(inp, out, full_match=True)
-                            for inp, out in input_output_format_pairs]
+        self.translators = [
+            FormatTranslator(inp, out, full_match=True, error_on_no_match=error_on_no_match)
+            for inp, out in input_output_format_pairs]
         self.error_on_no_match = error_on_no_match
 
     def __call__(self, input):
         for t in self.translators:
-            output = t(input)
+            output = func.tryable(t, None, NoMatchError)(input)
             if output is not None:
                 return output
         if not self.error_on_no_match:
