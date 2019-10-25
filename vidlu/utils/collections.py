@@ -56,6 +56,9 @@ class NameDict(Mapping):
     def items(self):
         return self.__dict__.items()
 
+    def pop(self, *args):
+        return self.__dict__.pop(*args)
+
     def as_dict(self):
         return self.__dict__
 
