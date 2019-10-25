@@ -48,7 +48,7 @@ def do(proc, x):
     return x
 
 
-class hard_partial(partial):
+class frozen_partial(partial):
     """
     Like partial, but doesn't allow changing already chosen keyword arguments.
     Strangely, works as desired, even though `partial.__new__` looks like it
@@ -63,7 +63,7 @@ class hard_partial(partial):
 
 
 def freeze_nonempty_args(func):
-    return hard_partial(func, **{k: v for k, v in default_args(func) if v is not Empty})
+    return frozen_partial(func, **{k: v for k, v in default_args(func) if v is not Empty})
 
 
 def tryable(func, default_value, error_type=Exception):
@@ -244,12 +244,6 @@ class ArgTree(NameDict):
             else:
                 self[k] = v
 
-    """def deepen(self):
-        for k in self:
-            if callable(self[k]):
-                self[k] = params_deep(self[k])
-    """
-
     def copy(self):
         return ArgTree({k: v.copy() if isinstance(v, ArgTree) else v for k, v in self.items()})
 
@@ -260,7 +254,7 @@ class ArgTree(NameDict):
              for k, v in params(func).items()})
 
 
-class HardArgTree(ArgTree):
+class FrozenArgTree(ArgTree):
     """An argtree whose arguments cannot be overridden."""
 
 
@@ -275,30 +269,31 @@ def argtree_partial(func, *args, **kwargs):
     if len(args) + int(len(kwargs) > 0) != 1:
         raise ValueError("The arguments should be either a single positional argument"
                          + " or 1 or more keyword arguments.")
+    # TODO: do not mutate arguments
     tree = args[0] if len(args) == 1 else kwargs
     for k, v in list(tree.items()):
-        if isinstance(v, HardArgTree):
-            tree[k] = argtree_hard_partial(default_args(func)[k], v)
+        if isinstance(v, FrozenArgTree):
+            tree[k] = argtree_frozen_partial(default_args(func)[k], v)
         if isinstance(v, ArgTree):
             tree[k] = argtree_partial(default_args(func)[k], v)
         elif isinstance(v, EscapedArgTree):
             tree[k] = v.argtree
-    if isinstance(tree, HardArgTree):
-        return hard_partial(func, **tree)
+    if isinstance(tree, FrozenArgTree):
+        return frozen_partial(func, **tree)
     return partial(func, **tree)
 
 
-def argtree_hard_partial(func, *args, **kwargs):
+def argtree_frozen_partial(func, *args, **kwargs):
     if len(args) + int(len(kwargs) > 0) > 1:
         raise ValueError("The arguments should be either a single positional argument"
                          + " or 0 or more keyword arguments.")
     tree = args[0] if len(args) == 1 else kwargs
     for k, v in list(tree.items()):
         if isinstance(v, ArgTree):
-            tree[k] = argtree_hard_partial(default_args(func)[k], v)
+            tree[k] = argtree_frozen_partial(default_args(func)[k], v)
         elif isinstance(v, EscapedArgTree):
             tree[k] = v.argtree
-    return hard_partial(func, **tree)
+    return frozen_partial(func, **tree)
 
 
 def argtree_partialmethod(func, *args, **kwargs):
@@ -384,7 +379,7 @@ class Reserved:  # placeholder to mark parameters that shouldn't be assigned / a
         return Reserved.partial(func, **kwargs)()
 
 
-def multiinput(func):
+def make_multiinput(func):
     @wraps(func)
     def wrapper(x, *a, **k):
         if isinstance(x, tuple):
