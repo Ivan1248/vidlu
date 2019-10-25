@@ -235,11 +235,11 @@ def linear_min_on_p_ball(grad, r, p=2):
         return grad.mul(r / norm(grad, p, keep_dims=True))
     elif p == 1:  # only 1 element can be modified in a single update
         raise NotImplementedError("mul r")
-        grad_flat = grad.view(grad.shape[0], -1)
-        sol = torch.zeros_like(grad_flat)
-        maxinds = torch.argmax(grad.abs().view(grad.shape[0], -1), dim=1)
-        for eind, maxind in enumerate(maxinds):
-            sol[eind, maxind] = torch.sign(grad_flat[eind, maxind])
-        return sol.view(grad.shape)
+        # grad_flat = grad.view(grad.shape[0], -1)
+        # sol = torch.zeros_like(grad_flat)
+        # maxinds = torch.argmax(grad.abs().view(grad.shape[0], -1), dim=1)
+        # for eind, maxind in enumerate(maxinds):
+        #     sol[eind, maxind] = torch.sign(grad_flat[eind, maxind])
+        # return sol.view(grad.shape)
     else:
         raise ValueError(f"Frank-Wolfe LMO solving not implemented for p={p}.")
