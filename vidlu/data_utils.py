@@ -1,15 +1,14 @@
 import shutil
 from argparse import Namespace
-from functools import partialmethod
+from functools import partial
 from pathlib import Path
 import warnings
 
 import numpy as np
-import torch
 from tqdm import tqdm
 
-from vidlu.data import DatasetFactory, default_collate
-from vidlu.utils import path, func
+from vidlu.data import DatasetFactory
+from vidlu.utils import path
 
 
 # Standardization ##################################################################################
@@ -28,16 +27,25 @@ def compute_pixel_mean_std(dataset, scale01=False, progress_bar=False):
 
 # Cached dataset with normalized inputs ############################################################
 
-def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
-    def compute_pixel_mean_std_d(ds):
-        return Namespace(**dict(zip(['mean', 'std'],
-                                    compute_pixel_mean_std(ds, scale01=True, progress_bar=True))))
 
+def _get_standardization(ds, ds_with_info):  # not local for picklability
+    return ds_with_info.info.cache['standardization']
+
+
+def _compute_pixel_mean_std_d(ds):  # not local for picklability
+    return Namespace(**dict(zip(['mean', 'std'],
+                                compute_pixel_mean_std(ds, scale01=True, progress_bar=True))))
+
+
+def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
     ds_with_info = parted_dataset.trainval.info_cache_hdd(
-        dict(standardization=compute_pixel_mean_std_d), Path(cache_dir) / 'dataset_statistics')
-    return parted_dataset.with_transform(
-        lambda ds: ds.info_cache(
-            dict(standardization=lambda ds: ds_with_info.info.cache['standardization'])))
+        dict(standardization=_compute_pixel_mean_std_d), Path(cache_dir) / 'dataset_statistics')
+
+    def cache_transform(ds):
+        return ds.info_cache(
+            dict(standardization=partial(_get_standardization, ds_with_info=ds_with_info)))
+
+    return parted_dataset.with_transform(cache_transform)
 
 
 def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
@@ -76,22 +84,3 @@ class CachingDatasetFactory(DatasetFactory):
         if self.add_statistics:
             pds = add_image_statistics_to_info_lazily(pds, self.cache_dir)
         return cache_data_lazily(pds, self.cache_dir)
-
-
-# DataLoader class with collate function that supports Record examples #############################
-
-class DataLoader(torch.utils.data.DataLoader):
-    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, collate_fn=default_collate)
-
-
-class ZipDataLoader:
-    __slots__ = '_data_loaders'
-
-    def __init__(self, *data_loaders):
-        self._data_loaders = data_loaders
-
-    def __iter__(self):
-        return zip(*self._data_loaders)
-
-    def __len__(self):
-        return min(len(d) for d in self._data_loaders)
