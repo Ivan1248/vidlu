@@ -1,13 +1,11 @@
 import argparse
 
-from _context import vidlu
+import _context
 from vidlu.data.misc import pickle_sizeof
 from vidlu.transforms import image, jitter
-from vidlu.transforms.image import to_pil
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
-from vidlu import defaults
-from vidlu.factories import get_prepared_data_for_trainer, get_data
+from vidlu.factories import get_prepared_data_for_trainer
 
 import dirs
 

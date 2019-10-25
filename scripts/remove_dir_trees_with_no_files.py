@@ -1,8 +1,7 @@
 import argparse
 from pathlib import Path
 
-from _context import vidlu
-
+import _context
 from vidlu.utils.path import remove_dir_trees_with_no_files
 
 parser = argparse.ArgumentParser()

@@ -6,7 +6,6 @@ from pathlib import Path
 
 from tqdm import tqdm, trange
 
-import vidlu
 from vidlu import models, problem, gpu_utils
 from vidlu.training import metrics
 from vidlu.utils.collections import NameDict
