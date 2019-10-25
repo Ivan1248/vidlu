@@ -4,13 +4,13 @@ import numpy as np
 import torch
 import PIL.Image as pimg
 
-from vidlu.transforms import image_transformer
+from vidlu.transforms import transformers
 
 
 class TestData:
     def test_transforms(self):
         im = np.random.randint(0, 255, (30, 20, 3), dtype=np.uint8)
-        imtn = image_transformer(im)
+        imtn = transformers.image_transformer(im)
         imtp = imtn.to_pil()
         imtn_f = imtn.transform(lambda x: x.astype(np.float32))
         imtt = imtn.to_torch()

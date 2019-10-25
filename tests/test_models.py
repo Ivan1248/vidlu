@@ -9,16 +9,15 @@ torch.no_grad()
 
 def compare_with_torchvision(mymodelname, tvmodelname):
     x = torch.randn(1, 3, 64, 64)
-    vidlu_model = factories.get_model(mymodelname,
-                                      problem=problem.Classification(class_count=8),
-                                      init_input=x,
-                                      verbosity=2)
+    vidlu_model = factories.get_model(
+        mymodelname, problem=problem.Classification(class_count=8), init_input=x, verbosity=2)
     tv_model = torchvision.models.__dict__[tvmodelname](num_classes=8)
 
     tsd = tv_model.state_dict()
 
-    params = parameters.translate(
-        text.scan("{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a'], tsd)
+    translator_name = text.scan(r"{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a']
+
+    params = parameters.translate(translator_name, tsd)
     vidlu_model.load_state_dict(params)
 
     assert torch.all(vidlu_model(x) == tv_model(x))

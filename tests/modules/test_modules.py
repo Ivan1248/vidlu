@@ -72,7 +72,7 @@ class TestSequentialForkParallelReduce:
             assert m(l) == sum(l)
 
     def test_combined(self):
-        m = Sequential(fork=Fork(id=nn.BIjectiveIdentity(),
+        m = Sequential(fork=Fork(id=RevIdentity(),
                                         sqr=Func(lambda x: x ** 2)),
                        para=Parallel(mul2=Func(lambda x: 2 * x),
                                      mul3=Func(lambda x: x * 3)),

@@ -7,9 +7,9 @@ from torch import nn
 
 from vidlu.training.trainers import Evaluator
 from vidlu.training.trainers import Trainer
-from vidlu.training.trainers import AdversarialTrainer
-from vidlu.training import configs
-from vidlu.modules.loss import SoftmaxCrossEntropyLoss
+import vidlu.training.steps as ts
+import vidlu.training.configs as tc
+from vidlu.modules.loss import NLLLossWithLogits
 from vidlu.modules.components import ClassificationHead
 from vidlu.models import ResNetV2, resnet_v2_backbone
 from vidlu.training.adversarial.attacks import GradientSignAttack
@@ -33,14 +33,15 @@ class TestTrainers:
     def test_evaluator_all_args(self):
         """ This should not fail because all attributes are assigned values.
         """
-        Evaluator(model=nn.Linear(5, 3), loss_f=SoftmaxCrossEntropyLoss,
-                  eval_step=configs.supervised_eval_step)
+        Evaluator(model=nn.Linear(5, 3), loss_f=NLLLossWithLogits,
+                  eval_step=ts.supervised_eval_step)
 
     def test_trainer_init(self):
-        Trainer(**configs.resnet_cifar, model=get_a_model(),
-                loss_f=partial(SoftmaxCrossEntropyLoss, ignore_index=-1))
+        Trainer(**tc.to_trainer_args(tc.resnet_cifar, model=get_a_model(),
+                                     loss_f=partial(NLLLossWithLogits, ignore_index=-1)))
 
     def test_adversarial_trainer_init(self):
-        AdversarialTrainer(**configs.resnet_cifar, model=get_a_model(),
-                           attack_f=GradientSignAttack,
-                           loss_f=partial(SoftmaxCrossEntropyLoss, ignore_index=-1))
+        Trainer(
+            **tc.to_trainer_args(tc.resnet_cifar, tc.adversarial, model=get_a_model(),
+                                 attack_f=GradientSignAttack,
+                                 loss_f=partial(NLLLossWithLogits, ignore_index=-1)))

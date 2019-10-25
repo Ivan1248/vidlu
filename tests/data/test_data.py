@@ -6,8 +6,7 @@ from collections.abc import Sequence
 import numpy as np
 import torch
 
-from vidlu.data import Record, Dataset, PartedDataset
-from vidlu.data_utils import DataLoader
+from vidlu.data import Record, Dataset, PartedDataset, DataLoader
 
 
 class TestRecord:
