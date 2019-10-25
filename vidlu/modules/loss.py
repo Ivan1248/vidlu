@@ -3,13 +3,16 @@ from torch import nn
 import torch.nn.functional as F
 
 from vidlu import ops
-from vidlu.utils.torch import disable_tracking_bn_stats, save_grads
+from vidlu.utils.torch import batchnorm_stats_tracking_off, save_grads
 
 # Cross entropy ####################################################################################
 
-# Cross entropy between softmax of the input (logits) and target
+NLLLossWithLogits = nn.CrossEntropyLoss
 
-SoftmaxCrossEntropyLoss = nn.CrossEntropyLoss
+
+class KLDivLossWithLogits(nn.KLDivLoss):
+    def __call__(self, logits, target_probs):
+        return super().__call__(torch.log_softmax(logits, 1), target_probs)
 
 
 # Adversarial training #############################################################################
@@ -36,7 +39,7 @@ class VATLoss(nn.Module):
         self.iter_count = iter_count
 
     def forward(self, model, x, pred=None):
-        with disable_tracking_bn_stats(model):
+        with batchnorm_stats_tracking_off():
             if pred is None:
                 with torch.no_grad():
                     pred = F.softmax(model(x), dim=1)
