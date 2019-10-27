@@ -208,9 +208,7 @@ swiftnet_cityscapes = TrainerConfig(
     batch_size=14,
     eval_batch_size=8,
     optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 4}),
-    jitter=jitter.SegRandomCropHFlip((768, 768)))
-
-from torch.nn import BatchNorm2d
+    jitter=jitter.SegRandomScaleCropHFlip(shape=(768, 768), max_scale=2, overstepping='half'))
 
 swiftnet_camvid = TrainerConfig(
     swiftnet_cityscapes,
@@ -218,7 +216,7 @@ swiftnet_camvid = TrainerConfig(
     lr_scheduler_f=partial(CosineLR, eta_min=1e-7),
     epoch_count=600,  # 600
     batch_size=12,
-    jitter=jitter.SegRandomCropHFlip((448, 448)))  # 448
+    jitter=jitter.SegRandomScaleCropHFlip(shape=(448, 448), max_scale=2, overstepping='half'))
 
 swiftnet_camvid_scratch = TrainerConfig(
     swiftnet_camvid,
