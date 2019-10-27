@@ -14,7 +14,7 @@ from vidlu import factories
 from vidlu.modules import components, Module
 from vidlu.modules.components import Tent
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
-from vidlu.training import AdversarialTrainer, configs, adversarial, initialization, metrics
+from vidlu.training import Trainer, configs, adversarial, initialization, metrics, extensions
 from vidlu.utils import misc, indent_print, logger
 
 # Data
@@ -55,7 +55,7 @@ def create_optimizer(trainer):
                       lr=1e-3, weight_decay=0)
 
 
-trainer = AdversarialTrainer(
+trainer = Trainer(
     model=model,
     extend_output=configs.classification_extend_output,
     loss_f=nn.CrossEntropyLoss,
@@ -67,7 +67,8 @@ trainer = AdversarialTrainer(
                           stop_on_success=True),
     epoch_count=40,
     batch_size=100,
-    optimizer_maker=create_optimizer)
+    optimizer_maker=create_optimizer,
+    extensions=extensions.AdversarialTraining)
 
 for m in [metrics.FuncAverageMetric(lambda iter_output: iter_output.loss, name='loss'),
           metrics.ClassificationMetrics(10, metrics=['A']),
