@@ -54,10 +54,5 @@ class SegRandomScaleCropHFlip(SegmentationJitter):
         xy = RandomScaleCrop(shape=self.shape, max_scale=self.max_scale,
                              min_scale=self.min_scale, overstepping=self.overstepping,
                              is_segmentation=(False, True))(tuple(xy))
-        # print(1, xy[1])
         x, y = RandomHFlip()(xy)
-        # print(2, y)
-        #print(y[0, 0], x[:, 0, 0])
-        x, y = PadToShape(self.shape, value=x.mean((1, 2)))(x), PadToShape(self.shape, value=-1)(y)
-        # print(3, y)
-        return x, y
+        return PadToShape(self.shape, value=x.mean((1, 2)))(x), PadToShape(self.shape, value=-1)(y)

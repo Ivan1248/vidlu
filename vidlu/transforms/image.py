@@ -2,7 +2,6 @@ from dataclasses import dataclass
 import random
 from functools import partial
 from numbers import Number
-from random import randint
 from typing import Union, Sequence
 
 import cv2
@@ -16,7 +15,7 @@ import torchvision.transforms.functional as tvtF
 
 from vidlu.utils import num
 from vidlu.utils.func import func_to_class, class_to_func, make_multiinput
-from vidlu.utils.torch import is_float_tensor, is_int_tensor
+from vidlu.utils.torch import is_int_tensor, round_float_to_int
 from . import numpy as npt
 
 
@@ -380,7 +379,7 @@ def pad_to_shape(x, shape, mode='constant', value=0):
     if np.all(padding == 0):
         return x
     elif np.any(padding < 0):
-        raise RuntimeError(f"`x` is to large ({tuple(x.shape)}) to be padded to to {tuple(shape)}")
+        raise RuntimeError(f"`x` is to large ({tuple(x.shape)}) to be padded to {tuple(shape)}")
 
     t, l = tl = padding // 2
     b, r = padding - tl
@@ -437,9 +436,8 @@ def random_crop(x: Union[Tensor, Sequence], shape, overstepping=0):
     p0 = np.maximum(p0, 0, out=p0)  # in-place
     p1 = np.minimum(p1, input_shape, out=p1)
 
-    location = num.round_to_int(p0)
     feasible_shape = num.round_to_int(p1 - p0)
-    return crop(x, location=location, shape=feasible_shape)
+    return crop(x, location=num.round_to_int(p0), shape=feasible_shape)
 
 
 RandomCrop = func_to_class(random_crop)
@@ -467,8 +465,9 @@ def _resolve_padding(input_padding: Union[Number, str, Sequence], shape: Sequenc
 def resize_segmentation(x, shape=None, scale_factor=None, align_corners=None):
     if not is_int_tensor(x):
         raise TypeError("`x` should be an integer tensor.")
-    return resize(x.float(), shape=shape, scale_factor=scale_factor, mode='nearest',
-                  align_corners=align_corners).add(0.5).to(x.dtype)
+    xfr = resize(x.float(), shape=shape, scale_factor=scale_factor, mode='nearest',
+               align_corners=align_corners)
+    return round_float_to_int(xfr, x.dtype)
 
 
 ResizeSegmentation = func_to_class(resize_segmentation)
@@ -476,25 +475,25 @@ ResizeSegmentation = func_to_class(resize_segmentation)
 
 def random_scale_crop(x, shape, max_scale, min_scale=None, overstepping=0, is_segmentation=False):
     multiple = isinstance(x, tuple)
-    if not multiple:
-        x = (x,)
+    xs = x if multiple else (x,)
     if isinstance(is_segmentation, bool):
-        is_segmentation = [is_segmentation] * len(x)
+        is_segmentation = [is_segmentation] * len(xs)
     if min_scale is None:
         min_scale = 1 / max_scale
-    input_shape = x[0].shape[-2:]
-    if not all(a.shape[-2:] == input_shape for a in x):
+    input_shape = xs[0].shape[-2:]
+    if not all(a.shape[-2:] == input_shape for a in xs):
         raise RuntimeError("All inputs must have the same height and width.")
 
     scale = np.random.rand() * (max_scale - min_scale) + min_scale
 
-    x_c = random_crop(x, shape=np.array(shape) / scale, overstepping=overstepping)
+    xs = random_crop(xs, shape=np.array(shape) / scale, overstepping=overstepping)
 
-    x_cs = tuple(
-        (resize_segmentation if iss else partial(resize, mode='bilinear'))(xc, scale_factor=scale)
-        for xc, iss in zip(x_c, is_segmentation))
-
-    return x_cs if multiple else x_cs[0]
+    shape = tuple(
+        d for d in np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale+0.5).astype(int)))
+    xs = tuple(
+        (resize_segmentation if iss else partial(resize, mode='bilinear'))(x, shape=shape)
+        for x, iss in zip(xs, is_segmentation))
+    return xs if multiple else xs[0]
 
 
 RandomScaleCrop = func_to_class(random_scale_crop)
