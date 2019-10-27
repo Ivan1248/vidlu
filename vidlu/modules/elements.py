@@ -234,11 +234,10 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-# TODO: rename to Seq
-class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
+class Seq(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
     """
-    A wrapper around torch.nn.Sequential to enable passing a dict as the only
-    parameter whereas in torch.nn.Sequential only OrderedDict is accepted
+    A wrapper around torch.nn.Seq to enable passing a dict as the only
+    parameter whereas in torch.nn.Seq only OrderedDict is accepted
     currently.
     It also supports slicing using strings.
     """
@@ -259,7 +258,7 @@ class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
         except ValueError:
             raise KeyError(f"Invalid index: {idx}.")
         if isinstance(idx, slice):
-            return Sequential(dict(list(self._modules.items())[idx]))
+            return Seq(dict(list(self._modules.items())[idx]))
         elif isinstance(idx, str):
             return getattr(self, idx)
         return super().__getitem__(idx)
@@ -270,18 +269,18 @@ class Sequential(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
 
     def forward(self, *input):
         if len(self._modules) == 0 and len(input) != 1:
-            raise RuntimeError("A `Sequential` with no children can only accept 1 argument.")
+            raise RuntimeError("A `Seq` with no children can only accept 1 argument.")
         for name in self._modules:
             input = (self._call_with_modifiers(name, *input),)
         return input[0]
 
     def inverse(self):
-        result = Sequential({k: m.inverse() for k, m in reversed(self._modules.items())})
+        result = Seq({k: m.inverse() for k, m in reversed(self._modules.items())})
         result._modifiers = self._modifiers
         return result
 
 
-class ModuleTable(Sequential):
+class ModuleTable(Seq):
     def forward(self, *input):
         raise NotImplementedError
 
@@ -663,17 +662,16 @@ def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
 
 
 def join_sequentials(a, b):
-    return Sequential(**{k: v for k, v in a.named_children()},
-                      **{k: v for k, v in b.named_children()})
+    return Seq(**{k: v for k, v in a.named_children()}, **{k: v for k, v in b.named_children()})
 
 
 def deep_split(root: nn.Module, split_path: Union[list, str]):
     if isinstance(split_path, str):
         split_path = [] if split_path == '' else split_path.split('.')
     if len(split_path) == 0:
-        return root, Sequential()
+        return root, Seq()
     next_name, path_remainder = split_path[0], split_path[1:]
-    if isinstance(root, Sequential):
+    if isinstance(root, Seq):
         split_index = root.index(next_name)
         left, right = root[:split_index + 1], root[split_index + int(len(path_remainder) == 0):]
         if len(path_remainder) > 0:
@@ -687,7 +685,7 @@ def deep_split(root: nn.Module, split_path: Union[list, str]):
 def deep_join(left: nn.Module, right: nn.Module):
     if not type(left) is type(right):
         raise ValueError("Both modules must be of the same type.")
-    if not isinstance(left, Sequential):
+    if not isinstance(left, Seq):
         raise NotImplementedError(f"Joining not implemented for module type {type(left)}")
 
     def index_to_name(module, index):

@@ -115,7 +115,7 @@ class Model(M.Module):
         self._init(module=self)
 
 
-class SeqModel(M.Sequential):
+class SeqModel(M.Seq):
     def __init__(self, seq, init, input_adapter=None):
         inpad = {} if input_adapter is None else dict(input_adapter=input_adapter)
         super().__init__(**inpad, **seq)
@@ -189,7 +189,7 @@ class SwiftNet(SegmentationModel):
     def __init__(self,
                  backbone_f=partial(resnet_v1_backbone, base_width=64),
                  laterals=tuple(f"bulk.unit{i}_{j}.sum"
-                                for i, j in zip(range(3), [1] * 3)),  # TODO
+                                for i, j in zip(range(3), [1] * 3)),
                  ladder_width=128, head_f=mc.heads.SegmentationHead, input_adapter=None):
         """
 

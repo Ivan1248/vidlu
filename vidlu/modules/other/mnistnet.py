@@ -1,9 +1,9 @@
 import torch.nn as nn
 
-from vidlu.modules.elements import Sequential, Conv, MaxPool, Linear, BatchNorm
+from vidlu.modules.elements import Seq, Conv, MaxPool, Linear, BatchNorm
 
 
-class MNISTNetBackbone(Sequential):
+class MNISTNetBackbone(Seq):
     def __init__(self, act_f=nn.ReLU, use_bn=False):
         super().__init__()
         add = self.add_module

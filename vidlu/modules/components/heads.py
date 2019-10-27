@@ -4,23 +4,23 @@ from functools import partial
 from torch import nn
 from torch.nn import functional as F
 
-from vidlu.modules import Module, Sequential, Linear, Conv, Func
+from vidlu.modules import Module, Seq, Linear, Conv, Func
 
 from . import _default_factories as D
 
 
-class ClassificationHead(Sequential):
+class ClassificationHead(Seq):
     def __init__(self, class_count):
         super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
                          logits=Linear(class_count))
 
 
-class ClassificationHead1D(Sequential):
+class ClassificationHead1D(Seq):
     def __init__(self, class_count):
         super().__init__(logits=Linear(class_count))
 
 
-class FixedSizeSegmentationHead(Sequential):
+class FixedSizeSegmentationHead(Seq):
     def __init__(self, class_count, shape=None, kernel_size=1, pre_activation=False,
                  norm_f=D.norm_f,
                  act_f=D.act_f):
@@ -43,7 +43,7 @@ class SegmentationHead(Module):
         return self.interpolate(self.logits(x), shape or self.shape)
 
 
-class TCSegmentationHead(Sequential):
+class TCSegmentationHead(Seq):
     def __init__(self, class_count, shape, norm_f=D.norm_f, act_f=nn.ReLU, convt_f=D.convt_f):
         super().__init__()
         self.shape = shape
@@ -65,7 +65,7 @@ class TCSegmentationHead(Sequential):
                                               align_corners=False)))
 
 
-class RegressionHead(Sequential):
+class RegressionHead(Seq):
     def __init__(self, class_count, shape):
         super().__init__(logits=Conv(class_count, kernel_size=1),
                          upsample=Func(partial(F.interpolate, size=shape, mode='bilinear',

@@ -1,7 +1,7 @@
-from vidlu.modules.elements import Sequential
+from vidlu.modules.elements import Seq
 
 
 
-class YingzhenLiEncoder(Sequential):
+class YingzhenLiEncoder(Seq):
     def __init__(self):
         pass
