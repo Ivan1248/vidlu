@@ -6,8 +6,14 @@ import torch
 def is_float_tensor(x):
     return 'float' in str(x.dtype)
 
+
 def is_int_tensor(x):
     return 'int' in str(x.dtype)
+
+
+def round_float_to_int(x, dtype=torch.int):
+    return x.sign().mul_(0.5).add_(x).to(dtype)
+
 
 # General context managers (move out of utils/torch?
 
