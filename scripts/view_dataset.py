@@ -37,9 +37,9 @@ if 'class_count' not in ds.info:
 if args.jitter:
     jitter = eval("jitter." + args.jitter)
     ds = ds.map(jitter)
-
+    
 if args.permute:
     ds = ds.permute()
 
-ds = ds.map(lambda r: (image.torch_to_numpy(r[0].permute(1,2,0)), r[1].numpy()))
+ds = ds.map(lambda r: (image.torch_to_numpy(r[0].permute(1, 2, 0)), r[1].numpy()))
 view_predictions(ds, infer=lambda x: ds[0][1])
