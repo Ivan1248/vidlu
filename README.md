@@ -7,32 +7,32 @@ A deep learning library for research with emphasis on computer vision, based on 
 
 ## Things (to be) done
 
-- [x] data
+- data
   - [x] easy data processing (transformations, splitting, joining)
   - [x] data caching in RAM and HDD
   - [x] lazy data loading and processing (e.g. if segmentation labels are not requested, they are not loaded)
   - [x] many datasets (data loaders)
-- [x] modules
+- modules
   - [X] modules that infer their input dimension automatically (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and
     [MagNet](https://github.com/MagNet-DL/magnet)) -- requires an initial run for initialization
   - [X] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names
   - [X] high generality/customizability of components and models (deep arguments) (not completely satisfactory)
   - [X] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)
   - [X] extraction of intermediate outputs without changing the module (`vidlu.modules.with_intermediate_outputs`, using `register_forward_hook`)
-- [X] models (convolutional) with training algorithms
-  - [X] classification
+- models (convolutional) with training algorithms
+  - classification
     - [x] ResNet, WRN, DenseNet
     - [ ] RevNet, iRevNet, VGG
     - [x] other: BagNet
-  - [X] semantic segmentation
+  - semantic segmentation
     - [x] basic segmentation head and loss
     - [x] SwiftNet
     - [ ] Ladder DenseNet
+  - [ ] stochastic model parts
   - [ ] variational inference
-    - [ ] stochastic model parts
   - [ ] VAE
   - [ ] flow generative models
-- [x] training
+- training
   - [x] inductive bias (mostly) disentangled from the model
   - [x] customizable training (inductive bias) configurations
   - [x] logging, checkpoints, resuming interrupted training
@@ -45,8 +45,8 @@ A deep learning library for research with emphasis on computer vision, based on 
 - adversarial attacks
   - [x] single step gradient
   - [x] PGD/BIM
-    - [x] stop on success
-    - [x] support for "adversarial training for free"
+  - [X] PGD: stop on success
+  - [X] PGD: support for "adversarial training for free"
   - [X] VAT attack
   - [ ] CW
   - [ ] DDN (arXiv:1811.09600)
