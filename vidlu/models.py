@@ -235,7 +235,7 @@ class LadderDensenet(DiscriminativeModel):
         """
         if laterals is None:
             laterals = tuple(
-                f"bulk.dense_block{i}.unit{j}.sum"  # TODO: automatic based on backbone
+                f"bulk.db{i}.unit{j}.sum"  # TODO: automatic based on backbone
                 for i, j in zip(range(3), [1] * 3))
         super().__init__(backbone_f=partial(mc.KresoLadderNet,
                                             backbone_f=backbone_f,

@@ -505,7 +505,7 @@ class DenseSequence(Seq):
         super().__init__()
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         for i, length in enumerate(db_lengths):
-            self.add_module(f'dense_block{i}',
+            self.add_module(f'db{i}',
                             DenseBlock(length,
                                        block_f=Reserved.partial(block_f, base_width=growth_rate)))
             if i != len(db_lengths) - 1:
@@ -580,7 +580,7 @@ class MDenseSequence(Seq):
             if i > 0:
                 self.add_module(f'transition{i - 1}',
                                 MDenseTransition(compression, **norm_act_args))
-            self.add_module(f'dense_block{i}',
+            self.add_module(f'db{i}',
                             MDenseBlock(len,
                                         block_f=Reserved.partial(block_f, base_width=growth_rate)))
         self.add_module('concat', Concat())
@@ -644,7 +644,7 @@ class FDenseSequence(Seq):
             if i > 0:
                 self.add_module(f'transition{i - 1}',
                                 FDenseTransition(compression, **norm_act_args))
-            self.add_module(f'dense_block{i}',
+            self.add_module(f'db{i}',
                             FDenseBlock(len,
                                         block_f=Reserved.partial(block_f, base_width=growth_rate)))
         self.add_module('concat', Concat())
