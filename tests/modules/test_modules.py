@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Sequential, Fork, Parallel,
+from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Seq, Fork, Parallel,
                            Reduce, Sum, with_intermediate_outputs, deep_split, deep_join,
                            RevIdentity)
 from vidlu.utils.collections import NameDict
@@ -34,8 +34,8 @@ class TestModule:
     """
     def test_scoped_sequential(self):
         x = torch.ones(4, 522)
-        inner = Sequential(lin1=Linear(8), lin2=Sequential(Linear(5)))
-        M = Sequential(inner=inner)
+        inner = Seq(lin1=Linear(8), lin2=Seq(Linear(5)))
+        M = Seq(inner=inner)
         M(x)
         assert M in [p for p, cname in inner.parents]
         assert inner in [p for p, cname in inner.lin1.parents]
@@ -50,8 +50,8 @@ class TestFunc:
 
 
 class TestSequentialForkParallelReduce:
-    def test_sequential(self):
-        m = Sequential(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
+    def test_seq(self):
+        m = Seq(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
         for i in range(100):
             assert m(torch.tensor(i)) == (i + 1) * 3
 
@@ -72,20 +72,20 @@ class TestSequentialForkParallelReduce:
             assert m(l) == sum(l)
 
     def test_combined(self):
-        m = Sequential(fork=Fork(id=RevIdentity(),
-                                        sqr=Func(lambda x: x ** 2)),
-                       para=Parallel(mul2=Func(lambda x: 2 * x),
-                                     mul3=Func(lambda x: x * 3)),
-                       sum=Sum())
+        m = Seq(fork=Fork(id=RevIdentity(),
+                          sqr=Func(lambda x: x ** 2)),
+                para=Parallel(mul2=Func(lambda x: 2 * x),
+                              mul3=Func(lambda x: x * 3)),
+                sum=Sum())
         for i in range(5):
             assert m(torch.tensor(i)) == 2 * i + 3 * i ** 2
 
     def test_intermediate(self):
-        m = Sequential(fork=Fork(id=RevIdentity(),
-                                        sqr=Func(lambda x: x ** 2)),
-                       para=Parallel(add2=Func(lambda x: x + 2),
-                                     mul3=Func(lambda x: x * 3)),
-                       sum=Sum())
+        m = Seq(fork=Fork(id=RevIdentity(),
+                          sqr=Func(lambda x: x ** 2)),
+                para=Parallel(add2=Func(lambda x: x + 2),
+                              mul3=Func(lambda x: x * 3)),
+                sum=Sum())
         inter = ["fork.id", "para.mul3", "para"]
         iomw = with_intermediate_outputs(m, inter)
         for i in range(5):
@@ -157,15 +157,15 @@ class TestBatchNorm:
 
 class TestDeepSplit:
     def test_deep_split(self):
-        module = Sequential(a=Linear(8),
-                            b=Sequential(
-                                a=Sequential(
-                                    a=Linear(9),
-                                    b=Linear(10),
-                                    c=Linear(11)),
-                                b=Linear(12)),
-                            c=Sequential(
-                                a=Linear(13)))
+        module = Seq(a=Linear(8),
+                     b=Seq(
+                         a=Seq(
+                             a=Linear(9),
+                             b=Linear(10),
+                             c=Linear(11)),
+                         b=Linear(12)),
+                     c=Seq(
+                         a=Linear(13)))
         x = torch.randn((4, 8))
         module(x)
         for path in ['', 'a', 'b', 'c', 'b.a', 'b.b', 'c.a', 'b.a.b', ]:
