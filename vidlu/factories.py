@@ -127,6 +127,10 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     else:
         names = ['train', 'test']
     data = get_data(data_str, datasets_dir, cache_dir)
+    names_iter = iter(names)
+    print("Datasets: " + ", ".join(f"{name}.{k}({len(ds)}) as {next(names_iter)}"
+                                   for name, subsets in data.items()
+                                   for k, ds in subsets.items()))
     datasets = dict(tree.flatten(data)).values()
     prepare = get_data_preparation(*datasets)
     datasets = map(prepare, datasets)
@@ -179,7 +183,8 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     import torchvision.models as tvmodels
 
     if prep_dataset is None and (problem is None or init_input is None):
-        raise ValueError("If `prep_dataset` is None, `problem` and `init_input` need to be provided.")
+        raise ValueError(
+            "If `prep_dataset` is `None`, `problem` and `init_input` need to be provided.")
 
     if problem is None:
         problem = defaults.get_problem_from_dataset(prep_dataset)
@@ -200,7 +205,8 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         input_adapter=get_input_adapter(
             input_adapter_str,
             problem=problem,
-            data_statistics=None if prep_dataset is None else prep_dataset.info.cache['standardization']))
+            data_statistics=(None if prep_dataset is None
+                             else prep_dataset.info.cache['standardization'])))
 
     _print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
 
@@ -288,7 +294,6 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
         #              if k.startswith(p.src_module)}
         state_dict = {k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
                       if k.startswith(p.src_module)}
-
     return state_dict, p.dest_module
 
 
