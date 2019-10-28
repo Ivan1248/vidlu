@@ -196,7 +196,7 @@ ladder_densenet = TrainerConfig(
     lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
     epoch_count=40,
     batch_size=4,
-    optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 4}),
+    optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 5}),
     jitter=jitter.SegRandomHFlip())
 
 swiftnet_cityscapes = TrainerConfig(
