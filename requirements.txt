@@ -3,6 +3,7 @@ graphviz==0.9
 ipython==7.6.1
 matplotlib==3.1.1
 numpy==1.17.1
+opencv-python
 parse==1.12.0
 pillow-simd
 pydot==1.4.1
