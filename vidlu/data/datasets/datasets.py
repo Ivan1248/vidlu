@@ -42,8 +42,8 @@ def _rescale(img, factor, interpolation=pimg.BILINEAR):
 
 def _make_record(**kwargs):
     def array_to_image(k, v):
-        if (k == 'x' and isinstance(v, np.ndarray) and v.dtype == np.uint8 and
-                2 <= len(v.shape) <= 3):
+        if (k == 'x' and isinstance(v, np.ndarray) and v.dtype == np.uint8
+                and 2 <= len(v.shape) <= 3):
             return pimg.fromarray(v)  # automatic RGB or L, depending on shape
         return v
 
@@ -187,6 +187,25 @@ class DummyClassification(Dataset):
 
     def __len__(self):
         return self._len
+
+
+# ImageFolder
+
+class ImageFolder(Dataset):
+    def __init__(self, data_dir, subset='all'):
+        self.data_dir = Path(data_dir)
+        subset_dir = self.data_dir if subset == 'all' else self.data_dir / subset
+        self._elements = sorted(p.name for p in subset_dir.iterdir())
+        super().__init__(subset=subset, info=dict(problem='images'), modifiers=self.data_dir.name)
+
+    def get_example(self, idx):
+        return _make_record(x_=lambda: _load_image(self.data_dir / self._elements[idx]))
+
+
+# Images
+
+class CamVidSequences(ImageFolder):
+    subsets = ['01TP', '01TP', '05VD', '06RO', '16E4']
 
 
 # Classification ###################################################################################
