@@ -1,7 +1,6 @@
 import pytest
 
-from random import randint
-
+import random
 from vidlu import factories
 from vidlu.utils import tree
 
@@ -13,7 +12,7 @@ def test_get_data_single(tmpdir):
 
 
 def test_get_datasets_single_args(tmpdir):
-    example_shape = (randint(1, 32),) * 2 + (3,)
+    example_shape = (random.randint(1, 32),) * 2 + (3,)
     data = factories.get_data(f"whitenoise(example_shape={example_shape}){{train,val}}", tmpdir)
     assert list(data.keys()) == [f"whitenoise(example_shape={example_shape})"]
     train, val = dict(tree.flatten(data)).values()

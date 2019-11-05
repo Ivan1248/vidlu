@@ -9,7 +9,7 @@ x = torch.ones((3,) + input_shape)
 y = torch.randint(1, 3, (1,) + input_shape)
 
 for i in range(100):
-    jitt = jitter.SegRandomScaleCropHFlip(shape=crop_shape, max_scale=2, overstepping='half')
+    jitt = jitter.SegRandScaleCropPadHFlip(shape=crop_shape, max_scale=2, overstepping='half')
     x_, y_ = jitt((x, y))
     if torch.any(y_ == 0):
         print(i, y_)

@@ -12,7 +12,7 @@ class OutputBuilder:
     def __init__(self):
         self.output = ''
 
-    def add(self, text, line_numbers=None):
+    def add(self, text):
         self.output += text
 
     def filter_add(self, text, line_numbers=None):
@@ -21,7 +21,7 @@ class OutputBuilder:
             self.output += text[l] + '\n'
 
     def print(self):
-        print(self.output)
+        print(self.output, flush=True)
 
 
 while True:
@@ -32,4 +32,4 @@ while True:
     for x in 'abc':
         ob.add(run_command('hddtemp /dev/sd' + x))
     ob.print()
-    time.sleep(1)
+    time.sleep(20)

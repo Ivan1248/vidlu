@@ -16,6 +16,7 @@ from vidlu.modules.components import Tent
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
 from vidlu.training import Trainer, configs, adversarial, initialization, metrics, extensions
 from vidlu.utils import misc, indent_print, logger
+import vidlu.training.steps as ts
 
 # Data
 
@@ -62,7 +63,7 @@ trainer = Trainer(
     train_step=configs.AdversarialTrainStep(),
     # no attack is used during training (the training is not adversarial)
     attack_f=adversarial.attacks.DummyAttack,
-    eval_step=configs.adversarial_eval_step,
+    eval_step=ts.AdversarialEvalStep(),
     eval_attack_f=partial(adversarial.attacks.PGDAttack, eps=0.3, step_size=0.1, step_count=20,
                           stop_on_success=True),
     epoch_count=40,

@@ -5,7 +5,7 @@ from torch import autograd
 from _context import vidlu, dirs
 from vidlu.experiments import TrainingExperiment, get_model
 from vidlu import models
-from vidlu.modules import loss
+from vidlu.modules import losses
 from vidlu.utils import func
 from vidlu.utils.func import ArgTree as t
 

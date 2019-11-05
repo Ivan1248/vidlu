@@ -178,8 +178,8 @@ class TestDataset:
 
             ds = ds.info_cache_hdd(name_to_func, tmpdir)
 
-            if i == 0:  # in the second run, the info is cached on the filesystem
-                assert len(call_counts) == 0
+            if i == 0:  # in the second run, the info is cached in the filesystem
+                assert len(call_counts) == 0  # unless the debugger has already called ds.info
                 _ = ds.info
                 assert all(x == 1 for x in call_counts.values()) and len(call_counts) > 0
                 _ = ds.info

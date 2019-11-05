@@ -16,6 +16,10 @@ python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 
 # semantic segmentation
 
+## DenseNet (pretrained on ImageNet)
+python run.py train "cityscapes(downsampling=2){train,val}" id "DenseNet,backbone_f=t(depth=121,small_input=False)" "tc.ladder_densenet,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone':1/5})" --params "densenet(backbone),backbone:densenet121-a639ec97.pth"
+
+
 ## ResNet
 python run.py train "camvid(downsampling=2){train,val}" id "ResNetV1,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,jitter=jitter.SegRandomCropHFlip((360,480)),optimizer_maker=None" -r
 
@@ -59,7 +63,7 @@ python show_summary.py /home/igrubisic/data/states/cifar10\{trainval\,test\}/Res
 
 
 # Semisupervised VAT
-python run.py train "train,train_ul,test:camvid{val,train,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth" -r
+python run.py train "train,train_u,test:camvid{val,train,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth" -r
 
 # rsync
 rsync -avzhe ssh --progress pretrained_parameters/ igrubisic@treebeard:/home/igrubisic/data/pretrained_parameters/
