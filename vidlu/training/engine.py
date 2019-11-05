@@ -46,7 +46,7 @@ class Engine(object):
             inputs, targets = batch
             optimizer.zero_grad()
             outputs = model(inputs)
-            loss = loss_fn(outputs, targets)
+            loss = loss_fn(outputs, targets).mean()
             loss.backward()
             optimizer.step()
             return loss.item()
