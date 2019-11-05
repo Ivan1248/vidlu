@@ -51,6 +51,9 @@ def _extended_interface(*superclasses):
                 sd = torch.load(sd, map_location=self.device)
             return super().load_state_dict(sd, strict=strict)
 
+        def with_intermediate_outputs(self, submodule_paths: list):
+            return with_intermediate_outputs(self, submodule_paths)
+
     return ExtendedInterfaceModExt
 
 
