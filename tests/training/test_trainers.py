@@ -9,7 +9,7 @@ from vidlu.training.trainers import Evaluator
 from vidlu.training.trainers import Trainer
 import vidlu.training.steps as ts
 import vidlu.training.configs as tc
-from vidlu.modules.loss import NLLLossWithLogits
+from vidlu.modules.losses import NLLLossWithLogits
 from vidlu.modules.components import ClassificationHead
 from vidlu.models import ResNetV2, resnet_v2_backbone
 from vidlu.training.adversarial.attacks import GradientSignAttack
