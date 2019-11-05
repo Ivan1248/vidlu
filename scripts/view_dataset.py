@@ -5,7 +5,7 @@ from vidlu.data.misc import pickle_sizeof
 from vidlu.transforms import image, jitter
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
-from vidlu.factories import get_prepared_data_for_trainer
+from vidlu.factories import get_prepared_data
 
 import dirs
 
@@ -22,8 +22,8 @@ parser.add_argument('--jitter', type=str, default=None)
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-ds = get_prepared_data_for_trainer(args.ds + '{' + args.part + '}', datasets_dir=dirs.DATASETS,
-                                   cache_dir=dirs.CACHE)[args.part]
+ds = get_prepared_data(args.ds + '{' + args.part + '}', datasets_dir=dirs.DATASETS,
+                       cache_dir=dirs.CACHE)[0]
 
 print("Name:", ds.name)
 print("Info:")
@@ -37,7 +37,7 @@ if 'class_count' not in ds.info:
 if args.jitter:
     jitter = eval("jitter." + args.jitter)
     ds = ds.map(jitter)
-    
+
 if args.permute:
     ds = ds.permute()
 
