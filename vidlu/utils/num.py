@@ -53,4 +53,4 @@ class KleinSum:
 
 
 def round_to_int(x):
-    return (x + 0.5).astype(int)
+    return (x + 0.5 * np.sign(x)).astype(int)
