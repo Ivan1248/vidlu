@@ -62,12 +62,12 @@ def get_model_argtree(model_class, problem):
 # Trainer/Evaluator ################################################################################
 
 def get_trainer_args(trainer_extension_fs, dataset):
-    from vidlu.modules import loss
+    from vidlu.modules import losses
 
     problem = get_problem_from_dataset(dataset)
     args = dict()
     if isinstance(problem, (Classification, SemanticSegmentation)):
-        args.update(loss_f=partial(loss.NLLLossWithLogits, ignore_index=-1))
+        args.update(loss_f=partial(losses.NLLLossWithLogits, ignore_index=-1))
     return args
 
 
@@ -95,11 +95,3 @@ def get_metrics(trainer, problem):
         warnings.warn(f"get_metrics: There are no default metrics for problem {type(problem)}.")
         ret = []
     return ret
-
-
-def get_metric_args(problem):
-    if isinstance(problem, (Classification, SemanticSegmentation)):
-        return dict(class_count=problem.class_count)
-    elif isinstance(problem, DepthRegression):
-        return {}
-    return {}
