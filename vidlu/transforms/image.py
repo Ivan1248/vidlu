@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import random
 from functools import partial
 from numbers import Number
 from typing import Union, Sequence
@@ -444,7 +443,7 @@ RandomCrop = func_to_class(random_crop)
 
 
 def random_hflip(x: Tensor, p=0.5) -> Tensor:
-    return hflip(x) if random.random() < p else x
+    return hflip(x) if np.random.rand() < p else x
 
 
 RandomHFlip = func_to_class(random_hflip)
