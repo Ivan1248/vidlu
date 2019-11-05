@@ -1,6 +1,4 @@
-import collections
-from typing import Union
-from collections import Callable, Mapping, Sequence
+from typing import Union, Callable, Mapping, Sequence
 from functools import partial
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
@@ -24,12 +22,12 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 
     if isinstance(batch, feature_type):
         return _prepare(batch)
-    elif isinstance(batch, (collections.Mapping, Record)):
+    elif isinstance(batch, (Mapping, Record)):
         return type(batch)({k: _prepare(x) for k, x in batch.items()})
     elif isinstance(batch, BatchTuple):
         return BatchTuple(default_prepare_batch(b, feature_type, device, non_blocking)
                           for b in batch)
-    elif isinstance(batch, collections.Sequence):
+    elif isinstance(batch, Sequence):
         return type(batch)(_prepare(x) for x in batch)
     raise TypeError(f"Invalid batch type {type(batch)}")
 
@@ -74,7 +72,7 @@ class Evaluator(_MetricsMixin):
     model: Callable = Missing
     loss_f: InitVar[Callable] = Missing
     prepare_batch: Callable = default_prepare_batch
-    data_loader_f: Callable = partial(DataLoader, num_workers=4)
+    data_loader_f: Callable = partial(DataLoader, num_workers=3)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=list)
     extend_output: Callable = extend_output
@@ -92,10 +90,25 @@ class Evaluator(_MetricsMixin):
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.iteration_completed.add_handler(self._update_metrics)
 
-    def eval(self, dataset, batch_size=None):
-        return self.evaluation.run(tqdm(
-            self.data_loader_f(dataset, batch_size=batch_size or self.batch_size, shuffle=True,
-                               drop_last=False)))
+    def _broadcast(self, obj, n):
+        if isinstance(obj, Sequence):
+            if len(obj) != n:
+                raise RuntimeError(f"`obj` already is a `Sequence` but its size"
+                                   + f" ({len(obj)}) is not `n` = {n}.")
+            return obj
+        return [obj] * n
+
+    def get_data_loader(self, *datasets, batch_size, shuffle, drop_last, **kwargs):
+        data_loader_fs = self._broadcast(self.data_loader_f, len(datasets))
+        batch_sizes = self._broadcast(batch_size, len(datasets))
+        data_loaders = [dl_f(ds, batch_size=bs, shuffle=shuffle, drop_last=drop_last, **kwargs)
+                        for ds, dl_f, bs in zip(datasets, data_loader_fs, batch_sizes)]
+        return data_loaders[0] if len(datasets) == 1 else ZipDataLoader(*data_loaders)
+
+    def eval(self, *datasets, batch_size=None):
+        data_loader = self.get_data_loader(*datasets, batch_size=batch_size or self.batch_size,
+                                           shuffle=True, drop_last=False)
+        return self.evaluation.run(tqdm(data_loader))
 
 
 # Trainer ##########################################################################################
@@ -155,10 +168,8 @@ class Trainer(Evaluator):
         self._initialized = True
 
     def train(self, *datasets, restart=False):
-        data_loaders = [self.data_loader_f(ds.map(self.jitter) if self.jitter else ds,
-                                           batch_size=self.batch_size, shuffle=True, drop_last=True)
-                        for ds in datasets]
-        data_loader = data_loaders[0] if len(datasets) == 1 else ZipDataLoader(*data_loaders)
+        data_loader = self.get_data_loader(*datasets, batch_size=self.batch_size,
+                                           shuffle=True, drop_last=True)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None):
