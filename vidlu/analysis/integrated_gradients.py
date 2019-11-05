@@ -5,8 +5,7 @@ and modified.
 import torch
 
 
-def integrated_gradients(inp, target_label_index, get_predictions_and_gradients, baseline,
-                         step_count=50):
+def integrated_gradients(inp, target, model, baseline, step_count=50):
     """Computes integrated gradients for a given network and prediction label.
     Integrated gradients is a technique for attributing a deep network's
     prediction to its input features. It was introduced by:
@@ -76,21 +75,22 @@ def integrated_gradients(inp, target_label_index, get_predictions_and_gradients,
     # Scale input and compute gradients.
     scaled_inputs = [baseline + (i / step_count) * (inp - baseline)
                      for i in range(0, step_count + 1)]
-    predictions, grads = get_predictions_and_gradients(
-        scaled_inputs, target_label_index)  # shapes: <step_count+1>, <step_count+1, inp.shape>
+    predictions, grads = model(
+        scaled_inputs, target)  # shapes: <step_count+1>, <step_count+1, inp.shape>
 
-    # The trapezoidal rule is not used as it is almost equivalent to a simple sum
-    integrated_gradients = (inp - baseline) * grads.mean(0)  # shape: <inp.shape>
+    # trapezoidal rule
+    integrated_gradients = (inp - baseline).mul_((grads[0] + grads[-1]).mul_(0.5)
+                                                 .add_(grads[1:-1].sum(0)))
     return integrated_gradients, predictions
 
 
-def random_baseline_integrated_gradients(inp, target_label_index, predictions_and_gradients,
+def random_baseline_integrated_gradients(inp, target, predictions_and_gradients,
                                          steps=50, num_random_trials=10):
     all_intgrads = []
     for i in range(num_random_trials):
         intgrads, prediction_trend = integrated_gradients(
             inp,
-            target_label_index=target_label_index,
+            target=target,
             get_predictions_and_gradients=predictions_and_gradients,
             baseline=255.0 * torch.random.random([224, 224, 3]),
             step_count=steps)
