@@ -3,22 +3,50 @@ from torch import nn
 import torch.nn.functional as F
 
 from vidlu import ops
+from vidlu.utils.func import class_to_func
 from vidlu.utils.torch import batchnorm_stats_tracking_off, save_grads
+
 
 # Cross entropy ####################################################################################
 
-NLLLossWithLogits = nn.CrossEntropyLoss
+
+class NLLLossWithLogits(nn.CrossEntropyLoss):
+    def __init__(self, weight=None, ignore_index=-1):
+        super().__init__(weight=weight, ignore_index=ignore_index, reduction='none')
+
+    def __call__(self, logits, targets):
+        return super().__call__(logits, targets)
+
+
+nll_loss_with_logits = class_to_func(NLLLossWithLogits)
 
 
 class KLDivLossWithLogits(nn.KLDivLoss):
+    def __init__(self):
+        super().__init__(reduction='none')
+
     def __call__(self, logits, target_probs):
-        return super().__call__(torch.log_softmax(logits, 1), target_probs)
+        return super().__call__(torch.log_softmax(logits, 1), target_probs).sum(1)
+
+
+kl_div_loss_with_logits = class_to_func(KLDivLossWithLogits)
+
+
+def reduce_loss(x, batch_reduction: "Literal['sum', 'mean']" = None,
+                elements_reduction: "Literal['sum', 'mean']" = None):
+    if batch_reduction == elements_reduction and batch_reduction is not None:
+        return getattr(torch, batch_reduction)(x)
+    if elements_reduction is not None:
+        x = getattr(torch, elements_reduction)(x.view(x.shape[0], -1), -1)
+    if batch_reduction is not None:
+        x = getattr(torch, batch_reduction)(x, 0)
+    return x
 
 
 # Adversarial training #############################################################################
 
 def _l2_normalize(d, eps=1e-8):
-    d_reshaped = d.view(d.shape[0], -1, *(1 for _ in range(d.dim() - 2)))
+    d_reshaped = d.view(d.shape[0], -1, *([1] * (d.dim() - 2)))
     return d / (torch.norm(d_reshaped, dim=1, keepdim=True) + eps)
 
 
