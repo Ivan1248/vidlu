@@ -8,49 +8,49 @@ A deep learning library for research with emphasis on computer vision, based on 
 ## Things (to be) done
 
 - data
-  - [x] easy data processing (transformations, splitting, joining)
-  - [x] data caching in RAM and HDD
-  - [x] lazy data loading and processing (e.g. if segmentation labels are not requested, they are not loaded)
-  - [x] many datasets (data loaders)
+    - [x] easy data processing (transformations, splitting, joining)
+    - [x] data caching in RAM and HDD
+    - [x] lazy data loading and processing (e.g. if segmentation labels are not requested, they are not loaded)
+    - [x] many datasets (data loaders)
 - modules
-  - [X] modules that infer their input dimension automatically (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and
+    - [x] modules that infer their input dimension automatically (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and
     [MagNet](https://github.com/MagNet-DL/magnet)) -- requires an initial run for initialization
-  - [X] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names
-  - [X] high generality/customizability of components and models (deep arguments) (not completely satisfactory)
-  - [X] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)
-  - [X] extraction of intermediate outputs without changing the module (`vidlu.modules.with_intermediate_outputs`, using `register_forward_hook`)
+    - [x] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names
+    - [x] high generality/customizability of components and models (deep arguments) (not completely satisfactory)
+    - [x] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)
+    - [x] extraction of intermediate outputs without changing the module (`vidlu.modules.with_intermediate_outputs`, using `register_forward_hook`)
 - models (convolutional) with training algorithms
-  - classification
-    - [x] ResNet, WRN, DenseNet
-    - [ ] RevNet, iRevNet, VGG
-    - [x] other: BagNet
-  - semantic segmentation
-    - [x] basic segmentation head and loss
-    - [x] SwiftNet
-    - [ ] Ladder DenseNet
-  - [ ] stochastic model parts
-  - [ ] variational inference
-  - [ ] VAE
-  - [ ] flow generative models
+    - classification
+        - [x] ResNet, WRN, DenseNet
+        - [ ] RevNet, iRevNet, VGG
+        - [x] other: BagNet
+    - semantic segmentation
+        - [x] basic segmentation head and loss
+        - [x] SwiftNet
+        - [ ] Ladder DenseNet
+    - [ ] stochastic model parts
+    - [ ] variational inference
+    - [ ] VAE
+    - [ ] flow generative models
 - training
-  - [x] inductive bias (mostly) disentangled from the model
-  - [x] customizable training (inductive bias) configurations
-  - [x] logging, checkpoints, resuming interrupted training
-  - [X] pretrained parameter loading: ResNet, DenseNet
-  - [x] supervised training
-  - [x] adversarial training
-  - [X] semi-supervised training (VAT)
-  - [ ] GAN training
-  - [ ] natural gradient variational inference
+    - [x] inductive bias (mostly) disentangled from the model
+    - [x] customizable training (inductive bias) configurations
+    - [x] logging, checkpoints, resuming interrupted training
+    - [x] pretrained parameter loading: ResNet, DenseNet
+    - [x] supervised training
+    - [x] adversarial training
+    - [x] semi-supervised training (VAT)
+    - [ ] GAN training
+    - [ ] natural gradient variational inference
 - adversarial attacks
-  - [x] single step gradient
-  - [x] PGD/BIM
-  - [X] PGD: stop on success
-  - [X] PGD: support for "adversarial training for free"
-  - [X] VAT attack
-  - [ ] CW
-  - [ ] DDN (arXiv:1811.09600)
-  - [ ] Frank-Wolfe constrained optimization
+    - [x] single step gradient
+    - [x] PGD/BIM
+    - [x] PGD: stop on success
+    - [x] PGD: support for "adversarial training for free"
+    - [x] VAT attack
+    - [ ] CW
+    - [ ] DDN (arXiv:1811.09600)
+    - [ ] Frank-Wolfe constrained optimization
 
 <!--
 In many places in the code some parameter names end with "_f". 
