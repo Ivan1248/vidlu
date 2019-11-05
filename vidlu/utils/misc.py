@@ -59,7 +59,7 @@ def try_input(default=None):
         if platform.system() == 'Windows':
             import msvcrt
             return msvcrt.kbhit()
-        else:
+        if sys.stdin.isatty():
             return select.select([sys.stdin], [], [], 0)[0]
 
     return input() if input_available() else default
