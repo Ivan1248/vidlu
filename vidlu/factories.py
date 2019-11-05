@@ -15,9 +15,6 @@ from vidlu.utils.collections import NameDict
 from vidlu.utils.func import (argtree_partial, find_empty_params_deep,
                               ArgTree, params, Empty, default_args, EscapedArgTree)
 
-t = ArgTree  # used in arg/evaluation
-EscapedArgTree = EscapedArgTree
-
 
 # Factory messages #################################################################################
 
@@ -117,6 +114,13 @@ def get_data_preparation(*datasets):
     raise ValueError(f"Unknown record format: {fields}.")
 
 
+def get_prepared_data(data_str: str, datasets_dir, cache_dir):
+    data = get_data(data_str, datasets_dir, cache_dir)
+    datasets = dict(tree.flatten(data)).values()
+    prepare = get_data_preparation(*datasets)
+    return tuple(map(prepare, datasets))
+
+
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     if ':' in data_str:
         names, data_str = [x.strip() for x in data_str.split(':')]
@@ -127,13 +131,13 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     else:
         names = ['train', 'test']
     data = get_data(data_str, datasets_dir, cache_dir)
+    datasets = dict(tree.flatten(data)).values()
+    prepare = get_data_preparation(*datasets)
+    datasets = map(prepare, datasets)
     names_iter = iter(names)
     print("Datasets: " + ", ".join(f"{name}.{k}({len(ds)}) as {next(names_iter)}"
                                    for name, subsets in data.items()
                                    for k, ds in subsets.items()))
-    datasets = dict(tree.flatten(data)).values()
-    prepare = get_data_preparation(*datasets)
-    datasets = map(prepare, datasets)
     return NameDict(**dict(zip(names, datasets)))
 
 
@@ -173,10 +177,8 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
     raise NotImplementedError()
 
 
-## noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
-    # imports available for evals
     from torch import nn
     import vidlu.modules as M
     import vidlu.modules.components as mc
@@ -196,7 +198,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
     model_class = getattr(models, model_name) if hasattr(models, model_name) else eval(model_name)
     argtree = defaults.get_model_argtree(model_class, problem)
-    argtree_arg = eval(f"ArgTree({argtree_arg[0]})") if len(argtree_arg) == 1 else ArgTree()
+    argtree_arg = (
+        eval(f"t({argtree_arg[0]})", dict(nn=nn, M=M, mc=mc, tvmodels=tvmodels, t=ArgTree))
+        if len(argtree_arg) == 1 else ArgTree())
     argtree.update(argtree_arg)
 
     model_f = argtree_partial(
@@ -299,9 +303,7 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 
 # Training and evaluation ##########################################################################
 
-# noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
-    # imports available for evals
     from torch import optim
     from torch.optim import lr_scheduler
     import vidlu.training.adversarial as ta
@@ -309,10 +311,11 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     import vidlu.training.extensions as te
     import vidlu.training.steps as ts
     from vidlu.training.adversarial import attacks
-    from vidlu.utils.misc import fuse
     from vidlu.transforms import jitter
 
-    config = eval(f"tc.TrainerConfig({trainer_str})")
+    config = eval(f"tc.TrainerConfig({trainer_str})",
+                  dict(optim=optim, lr_scheduler=lr_scheduler, ta=ta, tc=tc, te=te, ts=ts,
+                       attacks=attacks, jitter=jitter, t=ArgTree, partial=partial))
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     if 'optimizer_f' in config and 'weight_decay' in default_args(config.optimizer_f):
         raise RuntimeError("The `weight_decay` argument should be passed to the trainer directly"
@@ -336,7 +339,6 @@ def get_pretrained_params(model, params_name, params_dir):
 """
 
 
-# noinspection PyUnresolvedReferences,PyUnusedLocal
 def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
     from vidlu.training import metrics
 
@@ -352,10 +354,4 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
     metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
     additional_metrics = [getattr(metrics, name) for name in metric_names]
 
-    def add_missing_args(metric_f):
-        dargs = defaults.get_metric_args(problem)
-        missing = [p for p in params(metric_f) if p is Empty]
-        return (partial(metric_f, **{p: dargs[p] for p in missing}) if len(missing) > 0
-                else metric_f)
-
-    return list(map(add_missing_args, default_metrics + additional_metrics))
+    return default_metrics + additional_metrics
