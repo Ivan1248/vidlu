@@ -1,4 +1,4 @@
-from . import loss, functional
+from . import losses, functional
 
 from .elements import *
 
