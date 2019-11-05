@@ -1,3 +1,4 @@
+from vidlu.training.adversarial.attacks import Attack
 from vidlu.utils.func import params, Empty, ArgTree, argtree_partial
 
 
@@ -6,7 +7,7 @@ class TrainerExtension:
 
 
 class AdversarialTraining(TrainerExtension):
-    def __init__(self, attack_f, eval_attack_f=None):
+    def __init__(self, attack_f: Attack, eval_attack_f: Attack = None):
         self.attack_f, self.eval_attack_f = attack_f, eval_attack_f or ArgTree()
 
     def initialize(self, trainer):
