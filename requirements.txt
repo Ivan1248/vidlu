@@ -17,4 +17,3 @@ tqdm
 urllib3
 virtualenv==16.1.0
 xmltodict==0.12.0
-
