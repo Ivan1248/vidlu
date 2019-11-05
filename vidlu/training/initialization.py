@@ -6,7 +6,7 @@ import vidlu.modules.components as mc
 import vidlu.modules as M
 
 
-def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=True):
+def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=False):
     # from torchvision/models/resnet.py
     for m in module.modules():
         if isinstance(m, nn.Conv2d):
