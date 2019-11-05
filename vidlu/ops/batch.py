@@ -169,21 +169,22 @@ def project_to_1_ball(x, r, inplace=False):
     return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
 
 
-def normalize_by_norm(x, p):
+def normalize_by_norm(x, p, inplace=False, eps=1e-8):
     """Projects inputs `x` to p-sphere with norm(s) `r` with maximum difference with
 
     Args:
         x: inputs.
-        r: p-ball radius/radii.
         p: p-norm p.
+        inplace: store the result in the same tensor.
+        eps: small constant to avoid division by 0.
     """
     # TODO: non-scalar r
     if p == np.inf:
-        return x.sign()
+        return x.sign_() if inplace else x.sign()
     elif p == 2:  # TODO: make correct for ellipsoids
-        return x.div(norm(x, p, keep_dims=True))
+        return (x.div_ if inplace else x.div)(norm(x, p, keep_dims=True).add_(eps))
     elif p == 1:  # TODO: optimize
-        return project_to_1_ball(x, r=1)
+        return project_to_1_ball(x, r=1, inplace=inplace)
     else:
         raise NotImplementedError(f"Operation not implemented for {p}-norm.")
 
