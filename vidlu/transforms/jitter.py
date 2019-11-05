@@ -25,18 +25,18 @@ class ClassificationJitter:
 
 ####################################################################################################
 
-class CifarPadRandomCropHFlip(ClassificationJitter):
+class CifarPadRandCropHFlip(ClassificationJitter):
     def apply_input(self, x):
         return compose(Pad(4), RandomCrop(x[0].shape[-2:]), RandomHFlip())(x)
 
 
-class SegRandomHFlip(SegmentationJitter):
+class SegRandHFlip(SegmentationJitter):
     def apply(self, x):
         return RandomHFlip()(tuple(x))
 
 
 @dataclass
-class SegRandomCropHFlip(SegmentationJitter):
+class SegRandCropHFlip(SegmentationJitter):
     crop_shape: tuple
 
     def apply(self, x):
@@ -44,7 +44,7 @@ class SegRandomCropHFlip(SegmentationJitter):
 
 
 @dataclass
-class SegRandomScaleCropHFlip(SegmentationJitter):
+class SegRandScaleCropPadHFlip(SegmentationJitter):
     shape: tuple
     max_scale: float
     overstepping: object
