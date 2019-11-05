@@ -117,24 +117,24 @@ supervised = TrainerConfig(
 
 adversarial = TrainerConfig(
     te.AdversarialTraining,
-    eval_step=ts.adversarial_eval_step,
+    eval_step=ts.AdversarialEvalStep(),
     train_step=ts.AdversarialTrainStep())
 
 adversarial_free = TrainerConfig(
     te.AdversarialTraining,
-    eval_step=ts.adversarial_eval_step,
+    eval_step=ts.AdversarialEvalStep(),
     train_step=ts.AdversarialTrainMultiStep())
 
-# supervised_vat = TrainerConfig(
-#     adversarial,
-#     train_step=AdversarialCombinedLossTrainStep(use_attack_loss=True, clean_weight=1, adv_weight=1),
-#     attack_f=attacks)
+vat = TrainerConfig(
+    adversarial,
+    train_step=ts.VATTrainStep(),
+    eval_step=ts.AdversarialEvalStep(virtual=True),
+    attack_f=attacks.VATAttack)
 
 semisupervised_vat = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.semisupervised_vat_eval_step,
-    train_step=ts.SemisupervisedVATTrainStep()
-)
+    eval_step=ts.SemisupervisedVATEvalStep(),
+    train_step=ts.SemisupervisedVATTrainStep())
 
 classification = TrainerConfig(
     supervised,
@@ -151,7 +151,7 @@ resnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     epoch_count=200,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
     batch_size=128,
-    jitter=jitter.CifarPadRandomCropHFlip())
+    jitter=jitter.CifarPadRandCropHFlip())
 
 resnet_cifar_cosine = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar,
@@ -179,7 +179,7 @@ densenet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1608.06993
     epoch_count=100,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
     batch_size=64,
-    jitter=jitter.CifarPadRandomCropHFlip())
+    jitter=jitter.CifarPadRandCropHFlip())
 
 small_image_classifier = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     classification,
@@ -187,7 +187,7 @@ small_image_classifier = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9),
     epoch_count=50,
     batch_size=64,
-    jitter=jitter.CifarPadRandomCropHFlip())
+    jitter=jitter.CifarPadRandCropHFlip())
 
 ladder_densenet = TrainerConfig(
     classification,
@@ -197,7 +197,7 @@ ladder_densenet = TrainerConfig(
     epoch_count=40,
     batch_size=4,
     optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 5}),
-    jitter=jitter.SegRandomHFlip())
+    jitter=jitter.SegRandHFlip())
 
 swiftnet_cityscapes = TrainerConfig(
     classification,
@@ -208,7 +208,7 @@ swiftnet_cityscapes = TrainerConfig(
     batch_size=14,
     eval_batch_size=8,
     optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 4}),
-    jitter=jitter.SegRandomScaleCropHFlip(shape=(768, 768), max_scale=2, overstepping='half'))
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overstepping='half'))
 
 swiftnet_camvid = TrainerConfig(
     swiftnet_cityscapes,
@@ -216,7 +216,7 @@ swiftnet_camvid = TrainerConfig(
     lr_scheduler_f=partial(CosineLR, eta_min=1e-7),
     epoch_count=600,  # 600
     batch_size=12,
-    jitter=jitter.SegRandomScaleCropHFlip(shape=(448, 448), max_scale=2, overstepping='half'))
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=2, overstepping='half'))
 
 swiftnet_camvid_scratch = TrainerConfig(
     swiftnet_camvid,
@@ -232,8 +232,10 @@ semseg_basic = TrainerConfig(
     epoch_count=40,
     batch_size=8,
     eval_batch_size=8,  # max 12?
-    optimizer_maker=FineTuningOptimizerMaker({'backbone': 1 / 4}),
-    jitter=jitter.SegRandomCropHFlip((768, 768)))
+    optimizer_maker=FineTuningOptimizerMaker({'backbone': 1 / 5}),
+    jitter=jitter.SegRandCropHFlip((768, 768)))
+
+# other
 
 mnistnet = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     classification,
@@ -251,8 +253,7 @@ mnistnet_tent = TrainerConfig(
     lr_scheduler_f=None,
     batch_size=100)
 
-## special
-
+# special
 
 wrn_cifar_tent = TrainerConfig(
     wrn_cifar,
