@@ -180,7 +180,7 @@ class Dataset(Sequence):
             directory: The directory in which cached datasets are to be stored.
             separate_fields: If True, record fileds are saved in separate files,
                 e.g. labels are stored separately from input examples.
-            **kwargs: additional arguments to the Dataset constructor.
+            **kwargs: additional arguments for the Dataset initializer.
         """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
 
@@ -196,7 +196,7 @@ class Dataset(Sequence):
                 to be stored in dataset.info.cache, e.g.
                 `dataset.info.cache.name = func()` for a `{name: func}` mapping.
             directory: The directory in which info cache is to be stored.
-            **kwargs: additional arguments to the Dataset constructor.
+            **kwargs: additional arguments for the Dataset initializer.
         """
         return HDDInfoCacheDataset(self, name_to_func, directory, **kwargs)
 
@@ -210,7 +210,7 @@ class Dataset(Sequence):
         Args:
             separate_fields: If True, record fileds are saved in separate files,
                 e.g. labels are stored separately from input examples.
-            **kwargs: additional arguments to the Dataset constructor.
+            **kwargs: additional arguments for the Dataset initializer.
         """
         return InfoCacheDataset(self, name_to_func, **kwargs)
 
@@ -477,12 +477,14 @@ class HDDCacheDataset(Dataset):
 
 
 class InfoCacheDataset(Dataset):  # TODO
+    # TODO: rename with "lazy"
     def __init__(self, dataset, name_to_func, verbose=True, **kwargs):
         self.names_str = ', '.join(name_to_func.keys())
         modifier = f"info_cache({self.names_str})"
         self.initialized = multiprocessing.Value('i', 0)  # must be before super
         info = NameDict(dataset.info or kwargs.get('info', dict()))
         info.cache = NameDict(info.get('cache', NameDict()))
+        self._info = None
         super().__init__(modifiers=modifier, data=dataset, info=info, **kwargs)
         self.name_to_func = name_to_func
         self.verbose = verbose
@@ -495,6 +497,8 @@ class InfoCacheDataset(Dataset):  # TODO
 
     @info.setter
     def info(self, value):
+        """This is called by the base initializer and (unnecessarily) by pickle
+        if sharing the object among processes."""
         self._info = value
 
     def _get_info_cache(self):
@@ -521,17 +525,9 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
         self.cache_file = to_valid_path(self.cache_dir / self.identifier / 'info_cache.txt')
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def _store_info_cache(self, info_cache):
-        try:
-            with self.cache_file.open('wb') as file:
-                pickle.dump(info_cache, file)
-        except Exception as ex:
-            self.cache_file.unlink()
-            raise
-
     def _get_info_cache(self):
         if self.cache_file.exists():
-            try:
+            try:  # load
                 with self.cache_file.open('rb') as file:
                     return pickle.load(file)
             except Exception as ex:
@@ -539,7 +535,12 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
                 raise
         else:
             info_cache = super()._get_info_cache()
-            self._store_info_cache(info_cache)
+            try:  # store
+                with self.cache_file.open('wb') as file:
+                    pickle.dump(info_cache, file)
+            except Exception as ex:
+                self.cache_file.unlink()
+                raise
             return info_cache
 
 
