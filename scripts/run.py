@@ -1,4 +1,6 @@
 import argparse
+from time import time
+import random
 
 # noinspection PyUnresolvedReferences
 import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -9,7 +11,6 @@ import numpy as np
 from _context import vidlu
 from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
-from vidlu.training.checkpoint_manager import CheckpointManager
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
 
@@ -17,8 +18,10 @@ import dirs
 
 
 def train(args):
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    seed = int(time()) % 100 if args.seed is None else args.seed  # 53
+    print(f"RNG seed: {seed}")
+    for rseed in [torch.manual_seed, np.random.seed, random.seed]:
+        rseed(seed)
 
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
@@ -71,7 +74,7 @@ def add_standard_arguments(parser, func):
     parser.add_argument("data", type=str, help=factories.get_data.help)
     parser.add_argument("input_adapter", type=str, default=Empty,
                         help='A string representing input adaptation to the model, '
-                             + 'e.g. "standardize", "div255".')
+                             + 'e.g. "id", "standardize".')
     parser.add_argument("model", type=str, help=factories.get_model.help)
     parser.add_argument("trainer", type=str, help=factories.get_trainer.help)
     parser.add_argument("--params", type=str, default=None,
@@ -91,8 +94,8 @@ def add_standard_arguments(parser, func):
                             help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_test", action='store_true',
                         help="Skip testing before training.")
-    parser.add_argument("-s", "--seed", type=str, default=53,
-                        help="RNG seed for experiment reproducibility. Useless on GPU.")
+    parser.add_argument("-s", "--seed", type=str, default=None,
+                        help="RNG seed. Default: `int(time()) % 100`.")
     # reporting
     parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.",
                         default=1)
