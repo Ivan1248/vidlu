@@ -2,6 +2,8 @@ import contextlib
 
 import torch
 
+from vidlu.utils.func import identity
+
 
 def is_float_tensor(x):
     return 'float' in str(x.dtype)
@@ -39,14 +41,18 @@ def switch_attribute_if_exists(objects, attrib_name, value):
     return switch_attribute((k for k in objects if hasattr(k, attrib_name)), attrib_name, value)
 
 
-# Context managers for modules and tensors
-
 @contextlib.contextmanager
-def keeping_tensor_value(objects, attrib_name):
-    state = {m: getattr(m, attrib_name).detach().clone() for m in objects}
+def save_attribute(objects, attrib_name, copy_func=identity):
+    state = {m: copy_func(getattr(m, attrib_name)) for m in objects}
     yield
     for m, v in state.items():
         setattr(m, attrib_name, v)
+
+
+# Context managers for modules and tensors
+
+def save_tensor_attribute(objects, attrib_name):
+    return save_attribute(objects, attrib_name, lambda x: x.detach().clone())
 
 
 def _module_or_params_to_params(module_or_params):
@@ -71,8 +77,8 @@ def switch_batchnorm_momentum(module, value=None):
 @contextlib.contextmanager
 def batchnorm_stats_tracking_off(module):
     modules = [m for m in module.modules() if type(m).__name__ == 'BatchNorm2d']
-    with switch_attribute(modules, 'momentum', 0), keeping_tensor_value(modules,
-                                                                        'num_batches_tracked'):
+    with switch_attribute(modules, 'momentum', 0), \
+         save_tensor_attribute(modules, 'num_batches_tracked'):
         yield
 
 
@@ -90,13 +96,13 @@ def concatenate_tensors_trees(*args, tree_type=None):
     """Concatenates corresponding arrays from equivalent (parallel) trees.
 
     Example:
+        >>> x1, y1, z1, x2, y2, z2 = [torch.tensor([i]) for i in range(6)]
         >>> cat = lambda x, y: torch.cat([x, y], dim=0)
-        >>> a = {q: {x: x1, y: y1), z: z1
-        >>> b = {q: {x: x2, y: y2), z: z2}
-        >>> c = concatenate_tensors_trees(a, b)
-        >>> # does the same as
-        >>> c = {q: {x: cat(x1, x2), y: cat(y1, y2)), z: cat(z1, z2)}}
-
+        >>> a = dict(q=dict(x=x1, y=y1), z=z1)
+        >>> b = dict(q=dict(x=x2, y=y2), z=z2)
+        >>> c1 = concatenate_tensors_trees(a, b)
+        >>> c2 = dict(q=dict(x=cat(x1, x2), y=cat(y1, y2)), z=cat(z1, z2))
+        >>> assert c1 == c2
 
     Args:
         *args: trees with Torch arrays as leaves.
