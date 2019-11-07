@@ -1,13 +1,13 @@
+from abc import ABC
 from collections import Callable
 import dataclasses as dc
 from dataclasses import dataclass
-from functools import partial, wraps
+from functools import partial
 from numbers import Number
 from typing import Union
 
 import numpy as np
 import torch
-from torch import nn
 import torch.nn.functional as F
 from torch import optim
 
@@ -19,11 +19,11 @@ from vidlu.utils.misc import Event
 # Prediction transformations #######################################################################
 
 def _to_hard_target(output):
-    """Compute predicted labels given `x`. Used to prevent label leaking
+    """Creates discrete labels from model output with arg-max along the first
+    dimension.
 
     Args:
-        predict: a model.
-        x (Tensor): an input for the model.
+        output: model output (logits).
 
     Returns:
         A tensor containing predicted labels.
@@ -33,18 +33,17 @@ def _to_hard_target(output):
 
 
 def _to_soft_target(output, temperature=1):
-    """Computes softmax output given logits `x`.
+    """Computes softmax output given logits `output`.
 
-     It computes `softmax(x/temperature)`. `temperature` is `1` by default.
+     It computes `softmax(output/temperature)`. `temperature` is `1` by default.
      Lower temperature gives harder labels.
 
     Args:
-        predict: a model.
-        x (Tensor): an input for the model.
+        output: model output (logits).
         temperature (float): softmax temperature.
 
     Returns:
-        A tensor containing predicted labels.
+        A tensor containing predicted probabilities.
     """
     return F.softmax(output if temperature == 1 else output / temperature, dim=1)
 
@@ -137,9 +136,14 @@ class Attack:
         """Generates an adversarial example.
 
         Args:
+            model (Module): model.
             x (Tensor): input tensor.
-            y (Tensor): label tensor. If `None`, the prediction obtained from
-                `get_prediction(model(x))` is used as the label.
+            y (Tensor, optional): target/label tensor. If `None`, the prediction
+                obtained from `self.to_virtual_target(output)` is used as the
+                label.
+            output (Tensor, optional): output for use as a target. If `None`
+                it is obtained by calling `model(x)` (and then transformad with
+                `self.to_virtual_target`).
 
         Return:
             Perturbed input.
@@ -297,7 +301,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, del
         Perturbed inputs.
     """
     stop_on_success, loss_fn = similar is not None, loss
-    backward_callback = backward_callback or (lambda x: None)
+    backward_callback = backward_callback or (lambda _: None)
 
     delta = torch.zeros_like(x) if delta_init is None else delta_init.detach().clone()
     delta.requires_grad_()
@@ -449,22 +453,16 @@ class VATAttack(Attack):
 
 @dataclass
 class DDN(EarlyStoppingMixin, Attack):
-    """
-    DDN attack: decoupling the direction and norm of the perturbation to achieve
-     a small L2 norm in few steps.
+    """DDN attack: decoupling the direction and norm of the perturbation to
+    achieve a small L2 norm in few steps.
 
     Args:
         eps_init (float, optional): Initial value for the norm.
-        max_step_count (int): Number of steps for the optimization.
-        gamma (float, optional): Factor by which the norm will be modified. new_norm = norm * (1 + or - gamma).
-    quantize : bool, optional
-        If True, the returned adversarials will have quantized values to the specified number of levels.
-    max_norm : float or None, optional
-        If specified, the norms of the perturbations will not be greater than this value which might lower success rate.
-    device : torch.device, optional
-        Device on which to perform the attack.
-    callback : object, optional
-        Visdom callback to display various metrics.
+        step_size (float): Optimization step size.
+        max_step_count (int): Maxmimum number of steps for the optimization.
+        gamma (float, optional): Factor by which the norm will be modified.
+            new_norm = norm * (1 + or - gamma).
+        p (float): p-norm p. If specified,
     """
     eps_init: float = 1.
     step_size: float = 2 / 255
@@ -536,6 +534,7 @@ class DDN(EarlyStoppingMixin, Attack):
 # CW ###############################################################################################
 # TODO
 
+'''
 CARLINI_L2DIST_UPPER = 1e10
 CARLINI_COEFF_UPPER = 1e10
 INVALID_LABEL = -1
@@ -559,7 +558,7 @@ def get_carlini_loss(targeted, confidence_threshold):
             loss1 = (other - real + confidence_threshold).relu_()
         else:
             loss1 = (real - other + confidence_threshold).relu_()
-        loss2 = (l2distsq).sum()
+        loss2 = l2distsq.sum()
         loss1 = torch.sum(c * loss1)
         loss = loss1 + loss2
         return loss
@@ -715,3 +714,4 @@ class CarliniWagnerL2Attack(Attack):
                                      coeff_lower_bound)
 
         return final_advs
+'''
