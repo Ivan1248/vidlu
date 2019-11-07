@@ -2,34 +2,33 @@ import pytest
 
 import numpy as np
 import torch
-import PIL.Image as pimg
+import torchvision.transforms.functional as F
 
-from vidlu.transforms import transformers
+from vidlu.transforms import image, numpy
 
 
 class TestData:
     def test_transforms(self):
-        im = np.random.randint(0, 255, (30, 20, 3), dtype=np.uint8)
-        imtn = transformers.image_transformer(im)
-        imtp = imtn.to_pil()
-        imtn_f = imtn.transform(lambda x: x.astype(np.float32))
-        imtt = imtn.to_torch()
-        imtt.to_numpy()
-        assert imtt.to_pil().item == imtp.item
-        assert np.all(imtt.to_numpy().item == imtn.item)
-        assert np.all(imtn.item == imtp.to_torch().to_numpy().item)
+        imtn = np.random.randint(0, 255, (30, 20, 3), dtype=np.uint8)
+        imtp = image.to_pil(imtn)
+        imtt = image.to_torch(imtn)
+        assert image.to_pil(imtt) == imtp
+        assert np.all(image.to_numpy(imtt) == imtn)
+        assert np.all(imtn == image.to_numpy(image.to_torch(imtp)))
+        imtt_chw = image.hwc_to_chw(imtt)
 
-        assert imtt.hwc_to_chw().item.shape != imtt.item.shape
-        assert torch.all(imtt.hwc_to_chw().chw_to_hwc().item == imtt.item)
+        assert image.hwc_to_chw(imtt).shape != imtt.shape
+        assert torch.all(image.chw_to_hwc(imtt_chw) == imtt)
 
-        imtt_f = imtt.to_float32()
-        mean, std = (127,) * 3, (50,) * 3
-        imtt_f_st = imtt_f.standardize(mean, std)
-        imtt_f_st_dst = imtt_f_st.destandardize(mean, std)
-        assert torch.max(torch.abs(imtt_f.item - imtt_f_st_dst.item)) < 1e-5
-        assert torch.all(imtt.item == imtt_f.transform(lambda x: x+0.5).to_uint8().item)
+        imtt_chw_f = imtt_chw.to(torch.float32)
+        mean, std = torch.tensor((127,) * 3), torch.tensor((50,) * 3)
+        imtt_chw_f_st = image.standardize(imtt_chw_f, mean, std)
+        assert torch.all(imtt_chw_f_st == image.Standardize(mean, std)(imtt_chw_f))
+        imtt_chw_f_st_dst = image.destandardize(imtt_chw_f_st, mean, std)
+        assert torch.max(torch.abs(imtt_chw_f - imtt_chw_f_st_dst)) < 1e-5
+        assert torch.all(imtt_chw == (imtt_chw_f + 0.5).to(torch.uint8))
 
-        imtp_cc = imtp.center_crop((40, 10))
-        imtn_cc = imtn.center_crop((40, 10))
-        assert np.all(imtp_cc.to_numpy().item == imtn_cc.item)
-        assert imtp_cc.item == imtn_cc.to_pil().item
+        imtp_cc = F.center_crop(imtp, (40, 10))
+        imtn_cc = numpy.center_crop(imtn, (40, 10))
+        assert np.all(image.to_numpy(imtp_cc) == imtn_cc)
+        assert imtp_cc == image.to_pil(imtn_cc)
