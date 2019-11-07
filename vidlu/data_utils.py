@@ -17,10 +17,10 @@ def compute_pixel_mean_std(dataset, scale01=False, progress_bar=False):
     pbar = tqdm if progress_bar else lambda x: x
     mvn = np.array([(x.mean((0, 1)), x.var((0, 1)), np.prod(x.shape[:2]))
                     for x in pbar(dataset.map(lambda r: np.array(r.x)))])
-    means, vars, ns = [mvn[:, i] for i in range(3)]  # means, variances, pixel counts
+    means, vars_, ns = [mvn[:, i] for i in range(3)]  # means, variances, pixel counts
     ws = ns / ns.sum()  # image weights (pixels in image / pixels in all images)
     mean = ws.dot(means)  # mean pixel
-    var = vars.mean(0) + ws.dot(means ** 2) - mean ** 2  # pixel variance
+    var = vars_.mean(0) + ws.dot(means ** 2) - mean ** 2  # pixel variance
     std = np.sqrt(var)  # pixel standard deviation
     return mean / 255, std / 255 if scale01 else mean, std
 

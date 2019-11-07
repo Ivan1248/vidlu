@@ -3,6 +3,7 @@ from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -25,11 +26,11 @@ class TrainingExperimentFactoryArgs:
     model: str
     trainer: str
     metrics: str
-    params: str
+    params: Optional[str]
     experiment_suffix: str
     resume: bool
     redo: bool
-    device: torch.device
+    device: Optional[torch.device]
     verbosity: int
 
 
@@ -40,7 +41,8 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
     @trainer.training.epoch_started.add_handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
-                   + f" ({es.batch_count} batches, lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
+                   + f" ({es.batch_count} batches,"
+                   + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
 
     @trainer.training.epoch_completed.add_handler
     def on_epoch_completed(_):
@@ -138,7 +140,7 @@ class TrainingExperiment:
                 trainer.add_metric(m())
         logger = Logger()
         logger.log("Resume command:\n"
-                   + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"' \
+                   + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
                    + f' -d "{a.device}" --metrics "{a.metrics}" -r')
         cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
         define_training_loop_actions(trainer, cpman, data, logger)
@@ -149,7 +151,7 @@ class TrainingExperiment:
             logger.print_all()
         elif a.params is not None:
             parameters, dest = factories.get_translated_parameters(params_str=a.params,
-                                                        params_dir=dirs.PRETRAINED)
+                                                                   params_dir=dirs.PRETRAINED)
             module = get_submodule(model, dest)
             try:
                 module.load_state_dict(parameters, strict=True)

@@ -13,6 +13,7 @@ def nvidia_smi():
         .communicate()[0]
     return xmltodict.parse(xml_output)['nvidia_smi_log']
 
+
 def set_cuda_visible_devices(arg):
     os.environ['CUDA_VISIBLE_DEVICES'] = arg
 
@@ -63,7 +64,9 @@ def get_first_available_cuda_gpu(max_gpu_util, min_mem_free, no_processes=True):
 
     availabilities = [availability_score(s.mem_free, s.gpu_util, len(s.processes))
                       for s in statuses]
-    best_idx = int(np.argmax(availabilities)) if len(availabilities) > 0 else None
+    if len(availabilities) == 0:
+        raise RuntimeError("No cuda GPU-s found.")
+    best_idx = int(np.argmax(availabilities))
     if ((statuses[best_idx].gpu_util > max_gpu_util)
             or (statuses[best_idx].mem_free < min_mem_free)
             or (no_processes and availabilities[best_idx] < 0)):
@@ -75,15 +78,12 @@ def get_first_available_device(max_gpu_util=0.3, min_mem_free=4000, no_processes
     try:
         device_idx, statuses, availabilities = get_first_available_cuda_gpu(
             max_gpu_util, min_mem_free, no_processes=no_processes)
-    except RuntimeError as ex:
-        warnings.warn(f"Unable to get GPU(s). \nCaught exception: \n{ex}")
-        device_idx = None
-    if device_idx is None:
-        if verbosity > 0:
-            print(f"Selected device: CPU.")
-        return 'cpu'
-    else:
         if verbosity > 0:
             print(f"Selected device {statuses[device_idx].name}"
                   + f" with availability score {availabilities[device_idx]}.")
         return device_idx
+    except RuntimeError as ex:
+        warnings.warn(f"Unable to get GPU(s). \nCaught exception: \n{ex}")
+        if verbosity > 0:
+            print(f"Selected device: CPU.")
+        return 'cpu'

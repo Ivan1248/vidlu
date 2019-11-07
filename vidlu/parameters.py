@@ -62,7 +62,7 @@ def translate_densenet(state_dict):
                 r"backbone.bulk.db{`int(a)-1`}.unit{`int(b)-1`}.block.{c}{`int(d)-1`}.orig.{e}",
             r"features.transition{a:(\d+)}.{b:conv|norm}.{e}":
                 r"backbone.bulk.transition{`int(a)-1`}.{b}.orig.{e}",
-            r"features.norm(\d+).{e:(.*)}":  # the number matching the (\d+) (1+number of blocks) is ignored
+            r"features.norm(\d+).{e:(.*)}":  # the number matching the (\d+) is ignored
                 r"backbone.bulk.norm.orig.{e}",
             # logits
             r"classifier.{e:(.*)}":
@@ -78,9 +78,11 @@ def translate_swiftnet(state_dict):
             r"backbone.{a:conv|bn}1{e}":
                 r"backbone.backbone.root.{a:bn->norm}.orig{e}",
             r"backbone.layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}.{e}":
-                r"backbone.backbone.bulk.unit{`int(a)-1`}_{b}.fork.block.{c:bn->norm}{`int(d)-1`}.orig.{e}",
+                r"backbone.backbone.bulk.unit{`int(a)-1`}_{b}.fork"
+                + r".block.{c:bn->norm}{`int(d)-1`}.orig.{e}",
             r"backbone.layer{a:(\d+)}.{b:(\d+)}.downsample.{c:0|1}.{e:(.*)}":
-                r"backbone.backbone.bulk.unit{`int(a)-1`}_{b}.fork.shortcut.{c:0->conv|1->norm}.orig.{e}",
+                r"backbone.backbone.bulk.unit{`int(a)-1`}_{b}.fork"
+                + r".shortcut.{c:0->conv|1->norm}.orig.{e}",
             # spp
             r"backbone.spp.spp.{a:spp_bn|spp_fuse}.{b:norm|conv}.{e:(.*)}":
                 r"backbone.context.{a:spp_bn->input_block|spp_fuse->fuse_block}.{b}0.orig.{e}",
@@ -88,7 +90,8 @@ def translate_swiftnet(state_dict):
                 r"backbone.context.pyramid.block{a}.{b}0.orig.{e}",
             # ladder
             r"backbone.upsample.{a:(\d+)}.{b:bottleneck|blend_conv}.{c:norm|conv}.{e:(.*)}":
-                r"backbone.ladder.up_blends.{a}.{b:bottleneck->project|blend_conv->blend}.{c}0.orig.{e}",
+                r"backbone.ladder.up_blends.{a}.{b:bottleneck->project|blend_conv->blend}"
+                +r".{c}0.orig.{e}",
             r"logits.norm.{e:(.*)}":
                 r"backbone.norm.orig.{e}",
             # logits

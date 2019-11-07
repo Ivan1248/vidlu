@@ -249,7 +249,8 @@ get_model.help = \
 def _parse_parameter_translation_string(params_str):
     module_re = fr'\w+(?:\.\w+)*'
     regex = re.compile(
-        fr'(?P<translator>[\w]+)(?:\[(?P<src_dict>{module_re})\])?(?:\((?P<src_module>{module_re})\))?'
+        fr'(?P<translator>[\w]+)(?:\[(?P<src_dict>{module_re})\])?'
+        + fr'(?:\((?P<src_module>{module_re})\))?'
         + fr'(?:,(?P<dest_module>{module_re}))?(?::(?P<file>.+))?')
     m = regex.fullmatch(params_str.strip())
     if m is None:
