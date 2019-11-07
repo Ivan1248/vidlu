@@ -126,6 +126,27 @@ class TorchToNumPy:
     __call__ = staticmethod(torch_to_numpy)
 
 
+def pil_to_numpy(img, dtype=None, copy=False):
+    return np.array(img, dtype=dtype, copy=copy)
+
+
+class PILToNumPy:
+    __call__ = staticmethod(np.array)  # keywords: call, copy, ...
+
+
+def to_numpy(x):
+    if is_pil_image(x):
+        return pil_to_numpy(x)
+    elif is_torch_image(x):
+        return torch_to_numpy(x)
+    else:
+        raise TypeError()
+
+
+class ToNumpy:
+    __call__ = staticmethod(to_numpy)
+
+
 def numpy_to_pil(npimg, mode=None):
     """Converts a NumPy array to a PIL Image.
 
@@ -185,14 +206,6 @@ class NumPyToPIL:
         return numpy_to_pil(img, mode=self.mode)
 
 
-def pil_to_numpy(img, dtype=None, copy=False):
-    return np.array(img, dtype=dtype, copy=copy)
-
-
-class PILToNumPy:
-    __call__ = staticmethod(np.array)  # keywords: call, copy, ...
-
-
 def torch_to_pil(timg, mode=None):
     """Converts a Torch tensor to a PIL Image.
 
@@ -227,6 +240,10 @@ def to_pil(x, mode=None):
         return numpy_to_pil(x, mode=mode)
     else:
         raise ValueError("The input is neither a Torch nor a NumPy array.")
+
+
+class ToPIL:
+    __call__ = staticmethod(to_pil)
 
 
 # NumPy ############################################################################################
@@ -380,9 +397,9 @@ def pad_to_shape(x, shape, mode='constant', value=0):
     elif np.any(padding < 0):
         raise RuntimeError(f"`x` is to large ({tuple(x.shape)}) to be padded to {tuple(shape)}")
 
-    t, l = tl = padding // 2
-    b, r = padding - tl
-    padding = (l, r, t, b)
+    to, le = tl = padding // 2
+    bo, ri = padding - tl
+    padding = (le, ri, to, bo)
 
     additional_dims = [None] * (4 - len(x.shape))
     if isinstance(value, Tensor) and len(value.shape) > 0:
@@ -465,7 +482,7 @@ def resize_segmentation(x, shape=None, scale_factor=None, align_corners=None):
     if not is_int_tensor(x):
         raise TypeError("`x` should be an integer tensor.")
     xfr = resize(x.float(), shape=shape, scale_factor=scale_factor, mode='nearest',
-               align_corners=align_corners)
+                 align_corners=align_corners)
     return round_float_to_int(xfr, x.dtype)
 
 
@@ -488,7 +505,8 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overstepping=0, is_se
     xs = random_crop(xs, shape=np.array(shape) / scale, overstepping=overstepping)
 
     shape = tuple(
-        d for d in np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale+0.5).astype(int)))
+        d for d in
+        np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int)))
     xs = tuple(
         (resize_segmentation if iss else partial(resize, mode='bilinear'))(x, shape=shape)
         for x, iss in zip(xs, is_segmentation))

@@ -26,5 +26,5 @@ def center_crop(img, shape, fill=0, padding_mode='constant'):
 def pad(image, padding: int):
     pad_width = [[padding] * 2] * 2
     if len(image.shape) == 3:
-        pad_width.append((0, 0))
+        pad_width.append([0, 0])
     return np.pad(image, pad_width, mode='constant')
