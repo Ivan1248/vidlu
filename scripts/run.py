@@ -37,6 +37,8 @@ def train(args):
     for name, ds in training_datasets.items():
         e.trainer.eval(ds)
 
+    print(f"RNG seed: {seed}")
+
     e.cpman.remove_old_checkpoints()
 
     print(f'Trained model saved in {e.cpman.experiment_dir}')
@@ -94,7 +96,7 @@ def add_standard_arguments(parser, func):
                             help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_test", action='store_true',
                         help="Skip testing before training.")
-    parser.add_argument("-s", "--seed", type=str, default=None,
+    parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: `int(time()) % 100`.")
     # reporting
     parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.",
