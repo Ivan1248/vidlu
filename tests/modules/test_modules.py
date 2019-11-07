@@ -67,9 +67,9 @@ class TestSequentialForkParallelReduce:
                 torch.tensor(i + 1), torch.tensor(3 * (i + 1))))
 
     def test_reduce(self):
-        l = list(map(torch.tensor, range(5)))
+        a = list(map(torch.tensor, range(5)))
         for m in [Reduce(lambda x, y: x.add_(y)), Sum()]:
-            assert m(l) == sum(l)
+            assert m(a) == sum(a)
 
     def test_combined(self):
         m = Seq(fork=Fork(id=RevIdentity(),
@@ -89,12 +89,12 @@ class TestSequentialForkParallelReduce:
         inter = ["fork.id", "para.mul3", "para"]
         iomw = with_intermediate_outputs(m, inter)
         for i in range(5):
-            id = i
+            id_ = i
             add2 = i + 2
             mul3 = 3 * i ** 2
             para = (add2, mul3)
             sum_ = add2 + mul3
-            assert iomw(torch.tensor(i)) == (sum_, [id, mul3, para])
+            assert iomw(torch.tensor(i)) == (sum_, [id_, mul3, para])
 
 
 class TestConv:

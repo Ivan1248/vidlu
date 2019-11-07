@@ -22,5 +22,6 @@ def test_get_datasets_single_args(tmpdir):
 def test_get_datasets_multiple(tmpdir):
     with pytest.raises(ValueError):
         factories.get_data("whitenoise{trainval,test}, whitenoise{val}", tmpdir)
-    data = factories.get_data("whitenoise{trainval,test}, whitenoise(example_shape=(8,8,8)){val}", tmpdir)
+    data = factories.get_data("whitenoise{trainval,test}, whitenoise(example_shape=(8,8,8)){val}",
+                              tmpdir)
     assert len(data) == 2 and len(tree.flatten(data)) == 3
