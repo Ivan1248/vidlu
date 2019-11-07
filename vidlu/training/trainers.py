@@ -35,7 +35,7 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 # Evaluator and trainer ############################################################################
 
 
-def extend_output(output, *x):
+def extend_output(output):
     return output, NameDict(prediction=output)
 
 
@@ -90,7 +90,8 @@ class Evaluator(_MetricsMixin):
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.iteration_completed.add_handler(self._update_metrics)
 
-    def _broadcast(self, obj, n):
+    @staticmethod
+    def _broadcast(obj, n):
         if isinstance(obj, Sequence):
             if len(obj) != n:
                 raise RuntimeError(f"`obj` already is a `Sequence` but its size"

@@ -11,6 +11,7 @@ import warnings
 import PIL.Image as pimg
 import numpy as np
 from scipy.io import loadmat
+import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
 from tqdm import tqdm
@@ -145,10 +146,10 @@ class RademacherNoise(Dataset):
             subset=f'{seed}-{size}',
             data=self._seeds)
 
-        def get_example(self, idx):
-            self._rand.seed(self._seeds[idx])
-            return _make_record(
-                x=self._rand.binomial(n=1, p=0.5, size=self._shape))
+    def get_example(self, idx):
+        self._rand.seed(self._seeds[idx])
+        return _make_record(
+            x=self._rand.binomial(n=1, p=0.5, size=self._shape))
 
 
 class HBlobs(Dataset):
@@ -368,12 +369,10 @@ class DescribableTexturesDataset(Dataset):
     def __init__(self, data_dir, subset='trainval'):
         _check_subsets(self.__class__, subset)
         ss = 'train' if subset == 'trainval' else subset
-        raise NotImplementedError("DescribableTexturesDataset not implemented")
-        for _ in range(10):
-            print("WARNING: DescribableTexturesDataset not completely implemented.")
-        super().__init__(subset=subset, info=dict(class_count=47),
+        super().__init__(subset=ss, info=dict(class_count=47),
                          data=dset.ImageFolder(f"{data_dir}/images"))
         self.data = dset.ImageFolder(f"{data_dir}/images")
+        raise NotImplementedError("DescribableTexturesDataset not implemented")
 
     def get_example(self, idx):
         x, y = self.data[idx]
@@ -434,6 +433,7 @@ class INaturalist2018(Dataset):
                   "inaturalist/fgvc5_competition/categories.json.tar.gz")
 
     def __init__(self, data_dir, subset='train', superspecies='all', downsampling=1):
+        # TODO: use superspecies parameter
         _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
         self._data_dir = data_dir
@@ -483,9 +483,7 @@ class TinyImages(Dataset):
             with open(f'{data_dir}/tiny_images.bin', "rb") as data_file:
                 data_file.seek(idx * 3072)
                 data = data_file.read(3072)
-                return np.fromstring(
-                    data, dtype='uint8').reshape(
-                    32, 32, 3, order="F")
+                return np.fromstring(data, dtype='uint8').reshape((32, 32, 3), order="F")
 
         self.load_image = load_image
 
@@ -520,7 +518,7 @@ class TinyImages(Dataset):
 
 def make_dataset(dataset_dir, class_to_idx, extensions=None, is_valid_file=None):
     images = []
-    dataset_dir = Path(dir)
+    dataset_dir = Path(dataset_dir)
     if not ((extensions is None) ^ (is_valid_file is None)):
         raise ValueError(
             "Both extensions and is_valid_file cannot be None or not None at the same time")
@@ -541,7 +539,7 @@ def make_dataset(dataset_dir, class_to_idx, extensions=None, is_valid_file=None)
     return images
 
 
-class ClassificationDatasetFolder(Dataset):
+class ClassificationFolderDataset(Dataset):  # TODO
     """A generic data loader where the samples are arranged in this way: ::
         root/class_x/xxx.ext
         root/class_x/xxy.ext
@@ -570,7 +568,7 @@ class ClassificationDatasetFolder(Dataset):
     """
 
     def __init__(self, dataset_dir, loader, extensions=None, is_valid_file=None):
-        super().__init__()
+        super().__init__()  # TODO
         classes, class_to_idx = self._find_classes(self.root)
         samples = make_dataset(self.root, class_to_idx, extensions, is_valid_file)
         if len(samples) == 0:
@@ -585,13 +583,17 @@ class ClassificationDatasetFolder(Dataset):
         self.samples = samples
         self.targets = [s[1] for s in samples]
 
-    def _find_classes(self, dir):
-        """
-        Finds the class folders in a dataset.
+    @staticmethod
+    def _find_classes(dir):
+        """Finds the class folders in a dataset.
+
         Args:
             dir (string): Root directory path.
+
         Returns:
-            tuple: (classes, class_to_idx) where classes are relative to (dir), and class_to_idx is a dictionary.
+            tuple: (classes, class_to_idx) where classes are relative to (dir),
+            and class_to_idx is a dictionary.
+
         Ensures:
             No class is a subdirectory of another.
         """
@@ -615,7 +617,7 @@ class ClassificationDatasetFolder(Dataset):
         return len(self.samples)
 
 
-class ImageFolder(ClassificationDatasetFolder):
+class ImageClassificationFolderDataset(ClassificationFolderDataset):
     """A generic data loader where the images are arranged in this way: ::
         root/dog/xxx.png
         root/dog/xxy.png
@@ -639,12 +641,12 @@ class ImageFolder(ClassificationDatasetFolder):
     """
 
     def __init__(self, root, loader=_load_image, is_valid_file=None):
-        super(ImageFolder, self).__init__(root, loader,
-                                          IMG_EXTENSIONS if is_valid_file is None else None,
-                                          is_valid_file=is_valid_file)
+        super().__init__(root, loader,
+                         IMG_EXTENSIONS if is_valid_file is None else None,
+                         is_valid_file=is_valid_file)
 
 
-class ImageNet(ImageFolder):
+class ImageNet(ImageClassificationFolderDataset):  # TODO
     """`ImageNet <http://image-net.org/>`_ 2012 Classification Dataset.
 
     Args:
@@ -664,11 +666,12 @@ class ImageNet(ImageFolder):
     default_dir = 'tiny-images'
 
     def __init__(self, root, subset='train', **kwargs):
+        # TODO: use subset parameter
         root = self.root = os.path.expanduser(root)
 
         wnid_to_classes = torch.load(self.meta_file)[0]
 
-        super().__init__(self.split_folder, **kwargs)
+        super().__init__(self.subset_folder, **kwargs)
         self.root = root
 
         self.wnids = self.classes
@@ -682,8 +685,8 @@ class ImageNet(ImageFolder):
         return os.path.join(self.root, 'meta.bin')
 
     @property
-    def split_folder(self):
-        return os.path.join(self.root, self.split)
+    def subset_folder(self):
+        return os.path.join(self.root, self.subset)
 
 
 # Semantic segmentation ############################################################################
@@ -777,15 +780,15 @@ class Cityscapes(Dataset):
         self._downsampling = downsampling
         self._shape = np.array([1024, 2048]) // downsampling
 
-        IMG_SUFFIX = "_leftImg8bit.png"
-        LAB_SUFFIX = "_gtFine_labelIds.png"
+        img_suffix = "_leftImg8bit.png"
+        lab_suffix = "_gtFine_labelIds.png"
         self._id_to_label = {l.id: l.trainId for l in cslabels}
 
         self._images_dir = Path(f'{data_dir}/leftImg8bit/{subset}')
         self._labels_dir = Path(f'{data_dir}/gtFine/{subset}')
         self._image_list = [x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]
         self._image_list = list(sorted(self._image_list))
-        self._label_list = [str(x)[:-len(IMG_SUFFIX)] + LAB_SUFFIX for x in self._image_list]
+        self._label_list = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._image_list]
 
         info = dict(problem='semantic_segmentation', class_count=19,
                     class_names=[l.name for l in cslabels if l.trainId >= 0],

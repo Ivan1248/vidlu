@@ -1,3 +1,5 @@
+from torch import nn
+
 def _scoped(*superclasses):
     class ScopedModuleExtension(*superclasses):
         # def __del__(self):
@@ -18,7 +20,7 @@ def _scoped(*superclasses):
             # if isinstance(value, nn.Module):
             #    self._register_as_parent(key, value)
 
-        def add_module(self, *args, **kwargs):
+        def add_module(self, name, module):
             super().add_module(name, module)
             self._register_as_parent(name, module)
 
@@ -33,7 +35,7 @@ def _scoped(*superclasses):
 
         def get_parents(self):
             import gc
-            for module in [r for r in gc.get_objects() if isinstance(r, (nn.Module))]:
+            for module in [r for r in gc.get_objects() if isinstance(r, nn.Module)]:
                 for k, v in module.named_children():
                     if v is self:
                         yield module, k

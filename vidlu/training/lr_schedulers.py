@@ -2,49 +2,9 @@ from torch.optim import lr_scheduler
 
 from vidlu.utils.func import default_args
 
-'''
-class MultiStepLR(lr_scheduler.MultiStepLR):
-    """Improved MultiStepLR where get_lr always returns the correct value.
-    Decays the learning rate of each parameter group by gamma once the
-    number of epoch reaches one of the milestones. Notice that such decay can
-    happen simultaneously with other changes to the learning rate from outside
-    this scheduler. When last_epoch=-1, sets initial lr as lr.
 
-    Args:
-        optimizer (Optimizer): Wrapped optimizer.
-        milestones (list): List of epoch indices. Must be increasing.
-        gamma (float): Multiplicative factor of learning rate decay.
-            Default: 0.1.
-        last_epoch (int): The index of last epoch. Default: -1.
-
-    Example:
-        >>> # Assuming optimizer uses lr = 0.05 for all groups
-        >>> # lr = 0.05     if epoch < 30
-        >>> # lr = 0.005    if 30 <= epoch < 80
-        >>> # lr = 0.0005   if epoch >= 80
-        >>> scheduler = MultiStepLR(optimizer, milestones=[30,80], gamma=0.1)
-        >>> for epoch in range(100):
-        >>>     train(...)
-        >>>     validate(...)
-        >>>     scheduler.step()
-    """
-
-    def __init__(self, optimizer, milestones, gamma=0.1, last_epoch=-1):
-        self.new_lrs = None
-        self.last_milestone_update = last_epoch  # for valid lr_value when get_lr is called from outside
-        super().__init__(optimizer=optimizer, milestones=milestones, gamma=gamma,
-                         last_epoch=last_epoch)
-
-    def get_lr(self):
-        if self.last_epoch in self.milestones:
-            if self.last_milestone_update != self.last_epoch:
-                self.last_milestone_update = self.last_epoch
-                self.new_lrs = [group['lr'] * self.gamma ** self.milestones[self.last_epoch]
-                                for group in self.optimizer.param_groups]
-            return self.new_lrs
-        else:
-            return [group['lr'] for group in self.optimizer.param_groups]
-'''
+class LRScheduler(lr_scheduler._LRScheduler):
+    pass
 
 
 class ScalableMultiStepLR(lr_scheduler.MultiStepLR):
@@ -86,7 +46,7 @@ class ScalableMultiStepLR(lr_scheduler.MultiStepLR):
                          gamma=gamma, last_epoch=last_epoch)
 
 
-class ConstLR(lr_scheduler._LRScheduler):
+class ConstLR(LRScheduler):
     """Decays the learning rate of each parameter group by gamma every
     step_size epochs. Notice that such decay can happen simultaneously with
     other changes to the learning rate from outside this scheduler. When

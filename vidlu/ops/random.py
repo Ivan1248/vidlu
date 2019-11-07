@@ -25,6 +25,8 @@ def generalized_normal_sample(p, loc=0, scale=1, shape=(), dtype=None, device=No
         loc: the location (mean) parameter of the distribution.
         scale: the scale parameter of the distribution.
         shape: the number of elements or the shape of the array.
+        dtype: PyTorch data-type.
+        device: PyTorch device.
 
     Returns:
         A random sample from a generalized normal distribution with a 1 degree
@@ -50,6 +52,8 @@ def uniform_sample_from_p_ball(p, shape=(), device=None, dtype=None):
     Args:
         p: p-ball p.
         shape: the number of elements or the shape of the array.
+        dtype: PyTorch data-type.
+        device: PyTorch device.
 
     Returns:
         A random sample from a uniform distribution over a unit p-ball.

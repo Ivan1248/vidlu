@@ -19,7 +19,7 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=False):
     if zero_init_residual:
         found = 0
         for m in module.modules():
-            if isinstance(m, (mc.ResNetV1Unit)):
+            if isinstance(m, mc.ResNetV1Unit):
                 found += 1
                 # not mc.ResNetV2Unit because it seems not to work better
                 last_bn = [c for c in m.fork.block.children() if isinstance(c, M.BatchNorm)][-1]

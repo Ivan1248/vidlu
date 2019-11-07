@@ -122,6 +122,7 @@ class ClassificationMetrics(AccumulatingMetric):
 class AverageMetric(AccumulatingMetric):
     def __init__(self, name):
         self.name = name
+        self._sum, self._n = None, None
         self.reset()
 
     def reset(self):

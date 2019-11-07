@@ -18,10 +18,6 @@ class FileNames:
     SUMMARY = 'summary.p'
 
 
-def _save(self, path, obj):
-    create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
-
-
 @dataclass
 class Checkpoint:
     state: dict
@@ -133,7 +129,8 @@ class CheckpointManager(object):
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
         self._save(path / FileNames.MODEL_STATE, state['model'])
-        self._save(path / FileNames.TRAINING_STATE, {k: v for k, v in state.items() if k != 'model'})
+        self._save(path / FileNames.TRAINING_STATE,
+                   {k: v for k, v in state.items() if k != 'model'})
         self._save(path / FileNames.PROGRESS_INFO, Namespace(index=self._index))
         self._save(path / FileNames.EXPERIMENT_INFO, self.experiment_desc)
         self._save(path / FileNames.SUMMARY, summary)
@@ -151,13 +148,16 @@ class CheckpointManager(object):
         self._required_resuming = False
         return state, summary
 
-    def _save(self, path, obj):
+    @staticmethod
+    def _save(path, obj):
         create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
 
-    def _index_to_name(self, index):
+    @staticmethod
+    def _index_to_name(index):
         return f'{index}'
 
-    def _name_to_index(self, name):
+    @staticmethod
+    def _name_to_index(name):
         return int(name)
 
     def remove_old_checkpoints(self, n_saved=None):
@@ -166,5 +166,5 @@ class CheckpointManager(object):
             path = self.experiment_dir / self.saved.pop(0)
             try:
                 shutil.rmtree(path)
-            except FileNotFoundError as ex:
+            except FileNotFoundError:
                 warnings.warn(f"Old checkpoint {path} is already deleted.")

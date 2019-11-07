@@ -24,11 +24,11 @@ class _DenseLayer(nn.Module):
         self.add_module('norm1', nn.BatchNorm2d(num_input_features)),
         self.add_module('relu1', nn.ReLU(inplace=True)),
         self.add_module('conv1', nn.Conv2d(num_input_features, bn_size * growth_rate,
-                        kernel_size=1, stride=1, bias=False)),
+                                           kernel_size=1, stride=1, bias=False)),
         self.add_module('norm2', nn.BatchNorm2d(bn_size * growth_rate)),
         self.add_module('relu2', nn.ReLU(inplace=True)),
         self.add_module('conv2', nn.Conv2d(bn_size * growth_rate, growth_rate,
-                        kernel_size=3, stride=1, padding=1, bias=False)),
+                                           kernel_size=3, stride=1, padding=1, bias=False)),
         self.drop_rate = drop_rate
         self.efficient = efficient
 
@@ -55,7 +55,8 @@ class _Transition(nn.Sequential):
 
 
 class _DenseBlock(nn.Module):
-    def __init__(self, num_layers, num_input_features, bn_size, growth_rate, drop_rate, efficient=False):
+    def __init__(self, num_layers, num_input_features, bn_size, growth_rate, drop_rate,
+                 efficient=False):
         super(_DenseBlock, self).__init__()
         for i in range(num_layers):
             layer = _DenseLayer(
@@ -89,10 +90,10 @@ class DenseNet(nn.Module):
         small_inputs (bool) - set to True if images are 32x32. Otherwise assumes images are larger.
         efficient (bool) - set to True to use checkpointing. Much more memory efficient, but slower.
     """
+
     def __init__(self, growth_rate=12, block_config=(16, 16, 16), compression=0.5,
                  num_init_features=24, bn_size=4, drop_rate=0,
                  num_classes=10, small_inputs=True, efficient=False):
-
         super(DenseNet, self).__init__()
         assert 0 < compression <= 1, 'compression of densenet should be between 0 and 1'
         self.avgpool_size = 8 if small_inputs else 7
@@ -100,16 +101,18 @@ class DenseNet(nn.Module):
         # First convolution
         if small_inputs:
             self.bulk = nn.Sequential(OrderedDict([
-                ('conv0', nn.Conv2d(3, num_init_features, kernel_size=3, stride=1, padding=1, bias=False)),
+                ('conv0',
+                 nn.Conv2d(3, num_init_features, kernel_size=3, stride=1, padding=1, bias=False)),
             ]))
         else:
             self.bulk = nn.Sequential(OrderedDict([
-                ('conv0', nn.Conv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False)),
+                ('conv0',
+                 nn.Conv2d(3, num_init_features, kernel_size=7, stride=2, padding=3, bias=False)),
             ]))
             self.bulk.add_module('norm0', nn.BatchNorm2d(num_init_features))
             self.bulk.add_module('relu0', nn.ReLU(inplace=True))
             self.bulk.add_module('pool0', nn.MaxPool2d(kernel_size=3, stride=2, padding=1,
-                                                           ceil_mode=False))
+                                                       ceil_mode=False))
 
         # Each denseblock
         num_features = num_init_features

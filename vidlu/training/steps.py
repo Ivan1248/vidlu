@@ -13,7 +13,7 @@ from vidlu.utils.torch import (concatenate_tensors_trees, switch_training,
 # Training/evaluation steps ########################################################################
 
 
-## Supervised
+# Supervised
 
 def do_optimization_step(optimizer, loss):
     optimizer.zero_grad()
@@ -42,7 +42,7 @@ def supervised_train_step(trainer, batch):
     return _supervised_train_step_x_y(trainer, *trainer.prepare_batch(batch))
 
 
-## Supervised multistep
+# Supervised multistep
 
 @dataclass
 class SupervisedTrainMultiStep:
@@ -133,7 +133,7 @@ class SupervisedSlidingBatchTrainStep:
         return result
 
 
-## Supervised accumulated batch
+# Supervised accumulated batch
 
 @dataclass
 class SupervisedTrainAcummulatedBatchStep:
@@ -184,13 +184,6 @@ class CleanResultCallback:
             self.result = NameDict({
                 **vars(r),
                 **dict(zip(("output", "other_outputs"), self.extend_output(r.output)))})
-
-
-def first_output_callback(output_ref: list):
-    def backward_callback(r):
-        nonlocal output_ref
-        if len(output_ref) == 0:
-            output_ref.append(r)
 
 
 @dataclass
@@ -530,7 +523,7 @@ class GANTrainStep:
         trainer.model.train()
         real = trainer.prepare_batch(batch)[0]
         batch_size = real.shape[0]
-        real_labels = trainer._get_real_labels(batch_size)
+        real_labels = self._get_real_labels(batch_size)
 
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z))) ##########
         discriminator, generator = trainer.model.discriminator, trainer.model.generator
@@ -546,7 +539,7 @@ class GANTrainStep:
 
         # training discriminator with fake
         output = discriminator(fake.detach())
-        errD_fake = trainer.loss(output, trainer._get_fake_labels(batch_size)).mean()
+        errD_fake = trainer.loss(output, self._get_fake_labels(batch_size)).mean()
         D_fake1 = output.mean().item()
         errD_fake.backward()
 
@@ -555,7 +548,8 @@ class GANTrainStep:
         # (2) Update G network: maximize log(D(G(z))) ##########################
         generator.zero_grad()
 
-        # Update generator. We want to make a step that will make it more likely that D outputs "real"
+        # Update generator.
+        # We want to make a step that will make it more likely that D outputs "real"
         output = discriminator(fake)
         errG = trainer.loss(output, real_labels).mean()
         D_fake2 = output.mean().item()

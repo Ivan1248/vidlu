@@ -94,7 +94,7 @@ class BagNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
-    def _make_layer(self, block, planes, blocks, stride=1, kernel3=0, prefix=''):
+    def _make_layer(self, block, planes, blocks, stride=1, kernel3=0):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -136,33 +136,21 @@ class BagNet(nn.Module):
         return nn.LogSoftmax()(x)
 
 
-def bagnet33(pretrained=False, strides=[2, 2, 2, 1], **kwargs):
-    """Constructs a Bagnet-33 model.
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
+def bagnet33(pretrained=False, strides=(2, 2, 2, 1), **kwargs):
     model = BagNet(_Bottleneck, [3, 4, 6, 3], strides=strides, kernel3=[1, 1, 1, 1], **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['bagnet33']))
     return model
 
 
-def bagnet17(pretrained=False, strides=[2, 2, 2, 1], **kwargs):
-    """Constructs a Bagnet-17 model.
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
+def bagnet17(pretrained=False, strides=(2, 2, 2, 1), **kwargs):
     model = BagNet(_Bottleneck, [3, 4, 6, 3], strides=strides, kernel3=[1, 1, 1, 0], **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['bagnet17']))
     return model
 
 
-def bagnet9(pretrained=False, strides=[2, 2, 2, 1], **kwargs):
-    """Constructs a Bagnet-9 model.
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-    """
+def bagnet9(pretrained=False, strides=(2, 2, 2, 1), **kwargs):
     model = BagNet(_Bottleneck, [3, 4, 6, 3], strides=strides, kernel3=[1, 1, 0, 0], **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['bagnet9']))

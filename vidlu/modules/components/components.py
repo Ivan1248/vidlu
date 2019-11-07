@@ -27,14 +27,16 @@ def _call_no_inplace(module_f):
 
 
 class Tent(Module):
-    def __init__(self, inplace=False, channelwise=False, delta_range=(0.05, 1.)):
+    def __init__(self, channelwise=False, delta_range=(0.05, 1.)):
         super().__init__()
         self.channelwise = channelwise
         self.min_delta, self.max_delta = delta_range
+        self.delta = None
 
     def build(self, x):
         self.delta = nn.Parameter(
-            torch.ones(x.shape[1]) if self.channelwise else torch.tensor(self.max_delta))
+            torch.ones(x.shape[1]) if self.channelwise else torch.tensor(self.max_delta),
+            requires_grad=True)
 
     def forward(self, x):
         with torch.no_grad():
@@ -245,6 +247,7 @@ class LadderUpsampleBlend(Seq):
         block_f = Reserved.partial(blend_block_f, width_factors=[1])
         self.args.block_f = block_f
 
+        self.project = None
         self.pre_blend = self._pre_blendings[pre_blending]()
         self.blend = block_f(base_width=out_channels, kernel_sizes=[3])
 
@@ -262,6 +265,7 @@ class LadderUpsampleBlend(Seq):
 class KresoLadder(Module):
     def __init__(self, width, up_blend_f=LadderUpsampleBlend):
         super().__init__()
+        self.up_blends = None
 
     def build(self, x, skips):
         self.up_blends = nn.ModuleList(
@@ -576,12 +580,12 @@ class MDenseSequence(Seq):
                  block_f=partial(default_args(MDenseBlock).block_f, base_width=Reserved)):
         super().__init__()
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        for i, len in enumerate(db_lengths):
+        for i, len_ in enumerate(db_lengths):
             if i > 0:
                 self.add_module(f'transition{i - 1}',
                                 MDenseTransition(compression, **norm_act_args))
             self.add_module(f'db{i}',
-                            MDenseBlock(len,
+                            MDenseBlock(len_,
                                         block_f=Reserved.partial(block_f, base_width=growth_rate)))
         self.add_module('concat', Concat())
         self.add_modules(norm=default_args(block_f).norm_f(),
@@ -640,12 +644,12 @@ class FDenseSequence(Seq):
                  block_f=partial(default_args(FDenseBlock).block_f, base_width=Reserved)):
         super().__init__()
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        for i, len in enumerate(db_lengths):
+        for i, len_ in enumerate(db_lengths):
             if i > 0:
                 self.add_module(f'transition{i - 1}',
                                 FDenseTransition(compression, **norm_act_args))
             self.add_module(f'db{i}',
-                            FDenseBlock(len,
+                            FDenseBlock(len_,
                                         block_f=Reserved.partial(block_f, base_width=growth_rate)))
         self.add_module('concat', Concat())
         self.add_modules(norm=default_args(block_f).norm_f(),

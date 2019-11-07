@@ -9,10 +9,10 @@ from vidlu.utils.func import param_count
 class _LazyField:
     __slots__ = "get"
 
-    def __init__(self, get, *args):
+    def __init__(self, get):
         if param_count(get) not in [0, 1]:
             raise ValueError("get should be a callable with either 0 (simple lazy evaluation) or 1"
-                             +" parameter (in case of referring back to the 'Record' object).")
+                             + " parameter (in case of referring back to the 'Record' object).")
         self.get = get
 
 
