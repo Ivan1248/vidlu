@@ -67,7 +67,7 @@ class VATLoss(nn.Module):
         self.iter_count = iter_count
 
     def forward(self, model, x, pred=None):
-        with batchnorm_stats_tracking_off():
+        with batchnorm_stats_tracking_off(model):
             if pred is None:
                 with torch.no_grad():
                     pred = F.softmax(model(x), dim=1)
@@ -102,15 +102,15 @@ class CarliniWagnerLoss(nn.Module):
     def __init__(self):
         super(CarliniWagnerLoss, self).__init__()
 
-    def forward(self, input, target):
+    def forward(self, x, target):
         """
-        :param input: pre-softmax/logits.
+        :param x: pre-softmax/logits.
         :param target: true labels.
         :return: CW loss value.
         """
-        num_classes = input.size(1)
+        num_classes = x.size(1)
         label_mask = ops.one_hot(target, num_classes, dtype=torch.float)
-        correct_logit = torch.sum(label_mask * input, dim=1)
-        wrong_logit = torch.max((1. - label_mask) * input, dim=1)[0]
+        correct_logit = torch.sum(label_mask * x, dim=1)
+        wrong_logit = torch.max((1. - label_mask) * x, dim=1)[0]
         loss = -F.relu(correct_logit - wrong_logit + 50.).sum()
         return loss
