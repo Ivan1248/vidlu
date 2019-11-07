@@ -481,10 +481,10 @@ class AdversarialTargetedEvalStep:
             output, other_outputs = trainer.extend_output(trainer.model(x))
             loss = trainer.loss(output, y).mean()
 
+        result = dict()
         for i, t in enumerate(self.targets):
             t_var = torch.full_like(y, t)
             x_adv = trainer.eval_attack.perturb(trainer.model, x, t_var)
-            result = dict()
             with torch.no_grad():
                 result[f"output_adv{i}"], result[f"other_outputs_adv{i}"] = trainer.extend_output(
                     trainer.model(x_adv))
@@ -507,6 +507,7 @@ def autoencoder_train_step(trainer, batch):
     return NameDict(x_r=x_r, x=x, loss=loss.item())
 
 
+'''
 # GAN
 
 class GANTrainStep:
@@ -559,3 +560,4 @@ class GANTrainStep:
 
         return NameDict(errD=(errD_real + errD_fake).item(), errG=errG.item(), D_real=D_real,
                         D_fake1=D_fake1, D_fake2=D_fake2)
+'''
