@@ -22,7 +22,7 @@ def compare_with_torchvision(mymodelname, tvmodelname):
     vidlu_model.load_state_dict(params)
 
     if platform.system() == 'Windows':
-        assert torch.max((vidlu_model(x) == tv_model(x)).abs())
+        assert torch.all(vidlu_model(x) == tv_model(x))
     else:
         assert (vidlu_model(x) - tv_model(x)).abs().max() < 3e-7
 
