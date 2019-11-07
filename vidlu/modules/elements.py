@@ -30,8 +30,8 @@ def _extended_interface(*superclasses):
             elif len(args) == 0 and len(kwargs) == 1:
                 name, module = next(iter(kwargs.items()))
             else:
-                raise ValueError(
-                    "Either a pair of positional arguments or single keyword argument can be accepted.")
+                raise RuntimeError(
+                    "Either 2 positional arguments or a single keyword argument is required.")
             super().add_module(name, module)
 
         def add_modules(self, *args, **kwargs):
@@ -58,7 +58,6 @@ def _extended_interface(*superclasses):
 
 
 def _extract_tensors(*args, **kwargs):
-    tensors = []
     for a in itertools.chain(args, kwargs.values()):
         if isinstance(a, torch.Tensor):
             yield a
@@ -126,13 +125,13 @@ def _modifiable(*superclasses):
                 del self._modifiers[k]
             return self
 
-        def _call_with_modifiers(self, name, *input):
-            return self._modifiers.get(name, identity)(getattr(self, name))(*input)
+        def _call_with_modifiers(self, name, *x):
+            return self._modifiers.get(name, identity)(getattr(self, name))(*x)
 
     return ModifibleModExt
 
 
-def _stochastic(*superclasses):
+def _stochastic(*superclasses):  # TODO: implement
     class StochasticModExt(*superclasses):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -153,7 +152,6 @@ def _stochastic(*superclasses):
                 #    raise ValueError(
                 #        "sample_count needs to be None for non-stochastic-scope-modules.")
                 # raise NotImplementedError("Stochastic modules need to override this method")
-                pass
             if stochastic_run_id is None:
                 stochastic_run_id = self._stoch_next_run_id
             if stochastic_run_id != self._stoch_last_run_id:
@@ -203,13 +201,13 @@ class InvertibleModuleMixin:
 
 # Core Modules #####################################################################################
 
-class Module(*_extended(nn.Module, ABC)):
+class Module(*_extended(nn.Module, ABC), nn.Module):
     # Based on https://github.com/MagNet-DL/magnet/blob/master/magnet/nodes/nodes.py
 
     def __init__(self):
         super().__init__()
         if type(self).__init__ is not Module.__init__:
-            args = class_initializer_locals_c()
+            args = class_initializer_locals_c()  # TODO: consider @dataclass instead of this
             self.args = NameDict(args)
         self._built = False
 
@@ -237,7 +235,7 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-class Seq(*_extended(nn.Sequential), _modifiable(nn.Sequential)):
+class Seq(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
     """
     A wrapper around torch.nn.Seq to enable passing a dict as the only
     parameter whereas in torch.nn.Seq only OrderedDict is accepted
@@ -383,17 +381,18 @@ def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.
         raise ValueError(f"Cannot infer {name} dimension from input shape.")
     name = f"{name}{dim}d"
     layer_func = nn.__getattribute__(name)
-    for k, v in params(layer_func).items():
+    for k in params(layer_func).keys():
         if k not in args:
-            breakpoint()
             raise ValueError(f"Missing argument for {name}: {k}.")
     module = layer_func(**args)
     return module
 
 
 def _get_conv_padding(padding_type, kernel_size, dilation):
-    assert all(k % 2 == 1
-               for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size))
+    if not all(k % 2 == 1
+               for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size)):
+        raise ValueError(f"`kernel_size` must be an odd positive integer "
+                         f"or a sequence of them, not {kernel_size}.")
     if padding_type not in ('half', 'full'):
         raise ValueError(f"Invalid padding_type value {padding_type}.")
 
@@ -499,6 +498,7 @@ class GhostBatchNorm(BatchNorm):
         super().__init__(eps=eps, momentum=momentum, affine=affine,
                          track_running_stats=track_running_stats, num_features=num_features)
         self.batch_size = batch_size
+        self.running_mean, self.running_var, self.num_splits = [None] * 3
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
@@ -578,9 +578,9 @@ class RevFunc(Func):
 # Stochastic #######################################################################################
 
 class StochasticModule(Module, ABC):
-    @abstractmethod
-    def deterministic_forward(self, *args, **kwargs):
-        pass
+    def __init__(self):
+        super().__init__()
+        self.stochastic_eval = False
 
 
 def is_stochastic(module):
@@ -605,12 +605,14 @@ class _DropoutNd(StochasticModule, ABC):
 
 class Dropout(_DropoutNd):
     def forward(self, input):
-        return F.dropout(input, self.p, training=True, inplace=self.inplace)
+        return F.dropout(input, self.p, training=self.training or self.stochastic_eval,
+                         inplace=self.inplace)
 
 
 class Dropout2d(_DropoutNd):
     def forward(self, input):
-        return F.dropout2d(input, self.p, training=True, inplace=self.inplace)
+        return F.dropout2d(input, self.p, training=self.training or self.stochastic_eval,
+                           inplace=self.inplace)
 
 
 # Utilities ########################################################################################
@@ -688,17 +690,17 @@ def deep_split(root: nn.Module, split_path: Union[list, str]):
 def deep_join(left: nn.Module, right: nn.Module):
     if not type(left) is type(right):
         raise ValueError("Both modules must be of the same type.")
-    if not isinstance(left, Seq):
+    if isinstance(left, Seq):
+        def index_to_name(module, index):
+            return list(module.named_children())[index][0]
+
+        if len(left) * len(right) == 0 or index_to_name(left, -1) != index_to_name(right, 0):
+            return join_sequentials(left, right)
+        left = left[:]
+        left[-1] = deep_join(left[-1], right[0])
+        return join_sequentials(left, right[1:])
+    else:
         raise NotImplementedError(f"Joining not implemented for module type {type(left)}")
-
-    def index_to_name(module, index):
-        return list(module.named_children())[index][0]
-
-    if len(left) * len(right) == 0 or index_to_name(left, -1) != index_to_name(right, 0):
-        return join_sequentials(left, right)
-    left = left[:]
-    left[-1] = deep_join(left[-1], right[0])
-    return join_sequentials(left, right[1:])
 
 
 def with_intermediate_outputs(root: nn.Module, submodule_paths: list):
@@ -749,7 +751,6 @@ def with_intermediate_outputs(root: nn.Module, submodule_paths: list):
 
 
 class IntermediateOutputsModuleWrapper(Module):
-
     def __init__(self, module, submodule_paths):
         """
         Creates a function extending `root.forward` so that a pair containing
