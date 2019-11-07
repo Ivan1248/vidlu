@@ -27,26 +27,11 @@ def colorify_segmentation(seg, colors):
     return plab
 
 
-class Composer:
-    def __init__(self, format=[0]):
-        """
-
-        Args:
-            format:
-
-        Example:
-            >>> format = lambda x: [[x[0], None], [fuse_images(x[0],x[1]), x[1]]]
-        """
-        self.format = format
-
-    def __call__(self, images):
-        image_matrix = format(images)
-
-
 def composef(images, format):
     """
 
     Args:
+        images:
         format:
 
     Example:

@@ -81,7 +81,7 @@ def read_lines(path):
 
 
 def write_text(path, text, append=False):
-    Path(path).open("w").write(text)
+    Path(path).open("w+" if append else "w").write(text)
 
 
 def write_lines(path, lines, append=False):

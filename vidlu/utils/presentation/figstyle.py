@@ -6,14 +6,14 @@ from math import *
 from matplotlib import rc
 
 scale = 1
-fontsize_pt = 11*scale # 11.74983
-fontsize_pt = 10*scale # 11.74983
-textwidth_pt = 412.56497*scale
+# fontsize_pt = 11*scale # 11.74983
+fontsize_pt = 10 * scale  # 11.74983
+textwidth_pt = 412.56497 * scale
 
 
 def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     # Modified https://gist.github.com/martijnvermaat/b5fe45124049b1e8e037
-    """
+    r"""
     Configures Matplotlib so saved figures can be used in LaTeX documents.
     Uses the sans-serif TeX Gyre Heros font (Helvetica), also for math.
     Arguments:
@@ -41,6 +41,7 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     - Document dependencies (tex-gyre, dvipng, ...).
     Based on: http://damon-is-a-geek.com/publication-ready-the-first-time-beautiful-reproducible-plots-with-matplotlib.html
     """
+
     def figsize(width_fraction=1.0):
         """
         width_fraction: The fraction of the available width you'd like the figure to occupy.
@@ -48,23 +49,23 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
         width_pt = available_width * width_fraction
 
         inches_per_pt = 1.0 / 72.27
-        golden_ratio  = (5**0.5 - 1.0) / 2.0
+        golden_ratio = (5 ** 0.5 - 1.0) / 2.0
 
         width_in = width_pt * inches_per_pt
         height_in = width_in * golden_ratio
         return width_in, height_in
-    
+
     from matplotlib import rcParams
-    #rcParams['figure.dpi']=160    
+    # rcParams['figure.dpi']=160
     rcParams['font.size'] = document_fontsize
     rcParams['axes.titlesize'] = document_fontsize
     rcParams['axes.labelsize'] = document_fontsize
     rcParams['xtick.labelsize'] = document_fontsize
     rcParams['ytick.labelsize'] = document_fontsize
     rcParams['legend.fontsize'] = document_fontsize
-    #rcParams['font.family'] = 'sans-serif'
-    #rcParams['font.sans-serif'] = ['tgheros']
-    #rcParams['font.serif'] = ['cm10']
+    # rcParams['font.family'] = 'sans-serif'
+    # rcParams['font.sans-serif'] = ['tgheros']
+    # rcParams['font.serif'] = ['cm10']
     rcParams['text.usetex'] = True
     matplotlib.rcParams['text.latex.unicode'] = True
     rcParams['text.latex.preamble'] = r"""
@@ -85,5 +86,6 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     rcParams['figure.figsize'] = figsize()
 
     return figsize
-    
+
+
 figsize = configure()  # figsize is a function returning (width, height)

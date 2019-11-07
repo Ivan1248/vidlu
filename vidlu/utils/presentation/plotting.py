@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def plot_surface(function, rect, offsets=[0.5], center=0.5, width=256, height=256, axis=None):
+def plot_surface(function, rect, offsets=(0.5,), center=0.5, width=256, height=256, axis=None):
     """
     Creates a surface plot (visualize with plt.show)
     From http://www.zemris.fer.hr/~ssegvic/du/
@@ -22,7 +22,7 @@ def plot_surface(function, rect, offsets=[0.5], center=0.5, width=256, height=25
     xx0, xx1 = np.meshgrid(lsh, lsw)
     grid = np.stack((xx0.flatten(), xx1.flatten()), axis=1)
 
-    #get the values and reshape them
+    # get the values and reshape them
     values = function(grid).reshape((width, height))
 
     # fix the range and offset
@@ -39,5 +39,5 @@ def plot_surface(function, rect, offsets=[0.5], center=0.5, width=256, height=25
         vmax=delta + maxval,
         cmap='RdYlGn')
 
-    if offsets != None:
+    if offsets is not None:
         ax.contour(xx0, xx1, values, colors='black', levels=offsets)

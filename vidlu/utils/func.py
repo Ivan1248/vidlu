@@ -68,6 +68,7 @@ def freeze_nonempty_args(func):
 
 def tryable(func, default_value, error_type=Exception):
     def try_(*args, **kwargs):
+        # noinspection PyBroadException
         try:
             return func(*args, **kwargs)
         except error_type:
@@ -81,8 +82,8 @@ def _dummy(*a, **k):
 
 
 class _FuncTree(partial, Mapping):
-    def __new__(*args, **kwargs):
-        cls, func, *args = args
+    def __new__(cls, *args, **kwargs):
+        func, *args = args
         if func in [None, Empty]:
             p = partial.__new__(cls, _dummy, *args, **kwargs)
             p.__setattr__(('func', func))
@@ -122,23 +123,23 @@ class _FuncTree(partial, Mapping):
 def functree(func, *args, **kwargs):
     kwargs = {k: functree(v) if callable(v) else v
               for k, v in itertools.chain(default_args(func).items(), kwargs.items())}
-    return _FuncTree(func, **kwargs)
+    return _FuncTree(func, *args, **kwargs)
 
 
 def functree_shallow(func, *args, **kwargs):
-    return _FuncTree(func, **{**default_args(func), **kwargs})
+    return _FuncTree(func, *args, **{**default_args(func), **kwargs})
 
 
-def call_with_args_from_dict(func, dict):
+def call_with_args_from_dict(func, dict_):
     par = params(func)
     return func(**misc.update_existing_items(
-        {k: v for k, v in par.items() if v is not Empty or k in dict}, dict))
+        {k: v for k, v in par.items() if v is not Empty or k in dict_}, dict_))
 
 
-def partial_with_args_from_dict(func, dict):
+def partial_with_args_from_dict(func, dict_):
     par = params(func)
     return partial(func, **misc.update_existing_items(
-        {k: v for k, v in par.items() if v is not Empty or k in dict}, dict))
+        {k: v for k, v in par.items() if v is not Empty or k in dict_}, dict_))
 
 
 # parameters/arguments #############################################################################
@@ -159,7 +160,7 @@ def params(func) -> NameDict:
         raise ValueError("The provided type is not callable.")
     try:
         return NameDict({k: v.default for k, v in signature(func).parameters.items()})
-    except ValueError as e:
+    except ValueError:
         return NameDict()
 
 

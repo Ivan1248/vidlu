@@ -21,13 +21,13 @@ class KleinSum:
         >>> print(np.mean(numbers))
 
     Args:
-        type: Number type.
+        num_type: Number type.
     """
 
-    def __init__(self, type=float):
-        self.s = type(0.0)
-        self.cs = type(0.0)
-        self.ccs = type(0.0)
+    def __init__(self, num_type=float):
+        self.s = num_type(0.0)
+        self.cs = num_type(0.0)
+        self.ccs = num_type(0.0)
 
     def get(self):
         return self.s + self.cs + self.ccs

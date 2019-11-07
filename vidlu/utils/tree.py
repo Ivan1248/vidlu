@@ -86,9 +86,10 @@ def map(tree, func, tree_type=None):
                         for k, v in tree.items()})
 
 
-def to_dot(tree, label="ROOT", graph=None, parent=None, tree_type=None, max_label_length=999999999):
+def to_dot(tree, label="ROOT", graph=None, tree_type=None, max_label_length=999999999):
     tree_type = tree_type or type(tree)
     import pydot
+
     def elipsis(s):
         return (s[:max_label_length] + '..') if len(s) > max_label_length else s
 
