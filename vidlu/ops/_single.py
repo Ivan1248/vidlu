@@ -7,7 +7,6 @@ import torch
 # operations
 
 def profile(func, on_cuda=True):
-    on_cuda = True
     with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
         output = func()
     if on_cuda:
@@ -21,6 +20,8 @@ def one_hot(indices: torch.Tensor, c: int, dtype=None, device=None):
     Args:
         indices (Tensor): labels.
         c (int): number of classes.
+        dtype: PyTorch data-type.
+        device: PyTorch device.
 
     Returns:
         A one-hot array with the last array dimension of size `c` and ones at
