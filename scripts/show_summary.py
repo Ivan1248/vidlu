@@ -33,7 +33,7 @@ epoch_lr = [NameDict(epoch=0, lr=0)]
 train_evals = []
 val_evals = []
 
-"""
+r"""
 scanner_action = [
     (FormatScanner(
         "[([:\d]+)] Starting epoch {epoch:(\d+)}/(\d+) (\(){batches:(\d+)} batches(\)), lr=[([^\]])]",

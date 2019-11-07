@@ -20,7 +20,7 @@ for m in range(numel_max_order_of_magnitude + 1):
         for i, p in enumerate(ps):
             # norms[i] += [(x.norm(p) / (x.size(0) ** (1 / p))).item()]
             norms[i] += [x.abs().pow_(p).mean().pow_(1 / p).item()]  # scalable norm
-            #norms[i] += [(x.abs().pow_(p).mean().pow_(1 / p)/ (x.size(0) ** (1 / p))).item()]
+            # norms[i] += [(x.abs().pow_(p).mean().pow_(1 / p)/ (x.size(0) ** (1 / p))).item()]
     for i, p in enumerate(ps):
         norms[i] /= sample_count
     print(norms)
@@ -29,7 +29,7 @@ for m in range(numel_max_order_of_magnitude + 1):
 
 plt.plot(np.log2(ps), (1 / (ps + 1)) ** (1 / ps), label='n=inf')
 plt.xticks(np.log2(ps))
-plt.xlabel("$\log_2(p)$")
-plt.ylabel("$m_p(x_n) = n^{-1/p}|x_n|$")
+plt.xlabel(r"$\log_2(p)$")
+plt.ylabel(r"$m_p(x_n) = n^{-1/p}|x_n|$")
 plt.legend()
 plt.show()
