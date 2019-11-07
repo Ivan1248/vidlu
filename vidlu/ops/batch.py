@@ -144,7 +144,7 @@ def generalized_mean_abs(x, p, keep_dims=False):
 
 
 def l2_distace_sqr(x, y, keep_dims=False):
-    return abs_pow_sum(x - y, 2, keep_dims=False)
+    return abs_pow_sum(x - y, 2, keep_dims=keep_dims)
 
 
 def project_to_1_ball(x, r, inplace=False):
