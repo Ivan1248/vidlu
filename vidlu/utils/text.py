@@ -7,6 +7,7 @@ from arpeggio import (Optional, ZeroOrMore, OneOrMore, EOF, ParserPython, PTNode
 from arpeggio import RegExMatch as R
 import vidlu.utils.func as func
 
+
 # @formatter:off
 # [...] is disjunction, (...) is conjunction
 def const(): return R(r"[\w\.]*")
@@ -30,53 +31,63 @@ def writer_expr(): return OneOrMore([const, ('{', translator, '}')]), EOF()
 
 class _ScannerWriterVisitorBase(PTNodeVisitor):
     def visit_const(self, node, children):
-        if self.debug: print(f"const: {node.value}")
+        if self.debug:
+            print(f"const: {node.value}")
         return node.value
 
     def visit_ident(self, node, children):
-        if self.debug: print(f"ident: {node.value}")
+        if self.debug:
+            print(f"ident: {node.value}")
         return node.value
 
 
 class _ScannerExprVisitor(_ScannerWriterVisitorBase):
     def visit_const(self, node, children):
-        if self.debug: print(f"const: {node.value}")
+        if self.debug:
+            print(f"const: {node.value}")
         return re.escape(node.value)
 
     def visit_ident(self, node, children):
-        if self.debug: print(f"ident: {node.value}")
+        if self.debug:
+            print(f"ident: {node.value}")
         return re.escape(node.value)
 
     def visit_re_pattern(self, node, children):
-        if self.debug: print(f"re_pattern: {node.value}")
+        if self.debug:
+            print(f"re_pattern: {node.value}")
         return '(?:' + node.value[1:-1] + ')'
 
     def visit_pattern(self, node, children):
-        if self.debug: print(f"re_pattern: {node.value}")
+        if self.debug:
+            print(f"re_pattern: {node.value}")
         return ''.join(children) if len(children) > 1 else children[0]
 
     def visit_or_pattern(self, node, children):
-        if self.debug: print(f"or_pattern: {children}")
+        if self.debug:
+            print(f"or_pattern: {children}")
         return '(?:' + '|'.join(children) + ')'
 
     def visit_var_pattern(self, node, children):
-        if self.debug: print(f"var_pattern: {children}")
+        if self.debug:
+            print(f"var_pattern: {children}")
         return children[0]
 
     def visit_input_var(self, node, children):
-        if self.debug: print(f"input_var: {children}")
+        if self.debug:
+            print(f"input_var: {children}")
         return Namespace(var_name=children[0], pattern=".*?" if len(children) == 1 else children[1])
 
     def visit_scanner_expr(self, node, children):
-        if self.debug: print("input_expr {}".format(children))
+        if self.debug:
+            print("input_expr {}".format(children))
         pattern = []
-        vars = []
+        vars_ = []
         for c in children:
             if isinstance(c, Namespace):
-                vars.append(c.var_name)
+                vars_.append(c.var_name)
                 c = f"({c.pattern})"
             pattern.append(c)
-        return ''.join(pattern), vars
+        return ''.join(pattern), vars_
 
 
 class _WriterExprVisitor(_ScannerWriterVisitorBase):
@@ -86,22 +97,26 @@ class _WriterExprVisitor(_ScannerWriterVisitorBase):
         self.vars_str = ', '.join(f"{k}='{v}'" for k, v in vars_.items())
 
     def visit_dict_translation(self, node, children):
-        if self.debug: print(f"dict_translation: {children}")
+        if self.debug:
+            print(f"dict_translation: {children}")
         return {children[0]: children[1]}
 
     def visit_dict_multi_translation(self, node, children):
-        if self.debug: print(f"dict_multi_translation: {children}")
+        if self.debug:
+            print(f"dict_multi_translation: {children}")
         return {k: v for d in children for k, v in reversed(list(d.items()))}
 
     def visit_dict_translator(self, node, children):
-        if self.debug: print(f"dict_translator: {children}")
+        if self.debug:
+            print(f"dict_translator: {children}")
         var_name = children[0]
         translation_dict = children[1] if len(children) > 1 else dict()
         key = self.vars[var_name]
         return translation_dict.get(key, key)
 
     def visit_py_translator(self, node, children):
-        if self.debug: print(f"py_translator: {node}")
+        if self.debug:
+            print(f"py_translator: {node}")
         try:
             return eval(f"str((lambda {self.vars_str}: {node.value[1:-1]})())")
         except NameError as e:
@@ -109,11 +124,13 @@ class _WriterExprVisitor(_ScannerWriterVisitorBase):
                             + f' Available variables: {self.vars_str}.')
 
     def translator(self, node, children):
-        if self.debug: print(f"translator: {node}")
+        if self.debug:
+            print(f"translator: {node}")
         return children[0]
 
     def visit_writer_expr(self, node, children):
-        if self.debug: print(f"writer_expr {children}")
+        if self.debug:
+            print(f"writer_expr {children}")
         return list(children)
 
 
@@ -124,7 +141,7 @@ class NoMatchError(Exception):
 
     def __str__(self):
         if self.inner_exception is not None:
-            return str(self.inner_exception)
+            return super().__str__() + ":\n" + str(self.inner_exception)
         else:
             return super().__str__()
 
@@ -136,30 +153,30 @@ class FormatScanner:
         try:
             format_parse_tree = format_parser.parse(format)
         except arpeggio.NoMatch as ex:
-            raise NoMatchError(inner_exception=ex)
+            raise NoMatchError("Invalid format", inner_exception=ex)
         input_pattern, self.var_names = visit_parse_tree(format_parse_tree,
                                                          _ScannerExprVisitor(debug=debug))
         self.full_match = full_match
         input_pattern = input_pattern + "$" if full_match else ".*?" + input_pattern
         self.regex = re.compile(input_pattern)
 
-    def __call__(self, input):
-        parsed = (self.regex.fullmatch if self.full_match else self.regex.match)(input)
+    def __call__(self, x):
+        parsed = (self.regex.fullmatch if self.full_match else self.regex.match)(x)
         if parsed is None:
-            raise NoMatchError(f'The input string\n  "{input}"\n does not match the format\n'
+            raise NoMatchError(f'The input string\n  "{x}"\n does not match the format\n'
                                + f'  "{self.format}"\n  (regex: {self.regex.pattern})')
         var_values = parsed.groups()
         return dict(zip(self.var_names, var_values))
 
-    def try_scan(self, input):
+    def try_scan(self, x):
         try:
-            return self(input)
+            return self(x)
         except arpeggio.NoMatch as ex:
             return None
 
 
-def scan(format, input):
-    return FormatScanner(format)(input)
+def scan(format, x):
+    return FormatScanner(format)(x)
 
 
 class FormatWriter:
@@ -183,9 +200,9 @@ class FormatTranslator:
         self.writer = FormatWriter(output_format)
         self.error_on_no_match = error_on_no_match
 
-    def __call__(self, input, **additional_vars):
+    def __call__(self, x, **additional_vars):
         try:
-            vars_ = self.scanner(input)
+            vars_ = self.scanner(x)
             return self.writer(**vars_, **additional_vars)
         except NoMatchError as ex:
             if self.error_on_no_match:
@@ -201,23 +218,23 @@ class FormatTranslatorCascade:
             for inp, out in input_output_format_pairs]
         self.error_on_no_match = error_on_no_match
 
-    def __call__(self, input):
+    def __call__(self, x):
         for t in self.translators:
-            output = func.tryable(t, None, NoMatchError)(input)
+            output = func.tryable(t, None, NoMatchError)(x)
             if output is not None:
                 return output
         if not self.error_on_no_match:
-            return input
+            return x
         messages = []
         for (inp, out), t in zip(self.input_output_format_pairs, self.translators):
             try:
-                t(input)
+                t(x)
             except NoMatchError as ex:
                 messages.append((inp, str(ex)))
         if self.error_on_no_match:
             messages = '\n'.join(
                 f"  {i}. {inp} -> {err}\n" for i, (inp, err) in enumerate(messages))
-            raise NoMatchError(f'Input "{input}" matches no input format.\n{messages}')
+            raise NoMatchError(f'Input "{x}" matches no input format.\n{messages}')
 
 
 def to_snake_case(identifier):
