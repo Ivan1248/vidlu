@@ -13,12 +13,12 @@ from vidlu import factories, models, problem, data, parameters, data_utils, modu
 
 dataset = factories.get_data("TinyImagenet{val}", dirs.DATASETS)['TinyImagenet']['val']
 dataset = factories.get_data_preparation(dataset)(dataset)
-input = next(iter(data.DataLoader(dataset, batch_size=1)))[0]
+inp = next(iter(data.DataLoader(dataset, batch_size=1)))[0]
 
 resnet_my = factories.get_model(
     model_str='ResNetV1,backbone_f=t(depth=18,small_input=False)',
     input_adapter_str='id', problem=problem.Classification(dataset.info.class_count),
-    init_input=input)
+    init_input=inp)
 resnet_my.eval()
 
 resnet_tv = torchvision.models.resnet18(num_classes=dataset.info.class_count)
@@ -49,7 +49,7 @@ layer_pairs = {
 output_pairs = defaultdict(list)
 
 for tv, my in layer_pairs.items():
-    def record_input(module, input, output, k=tv):
+    def record_input(module, inp, output, k=tv):
         output_pairs[k].append(output)
 
 
@@ -60,7 +60,7 @@ new_state = resnet_my.state_dict()
 # resnet_my.load_state_dict(new_state)
 # state = resnet_my.state_dict()
 
-output_my = resnet_my(input)
+output_my = resnet_my(inp)
 for k, v in resnet_my.named_modules():
     print(k)
 print()
@@ -68,7 +68,7 @@ for k, v in resnet_tv.named_modules():
     print(k)
 print()
 # output_my = resnet_my(input.detach().clone())
-output_tv = resnet_tv(input)
+output_tv = resnet_tv(inp)
 
 """try:
     output_my = resnet_my(input)
@@ -81,9 +81,8 @@ except AssertionError as ex:
 for k, (my, tv) in output_pairs.items():
     err = (my - tv).abs() / (torch.min(my.abs() + tv.abs()) + 1e-16)
 
-    print(
-        f"_{err.min().item():.1e} #{err.median().item():.1e} -{err.mean().item():.1e} ^{err.max().item():.1e}",
-        k)
+    print(f"_{err.min().item():.1e} #{err.median().item():.1e}"
+          + f" -{err.mean().item():.1e} ^{err.max().item():.1e}", k)
     # err.min().item(),, err.mean().item()
 print('-\n-')
 

@@ -92,22 +92,9 @@ trainer.model.backbone.bulk.unit0_0.fork.block.act1.register_forward_hook(
 trainer.model.backbone.bulk.unit0_0.fork.block.act1.register_forward_hook(
     lambda s, inp, out: print((inp[0] > 0).float().mean()))
 
-
 # print calls
 
-def tracefunc(frame, event, arg, indent=[0]):
-    if event == "call":
-        indent[0] += 2
-        print("-" * indent[0] + "> call function", frame.f_code.co_name)
-    elif event == "return":
-        print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
-        indent[0] -= 2
-    return tracefunc
-
-
-import sys;
-
-sys.settrace(tracefunc)
+vidlu.utils.debug.tracecalls()
 
 # make eval attack stronger
 trainer.eval_attack.stop_on_success = False

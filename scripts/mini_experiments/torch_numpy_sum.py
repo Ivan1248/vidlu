@@ -1,8 +1,10 @@
-import time, torch
+import time
+
+import torch
 
 arrays = [torch.ones(1000, 1000).to("cuda:1") for _ in range(100)]
-start = time.clock();
-sum(arrays);
+start = time.clock()
+sum(arrays)
 print(time.clock() - start)
 
 
@@ -153,6 +155,7 @@ import tracemalloc
 
 def b2mb(x): return int(x / 2 ** 20)
 
+
 """
 class TorchTracemalloc():
 
@@ -175,10 +178,11 @@ class TorchTracemalloc():
 tracemalloc = TorchTracemalloc()
 """
 
+
 def timeit(n, proc):
     start = time.clock()
     for _ in range(n):
-        r = proc()
+        _ = proc()
     torch.cuda.synchronize()
     return time.clock() - start
 
@@ -233,7 +237,7 @@ mem = True
 
 with torch.no_grad():
     for n in lens:
-        arrays = [torch.ones(8192//n, 8192) for _ in range(n)]
+        arrays = [torch.ones(8192 // n, 8192) for _ in range(n)]
         # timeit(n_repeats, lambda: py_sum(arrays))
 
         print(f'n = {n}:')

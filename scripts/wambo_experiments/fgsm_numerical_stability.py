@@ -1,13 +1,17 @@
 import torch
 from torch.nn.functional import cross_entropy
 from torch import autograd
+from IPython import embed
 
 from _context import vidlu, dirs
-from vidlu.experiments import TrainingExperiment, get_model
+from vidlu.experiments import TrainingExperiment
+from vidlu.factories import get_model
 from vidlu import models
 from vidlu.modules import losses
 from vidlu.utils import func
 from vidlu.utils.func import ArgTree as t
+
+
 
 from vidlu.factories import get_data, get_prepared_data_for_trainer
 
@@ -34,6 +38,5 @@ diff23 = (grad2-grad3).abs().max()
 
 print(diff12, diff13, diff23)
 
-from IPython import embed
 
 embed()

@@ -1,5 +1,7 @@
-import torch
 import tracemalloc
+
+import torch
+import matplotlib.pyplot as plt
 
 
 def idexing(arrays):
@@ -8,7 +10,7 @@ def idexing(arrays):
 
 
 def list_copy(arrays):
-    for x in arrays[:]:  # <- BUG HERE
+    for _ in arrays[:]:  # <- BUG HERE
         pass
 
 
@@ -28,13 +30,11 @@ name_to_mem_usages = {k: [] for k in name_to_procedure.keys()}
 
 with torch.no_grad():
     for n in lens:
-        arrays = [torch.ones(2**16 // n, 4096).to('cuda:0') for _ in range(n)]
+        arrays = [torch.ones(2 ** 16 // n, 4096).to('cuda:0') for _ in range(n)]
 
         print(f'n = {n}:')
         for name, proc in name_to_procedure.items():
             name_to_mem_usages[name] += [get_peak_mem_usage(lambda: proc(arrays))]
-
-import matplotlib.pyplot as plt
 
 plt.figure()
 plt.xscale('log')
