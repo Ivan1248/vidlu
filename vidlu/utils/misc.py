@@ -84,7 +84,7 @@ class _DownloadProgressBar(tqdm):
         self.update(b * bsize - self.n)
 
 
-def download_if_not_downloaded(url, output_path, md5=None):
+def download_if_not_downloaded(url, output_path):
     if not Path(output_path).exists():
         download(url, output_path, md5=None)
 
@@ -155,19 +155,6 @@ def check_all_initialized(obj, invalid_predicate):
                 f"{type(obj).__name__} attribute '{k}' is missing or has invalid value {v} .")
 
 
-def AttributeCheckingMeta(*, invalid_value):
-    class SpecialAttributeCheckingMeta(type):
-        def __new__(cls, name, bases, dict):
-            return type.__new__(cls, name, bases, dict)
-
-        def __call__(cls, *args, **kwargs):
-            instance = super().__call__(*args, **kwargs)
-            check_all_initialized(instance, lambda x: x is invalid_value)
-            return instance
-
-    return SpecialAttributeCheckingMeta
-
-
 # Mappings
 
 
@@ -212,21 +199,6 @@ class Importer:
     __metaclass__ = Meta
 
 
-# trace_calls
-
-def trace_calls():
-    def tracefunc(frame, event, arg, indent=[0]):
-        if event == "call":
-            indent[0] += 2
-            print("-" * indent[0] + "> call function", frame.f_code.co_name)
-        elif event == "return":
-            print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
-            indent[0] -= 2
-        return tracefunc
-
-    import sys
-
-    sys.settrace(tracefunc)
 
 
 # context manager timer
