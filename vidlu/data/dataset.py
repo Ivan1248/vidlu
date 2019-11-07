@@ -8,7 +8,7 @@ import itertools
 import os
 import pickle
 from collections.abc import Sequence
-from typing import Union, Callable
+from typing import Union, Callable, Mapping
 from pathlib import Path
 import shutil
 import warnings
@@ -40,14 +40,13 @@ def _subset_hash(indices):
 
 
 def _split_on_common_prefix(strings):
-    min_len = min(len(s) for s in strings)
-    for i, chars in enumerate(s[:min_len] for s in zip(strings)):
-        c = chars[0]
-        if any(d != c for d in chars[1:]):
+    i = -1
+    for i, (c, *others) in enumerate(zip(*strings)):
+        if any(d != c for d in others):
             break
     else:
         i += 1
-    return strings[0:i], [s[i:] for s in strings]
+    return [s[:i] for s in strings], [s[i:] for s in strings]
 
 
 def _split_on_common_suffix(strings):
@@ -71,7 +70,7 @@ class Dataset(Sequence):
     _instance_count = 0
 
     def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
-                 info: dict = None, data=None):
+                 info: Mapping = None, data=None):
         self.name = name or getattr(data, 'name', None)
         if self.name is None:
             if type(self) is Dataset:
@@ -208,8 +207,8 @@ class Dataset(Sequence):
         data loading faster.
 
         Args:
-            separate_fields: If True, record fileds are saved in separate files,
-                e.g. labels are stored separately from input examples.
+            name_to_func (Mapping): a mapping from cache field names to
+                procedures that are to be called to lazily evaluate the fields.
             **kwargs: additional arguments for the Dataset initializer.
         """
         return InfoCacheDataset(self, name_to_func, **kwargs)
@@ -268,7 +267,7 @@ class Dataset(Sequence):
         name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
 
-    def random(self, length=None, replace=False, seed=53, **kwargs):
+    def random(self, length=None, seed=53, **kwargs):
         """
         A modified dataset where the indexing operator returns a randomly chosen
         element which doesn't depend on the index.
@@ -344,7 +343,7 @@ class CollateDataset(Dataset):
             collate_func = lambda b: default_collate(b, array_type)
         self._collate = collate_func or default_collate
         batch = zip_dataset[0]
-        if not all(type(e) is type(batch[0]) for e in batch[1:]):
+        if not all(isinstance(e, type(batch[0])) for e in batch[1:]):
             raise ValueError("All datasets must have the same element type.")
         if isinstance(zip_dataset, ZipDataset):
             info = dict(zip_dataset.data[0].info)
@@ -394,7 +393,7 @@ class HDDAndRAMCacheDataset(Dataset):
                 self._print("Loading dataset cache from HDD...")
                 with open(cache_path, 'rb') as f:
                     n = (len(dataset) - 1) // chunk_size + 1  # ceil
-                    chunks = [pickle.load(f) for i in trange(n)]
+                    chunks = [pickle.load(f) for _ in trange(n)]
                     data = list(itertools.chain(*chunks))
             except Exception as ex:
                 self._print(ex)
@@ -457,7 +456,7 @@ class HDDCacheDataset(Dataset):
             try:
                 with open(cache_path, 'rb') as cache_file:
                     return pickle.load(cache_file)
-            except:
+            except (PermissionError, TypeError):
                 os.remove(cache_path)
         example = self.data[idx]
         if field is not None:
@@ -530,7 +529,7 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
             try:  # load
                 with self.cache_file.open('rb') as file:
                     return pickle.load(file)
-            except Exception as ex:
+            except (PermissionError, TypeError):
                 self.cache_file.unlink()
                 raise
         else:
@@ -538,7 +537,7 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
             try:  # store
                 with self.cache_file.open('wb') as file:
                     pickle.dump(info_cache, file)
-            except Exception as ex:
+            except (PermissionError, TypeError):
                 self.cache_file.unlink()
                 raise
             return info_cache
