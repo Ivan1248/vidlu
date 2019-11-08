@@ -77,6 +77,16 @@ def _add_norm_act(seq, suffix, norm_f, act_f):
     seq.add_module(f'act{suffix}', act_f())
 
 
+def _resolve_block_args(base_width, width_factors, stride, dilation):
+    widths = [base_width * wf for wf in width_factors]
+    conv_defaults = default_args(D.conv_f)
+    if not isinstance(stride, Sequence):
+        stride = [stride] + [conv_defaults.stride] * (len(widths) - 1)
+    if not isinstance(dilation, Sequence):
+        dilation = [dilation] + [conv_defaults.dilation] * (len(widths) - 1)
+    return widths, stride, dilation
+
+
 class PreactBlock(Seq):
     """A block of one or more sequences of the form
     "normalization -> activation [-> noise] -> convolution".
@@ -87,29 +97,25 @@ class PreactBlock(Seq):
             `width_factors` to get its output widths for all convolutions.
         width_factors (Sequence[int]): Factors that multiply `base_width` to get
             the output width for all convolutions.
+        stride (int or Sequence[int]): Stride of the first convolution or a
+            sequence of strides of all convolutions.
+        dilation (int or Sequence[int]): Dilation of the first convolution or a
+            sequence of dilations of all convolutions.
         noise_locations (Sequence[int]): The indices of convolutions that are to
             be followed by a noise layer.
-        stride (int): Stride of the first convolution.
-        omit_first_preactivation (bool): If True, the first normalization and
-            activation are to be omitted.
         norm_f: Normalization module factory.
         act_f: Activation module factory.
         conv_f: Convolution module factory.
         noise_f: Noise module factory.
     """
 
-    def __init__(self, *, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
-                 dilation=1, norm_f=D.norm_f, act_f=D.act_f,
-                 conv_f=partial(D.conv_f, stride=Reserved, dilation=Reserved, kernel_size=Reserved,
-                                out_channels=Reserved),
+    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1,
+                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=D.act_f,
+                 conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
+                                stride=Reserved, dilation=Reserved),
                  noise_f=None):
         super().__init__()
-        widths = [base_width * wf for wf in width_factors]
-        conv_defaults = default_args(D.conv_f)
-        if not isinstance(stride, Sequence):
-            stride = [stride] + [conv_defaults.stride] * (len(widths) - 1)
-        if not isinstance(dilation, Sequence):
-            dilation = [dilation] + [conv_defaults.dilation] * (len(widths) - 1)
+        widths, stride, dilation = _resolve_block_args(base_width, width_factors, stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
@@ -130,23 +136,26 @@ class PostactBlock(Seq):
             the output width for all convolutions.
         noise_locations (Sequence[int]): The indices of activations that are to
             be followed by a noise layer.
-        stride (int): Stride of the first convolution.
+        stride (int or Sequence[int]): Stride of the first convolution or a
+            sequence of strides of all convolutions.
+        dilation (int or Sequence[int]): Dilation of the first convolution or a
+            sequence of dilations of all convolutions.
         conv_f: Convolution module factory.
         norm_f: Normalization module factory.
         act_f: Activation module factory.
         noise_f: Noise module factory.
     """
 
-    def __init__(self, *, kernel_sizes, base_width, width_factors, noise_locations=(), stride=1,
-                 norm_f=D.norm_f, act_f=D.act_f,
+    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1,
+                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=D.act_f,
                  conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
-                                stride=Reserved),
+                                stride=Reserved, dilation=Reserved),
                  noise_f=None):
         super().__init__()
-        widths = [base_width * wf for wf in width_factors]
-        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
+        widths, stride, dilation = _resolve_block_args(base_width, width_factors, stride, dilation)
+        for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
-                                                      stride=stride if i == 0 else 1))
+                                                      stride=s, dilation=d))
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
                 self.add_module(f'noise{i}', noise_f())
