@@ -423,7 +423,7 @@ class VATUpdate(AttackStepUpdate):
     p: Number
 
     def __call__(self, delta, grad, x):
-        return ops.batch.normalize_by_norm(grad, self.p, inplace=True).mul_(self.xi)
+        return delta.set_(ops.batch.normalize_by_norm(grad, self.p).mul_(self.xi))
 
     def finish(self, delta, x):
         return ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)
