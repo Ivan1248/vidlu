@@ -190,7 +190,8 @@ class SwiftNet(SegmentationModel):
                  backbone_f=partial(resnet_v1_backbone, base_width=64),
                  laterals=tuple(f"bulk.unit{i}_{j}.sum"
                                 for i, j in zip(range(3), [1] * 3)),
-                 ladder_width=128, head_f=mc.heads.SegmentationHead, input_adapter=None):
+                 ladder_width=128, head_f=mc.heads.SegmentationHead, input_adapter=None,
+                 init=partial(initialization.kaiming_resnet, module=Reserved)):
         """
 
         laterals contains all but the last block?
@@ -211,7 +212,7 @@ class SwiftNet(SegmentationModel):
                                                                pre_blending='sum'),
                                             post_activation=True),
                          head_f=partial(head_f, kernel_size=3),
-                         init=partial(initialization.kaiming_resnet, module=Reserved),
+                         init=init,
                          input_adapter=input_adapter)
 
     def post_build(self, *args, **kwargs):
