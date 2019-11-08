@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from argparse import Namespace
 from collections import OrderedDict
 import functools
@@ -207,7 +207,7 @@ class Module(*_extended(nn.Module, ABC), nn.Module):
     def __init__(self):
         super().__init__()
         if type(self).__init__ is not Module.__init__:
-            args = class_initializer_locals_c()  # TODO: consider @dataclass instead of this
+            args = class_initializer_locals_c()
             self.args = NameDict(args)
         self._built = False
 
@@ -800,3 +800,59 @@ class CheckpointingModuleWrapper(Module):
 
 def checkpointed(module):
     return partial(checkpoint, module)
+
+
+# Gradiont modification
+
+class _RevGrad(torch.autograd.Function):
+    """From https://github.com/janfreyberg/pytorch-revgrad"""
+
+    @staticmethod
+    def forward(ctx, input_):
+        ctx.save_for_backward(input_)
+        output = input_
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):  # pragma: no cover
+        grad_input = None
+        if ctx.needs_input_grad[0]:
+            grad_input = -grad_output
+        return grad_input
+
+
+rev_grad = _RevGrad.apply
+
+
+class RevGrad(Module):
+    def forward(self, x):
+        return rev_grad(x)
+
+
+class _AmpGrad(torch.autograd.Function):
+    def __init__(self, a):
+        self.a = a
+
+    def forward(self, input_):
+        self.save_for_backward(input_)
+        output = input_
+        return output
+
+    def backward(self, grad_output):  # pragma: no cover
+        grad_input = None
+        if self.needs_input_grad[0]:
+            grad_input = self.a * grad_output
+        return grad_input
+
+
+amp_grad = _AmpGrad.apply
+
+
+class AmpGrad(Module):
+    def forward(self, x):
+        return amp_grad(x)
+
+
+class StopGrad(Module):
+    def forward(self, x):
+        return x.detach()
