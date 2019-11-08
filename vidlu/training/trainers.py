@@ -169,7 +169,8 @@ class Trainer(Evaluator):
         self._initialized = True
 
     def train(self, *datasets, restart=False):
-        data_loader = self.get_data_loader(*datasets, batch_size=self.batch_size,
+        datasets_jittered = [ds.map(self.jitter) if self.jitter else ds for ds in datasets]
+        data_loader = self.get_data_loader(*datasets_jittered, batch_size=self.batch_size,
                                            shuffle=True, drop_last=True)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
