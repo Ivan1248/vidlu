@@ -65,6 +65,7 @@ scanner_action = [
 includes = None if args.include is None else args.include.split(",")
 excludes = args.exclude.split(",")
 
+
 def name_filter(name):
     if includes is None:
         return not any(x.startswith(name) for x in excludes)

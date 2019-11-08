@@ -7,7 +7,7 @@ class TrainerExtension:
 
 
 class AdversarialTraining(TrainerExtension):
-    def __init__(self, attack_f, eval_attack_f = None):
+    def __init__(self, attack_f, eval_attack_f=None):
         self.attack_f, self.eval_attack_f = attack_f, eval_attack_f or ArgTree()
         self.attack, self.eval_attack = None, None
 

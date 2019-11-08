@@ -12,6 +12,7 @@ def to_numpy_image(graph: pydot.Dot, *args, **kwargs):
     sio.seek(0)
     return mpimg.imread(sio)
 
+
 def show(graph: pydot.Dot, *args, **kwargs):
     import matplotlib.pyplot as plt
     img = to_numpy_image(graph, *args, **kwargs)
@@ -19,4 +20,3 @@ def show(graph: pydot.Dot, *args, **kwargs):
     plt.tight_layout(0)
     plt.axis('off')
     plt.show()
-

@@ -76,7 +76,6 @@ for m in [metrics.FuncAverageMetric(lambda iter_output: iter_output.loss, name='
               10, hard_prediction_name="other_outputs_adv.hard_prediction", metrics=['A'])]:
     trainer.add_metric(m)
 
-
 # Reporting and evaluation during training
 
 logger = logger.Logger()

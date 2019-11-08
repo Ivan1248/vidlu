@@ -3,6 +3,7 @@ from .misc import default_collate
 
 import torch
 
+
 class DataLoader(torch.utils.data.DataLoader):
     """DataLoader class with support for `Record`-typed examples."""
     __init__ = partialmethod(torch.utils.data.DataLoader.__init__, collate_fn=default_collate)

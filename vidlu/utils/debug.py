@@ -13,6 +13,7 @@ def warning_debug_exec(code: str):
         traceback.print_stack()
     return exec(code)
 
+
 # trace_calls
 
 def trace_calls():
@@ -24,4 +25,5 @@ def trace_calls():
             print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
             indent[0] -= 2
         return tracefunc
+
     sys.settrace(tracefunc)

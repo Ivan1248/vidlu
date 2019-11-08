@@ -1,5 +1,6 @@
 from torch import nn
 
+
 def _scoped(*superclasses):
     class ScopedModuleExtension(*superclasses):
         # def __del__(self):

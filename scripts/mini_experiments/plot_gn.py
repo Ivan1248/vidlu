@@ -12,7 +12,7 @@ ax = fig.gca(projection='3d')
 
 # Make data.
 x = np.arange(-2.5, 2.5, 2e-3, dtype=np.double)
-p = 2**np.arange(-5, 5, 2e-3, dtype=np.double)
+p = 2 ** np.arange(-5, 5, 2e-3, dtype=np.double)
 x, p = np.meshgrid(x, p)
 z = p / (2 * gamma(1 / p)) * np.exp(-np.abs(x) ** p)
 

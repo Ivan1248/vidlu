@@ -37,6 +37,7 @@ def get_device(module):
     param = next(module.parameters(), None)
     return None if param is None else param[0].device
 
+
 def eval_no_param_grad(*modules):
     r"""A Context Manger that sets modules to eval mode and disables gradient
     computation only for parameters.

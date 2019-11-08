@@ -91,7 +91,7 @@ def translate_swiftnet(state_dict):
             # ladder
             r"backbone.upsample.{a:(\d+)}.{b:bottleneck|blend_conv}.{c:norm|conv}.{e:(.*)}":
                 r"backbone.ladder.up_blends.{a}.{b:bottleneck->project|blend_conv->blend}"
-                +r".{c}0.orig.{e}",
+                + r".{c}0.orig.{e}",
             r"logits.norm.{e:(.*)}":
                 r"backbone.norm.orig.{e}",
             # logits
