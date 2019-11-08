@@ -349,6 +349,7 @@ class AdversarialTrainMultiStep:
 @dataclass
 class VATTrainStep:
     alpha: float = 1
+    attack_eval_model: bool = False
 
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
@@ -358,11 +359,12 @@ class VATTrainStep:
         output, other_outputs = trainer.extend_output(trainer.model(x))
         loss = trainer.loss(output, y).mean()
         target = attack.to_virtual_target(output)
-        with batchnorm_stats_tracking_off(trainer.model):
-            x_adv = attack.perturb(trainer.model, x, target)
-            output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-            loss_adv = attack.loss(output_adv, target).mean()
-            do_optimization_step(trainer.optimizer, loss=loss + self.alpha * loss_adv)
+        with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
+            with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
+                x_adv = attack.perturb(trainer.model, x, target)
+                output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
+                loss_adv = attack.loss(output_adv, target).mean()
+                do_optimization_step(trainer.optimizer, loss=loss + self.alpha * loss_adv)
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
                         x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
@@ -384,7 +386,6 @@ def _prepare_semisupervised_vat_input(trainer, batch):
 class SemisupervisedVATEvalStep:
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
-
         model.eval()
 
         x, x_l, y_l, n_l = _prepare_semisupervised_vat_input(trainer, batch)
