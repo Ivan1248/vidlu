@@ -27,30 +27,30 @@ def colorify_segmentation(seg, colors):
     return plab
 
 
-def composef(images, format):
+def composef(images, fmt):
     """
 
     Args:
         images:
-        format:
+        fmt:
 
     Example:
         >>> format = lambda x: [[x[0], None], [fuse_images(x[0],x[1]), x[1]]]
     """
-    images_array = format(images)
+    images_array = fmt(images)
     return compose(images_array)
 
 
 def compose(images_array):
-    if type(images_array[0]) is not list:
+    if not isinstance(images_array[0], list):
         images_array = [images_array]
 
     rows = [np.concatenate(row, axis=1) for row in images_array]
     return np.concatenate(rows, axis=0)
 
 
-def compose_old(images, format='0,0;1,0-1'):
-    if format is None:
+def compose_old(images, fmt='0,0;1,0-1'):
+    if fmt is None:
         return np.concatenate(
             [np.concatenate([im for im in row], 1) for row in images], 0)
 
@@ -60,10 +60,10 @@ def compose_old(images, format='0,0;1,0-1'):
         ims = [images[i] for i in inds]
         return ims[0] if len(ims) == 1 else fuse_images(ims[0], ims[1], 0.5)
 
-    format = format.split(';')
-    format = [f.split(',') for f in format]
+    fmt = fmt.split(';')
+    fmt = [f.split(',') for f in fmt]
     return np.concatenate([
-        np.concatenate([get_image(frc) for frc in frow], 1) for frow in format
+        np.concatenate([get_image(frc) for frc in frow], 1) for frow in fmt
     ], 0)
 
 
@@ -83,7 +83,7 @@ class Viewer:
 
         def get_images(i):
             images = mapping(dataset[i])
-            return images if type(images) is list else [images]
+            return images if isinstance(images, list) else [images]
 
         def show(i):
             images = get_images(i)
@@ -209,7 +209,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
 
         if infer is not None:
             preds = infer(img)
-            if type(preds) not in [list, tuple]:
+            if not isinstance(preds, (list, tuple)):
                 preds = [preds]
             for pred in preds:
                 add_prediction(pred)

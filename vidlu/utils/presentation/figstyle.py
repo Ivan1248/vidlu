@@ -1,9 +1,4 @@
-import numpy as np
 import matplotlib
-import matplotlib.pyplot as plt
-from math import *
-
-from matplotlib import rc
 
 scale = 1
 # fontsize_pt = 11*scale # 11.74983

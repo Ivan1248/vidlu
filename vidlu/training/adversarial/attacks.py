@@ -1,4 +1,3 @@
-from abc import ABC
 from collections import Callable
 import dataclasses as dc
 from dataclasses import dataclass
@@ -51,13 +50,13 @@ def _to_soft_target(output, temperature=1):
 # Early stopping conditions ########################################################################
 
 class PredictionSimilarityIndicator:
-    def __call__(self, state) -> torch.Tensor:  # -> BoolTensor
+    def __call__(self, state) -> torch.BoolTensor:
         raise NotImplemented()
 
 
 @dataclass
 class ClassMatches(PredictionSimilarityIndicator):
-    def __call__(self, state) -> torch.Tensor:
+    def __call__(self, state) -> torch.BoolTensor:
         return state.output.argmax(dim=1) == state.y
 
 
@@ -66,7 +65,7 @@ class LossIsBelowThreshold(PredictionSimilarityIndicator):
     threshold: float
     loss: callable = None
 
-    def __call__(self, state) -> torch.Tensor:
+    def __call__(self, state) -> torch.BoolTensor:
         loss = state.loss if self.loss is None else self.loss(state.output, state.y)
         return loss < self.threshold
 
@@ -169,7 +168,7 @@ class Attack:
     def _clip(self, x):
         return torch.clamp(x, *self.clip_bounds)
 
-    def _perturb(self, model, x, y, **kwargs):
+    def _perturb(self, model, x, y=None, **kwargs):
         # has to be implemented in subclasses
         raise NotImplementedError()
 
@@ -199,7 +198,7 @@ class GradientSignAttack(Attack):
     eps: float = 8 / 255
 
     def _perturb(self, model, x, y=None):
-        output, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
+        output, _, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         with torch.no_grad:
             return x + self.eps * grad.sign()
 
@@ -496,6 +495,10 @@ class DDN(EarlyStoppingMixin, Attack):
             loss = self.loss(output, y).view(len(x), -1).mean(1).sum()
             grad = delta.grad  # .detach().clone() unnecessary
 
+            state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss, grad=grad,
+                                step=i)
+            backward_callback(state)
+
             is_adv = self.similar(state) if self.minimize else ~self.similar(state)
             is_smaller = curr_norm < best_norm
             is_smaller_adv = is_adv ^ is_smaller
@@ -505,9 +508,6 @@ class DDN(EarlyStoppingMixin, Attack):
 
             optimizer.zero_grad()
             loss.backward()
-            state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss, grad=grad,
-                                step=i)
-            backward_callback(state)
 
             # renorming gradient
             grad_norms = ops.batch.norm(grad, p=self.p)

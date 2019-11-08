@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Mapping, Sequence
+from typing import Mapping
 
 
 # Dictionary-like trees ############################################################################

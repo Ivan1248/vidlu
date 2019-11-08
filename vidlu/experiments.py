@@ -56,10 +56,10 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
         metrics = trainer.get_metric_values(reset=True)
         with indent_print():
             epoch_fmt, iter_fmt = f'{len(str(es.max_epochs))}d', f'{len(str(es.batch_count))}d'
-            iter = es.iteration % es.batch_count
+            iter_ = es.iteration % es.batch_count
             prefix = ('val' if is_validation
                       else f'{format(es.epoch, epoch_fmt)}.'
-                           + f'{format((iter - 1) % es.batch_count + 1, iter_fmt)}')
+                           + f'{format((iter_ - 1) % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
     # noinspection PyUnresolvedReferences

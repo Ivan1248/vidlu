@@ -10,22 +10,36 @@ import vidlu.utils.func as func
 
 # @formatter:off
 # [...] is disjunction, (...) is conjunction
-def const(): return R(r"[\w\.]*")
-def ident(): return R(r"\w+")
+def const():
+    return R(r"[\w\.]*")
+def ident():
+    return R(r"\w+")
 
-def re_pattern(): return R(r"\([^\)]*\)")
-def pattern(): return [const, re_pattern]
-def or_pattern(): return pattern, ZeroOrMore('|', pattern)
-def var_pattern(): return ':', or_pattern
-def input_var(): return ident, Optional(var_pattern)
-def scanner_expr(): return OneOrMore([pattern, ('{', [input_var, var_pattern], '}')]), EOF()
+def re_pattern():
+    return R(r"\([^\)]*\)")
+def pattern():
+    return [const, re_pattern]
+def or_pattern():
+    return pattern, ZeroOrMore('|', pattern)
+def var_pattern():
+    return ':', or_pattern
+def input_var():
+    return ident, Optional(var_pattern)
+def scanner_expr():
+    return OneOrMore([pattern, ('{', [input_var, var_pattern], '}')]), EOF()
 
-def dict_translation(): return const, '->', const
-def dict_multi_translation(): return dict_translation, ZeroOrMore('|', dict_translation)
-def dict_translator(): return ident, Optional(':', dict_multi_translation)
-def py_translator(): return R('`[^`]+`')
-def translator(): return [dict_translator, py_translator]
-def writer_expr(): return OneOrMore([const, ('{', translator, '}')]), EOF()
+def dict_translation():
+    return const, '->', const
+def dict_multi_translation():
+    return dict_translation, ZeroOrMore('|', dict_translation)
+def dict_translator():
+    return ident, Optional(':', dict_multi_translation)
+def py_translator():
+    return R('`[^`]+`')
+def translator():
+    return [dict_translator, py_translator]
+def writer_expr():
+    return OneOrMore([const, ('{', translator, '}')]), EOF()
 # @formatter:on
 
 
@@ -147,11 +161,11 @@ class NoMatchError(Exception):
 
 
 class FormatScanner:
-    def __init__(self, format, full_match=True, debug=False):
-        self.format = format
+    def __init__(self, fmt, full_match=True, debug=False):
+        self.format = fmt
         format_parser = arpeggio.ParserPython(scanner_expr)
         try:
-            format_parse_tree = format_parser.parse(format)
+            format_parse_tree = format_parser.parse(fmt)
         except arpeggio.NoMatch as ex:
             raise NoMatchError("Invalid format", inner_exception=ex)
         input_pattern, self.var_names = visit_parse_tree(format_parse_tree,
@@ -171,7 +185,7 @@ class FormatScanner:
     def try_scan(self, x):
         try:
             return self(x)
-        except arpeggio.NoMatch as ex:
+        except arpeggio.NoMatch:
             return None
 
 
@@ -185,7 +199,7 @@ class FormatWriter:
         try:
             format_parser = arpeggio.ParserPython(writer_expr)
         except arpeggio.NoMatch as ex:
-            raise NoMatchError(inner_exception=ex)
+            raise NoMatchError("Invalid format.", inner_exception=ex)
         self.format_parse_tree = format_parser.parse(format)
 
     def __call__(self, **vars_):
@@ -226,7 +240,7 @@ class FormatTranslatorCascade:
         if not self.error_on_no_match:
             return x
         messages = []
-        for (inp, out), t in zip(self.input_output_format_pairs, self.translators):
+        for (inp, _), t in zip(self.input_output_format_pairs, self.translators):
             try:
                 t(x)
             except NoMatchError as ex:

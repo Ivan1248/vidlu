@@ -389,15 +389,13 @@ def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.
 
 
 def _get_conv_padding(padding_type, kernel_size, dilation):
-    if not all(k % 2 == 1
-               for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size)):
+    if any(k % 2 == 0 for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size)):
         raise ValueError(f"`kernel_size` must be an odd positive integer "
                          f"or a sequence of them, not {kernel_size}.")
     if padding_type not in ('half', 'full'):
         raise ValueError(f"Invalid padding_type value {padding_type}.")
 
     def get_padding(k, d):
-        k_ = 1 + (k - 1) * d
         return (k - 1) * d // 2 if padding_type == 'half' else (k - 1) * d
 
     if any(isinstance(x, Sequence) for x in [kernel_size, dilation]):
@@ -514,16 +512,16 @@ class GhostBatchNorm(BatchNorm):
             num_splits)
         self.num_splits = num_splits
 
-    def forward(self, input):
+    def forward(self, x):
         if self.training or not self.track_running_stats:
-            N, C, *S = input.shape
+            _, C, *S = x.shape
             return F.batch_norm(
-                input.view(-1, C * self.num_splits, *S), self.running_mean, self.running_var,
+                x.view(-1, C * self.num_splits, *S), self.running_mean, self.running_var,
                 self.weight.repeat(self.num_splits), self.bias.repeat(self.num_splits),
-                True, self.momentum, self.eps).view(input.shape)
+                True, self.momentum, self.eps).view(x.shape)
         else:
             return F.batch_norm(
-                input, self.running_mean[:self.num_features], self.running_var[:self.num_features],
+                x, self.running_mean[:self.num_features], self.running_var[:self.num_features],
                 self.weight, self.bias, False, self.momentum, self.eps)
 
 
@@ -633,7 +631,7 @@ def parameter_count(module) -> Namespace:
     from numpy import prod
 
     trainable, non_trainable = 0, 0
-    for name, p in module.named_parameters():
+    for _, p in module.named_parameters():
         n = prod(p.size())
         if p.requires_grad:
             trainable += n
@@ -723,7 +721,8 @@ def with_intermediate_outputs(root: nn.Module, submodule_paths: list):
     if isinstance(submodule_paths, str):
         submodule_paths = [submodule_paths]
 
-    def get_submodules(): return [get_submodule(root, p) for p in submodule_paths]
+    def get_submodules():
+        return [get_submodule(root, p) for p in submodule_paths]
 
     @functools.wraps(root)
     def wrapper(*args, **kwargs):

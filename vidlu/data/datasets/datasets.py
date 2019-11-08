@@ -101,8 +101,8 @@ def load_segmentation_with_downsampling(path, downsampling, id_to_label=None,
         return np.array([id_to_label.get(k, k) for k in u], dtype=dtype)[inv].reshape(lab.shape)
     else:  # faster for small numbers of distinct labels
         lab = np.array(lab, dtype=dtype)
-        for id, lb in id_to_label.items():
-            lab[lab == id] = lb
+        for id_, lb in id_to_label.items():
+            lab[lab == id_] = lb
         return lab
 
 
@@ -516,40 +516,42 @@ class TinyImages(Dataset):
         return 79302017
 
 
-def make_dataset(dataset_dir, class_to_idx, extensions=None, is_valid_file=None):
-    images = []
-    dataset_dir = Path(dataset_dir)
+def _read_classification_dataset(data_dir, class_name_to_idx, extensions=None, is_valid_file=None):
+    path_to_class = []
+    data_dir = Path(data_dir)
     if not ((extensions is None) ^ (is_valid_file is None)):
         raise ValueError(
             "Both extensions and is_valid_file cannot be None or not None at the same time")
     if extensions is not None:
-        def is_valid_file(x):
-            return x.lower().endswith(extensions)
-    for target in sorted(class_to_idx.keys()):
-        d = dataset_dir / target
+        is_valid_file = lambda x: x.lower().endswith(extensions)
+    for target in sorted(class_name_to_idx.keys()):
+        d = data_dir / target
         if not d.is_dir():
             continue
         for root, _, fnames in sorted(os.walk(d)):
             for fname in sorted(fnames):
                 path = Path(root, fname)
                 if is_valid_file(path):
-                    item = (path, class_to_idx[target])
-                    images.append(item)
+                    item = (path, class_name_to_idx[target])
+                    path_to_class.append(item)
 
-    return images
+    return path_to_class
 
 
 class ClassificationFolderDataset(Dataset):  # TODO
-    """A generic data loader where the samples are arranged in this way: ::
+    """A generic data loader where the examples are arranged in this way: ::
         root/class_x/xxx.ext
         root/class_x/xxy.ext
         root/class_x/xxz.ext
         root/class_y/123.ext
         root/class_y/nsdf3.ext
         root/class_y/asd932_.ext
+
+    Copied from Torchvision and modified.
+
     Args:
         root (string): Root directory path.
-        loader (callable): A function to load a sample given its path.
+        load_func (callable): A function to load a sample given its path.
         extensions (tuple[string]): A list of allowed extensions.
             both extensions and is_valid_file should not be passed.
         transform (callable, optional): A function/transform that takes in
@@ -563,32 +565,27 @@ class ClassificationFolderDataset(Dataset):  # TODO
      Attributes:
         classes (list): List of the class names.
         class_to_idx (dict): Dict with items (class_name, class_index).
-        samples (list): List of (sample path, class_index) tuples
+        path_to_class (list): List of (sample path, class_index) tuples
         targets (list): The class_index value for each image in the dataset
     """
 
-    def __init__(self, dataset_dir, loader, extensions=None, is_valid_file=None):
-        super().__init__()  # TODO
-        classes, class_to_idx = self._find_classes(self.root)
-        samples = make_dataset(self.root, class_to_idx, extensions, is_valid_file)
-        if len(samples) == 0:
+    def __init__(self, data_dir, load_func, extensions=None, is_valid_file=None, **kwargs):
+        classes, class_name_to_idx = self._find_classes(data_dir)
+        self.path_to_class = _read_classification_dataset(data_dir, class_name_to_idx, extensions,
+                                                          is_valid_file)
+        if len(self.path_to_class) == 0:
             raise (RuntimeError("Found 0 files in subfolders of: " + self.root
                                 + "\nSupported extensions are: " + ",".join(extensions)) + ".")
-
-        self.loader = loader
-        self.extensions = extensions
-
-        self.classes = classes
-        self.class_to_idx = class_to_idx
-        self.samples = samples
-        self.targets = [s[1] for s in samples]
+        self.load = load_func
+        super().__init__(**kwargs)
+        self.info.classes, self.info.class_name_to_idx = classes, class_name_to_idx
 
     @staticmethod
-    def _find_classes(dir):
+    def _find_classes(data_dir):
         """Finds the class folders in a dataset.
 
         Args:
-            dir (string): Root directory path.
+            data_dir (string): Root directory path.
 
         Returns:
             tuple: (classes, class_to_idx) where classes are relative to (dir),
@@ -597,24 +594,24 @@ class ClassificationFolderDataset(Dataset):  # TODO
         Ensures:
             No class is a subdirectory of another.
         """
-        classes = [d.name for d in os.scandir(dir) if d.is_dir()]
+        classes = [d.name for d in os.scandir(data_dir) if d.is_dir()]
         classes.sort()
-        class_to_idx = {classes[i]: i for i in range(len(classes))}
-        return classes, class_to_idx
+        class_name_to_idx = {classes[i]: i for i in range(len(classes))}
+        return classes, class_name_to_idx
 
-    def get_example(self, index):
+    def get_example(self, idx):
         """
         Args:
-            index (int): Index
+            idx (int): Index
         Returns:
-            tuple: (sample, target) where target is class_index of the target class.
+            Record: (sample, target) where target is class_index of the target class.
         """
-        path, y = self.samples[index]
-        x = self.loader(path)
+        path, y = self.path_to_class[idx]
+        x = self.load(path)
         return _make_record(x_=x, y=y)
 
     def __len__(self):
-        return len(self.samples)
+        return len(self.path_to_class)
 
 
 class ImageClassificationFolderDataset(ClassificationFolderDataset):
@@ -631,7 +628,7 @@ class ImageClassificationFolderDataset(ClassificationFolderDataset):
             and returns a transformed version. E.g, ``transforms.RandomCrop``
         target_transform (callable, optional): A function/transform that takes in the
             target and transforms it.
-        loader (callable, optional): A function to load an image given its path.
+        load_func (callable, optional): A function to load an image given its path.
         is_valid_file (callable, optional): A function that takes path of an Image file
             and check if the file is a valid file (used to check of corrupt files)
      Attributes:
@@ -640,8 +637,8 @@ class ImageClassificationFolderDataset(ClassificationFolderDataset):
         imgs (list): List of (image path, class_index) tuples
     """
 
-    def __init__(self, root, loader=_load_image, is_valid_file=None):
-        super().__init__(root, loader,
+    def __init__(self, root, load_func=_load_image, is_valid_file=None, **kwargs):
+        super().__init__(root, load_func,
                          IMG_EXTENSIONS if is_valid_file is None else None,
                          is_valid_file=is_valid_file)
 
@@ -748,8 +745,8 @@ class CamVid(Dataset):
                           CamVid.class_groups_colors.values()])
 
         self.color_to_label = dict()
-        for i, (k, v) in enumerate(CamVid.class_groups_colors.items()):
-            for c, color in v.items():
+        for i, class_name_color in enumerate(CamVid.class_groups_colors.values()):
+            for _, color in class_name_color.items():
                 self.color_to_label[color] = i
         self.color_to_label[(0, 0, 0)] = -1
 
@@ -860,8 +857,8 @@ class WildDash(Dataset):
                 if self._downsampling > 1:
                     lab = tvtf.resize(lab, self._shape, pimg.NEAREST)
                 lab = np.array(lab, dtype=np.int8)
-            for id, lb in self._id_to_label:
-                lab[lab == id] = lb
+            for id_, lb in self._id_to_label:
+                lab[lab == id_] = lb
             return lab
 
         return _make_record(x_=load_img, y_=load_lab)

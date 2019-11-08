@@ -6,7 +6,7 @@ import vidlu.modules as M
 import vidlu.modules.components as mc
 from vidlu.training import initialization
 from vidlu.modules.other import mnistnet
-from vidlu.utils.func import (ArgTree, argtree_partialmethod, Reserved, Empty, default_args)
+from vidlu.utils.func import (Reserved, Empty, default_args)
 
 
 # Backbones ########################################################################################
