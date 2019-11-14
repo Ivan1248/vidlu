@@ -133,27 +133,6 @@ def consume(iterator):
     return iterator
 
 
-# Dataclasses
-
-@dataclass
-class FieldCheckingClass:
-    def __post_init__(self):
-        self.check_all_initialized()
-
-    def check_all_initialized(self, invalid_predicate):
-        for k, v in self.__dict__:
-            if invalid_predicate(v):
-                raise TypeError(
-                    f"Attribute {k} has invalid value {v} (for an object of type {type(self)}).")
-
-
-def check_all_initialized(obj, invalid_predicate):
-    for k, v in obj.__dict__.items():
-        if invalid_predicate(v):
-            raise TypeError(
-                f"{type(obj).__name__} attribute '{k}' is missing or has invalid value {v} .")
-
-
 # Mappings
 
 
