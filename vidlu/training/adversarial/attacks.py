@@ -78,13 +78,13 @@ class AttackState:
     y: torch.Tensor
     x_adv: torch.Tensor
     output: torch.Tensor
-    loss_sum: torch.Tensor
+    loss_sum: float
     grad: torch.Tensor
     step: int = None
+    loss_mean: float = dc.field(init=False)
 
-    @property
-    def loss_mean(self):
-        return self.loss_sum / len(self.output)
+    def __post_init__(self):
+        self.loss_mean = self.loss_sum / len(self.x)
 
 
 # get_prediction ###################################################################################
@@ -173,6 +173,7 @@ class Attack:
         raise NotImplementedError()
 
 
+@dataclass
 class EarlyStoppingMixin:
     stop_on_success: bool = False
     similar: Callable = dc.field(default_factory=ClassMatches)
@@ -183,7 +184,7 @@ class DummyAttack(Attack):
         output, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         if backward_callback is not None:
             backward_callback(
-                AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s, grad=grad))
+                AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s.item(), grad=grad))
         return x
 
 
@@ -316,7 +317,8 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, del
         loss.backward()
         grad = delta.grad  # .detach().clone() unnecessary
 
-        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss, grad=grad, step=i)
+        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
+                            grad=grad, step=i)
         backward_callback(state)
 
         with torch.no_grad():
@@ -330,15 +332,16 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, del
                     if is_adv.all():
                         break  # stop when all adversarial examples are successful
 
+            del loss, output, state  # free some memory
             delta = update(delta, grad.neg_() if minimize else grad, x=x)
             if clip_bounds is not None:
                 delta.add_(x).clamp_(*clip_bounds).sub_(x)
 
-    if stop_on_success:
-        delta_all[index] = delta
-        x, delta = x_all, delta_all
-
     with torch.no_grad():
+        if stop_on_success:
+            delta_all[index] = delta
+            x, delta = x_all, delta_all
+
         delta = update.finish(delta, x)
     return x + delta
 
@@ -495,8 +498,8 @@ class DDN(EarlyStoppingMixin, Attack):
             loss = self.loss(output, y).view(len(x), -1).mean(1).sum()
             grad = delta.grad  # .detach().clone() unnecessary
 
-            state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss, grad=grad,
-                                step=i)
+            state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
+                                grad=grad, step=i)
             backward_callback(state)
 
             is_adv = self.similar(state) if self.minimize else ~self.similar(state)
