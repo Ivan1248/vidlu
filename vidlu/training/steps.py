@@ -276,7 +276,7 @@ class AdversarialCombinedLossTrainStep:
         do_optimization_step(trainer.optimizer,
                              loss=self.clean_weight * loss_c + self.adv_weight * loss_adv)
 
-        return NameDict(x=x, output=output_c, target=y, other_outputs=other_outputs_c, loss=loss_c,
+        return NameDict(x=x, output=output_c, target=y, other_outputs=other_outputs_c, loss=loss_c.item(),
                         x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
                         loss_adv=loss_adv.item())
 
