@@ -19,12 +19,13 @@ import dirs
 
 def train(args):
     seed = int(time()) % 100 if args.seed is None else args.seed  # 53
-    print(f"RNG seed: {seed}")
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
         rseed(seed)
 
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+
+    e.logger.log(f"RNG seed: {seed}")
 
     if not args.no_init_test:
         print('Evaluating initially...')
@@ -33,6 +34,7 @@ def train(args):
     print(('Continuing' if args.resume else 'Starting') + ' training...')
     training_datasets = {k: v for k, v in e.data.items() if k.startswith("train")}
     e.trainer.train(*training_datasets.values(), restart=False)
+
     print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
     for name, ds in training_datasets.items():
         e.trainer.eval(ds)
