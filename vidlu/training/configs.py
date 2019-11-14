@@ -1,4 +1,3 @@
-from collections import Mapping
 from functools import partial
 from dataclasses import dataclass
 
@@ -9,8 +8,8 @@ from vidlu.data import Record
 from vidlu.modules import get_submodule
 from vidlu.transforms import jitter
 from vidlu.utils.collections import NameDict
-from vidlu.utils.func import default_args, params, Empty, Missing
-from vidlu.utils.misc import fuse, dict_difference
+from vidlu.utils.func import params, Empty, Missing
+from vidlu.utils.misc import dict_difference
 from .adversarial import attacks
 from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
 import torch.nn.functional as F
