@@ -157,10 +157,12 @@ def default_args(func) -> NameDict:
 
 def params(func) -> NameDict:
     if not callable(func):
-        raise ValueError("The provided type is not callable.")
+        raise TypeError("The provided type is not callable.")
     try:
         return NameDict({k: v.default for k, v in signature(func).parameters.items()})
-    except ValueError:
+    except ValueError as ex:
+        if 'no signature found for builtin' not in str(ex):
+            raise
         return NameDict()
 
 
