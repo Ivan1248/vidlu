@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from vidlu.utils.func import compose
-from . import image as imt
+import vidlu.transforms.image as iti
 
 
 def prepare_label(y):
@@ -18,4 +18,4 @@ def prepare_label(y):
 
 
 def prepare_input_image(x):
-    return compose(imt.to_torch, imt.hwc_to_chw, imt.To(dtype=torch.float), imt.Div(255))(x)
+    return compose(iti.to_torch, iti.hwc_to_chw, lambda x: x.to(dtype=torch.float), iti.Div(255))(x)
