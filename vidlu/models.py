@@ -1,4 +1,5 @@
 from functools import partial, partialmethod
+from fractions import Fraction as Frac
 
 import torch
 
@@ -102,6 +103,28 @@ fdensenet_backbone = partial(densenet_backbone,
                              backbone_f=mc.FDenseNetBackbone)
 
 
+def irevnet_backbone(init_stride=2,
+                     group_lengths=[6, 16, 72, 6],
+                     width_factors=(Frac(1, 4), Frac(1, 4), 1),
+                     block_f=partial(default_args(mc.IRevNetBackbone).block_f,
+                                     kernel_sizes=(3, 3, 3)),
+                     base_width=None):
+    group_count = len(group_lengths)
+    return mc.iRevNetBackboneHyb(nBlocks=group_lengths,
+                                 nStrides=[1] + [2] * (group_count - 1),
+                                 nClasses=10,
+                                 nChannels=None if base_width is None else [
+                                     base_width * 4 ** i for i in range(group_count)],
+                                 init_ds=init_stride,
+                                 in_shape=[3, 32, 32])
+
+    return mc.IRevNetBackbone(init_stride=init_stride,
+                              group_lengths=group_lengths,
+                              width_factors=width_factors,
+                              base_width=base_width,
+                              block_f=block_f)
+
+
 # Models ###########################################################################################
 
 class Model(M.Module):
@@ -146,7 +169,7 @@ class SegmentationModel(DiscriminativeModel):
 
 
 class ResNetV1(ClassificationModel):
-    __init__ = partialmethod(DiscriminativeModel.__init__,
+    __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=partial(resnet_v1_backbone, base_width=64),
                              init=partial(initialization.kaiming_resnet, module=Reserved))
 
@@ -179,6 +202,13 @@ class DenseNet(ClassificationModel):
                              init=partial(initialization.kaiming_densenet, module=Reserved))
 
 
+class IRevNet(ClassificationModel):
+    __init__ = partialmethod(ClassificationModel.__init__,
+                             backbone_f=irevnet_backbone,
+                             init=partial(initialization.kaiming_resnet, module=Reserved))
+    # better with this init than default
+
+
 class MNISTNet(ClassificationModel):
     __init__ = partialmethod(DiscriminativeModel.__init__,
                              backbone_f=mnistnet.MNISTNetBackbone,
@@ -187,7 +217,7 @@ class MNISTNet(ClassificationModel):
 
 class SwiftNet(SegmentationModel):
     def __init__(self,
-                 backbone_f=partial(resnet_v1_backbone, base_width=64),
+                 backbone_f=resnet_v1_backbone,
                  laterals=tuple(f"bulk.unit{i}_{j}.sum"
                                 for i, j in zip(range(3), [1] * 3)),
                  ladder_width=128, head_f=mc.heads.SegmentationHead, input_adapter=None,
@@ -218,6 +248,7 @@ class SwiftNet(SegmentationModel):
     def post_build(self, *args, **kwargs):
         from torch.utils.checkpoint import checkpoint
         for unit_name, unit in self.backbone.backbone.bulk.named_children():
+            print(unit_name)
             self.backbone.backbone.bulk.set_modifiers(
                 **{unit_name: lambda module: partial(checkpoint, module)})
 
