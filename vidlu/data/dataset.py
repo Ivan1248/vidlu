@@ -8,7 +8,7 @@ import itertools
 import os
 import pickle
 from collections.abc import Sequence
-from typing import Union, Callable, Mapping
+from typing import Union, Callable, Mapping, Literal
 from pathlib import Path
 import shutil
 import warnings
@@ -21,6 +21,7 @@ from tqdm import tqdm, trange
 from vidlu.utils.misc import slice_len, query_yes_no
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
+import vidlu.utils.func as vuf
 
 from .record import Record
 from .misc import default_collate, pickle_sizeof
@@ -230,7 +231,7 @@ class Dataset(Sequence):
         """ Creates a dataset with elements transformed with `func`. """
         return MapDataset(self, func, func_name=func_name, **kwargs)
 
-    def map_fields(self, field_to_func, *, record_factory=Record, func_name=None, **kwargs):
+    def map_fields(self, field_to_func, *, func_name=None, **kwargs):
         """ Creates a dataset with each element transformed with its function.
 
         ds.map_fields(dict(x1=func1, ..., xn=funcn)) does the same as
@@ -239,7 +240,7 @@ class Dataset(Sequence):
         It is useful when using multiprocessing, which uses pickling, which
         doesn't support pickling of lambdas.
         """
-        return self.map(FieldsMap(field_to_func, record_factory), func_name=func_name, **kwargs)
+        return self.map(FieldsMap(field_to_func), func_name=func_name, **kwargs)
 
     def permute(self, seed=53, **kwargs):
         """ Creates a permutation of the dataset. """
@@ -295,17 +296,34 @@ class Dataset(Sequence):
                 if isinstance(ds, Dataset):
                     ds.clear_hdd_cache()
 
+    @staticmethod
+    def from_getitem_func(func, len, **kwargs):
+        class _Data:
+            def __len__(self):
+                return len
+
+            def __getitem__(self, item):
+                return func(item)
+
+        return Dataset(data=_Data(), **kwargs)
+
     def _print(self, *args, **kwargs):
         print(*args, f"({self.identifier})", **kwargs)
 
 
 class FieldsMap:
-    def __init__(self, field_to_func, record_factory=Record):
+    # TODO: use @vuf.type_checked()
+    def __init__(self, field_to_func, *, mode: Literal['override', 'replace'] = 'override'):
+        if not mode in ('override', 'replace'):
+            raise ValueError(f"Invalid mode argument '{mode}' is not in {'override', 'replace'}.")
         self.field_to_func = field_to_func
-        self.record_factory = record_factory
+        self.mode = mode
 
     def __call__(self, r):
-        return type(r)(r, **{k: f(r[k]) for k, f in self.field_to_func.items()})
+        if self.mode == 'override':
+            return type(r)(r, **{k: f(r[k]) for k, f in self.field_to_func.items()})
+        else:
+            return type(r)(**{k: f(r[k]) for k, f in self.field_to_func.items()})
 
 
 # Dataset wrappers and proxies
@@ -456,7 +474,7 @@ class HDDCacheDataset(Dataset):
             try:
                 with open(cache_path, 'rb') as cache_file:
                     return pickle.load(cache_file)
-            except (PermissionError, TypeError):
+            except (PermissionError, TypeError, EOFError):
                 os.remove(cache_path)
         example = self.data[idx]
         if field is not None:

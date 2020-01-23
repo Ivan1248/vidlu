@@ -117,7 +117,7 @@ class WhiteNoise(Dataset):
     def __init__(self, distribution='normal', example_shape=(32, 32, 3), size=1000, seed=53):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.random_integers(_max_int32, size=(size,))
+        self._seeds = self._rand.randint(1, size=(size,))
         if distribution not in ('normal', 'uniform'):
             raise ValueError('Distribution not in {"normal", "uniform"}')
         self._distribution = distribution
@@ -140,7 +140,7 @@ class RademacherNoise(Dataset):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.random_integers(_max_int32, size=(size,))
+        self._seeds = self._rand.randint(1, size=(size,))
         super().__init__(
             name=f'RademacherNoise{example_shape}',
             subset=f'{seed}-{size}',
@@ -159,7 +159,7 @@ class HBlobs(Dataset):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.random_integers(_max_int32, size=(size,))
+        self._seeds = self._rand.randint(1, size=(size,))
         self._sigma = sigma or 1.5 * example_shape[0] / 32
         super().__init__(name=f'HBlobs({example_shape})', subset=f'{seed}-{size}', data=self._seeds)
 
@@ -806,7 +806,7 @@ class Cityscapes(Dataset):
 
 
 class WildDash(Dataset):
-    subsets = ['val', 'bench', 'both']
+    subsets = ['val', 'bench']
     splits = dict(all=(('val', 'bench'), None), both=(('val', 'bench'), None))
     default_dir = 'WildDash'
 
@@ -828,8 +828,9 @@ class WildDash(Dataset):
         self._images_dir = Path(f'{data_dir}/wd_{subset}_01')
         self._image_names = sorted([
             str(x.relative_to(self._images_dir))[:-5]
-            for x in self._images_dir.glob(f'/*{self._IMG_SUFFIX}')
+            for x in self._images_dir.glob(f'*{self._IMG_SUFFIX}')
         ])
+
         info = {
             'problem': 'semantic_segmentation',
             'class_count': 19,
