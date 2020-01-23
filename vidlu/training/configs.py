@@ -5,13 +5,13 @@ import torch
 from torch import optim
 
 from vidlu.data import Record
-from vidlu.modules import get_submodule
+from vidlu.modules import get_submodule, losses
 from vidlu.transforms import jitter
 from vidlu.utils.collections import NameDict
 from vidlu.utils.func import params, Empty, Missing
 from vidlu.utils.misc import dict_difference
-from .adversarial import attacks
-from .lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
+from vidlu.training.adversarial import attacks
+from vidlu.training.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
 import torch.nn.functional as F
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
@@ -52,9 +52,20 @@ class FineTuningOptimizerMaker:
 madry_cifar10_attack = partial(attacks.PGDAttack,
                                eps=8 / 255,
                                step_size=2 / 255,
-                               grad_preprocessing='sign',
+                               grad_processing='sign',
                                step_count=10,  # TODO: change
                                clip_bounds=(0, 1))
+
+pert_model_attack = partial(attacks.PerturbationModelAttack,
+                            eps=8 / 255,
+                            step_size=2 / 255,
+                            grad_processing='sign',
+                            step_count=10,  # TODO: change
+                            clip_bounds=(0, 1))
+
+entmin_attack = partial(madry_cifar10_attack,
+                        minimize=False,
+                        loss=lambda logits, _: losses.entropy(logits))
 
 virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
                                      get_prediction='hard')
@@ -66,7 +77,7 @@ vat_pgd_cifar10_attack = partial(madry_cifar10_attack,
 mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
                                     eps=0.3,
                                     step_size=0.1,
-                                    grad_preprocessing='sign',
+                                    grad_processing='sign',
                                     step_count=40,  # TODO: change
                                     clip_bounds=(0, 1),
                                     stop_on_success=True)
@@ -171,14 +182,17 @@ wrn_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
     # overriding
     weight_decay=5e-4)
 
+irevnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
+    resnet_cifar,
+    # overriding
+    weight_decay=5e-4)
+
 densenet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1608.06993
-    classification,
-    weight_decay=1e-4,
+    resnet_cifar,
     optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
     epoch_count=100,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
-    batch_size=64,
-    jitter=jitter.CifarPadRandCropHFlip())
+    batch_size=64)
 
 small_image_classifier = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     classification,

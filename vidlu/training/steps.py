@@ -215,12 +215,12 @@ class AdversarialTrainStep:
         split = lambda a: (a[:cln_count], a[cln_count:])
         (x_c, x_a), (y_c, y_a) = split(x), split(y)
 
-        crc = CleanResultCallback(trainer.extend_output)
         trainer.model.eval()  # adversarial examples are generated in eval mode
+        crc = CleanResultCallback(trainer.extend_output)
         x_adv = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y[cln_count:],
                                        backward_callback=crc)
-
         trainer.model.train()
+
         output, other_outputs = trainer.extend_output(trainer.model(torch.cat((x_c, x_adv), dim=0)))
         output_c, output_adv = split(output)
         loss_adv = trainer.loss(output_adv, y_a).mean()
@@ -276,7 +276,8 @@ class AdversarialCombinedLossTrainStep:
         do_optimization_step(trainer.optimizer,
                              loss=self.clean_weight * loss_c + self.adv_weight * loss_adv)
 
-        return NameDict(x=x, output=output_c, target=y, other_outputs=other_outputs_c, loss=loss_c.item(),
+        return NameDict(x=x, output=output_c, target=y, other_outputs=other_outputs_c,
+                        loss=loss_c.item(),
                         x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
                         loss_adv=loss_adv.item())
 
@@ -306,11 +307,17 @@ class AdversarialTrainBiStep:
 
 @dataclass
 class AdversarialTrainMultiStep:
+    """A training step that performs a model parameter update for each
+    adversarial perturbation update.
+
+    The perturbations of one batch can be used as initialization for the next
+    one.
+    """
     update_period: int = 1
     virtual: bool = False
     train_mode: bool = True
-    reuse_perturbation: bool = False
-    last_perturbation: torch.Tensor = None
+    reuse_pert: bool = False  # adversarial training for free
+    last_pert: torch.Tensor = None
 
     def __call__(self, trainer, batch):
         # assert trainer.attack.loss == trainer.loss
@@ -328,12 +335,11 @@ class AdversarialTrainMultiStep:
         (trainer.model.train if self.train_mode else trainer.model.eval)()
         with batchnorm_stats_tracking_off(trainer.model) if self.train_mode else ctx_suppress():
             perturb = trainer.attack.perturb
-            if self.reuse_perturbation and (
-                    self.last_perturbation is None or self.last_perturbation.shape == x.shape):
-                perturb = partial(perturb, delta_init=self.last_perturbation)
+            if self.reuse_pert:
+                perturb = partial(perturb, delta_init=self.last_pert)
             x_adv = perturb(trainer.model, x, None if self.virtual else y, backward_callback=step)
-            if self.reuse_perturbation:
-                self.last_perturbation = x_adv - x
+            if self.reuse_pert:
+                self.last_pert = x_adv - x
 
         trainer.model.train()
         output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
