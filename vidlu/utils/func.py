@@ -1,10 +1,11 @@
 import inspect
-from collections import Mapping
+from collections.abc import Mapping
 from inspect import signature
 from functools import partialmethod, partial, reduce, wraps
 import itertools
+import typing
 
-from vidlu.utils.text import to_snake_case, to_pascal_case
+from vidlu.utils import text
 from .collections import NameDict
 from vidlu.utils import tree, misc
 
@@ -402,20 +403,24 @@ def multiinput_method(func):
     return wrapper
 
 
-def func_to_class(func, call_params_count=1, name=None):
+def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__call__',
+                  name=None, ):
     from inspect import signature, Parameter
-    name = name or to_pascal_case(func.__name__)  # PascalCase
+    name = name or text.to_pascal_case(func.__name__)  # PascalCase
     pnames = list(signature(func).parameters.keys())
+    if not isinstance(superclasses, typing.Sequence):
+        superclasses = (superclasses,)
 
     call_pnames = pnames[0:call_params_count]
     init_pnames = pnames[call_params_count:]
 
     exec(f"""
-class {name}:
+class {name}(*superclasses):
     func=func
     def __init__(self, {', '.join(init_pnames)}):
+        super().__init__()
         self.args=dict({', '.join(k + '=' + k for k in init_pnames)})
-    def __call__(self, {', '.join(call_pnames)}):
+    def {method_name}(self, {', '.join(call_pnames)}):
         return func({', '.join(call_pnames)}, **self.args)""",
          {'func': func}, locals())
     class_ = locals()[name]
@@ -437,7 +442,7 @@ def class_to_func(class_, name=None):
     if len(default_args(class_.__call__)) > 0:
         raise ValueError("The `__call__` method of the class should have no default arguments.")
     from inspect import signature, Parameter
-    name = name or to_snake_case(class_.__name__)
+    name = name or text.to_snake_case(class_.__name__)
     init_pnames = list(signature(class_).parameters.keys())
     call_pnames = list(signature(class_.__call__).parameters.keys())[1:]
     pnames = call_pnames + init_pnames
@@ -452,3 +457,26 @@ def {name}({', '.join(pnames)}):
         raise NotImplementedError("Not implemented for decorated __init__.")
     func.__module__ = class_.__module__
     return func
+
+
+def type_checked(func):
+    sig = inspect.signature(func)
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        ba = sig.bind(*args, **kwargs)
+        ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
+        fail = False
+        for name, type in func.__annotations__.items():
+            type_origin = typing.get_origin(type)
+            if type_origin is not None:
+                if type_origin is typing.Literal:
+                    if ba[name] not in typing.get_args(type):
+                        fail = True
+            if fail or not isinstance(ba[name], type):
+                val_str = str(ba[name])
+                val_str = val_str if val_str < 80 else val_str[:77] + '...'
+                raise TypeError(f"The argument {name}={val_str} is not of type {type}.")
+        return func(*args, **kwargs)
+
+    return wrapper
