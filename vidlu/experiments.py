@@ -98,7 +98,7 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     print('Experiment ID:', experiment_id)
     return CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
                              experiment_desc=training_args, resume=a.resume,
-                             remove_old=a.redo or (expsuff == '_' and not a.resume))
+                             remove_old=a.redo)
 
 
 # Experiment #######################################################################################
@@ -119,8 +119,9 @@ class TrainingExperiment:
         a = training_args
         with indent_print("Selecting device..."):
             if a.device is None:
-                a.device = torch.device(
-                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+                a.device = torch.device("cuda:0")
+                #a.device = torch.device(
+                #    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
             print(f"device: {a.device}")
         with indent_print('Initializing data...'):
             with CMTimer() as t:
