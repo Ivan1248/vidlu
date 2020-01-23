@@ -2,6 +2,10 @@ from typing import Union, Callable, Mapping, Sequence
 from functools import partial
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
+import logging
+import time
+from collections import defaultdict
+import warnings
 
 from tqdm import tqdm
 import torch
@@ -11,8 +15,156 @@ from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
 from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
-from vidlu.training.engine import Engine
+from vidlu.utils.misc import Event, CMTimer
 
+
+# Engine based on Ignite Engine ####################################################################
+
+def _to_hours_mins_secs(t_s):
+    """Convert seconds to hours, minutes, and seconds."""
+    m, s = divmod(t_s, 60)
+    h, m = divmod(m, 60)
+    return h, m, s
+
+
+class State(NameDict):
+    """An object that is used to pass internal and user-defined state between event handlers"""
+
+    def __init__(self, **kwargs):
+        self.reset(**kwargs)
+
+    def reset(self, **kwargs):
+        self.iteration = 0
+        self.epoch = 0
+        self.output = None
+        self.batch = None
+        self.batch_count = None
+        self.update(**kwargs)
+
+
+class Engine(object):
+    """Runs a given process_function over each batch of a dataset, emitting events as it goes.
+
+    Taken from Ignite (https://pytorch.org/ignite) and modified.
+
+    Args:
+        process_function (Callable): A function receiving a handle to the engine and the current batch
+            in each iteration, and returns data to be stored in the engine's state
+
+    Example usage:
+
+    .. code-block:: python
+
+        def train_and_store_loss(engine, batch):
+            inputs, targets = batch
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = loss_fn(outputs, targets).mean()
+            loss.backward()
+            optimizer.step()
+            return loss.item()
+
+        engine = Engine(train_and_store_loss)
+        engine.run(data_loader)
+
+        # Loss value is now stored in `engine.state.output`.
+
+    """
+
+    def __init__(self, process_function):
+        self._event_handlers = defaultdict(list)
+        self._logger = logging.getLogger(__name__ + "." + type(self).__name__)
+        self._logger.addHandler(logging.NullHandler())
+        self._process_function = process_function
+        self.should_terminate = False
+        self.should_terminate_single_epoch = False
+        self.state = State()
+
+        # events
+        self.started = Event()
+        self.completed = Event()
+        self.epoch_started = Event()
+        self.epoch_completed = Event()
+        self.iteration_started = Event()
+        self.iteration_completed = Event()
+
+        if self._process_function is None:
+            raise ValueError("Engine must be given a processing function in order to run")
+
+    def terminate(self):
+        """Sends terminate signal to the engine, so that it terminates completely the run after the
+        current iteration
+        """
+        self._logger.info(
+            "Terminate signaled. Engine will stop after current iteration is finished")
+        self.should_terminate = True
+
+    def terminate_epoch(self):
+        """Sends terminate signal to the engine, so that it terminates the current epoch after the
+        current iteration
+        """
+        self._logger.info("Terminate current epoch is signaled. "
+                          "Current epoch iteration will stop after current iteration is finished")
+        self.should_terminate_single_epoch = True
+
+    def _run_once_on_dataset(self):
+        for batch in self.state.data_loader:
+            self.state.iteration += 1
+            self.state.batch = batch
+            self.iteration_started(self.state)
+            self.state.output = self._process_function(self, batch)
+            self.iteration_completed(self.state)
+            del self.state.batch, self.state.output
+            if self.should_terminate or self.should_terminate_single_epoch:
+                self.should_terminate_single_epoch = False
+                break
+
+    def run(self, data, max_epochs=1, restart=True):
+        """Runs the `process_function` over the passed data.
+
+        Args:
+            data (Iterable): 1 or more collections of batches allowing repeated
+                iteration (e.g., list or `DataLoader`).
+            max_epochs (int, optional): max epochs to run for (default: 1)
+
+        Returns:
+            State: output state
+        """
+        if restart or self.state is None:
+            self.state.reset(metrics={})
+
+        self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
+
+        self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
+        with CMTimer() as t_run:
+            start_time = time.time()
+            self.started(self.state)
+            if self.state.epoch >= max_epochs:
+                warnings.warn("All epochs are already completed.")
+            while self.state.epoch < max_epochs and not self.should_terminate:
+                self.state.epoch += 1
+                self.epoch_started(self.state)
+                with CMTimer() as t_epoch:
+                    self._run_once_on_dataset()
+                hours, mins, secs = _to_hours_mins_secs(t_epoch.time)
+                self._logger.info(
+                    f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}")
+                if self.should_terminate:
+                    break
+                self.epoch_completed(self.state)
+            self.completed(self.state)
+        hours, mins, secs = _to_hours_mins_secs(t_run.time)
+        self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")
+        return self.state
+
+    def state_dict(self):
+        return dict(epoch=self.state.epoch)
+
+    def load_state_dict(self, state_dict):
+        self.state.epoch = state_dict['epoch']
+
+
+# Batch preparation ################################################################################
 
 def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=False):
     """ A function for putting feature batches on the relevant device"""
@@ -72,7 +224,7 @@ class Evaluator(_MetricsMixin):
     model: Callable = Missing
     loss_f: InitVar[Callable] = Missing
     prepare_batch: Callable = default_prepare_batch
-    data_loader_f: Callable = partial(DataLoader, num_workers=3)
+    data_loader_f: Callable = partial(DataLoader, num_workers=2)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=list)
     extend_output: Callable = extend_output
@@ -193,10 +345,10 @@ class Trainer(Evaluator):
                              + f' have a "{key}" attribute.')
 
     def __setattr__(self, key, value):
-        if '_initialized' not in self.__dict__:
+        if '_initialized' not in self.__dict__ or key in self.__dict__:
             self.__dict__[key] = value
             return
-        for e in self.extensions.values():
+        for e in self.extensions:
             if hasattr(e, key):
                 return setattr(e, key, value)
         raise AttributeError(f'Neither the `Trainer` object nor its extensions'
