@@ -169,7 +169,7 @@ def project_to_1_ball(x, r, inplace=False):
     return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
 
 
-def normalize_by_norm(x, p, inplace=False, eps=1e-8):
+def normalize_by_norm(x, p, inplace=False, eps=1e-8):  # todo: use torch.renorm
     """Projects inputs `x` to p-sphere with norm(s) `r` with maximum difference with
 
     Args:
@@ -189,7 +189,7 @@ def normalize_by_norm(x, p, inplace=False, eps=1e-8):
         raise NotImplementedError(f"Operation not implemented for {p}-norm.")
 
 
-def project_to_p_ball(x, r, p):
+def project_to_p_ball(x, r, p, inplace=False):
     """Projects inputs `x` to p-ball with norm(s) `r` with minimum L2 distance
     with respect to the original value.
 
@@ -200,11 +200,12 @@ def project_to_p_ball(x, r, p):
     """
     # TODO: non-scalar r
     if p == np.inf:
-        return single.clamp(x, -r, r)
+        return single.clamp(x, -r, r, inplace=inplace)
     elif p == 2:  # TODO: make correct for ellipsoids
-        return x.mul_(torch.min(r / norm(x, p, keep_dims=True), torch.ones(())))
+        return (x.mul_ if inplace else x.mul)(
+            torch.min(r / norm(x, p, keep_dims=True), torch.ones(())))
     elif p == 1:  # TODO: optimize
-        return torch.min(x, project_to_1_ball(x, r))
+        return torch.min(x, project_to_1_ball(x, r), out=x if inplace else None)
     else:
         raise NotImplementedError(f"Operation not implemented for {p}-norm.")
 
