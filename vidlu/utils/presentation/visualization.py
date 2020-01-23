@@ -4,6 +4,8 @@ from functools import lru_cache
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from torchvision.utils import make_grid, save_image
+from tqdm import tqdm
 
 
 def get_color_palette(n, cmap='jet'):
@@ -19,13 +21,11 @@ def scale_min_max(img):
     return (img - np.min(img)) / (np.max(img) - np.min(img))
 
 
-def colorify_segmentation(seg, colors):
-    plab = np.empty(list(seg.shape) + [3])
-    for i in range(seg.shape[0]):
-        for j in range(seg.shape[1]):
-            plab[i, j, :] = colors[seg[i, j]]
-    return plab
+def colorize_segmentation(seg, colors):
+    return colors[seg.ravel()].reshape(seg.shape + colors.shape[1:])
 
+
+####
 
 def composef(images, fmt):
     """
@@ -148,7 +148,7 @@ def view_predictions_2(dataset, infer=None, save_dir=None):
             if np.issubdtype(pred.dtype, np.floating):
                 return pred
             else:
-                return colorify_segmentation(pred + 1, colors)
+                return colorize_segmentation(pred + 1, colors)
 
         img, lab = datapoint
         return [scale_min_max(img)] + list(map(process, [lab] + list(infer(img))))
@@ -172,7 +172,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
             colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
     else:
         colors = get_color_palette(dataset.info['class_count'])
-    colors = [np.zeros(3)] + list(map(np.array, colors))  # unknown black
+    colors = np.array([np.zeros(3)] + colors)  # unknown black
 
     @lru_cache(maxsize=1000)
     def get_class_representative(label):  # classification
@@ -195,7 +195,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
                 pred_disp = np.reshape(pred_disp, shape)
                 pred_disp = scale_min_max(pred_disp)
             else:
-                pred_disp = colorify_segmentation(pred_disp + 1, colors)
+                pred_disp = colorize_segmentation(pred_disp + 1, colors)
 
             def _get_class_representative():
                 cr = get_class_representative(pred)
@@ -221,20 +221,56 @@ def view_predictions(dataset, infer=None, save_dir=None):
         bar = np.zeros((bar_height, bar_width), dtype=np.int8)
         for i in range(len(colors)):
             bar[i * step:(i + 1) * step, 1:] = len(colors) - 1 - i
-        bar = colorify_segmentation(bar, colors)
+        bar = colorize_segmentation(bar, colors)
 
         return compose([comp, bar])
 
     if save_dir is not None:
-        from skimage.io import imsave
+        from PIL import Image
         from tqdm import tqdm
         print("Saving predictions")
 
         os.makedirs(save_dir, exist_ok=True)
         for i, d in enumerate(tqdm(dataset)):
-            imsave(f'{save_dir}/p{i:05d}.png', get_frame(d))
+            im = np.round(get_frame(d) * 255).astype('uint8')
+            Image.fromarray(im).save(f'{save_dir}/p{i:05d}.png')
 
     return Viewer().display(dataset, get_frame)
+
+
+def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
+    if 'class_colors' in dataset.info:
+        colors = list(map(np.array, dataset.info['class_colors']))
+        if np.max(np.array(colors)) > 1:
+            colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
+    else:
+        colors = get_color_palette(dataset.info['class_count'])
+    colors = np.array([np.zeros(3)] + colors)  # unknown black
+
+    def get_frame(img, lab, img_adv, pred):
+        fuse = lambda im, seg: fuse_images(im, colorize_segmentation(seg + 1, colors), 0.2)
+        return compose([[img, img_adv], [fuse(img, lab), fuse(img_adv, pred)]])
+
+    from PIL import Image
+    print("Saving predictions")
+
+    os.makedirs(save_dir, exist_ok=True)
+    for i, d in enumerate(tqdm(dataset)):
+        dir = f'{save_dir}/p{i:05d}'
+        os.makedirs(dir, exist_ok=True)
+
+        def save_frame(s):
+            import torch
+            with torch.no_grad():
+                y = model(s.x).argmax(1)
+                args = [s.x.permute(0, 2, 3, 1), y, s.x_adv.permute(0, 2, 3, 1), s.output.argmax(1)]
+                args = [a[0].detach().cpu().numpy() for a in args]
+                x = get_frame(*args)
+                im = np.round(x * 255).astype('uint8')
+                Image.fromarray(im).save(f'{dir}/{s.step:05d}.png')
+
+        attack.perturb(model, d.x.unsqueeze(0).cuda(), d.y.unsqueeze(0).cuda(),
+                       backward_callback=save_frame)
 
 
 def plot_curves(curves):
