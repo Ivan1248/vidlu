@@ -20,7 +20,8 @@ def set_cuda_visible_devices(arg):
 
 def get_gpu_statuses(measurement_count=1, measuring_interval=1.0):
     if "CUDA_DEVICE_ORDER" not in os.environ or os.environ["CUDA_DEVICE_ORDER"] != "PCI_BUS_ID":
-        raise RuntimeError("CUDA device order does not correspond to nvidia-smi's device order.")
+        raise RuntimeError('The environment variable "CUDA_DEVICE_ORDER" should correspond to '
+                           'nvidia-smi\'s device order, "PCI_BUS_ID".')
 
     def get_processes(gpu):
         if gpu['processes'] is None:
