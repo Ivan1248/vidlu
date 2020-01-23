@@ -1,7 +1,10 @@
 # list aprameters with shapes
+from vidlu.utils.presentation import visualization
+
 print('\n'.join(f"{k} {tuple(v.shape)}" for k, v in trainer.model.state_dict().items()))
 
 # semseg
+
 visualization.view_predictions(
     data.train.map(lambda r, trainer=trainer: (
         trainer.prepare_batch((r.x.reshape((1,) + r.x.shape), r.y.reshape((1,) + r.y.shape)))[
@@ -18,17 +21,122 @@ visualization.view_predictions(
         1).squeeze().int().cpu().numpy())
 
 # semseg, adversarial
+
+trainer.attack.minimize = False
+trainer.attack.eps = 3 / 255
+trainer.attack.step_size = 2 / 255
+trainer.attack.step_count = 40
+
 visualization.view_predictions(
-    data.train.map(lambda r, trainer=trainer: (
+    data.test.map(lambda r, trainer=trainer: (
         trainer.attack.perturb(trainer.model,
                                *trainer.prepare_batch((r.x.unsqueeze(0), r.y.unsqueeze(0))))
             .squeeze().permute(1, 2, 0).detach().cpu().numpy(),
         r.y.cpu().numpy())),
     infer=lambda x, trainer=trainer: trainer.model(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
-        1).squeeze().int().cpu().numpy())
+        1).squeeze().int().cpu().numpy(),
+    save_dir="/home/igrubisic/robust_seg_eps3_it40")
+
+# semseg, adversarial - shifted labels, targeted
+
+ds = data.train
+
+
+def shift_label(i, ds=ds):
+    from vidlu.data import Record;
+    # yt = ds[(i + 1) % len(ds)].y
+    yt = ds[(i + 1) % len(ds)].y
+    yt[yt != 13] = 0
+    return Record(x=ds[i % len(ds)].x, y=ds[i % len(ds)].y, yt=yt)
+
+
+def single_label(i, ds=ds):
+    from vidlu.data import Record
+    yt = ds[i % len(ds)].y.clone().fill_(13)
+    return Record(x=ds[i % len(ds)].x, y=ds[i % len(ds)].y, yt=yt)
+
+
+ds = type(ds).from_getitem_func(single_label, len(ds), info=ds.info)
+trainer.attack.minimize = True
+trainer.attack.eps = 100 / 255
+trainer.attack.step_size = 2 / 255
+trainer.attack.step_count = 150
+
+
+def greyed_image_as(x):
+    return x * 0.5  # REMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVE
+    x = x * 0.5 + x.mean()
+    x[0, 0, 0] = 0
+    x[0, 0, 1] = 1
+    return x
+
+
+def process_example(r, trainer=trainer, empty_image_as=greyed_image_as):
+    return (trainer.attack.perturb(trainer.model,
+                                   *trainer.prepare_batch(
+                                       (empty_image_as(r.x.unsqueeze(0)), r.yt.unsqueeze(0))))
+            .squeeze().permute(1, 2, 0).detach().cpu().numpy(),
+            r.yt.cpu().numpy())
+
+
+visualization.view_predictions(
+    ds.map(process_example),
+    infer=lambda x, trainer=trainer: trainer.model(
+        torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
+        1).squeeze().int().cpu().numpy(),
+    save_dir="/home/igrubisic/robust_seg_2")
+
+# semseg, adversarial, PGD iterations
+
+# python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,tc.adversarial,epoch_count=200,attack_f=partial(tc.madry_cifar10_attack,step_count=7,eps=2/255,step_size=0.5/255),eval_attack_f=t(step_count=10),eval_batch_size=1" --params "id:/home/igrubisic/data/states/cityscapes{train,val}/SwiftNet,backbone_f=t(depth=18,small_input=False)/tc.swiftnet_cityscapes,tc.adversarial,epoch_count=200,attack_f=partial(tc.madry_cifar10_attack,step_count=7,eps=2/255,step_size=0.5/255),eval_attack_f=t(step_count=10),eval_batch_size=4/resnet(backbone),backbone.backbone+resnet18-5c106cde.pth/_/200/model_state.pth"
+# ffmpeg -i %05d.png -vcodec libx264 -crf 2 -filter:v scale=1024:-1 robust_pgd_50_3_200.avi
+trainer.attack.minimize = False
+trainer.attack.eps = 30 / 255
+trainer.attack.step_size = 2 / 255
+trainer.attack.step_count = 200
+trainer.attack.rand_init = False
+
+from vidlu.modules.losses import NLLLossWithLogits
+from vidlu.modules.components import GaussianFilter2D
+
+low_pass = GaussianFilter2D(5)
+
+
+def reg(x, delta, low_pass=low_pass):
+    return 1e15 / (x.shape[2] * x.shape[3]) * (delta - low_pass(delta)).pow_(2).sum((2, 3))
+
+
+def reggrad(x, delta, y, t):
+    return 1e12 * ((delta[:, :, :-1, :] - delta[:, :, 1:, :]).pow_(2).mean((2, 3))
+                   + (delta[:, :, :, :-1] - delta[:, :, :, 1:]).pow_(2).mean((2, 3)))
+
+
+def segreggrad(x, delta, y, t):
+    from torch.nn.functional import pad
+    mask = ((t[:, :-1, :-1] == t[:, 1:, :-1]) | (t[:, :-1, :-1] == t[:, :-1, 1:])
+            ).view(1, -1, t.shape[1] - 1, t.shape[2] - 1)
+    return 1e12 * ((delta[:, :, :-1, :-1] - delta[:, :, 1:, :-1]).pow_(2)
+                   + (delta[:, :, :-1, :-1] - delta[:, :, :-1, 1:]).pow_(2)).mul_(mask).mean((2, 3))
+
+
+def ent(y, t, attack=trainer.attack):
+    from vidlu.modules import losses
+    loss = losses.entropy(y).mean()
+    print(y.softmax(1).max(1)[0].mean())
+    return loss
+
+
+#trainer.attack.loss = ent, segreggrad
+trainer.attack.loss = NLLLossWithLogits() #, segreggrad
+
+visualization.generate_adv_iter_segmentations(dataset=data.test.map(trainer.prepare_batch),
+                                              model=trainer.model,
+                                              attack=trainer.attack,
+                                              save_dir="/home/igrubisic/robust_seg_lossmax_30_2_200")
 
 # semseg, VAT
+
 visualization.view_predictions(
     data.train.map(lambda r, trainer=trainer: (
         trainer.attack.perturb(trainer.model,
@@ -108,6 +216,10 @@ trainer.eval_attack.eps *= 4
 trainer.eval_attack.loss = lambda *a, **k: -trainer.eval_attack.loss(*a, **k)
 
 # show adversarial examples
+trainer.eval_attack.eps=10000
+trainer.eval_attack.step_size=10
+trainer.eval_attack.step_count=10
+
 import torch
 
 with torch.no_grad():
@@ -120,6 +232,7 @@ with torch.no_grad():
         npimg = img.detach().cpu().numpy()
         plt.close()
         plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
+        plt.show()
 
 
     N = 16
