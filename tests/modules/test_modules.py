@@ -6,7 +6,8 @@ import numpy as np
 
 from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Seq, Fork, Parallel,
                            Reduce, Sum, with_intermediate_outputs, deep_split, deep_join,
-                           RevIdentity)
+                           Identity)
+from vidlu.modules.components import Baguette
 from vidlu.utils.collections import NameDict
 
 torch.no_grad()
@@ -67,12 +68,12 @@ class TestSequentialForkParallelReduce:
                 torch.tensor(i + 1), torch.tensor(3 * (i + 1))))
 
     def test_reduce(self):
-        a = list(map(torch.tensor, range(5)))
+        a = tuple(map(torch.tensor, range(5)))
         for m in [Reduce(lambda x, y: x.add_(y)), Sum()]:
             assert m(a) == sum(a)
 
     def test_combined(self):
-        m = Seq(fork=Fork(id=RevIdentity(),
+        m = Seq(fork=Fork(id=Identity(),
                           sqr=Func(lambda x: x ** 2)),
                 para=Parallel(mul2=Func(lambda x: 2 * x),
                               mul3=Func(lambda x: x * 3)),
@@ -81,7 +82,7 @@ class TestSequentialForkParallelReduce:
             assert m(torch.tensor(i)) == 2 * i + 3 * i ** 2
 
     def test_intermediate(self):
-        m = Seq(fork=Fork(id=RevIdentity(),
+        m = Seq(fork=Fork(id=Identity(),
                           sqr=Func(lambda x: x ** 2)),
                 para=Parallel(add2=Func(lambda x: x + 2),
                               mul3=Func(lambda x: x * 3)),
@@ -153,6 +154,14 @@ class TestBatchNorm:
         bn = BatchNorm().eval()
         bn(torch.randn(4, 2, 3, 4, 5))
         assert isinstance(bn.orig, nn.BatchNorm3d)
+
+
+class TestBaguette:
+    def test_baguette(self):
+        bk = Baguette(2)
+        bki = bk.inverse
+        x = torch.arange(2 * 4 * 8 * 6).view(2, 4, 8, 6)
+        assert torch.all(bk.inverse(bk(x)) == x)
 
 
 class TestDeepSplit:

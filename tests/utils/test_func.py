@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 from functools import partial, wraps
-from vidlu.utils.func import Empty, default_args, params, func_to_class, class_to_func
+from vidlu.utils.func import (Empty, default_args, params, func_to_class, class_to_func)
 
 
 class TestHardPartial:
