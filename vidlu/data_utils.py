@@ -38,7 +38,13 @@ def _compute_pixel_mean_std_d(ds):  # not local for picklability
 
 
 def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
-    ds_with_info = parted_dataset.trainval.info_cache_hdd(
+    try:
+        stats_ds = parted_dataset.trainval
+    except KeyError:
+        part_name, stats_ds = next(parted_dataset.items())
+        warnings.warn('The parted dataset object has no "trainval" part.'
+                      + f' "{part_name}" is used instead.')
+    ds_with_info = stats_ds.info_cache_hdd(
         dict(standardization=_compute_pixel_mean_std_d), Path(cache_dir) / 'dataset_statistics')
 
     def cache_transform(ds):
@@ -49,7 +55,7 @@ def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
 
 
 def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
-    elem_size = parted_dataset.trainval.approx_example_size()
+    elem_size = next(parted_dataset.items())[1].approx_example_size()
     size = elem_size * sum(len(ds) for _, ds in parted_dataset.top_level_items())
     free_space = shutil.disk_usage(cache_dir).free
     space_left = size - free_space
