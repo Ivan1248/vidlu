@@ -32,6 +32,11 @@ class KLDivLossWithLogits(nn.KLDivLoss):
 kl_div_loss_with_logits = class_to_func(KLDivLossWithLogits)
 
 
+def entropy(logits):
+    log_probs = logits.log_softmax(1)
+    return -(log_probs.exp() * log_probs).sum(1)
+
+
 def reduce_loss(x, batch_reduction: "Literal['sum', 'mean']" = None,
                 elements_reduction: "Literal['sum', 'mean']" = None):
     if batch_reduction == elements_reduction and batch_reduction is not None:
@@ -109,7 +114,7 @@ class CarliniWagnerLoss(nn.Module):
         :return: CW loss value.
         """
         num_classes = x.size(1)
-        label_mask = ops.one_hot(target, num_classes, dtype=torch.float)
+        label_mask = F.one_hot(target, num_classes, dtype=torch.float)
         correct_logit = torch.sum(label_mask * x, dim=1)
         wrong_logit = torch.max((1. - label_mask) * x, dim=1)[0]
         loss = -F.relu(correct_logit - wrong_logit + 50.).sum()
