@@ -74,12 +74,12 @@ def integrated_gradients(inp, target, get_predictions_and_gradients, baseline, s
     # Scale input and compute gradients.
     scaled_inputs = [baseline + (i / step_count) * (inp - baseline)
                      for i in range(0, step_count + 1)]
-    predictions, grads = get_predictions_and_gradients(
-        scaled_inputs, target)  # shapes: <step_count+1>, <step_count+1, inp.shape>
+    # shapes: <step_count+1>, <step_count+1, inp.shape>
+    predictions, grads = get_predictions_and_gradients(scaled_inputs, target)
 
     # trapezoidal rule
-    integrated_gradients = (inp - baseline).mul_((grads[0] + grads[-1]).mul_(0.5)
-                                                 .add_(grads[1:-1].sum(0)))
+    integrated_gradients = (inp - baseline).mul_(torch.trapz(grads, dim=0))
+
     return integrated_gradients, predictions
 
 

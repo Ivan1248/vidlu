@@ -1,9 +1,10 @@
 from torch import nn
 from inspect import isfunction
-from functools import wraps
+from functools import wraps, partial
 import contextlib
 
 from vidlu.utils.inspect import find_frame_in_call_stack
+from vidlu.utils.func import func_to_class
 
 
 def get_calling_module(module, start_frame=None):
@@ -105,3 +106,6 @@ def eval_no_param_grad(*modules):
             return fn(*args, **kwargs)
 
     return new_fn
+
+
+func_to_module_class = partial(func_to_class, superclasses=nn.Module, method_name='forward')

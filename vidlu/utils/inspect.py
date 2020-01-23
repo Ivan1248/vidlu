@@ -3,9 +3,8 @@ import inspect
 
 def class_initializer_locals_c():
     """
-    Returns arguments of the initializer of a subclass if there are no variables
-    defined before `super().__init__()` calls in the initializer of the object's
-    class.
+    Returns arguments of the initializer of a subclass (and variables defined
+    before `super().__init__()` calls) in the initializer of the object's class.
     Based on `magnet.utils.misc.caller_locals`.
     """
     frame = inspect.currentframe().f_back.f_back

@@ -193,6 +193,9 @@ class CMTimer:
     def __exit__(self, *args):
         self.time = self._time_func() - self.start
 
+    def __str__(self):
+        return f"CMTimer(time={self.time})"
+
 
 # shared array
 

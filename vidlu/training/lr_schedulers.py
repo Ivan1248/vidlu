@@ -2,6 +2,10 @@ from torch.optim import lr_scheduler
 
 from vidlu.utils.func import default_args
 
+import warnings
+
+warnings.warn("Update to PyTorch 1.4")
+
 
 class LRScheduler(lr_scheduler._LRScheduler):
     pass

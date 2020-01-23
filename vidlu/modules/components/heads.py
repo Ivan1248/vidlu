@@ -43,14 +43,13 @@ class SegmentationHead(Module):
         return self.interpolate(self.logits(x), shape or self.shape)
 
 
-class TCSegmentationHead(Seq):
+class TCSegmentationHead(Seq):  # TODO: decide what to do about it
     def __init__(self, class_count, shape, norm_f=D.norm_f, act_f=nn.ReLU, convt_f=D.convt_f):
         super().__init__()
         self.shape = shape
         self.class_count = class_count
         self.norm_f, self.act_f, self.convt_f = norm_f, act_f, convt_f
 
-        self.add_module(logits=Conv(class_count, kernel_size=1))
         self.add_module(logits=Conv(class_count, kernel_size=1))
 
     def build(self, x):
