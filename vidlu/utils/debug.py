@@ -1,5 +1,7 @@
 import warnings
 import traceback
+import sys
+from datetime import datetime
 
 from vidlu.utils.indent_print import indent_print
 
@@ -27,3 +29,9 @@ def trace_calls():
         return tracefunc
 
     sys.settrace(tracefunc)
+
+
+def crash_after(proc, *datetime_args):
+    if datetime.utcnow() <= datetime(*datetime_args):
+        proc()
+    raise AssertionError("")
