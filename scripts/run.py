@@ -3,7 +3,7 @@ from time import time
 import random
 
 # noinspection PyUnresolvedReferences
-import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
+# import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
 import torch
 import numpy as np
 
@@ -31,6 +31,10 @@ def train(args):
         print('Evaluating initially...')
         e.trainer.eval(e.data.test)
 
+    if args.debug:
+        print("Debug: Autograd anomaly detection on.")
+        torch.autograd.set_detect_anomaly(True)
+
     print(('Continuing' if args.resume else 'Starting') + ' training...')
     training_datasets = {k: v for k, v in e.data.items() if k.startswith("train")}
     e.trainer.train(*training_datasets.values(), restart=False)
@@ -47,15 +51,15 @@ def train(args):
 
 
 def test(args):
-    te = TrainingExperiment.from_args(
+    e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
     print('Starting evaluation (test/val):...')
-    te.trainer.eval(te.data.test)
+    e.trainer.eval(e.data.test)
     print('Starting evaluation (train):...')
-    te.trainer.eval(te.data.train)
+    e.trainer.eval(e.data.train)
 
-    te.cpman.remove_old_checkpoints()
+    e.cpman.remove_old_checkpoints()
 
 
 def test_trained(args):
@@ -81,12 +85,13 @@ def add_standard_arguments(parser, func):
                              + 'e.g. "id", "standardize".')
     parser.add_argument("model", type=str, help=factories.get_model.help)
     parser.add_argument("trainer", type=str, help=factories.get_trainer.help)
+    parser.add_argument("--evaluator", type=str, help=factories.get_trainer.help)
     parser.add_argument("--params", type=str, default=None,
                         help='The name of the file containing parameters.')
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
     # device
-    parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.", default=None)
+    parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.", default="cuda:0")
     # experiment result saving, state checkpoints
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
@@ -100,9 +105,9 @@ def add_standard_arguments(parser, func):
                         help="Skip testing before training.")
     parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: `int(time()) % 100`.")
-    # reporting
-    parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.",
-                        default=1)
+    # reporting, debugging
+    parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
+    parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=1)
     parser.set_defaults(func=func)
 
 
