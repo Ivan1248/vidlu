@@ -1,4 +1,5 @@
 import warnings
+import math
 
 import numpy as np
 import torch
@@ -14,25 +15,26 @@ def profile(func, on_cuda=True):
     return output, prof.key_averages().table('cuda_time_total')
 
 
-def one_hot(indices: torch.Tensor, c: int, dtype=None, device=None):
+def one_hot(indices: torch.Tensor, c: int, dtype=None):
     """Returns a one-hot array.
 
     Args:
         indices (Tensor): labels.
         c (int): number of classes.
         dtype: PyTorch data-type.
-        device: PyTorch device.
 
     Returns:
         A one-hot array with the last array dimension of size `c` and ones at
         `indices`.
     """
+    if dtype is torch.int64:
+        warnings.warn("You can use one_hot from torch.nn.functional instead.")
     y_flat = indices.view(-1, 1)
-    return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=device or indices.device)
+    return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=indices.device)
             .scatter_(1, y_flat, 1).view(*indices.shape, -1))
 
 
-def clamp(x, min, max):
+def clamp(x, min, max, inplace=False):
     """A `clamp` that works with `min` and `max` being arrays.
 
     Args:
@@ -44,8 +46,9 @@ def clamp(x, min, max):
         An array with values bounded with `min` and `max`.
     """
     if not isinstance(min, torch.Tensor):
-        return x.clamp(min, max)
-    return torch.min(torch.max(x, min), max)
+        return (x.clamp_ if inplace else x.clamp)(min, max)
+    out = x if inplace else None
+    return torch.min(torch.max(x, min, out=out), max, out=out)
 
 
 def project_to_1_ball(x, max_norm=1, inplace=False):
@@ -115,5 +118,38 @@ def unscaled_atanh(x, min=-1., max=1., input_scale=1):
     return torch.tanh(x if input_scale == 1 else input_scale * x) * y_scale + y_offset
 
 
-def atanh(x):
-    return 0.5 * torch.log((1 + x).div_(1 - x))
+def atanh(x, inplace=False):
+    den = 1 - x
+    return (x.add_(1) if inplace else x + 1).log().div_(den).mul_(0.5)
+
+
+def harder_tanh(x, h=1, inplace=False):
+    """A generalization of tanh that converges to tanh for h → 0 and
+    x ↦ min(max(x, 0), 1) for h → ∞, probably"""
+    if h == 0:
+        return x.tanh_() if inplace else x.tanh()
+    euh, elh = math.exp(h), math.exp(-h)
+    s = (1 + euh) * (1 + elh) / (euh - elh)  # to make f'(0) = 1
+    hs = h * s
+    exhs = (x.mul_ if inplace else x.mul)(hs).exp_()
+    den, nom = exhs + euh, exhs.add_(elh),
+    return nom.div_(den).log().div_(h).add_(1)
+
+
+def soft_clamp(x, min_, max_, eps, inplace=False):
+    """A piecewise continous function consisting of 2 scaled tanh parts and an
+    id part from `eps` to `1 - eps`.
+
+    The left limit of the function is 0. The right limit is 1. The function is identity from
+    `eps` to `1 - eps`.
+    """
+    if not inplace:
+        x = x.clone()
+    l, h = min_ + eps, max_ - eps
+    high = x > h
+    if len(high) > 0:
+        x[high] = x[high].sub_(h).div_(eps).tanh_().mul_(eps).add_(h)
+    low = x < l
+    if len(low) > 0:
+        x[low] = x[low].sub_(l).div_(eps).tanh_().mul_(eps).add_(l)
+    return x
