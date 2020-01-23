@@ -1,9 +1,11 @@
-from collections import Callable
+from collections.abc import Callable
 import dataclasses as dc
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Union
+from typing import Union, Sequence
+import warnings
+from time import sleep
 
 import numpy as np
 import torch
@@ -13,6 +15,8 @@ from torch import optim
 from vidlu.modules.losses import NLLLossWithLogits, KLDivLossWithLogits
 from vidlu import ops
 from vidlu.utils.misc import Event
+import vidlu.modules.inputwise as vmi
+import vidlu.optim as vo
 
 
 # Prediction transformations #######################################################################
@@ -79,12 +83,16 @@ class AttackState:
     x_adv: torch.Tensor
     output: torch.Tensor
     loss_sum: float
+    reg_loss_sum: float
     grad: torch.Tensor
     step: int = None
     loss_mean: float = dc.field(init=False)
+    reg_loss_mean: float = dc.field(init=False)
+    pmodel: torch.nn.Module = None
 
     def __post_init__(self):
         self.loss_mean = self.loss_sum / len(self.x)
+        self.reg_loss_mean = self.reg_loss_sum / len(self.x)
 
 
 # get_prediction ###################################################################################
@@ -125,9 +133,6 @@ class Attack:
     on_virtual_label_computed = Event()
 
     def __post_init__(self):
-        if self._perturb is Attack._perturb:
-            raise RuntimeError("The `_perturb` (not `perturb`) method should be overridden in"
-                               + "f subclass `{type(self).__name__}`.")
         if isinstance(self.to_virtual_target, str):
             self.to_virtual_target = _to_target_wiki[self.to_virtual_target]
 
@@ -166,7 +171,7 @@ class Attack:
         return output, loss, x.grad
 
     def _clip(self, x):
-        return torch.clamp(x, *self.clip_bounds)
+        return x.clamp(*self.clip_bounds)
 
     def _perturb(self, model, x, y=None, **kwargs):
         # has to be implemented in subclasses
@@ -229,7 +234,7 @@ def rand_init_delta(x, p, eps, bounds, batch=False):
 
 # Iterative attacks ################################################################################
 
-def _get_grad_preprocessing(name):
+def _get_grad_processing(name) -> Callable:
     if name == 'sign':
         return lambda g: g.sign()
     elif name.startswith('normalize'):
@@ -245,20 +250,18 @@ def _get_grad_preprocessing(name):
 
 # Attack step updates ##############################################################################
 
+
 class AttackStepUpdate:
-    def __call__(self, delta, grad, x):
+    def __call__(self, delta, grad):
         """Updates `delta` and returns the same object (modified)."""
         raise NotImplementedError()
 
     def init(self, delta, x):
         return delta
 
-    def finish(self, delta, x):
-        return delta
-
 
 class DummyUpdate(AttackStepUpdate):
-    def __call__(self, delta, grad, x):
+    def __call__(self, delta, grad):
         return delta
 
 
@@ -271,8 +274,8 @@ def zero_grad(delta):
         delta.grad.zero_()
 
 
-def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, delta_init=None,
-                      clip_bounds=(0, 1), similar=None, backward_callback=None):
+def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
+                      delta_init=None, clip_bounds=(0, 1), similar=None, backward_callback=None):
     """Iteratively optimizes the loss over the input.
 
     Args:
@@ -300,7 +303,8 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, del
     Returns:
         Perturbed inputs.
     """
-    stop_on_success, loss_fn = similar is not None, loss
+    stop_on_success = similar is not None
+    loss_fn, rloss_fn = loss if isinstance(loss, Sequence) else (loss, None)
     backward_callback = backward_callback or (lambda _: None)
 
     delta = torch.zeros_like(x) if delta_init is None else delta_init.detach().clone()
@@ -313,27 +317,33 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, del
         x_adv = x + delta
         output = model(x_adv)
         loss = loss_fn(output, y).view(len(x), -1).mean(1).sum()
+        reg_loss = rloss_fn(x, delta, output, y).view(len(x), -1).mean(1).sum() if rloss_fn \
+            else torch.tensor(0.)
         zero_grad(delta)
-        loss.backward()
-        grad = delta.grad  # .detach().clone() unnecessary
+        ((-loss if minimize else loss) - reg_loss).backward()  # maximized
 
         state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
-                            grad=grad, step=i)
+                            reg_loss_sum=reg_loss.item(), grad=delta.grad, step=i)
         backward_callback(state)
 
         with torch.no_grad():
             if stop_on_success:
                 is_adv = similar(state) if minimize else ~similar(state)
-                if is_adv.any():  # keep the already succesful adversarial examples unchanged
-                    is_nonadv = ~is_adv
+                if is_adv.any():  # keep the already successful adversarial examples unchanged
                     delta_all[index[is_adv]] = delta[is_adv]
-                    x, y, index, grad, delta = (a[is_nonadv] for a in [x, y, index, grad, delta])
+                    is_nonadv = ~is_adv
+                    x, y, index, grad, delta = (a[is_nonadv] for a in
+                                                [x, y, index, delta.grad, delta])
+                    del is_nonadv  # free some memory
                     delta.requires_grad_()
+                    delta.grad = grad
                     if is_adv.all():
                         break  # stop when all adversarial examples are successful
+                del is_adv  # free some memory
 
-            del loss, output, state  # free some memory
-            delta = update(delta, grad.neg_() if minimize else grad, x=x)
+            del state, loss, reg_loss, output  # free some memory
+            delta = update(delta, delta.grad)
+
             if clip_bounds is not None:
                 delta.add_(x).clamp_(*clip_bounds).sub_(x)
 
@@ -342,8 +352,285 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, del
             delta_all[index] = delta
             x, delta = x_all, delta_all
 
-        delta = update.finish(delta, x)
-    return x + delta
+    return delta
+
+
+def _reduce_loss(loss):
+    return loss.view(loss.shape[0], -1).mean(1).sum()
+
+
+def _reduce_losses(unred_loss, unred_reg_loss=None, nonadv_mask=None):
+    """Used by `perturb_iterative_with_perturbation_model` to compute (masked)
+    losses."""
+    loss_nomask = _reduce_loss(unred_loss)
+    loss = _reduce_loss(unred_loss * nonadv_mask) if nonadv_mask is not None else loss_nomask
+    reg_loss = (torch.tensor(0., device=loss.device) if unred_reg_loss is None else
+                loss if nonadv_mask is None else
+                _reduce_loss(unred_reg_loss * nonadv_mask))
+    return loss, reg_loss, loss_nomask
+
+
+def _set_tensor_storage(tensor, storage, grad=None):
+    tensor.set_(storage)
+    tensor.grad = grad
+    return tensor
+
+
+def _extract_nonadv(pmodel, adv_mask, masking_mode, pm_params_all, index, y, x, prune):
+    """Used by `perturb_iterative_with_perturbation_model` to optionally prune
+    batches and mask gradients."""
+    mask_loss, mask_grad = 'loss' in masking_mode and not prune, 'grad' in masking_mode
+
+    if adv_mask.any():  # keep the already successful adversarial examples unchanged
+        mask_loss &= len(adv_mask.shape) > 1
+        is_adv = adv_mask if len(adv_mask.shape) == 1 else adv_mask.view(len(x), -1).all(dim=1)
+
+        if prune and is_adv.any():
+            # extract non-adversarial inputs and perturbations
+            isnot_adv, index_adv = ~is_adv, index[is_adv]
+            for p_all, p in zip(pm_params_all, pmodel.parameters()):
+                p_all[index_adv] = p[is_adv]
+                _set_tensor_storage(p, p[isnot_adv], grad=p.grad[isnot_adv])
+
+            for a in (x, y, index):
+                a.set_(a[isnot_adv])
+
+            if (mask_loss or mask_grad) and len(adv_mask.shape) > 1:
+                adv_mask.set_(adv_mask[isnot_adv])
+
+        if mask_grad and len(adv_mask.shape) > 1:
+            for p in pmodel.parameters():
+                p.grad[adv_mask] = 0
+    else:  # nothing adversarial, no need for masking
+        mask_loss = False
+    return adv_mask.logical_not_() if mask_loss else None
+
+
+def perturb_iterative_with_perturbation_model_hacky(
+        model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
+        project_params=None, clip_bounds=(0, 1), similar=None, masking_mode='loss', prune=True,
+        backward_callback=None):
+    """Iteratively optimizes the loss over the input.
+    Compared to `perturb_iterative`, uses an optimizer instead of an update
+    function and stopping on success (when `similar` is provided) does not
+    speed up optimization unless the optimization succeeds on all inputs.
+
+    Args:
+        model: Forward pass function.
+        x: Inputs.
+        y: Input labels.
+        step_count: (Max.) number of iterations.
+        optim_f: optimizer.
+        loss: A loss function that returns one ore more values per input.
+        minimize (bool): Whether the attack should minimize the loss.`
+        pert_model: A function returning a perturbation model that has "batch
+            parameters" of type `vidlu.BatchParameter`. If `None`, an
+            elementwise perturbation model is created.
+        clip_bounds (optional): Minimum and maximum input value pair.
+        similar (optional): A function that tells whether the attack is
+            successful example-wise based on the predictions and the true
+            labels. If it is provided, optimization is stopped when `similar`
+            returns `False`. Otherwise,`step_count` of iterations is performed
+            on every example. Besides the batch size, the shape of the output
+            can also be the shape of the loss function output (if `masking_mode`
+            is `'loss'`) or the input shape (if `masking_mode` is `'grad'`).
+        masking_mode (Literal['loss', 'grad']): If `similar` is provided and
+            returns multiple values per input, `masking_mode` determines whether
+            loss or the gradient is to be masked for early stopping of the
+            optimization.
+        prune (bool): if True and the `similar` function is provided, batches
+            are pruned when possible to speed up computation.
+        backward_callback: A callback function called after the gradient has
+            been computed. It can be used for e.g. updating model parameters
+            during input optimization (adversarial training for free).
+
+    Returns:
+        The perturbation model.
+    """
+    if prune:
+        warnings.warn("If pruning is enabled, this procedure relies on an hack used to avoid a race"
+                      " condition without guarantee. Set `prune=False` if you want to guarantee no"
+                      " errors but make it slower.")
+    stop_on_success = similar is not None
+    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, Sequence) else (loss_fn, None)
+    backward_callback = backward_callback or (lambda _: None)
+
+    pmodel = pert_model or vmi.Additive(())
+    pmodel(x)  # initialoze perturbation model (parameter shapes have to be inferred from x)
+    optim = optim_f(pmodel.parameters())
+    project_params = project_params or (lambda _: None)
+
+    if stop_on_success:
+        nonadv_mask = None
+        if prune:
+            with torch.no_grad():
+                x_all = x
+                index, x, y = torch.arange(len(x)), x.detach().clone(), y.detach().clone()
+                pm_params_all = [p.detach().clone() for p in pmodel.parameters()]
+        else:
+            pm_params_all, index = None, None
+    else:
+        masking_mode, pm_params_all = '', None
+
+    for i in range(step_count):
+        x_adv = pmodel(x)
+        output = model(x_adv)
+
+        loss, reg_loss, loss_no_mask = _reduce_losses(
+            unred_loss=loss_fn(output, y),
+            unred_reg_loss=reg_loss_fn(pmodel, x, y, x_adv, output) if reg_loss_fn else None,
+            nonadv_mask=nonadv_mask)
+        optim.zero_grad()
+        ((loss if minimize else -loss) + reg_loss).backward()  # minimized
+
+        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss_no_mask.item(),
+                            reg_loss_sum=reg_loss.item(), grad=None, step=i, pmodel=pmodel)
+        backward_callback(state)
+        del output, loss, reg_loss, loss_no_mask
+
+        with torch.no_grad():
+            if stop_on_success:
+                nonadv_mask = _extract_nonadv(
+                    pmodel, similar(state) if minimize else ~similar(state),
+                    masking_mode, pm_params_all, index, y, x, prune=prune)
+            del state  # free some memory and remove references to the graph
+
+            optim.step()
+            project_params(pmodel)
+
+            if clip_bounds is not None and torch.any(x_adv.clamp_(*clip_bounds) != x_adv):
+                warnings.warn(f"The perturbed input has values out of bounds {clip_bounds}.")
+            if len(x) == 0:
+                break
+            if i < step_count - 1:
+                del x_adv  # request graph deletion by removing the last reference
+                sleep(0.002)  # a hack to give PyTorch time to reset Autograd metadata
+
+    if stop_on_success and prune:  # store the final parameters of the unsuccesful examples
+        with torch.no_grad():
+            x = x_all
+            for p_all, p in zip(pm_params_all, pmodel.parameters()):
+                p_all[index] = p
+                p.set_(p_all)
+
+    return pmodel, pmodel(x)
+
+
+def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
+    """Used by `perturb_iterative_with_perturbation_model` to optionally prune
+    batches and mask gradients."""
+    mask_loss, mask_grad = 'loss' in masking_mode, 'grad' in masking_mode
+
+    if adv_mask.any():  # keep the already successful adversarial examples unchanged
+        if len(adv_mask.shape) == 1:
+            isnot_adv = adv_mask.logical_not_()
+            mask_loss = False
+        else:
+            isnot_adv = adv_mask.view(len(adv_mask), -1).all(dim=1).logical_not_()
+            if mask_loss or mask_grad:
+                adv_mask.set_(adv_mask[isnot_adv])
+                if mask_grad:
+                    for p in pmodel.parameters():
+                        p.grad[index][adv_mask] = 0
+        index.set_(index[isnot_adv])
+    else:
+        mask_loss = None
+    return adv_mask.logical_not_() if mask_loss else None
+
+
+def perturb_iterative_with_perturbation_model(
+        model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
+        project_params=None, clip_bounds=(0, 1), similar=None, masking_mode='loss',
+        backward_callback=None):
+    """Iteratively optimizes the loss over the input.
+    Compared to `perturb_iterative`, uses an optimizer instead of an update
+    function and stopping on success (when `similar` is provided) does not
+    speed up optimization unless the optimization succeeds on all inputs.
+
+    Args:
+        model: Forward pass function.
+        x: Inputs.
+        y: Input labels.
+        step_count: (Max.) number of iterations.
+        optim_f: optimizer factory. Optimizers with running stats are not
+            supported.
+        loss_fn: A loss function that returns one ore more values per input.
+            minimize (bool): Whether the attack should minimize the loss.`
+        pert_model: A function returning a perturbation model that has "batch
+            parameters" of type `vidlu.BatchParameter`. If `None`, an
+            elementwise perturbation model is created.
+        clip_bounds (optional): Minimum and maximum input value pair.
+        similar (optional): A function that tells whether the attack is
+            successful example-wise based on the predictions and the true
+            labels. If it is provided, optimization is stopped when `similar`
+            returns `False`. Otherwise,`step_count` of iterations is performed
+            on every example. Besides the batch size, the shape of the output
+            can also be the shape of the loss function output (if `masking_mode`
+            is `'loss'`) or the input shape (if `masking_mode` is `'grad'`).
+        masking_mode (Literal['loss', 'grad']): If `similar` is provided and
+            returns multiple values per input, `masking_mode` determines whether
+            loss or the gradient is to be masked for early stopping of the
+            optimization.
+        backward_callback: A callback function called after the gradient has
+            been computed. It can be used for e.g. updating model parameters
+            during input optimization (adversarial training for free).
+
+    Returns:
+        The perturbation model.
+    """
+    stop_on_success = similar is not None
+    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, Sequence) else (loss_fn, None)
+    backward_callback = backward_callback or (lambda _: None)
+
+    pmodel = pert_model or vmi.Additive(())
+    pmodel(x)  # initialoze perturbation model (parameter shapes have to be inferred from x)
+    optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
+    project_params = project_params or (lambda _: None)
+
+    if stop_on_success:
+        with torch.no_grad():
+            index = torch.arange(len(x))
+    else:
+        masking_mode = ''
+    nonadv_mask = None
+
+    for i in range(step_count):
+        x_adv = pmodel(x)
+
+        if stop_on_success:
+            storage = [x, y, x_adv]
+            x, y, x_adv = [a[index] for a in storage]
+
+        output = model(x_adv)
+        loss, reg_loss, loss_no_mask = _reduce_losses(
+            unred_loss=loss_fn(output, y),
+            unred_reg_loss=reg_loss_fn(pmodel, x, y, x_adv, output) if reg_loss_fn else None,
+            nonadv_mask=nonadv_mask)
+        optim.zero_grad()
+        ((loss if minimize else -loss) + reg_loss).backward()  # minimized
+
+        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss_no_mask.item(),
+                            reg_loss_sum=reg_loss.item(), grad=None, step=i, pmodel=pmodel)
+        backward_callback(state)
+        del output, loss, reg_loss, loss_no_mask  # free some memory
+
+        with torch.no_grad():
+            if stop_on_success:
+                nonadv_mask = _get_mask_and_update_index(
+                    pmodel, similar(state) if minimize else ~similar(state), masking_mode, index)
+            del state  # free some memory
+
+            optim.step()
+            project_params(pmodel)
+            if clip_bounds is not None and torch.any(x_adv.clamp_(*clip_bounds) != x_adv):
+                warnings.warn(f"The perturbed input has values out of bounds {clip_bounds}.")
+
+        if stop_on_success:
+            x, y, x_adv = storage
+            if len(index) == 0:
+                break
+
+    return pmodel, x_adv
 
 
 # Attacks ##########################################################################################
@@ -354,7 +641,7 @@ class PGDUpdate(AttackStepUpdate):
     Args:
         step_size: attack step size per iteration.
         eps: maximum distortion.
-        grad_preprocessing (Union[Callable, str] =): preprocessing of gradient
+        grad_processing (Union[Callable, str] =): preprocessing of gradient
             before multiplication with step_size.'sign' for gradient sign,
             'normalize' for p-norm normalization.
         project_or_p (Union[Number, type(np.inf), Callable]): a function that
@@ -363,26 +650,26 @@ class PGDUpdate(AttackStepUpdate):
     """
     step_size: float
     eps: float
-    grad_preprocessing: Union[Callable, str] = torch.sign
+    grad_processing: Union[Callable, str] = torch.sign
     project_or_p: dc.InitVar[Union[Number, type(np.inf), Callable]] = np.inf
-
+    # derived
     project: Callable = dc.field(init=False)
 
     def __post_init__(self, project_or_p):
         self.project = (partial(ops.batch.project_to_p_ball, p=project_or_p)
                         if isinstance(project_or_p, (Number, type(np.inf)))
                         else project_or_p)
-        if isinstance(self.grad_preprocessing, str):
-            self.grad_preprocessing = _get_grad_preprocessing(self.grad_preprocessing)
+        if isinstance(self.grad_processing, str):
+            self.grad_processing = _get_grad_processing(self.grad_processing)
 
-    def __call__(self, delta, grad, x):
-        pgrad = self.grad_preprocessing(grad)
+    def __call__(self, delta, grad):
+        pgrad = self.grad_processing(grad)
         delta += pgrad.mul_(self.step_size)
         return delta.set_(self.project(delta, self.eps))  # TODO: check for p in {1, 2}
 
 
 @dataclass
-class PGDAttack(EarlyStoppingMixin, Attack):
+class PGDAttackOld(EarlyStoppingMixin, Attack):
     """The PGD attack (Madry et al., 2017).
 
     The attack performs `step_count` steps of size `step_size`, while always 
@@ -394,7 +681,7 @@ class PGDAttack(EarlyStoppingMixin, Attack):
     eps: float = 8 / 255
     step_size: float = 2 / 255
     step_count: int = 40
-    grad_preprocessing: str = 'sign'
+    grad_processing: str = 'sign'
     rand_init: bool = True
     p: float = np.inf
 
@@ -402,18 +689,121 @@ class PGDAttack(EarlyStoppingMixin, Attack):
         if delta_init is None:
             delta_init = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
                           else torch.zeros_like(x))
-        update = PGDUpdate(step_size=self.step_size, eps=self.eps,
-                           grad_preprocessing=self.grad_preprocessing, project_or_p=self.p)
 
-        return perturb_iterative(model, x, y, step_count=self.step_count, update=update,
-                                 loss=self.loss, minimize=self.minimize, delta_init=delta_init,
-                                 clip_bounds=self.clip_bounds,
-                                 similar=self.similar if self.stop_on_success else None,
-                                 backward_callback=backward_callback)
+        update = PGDUpdate(step_size=self.step_size, eps=self.eps,
+                           grad_processing=self.grad_processing, project_or_p=self.p)
+        delta = perturb_iterative(
+            model, x, y, step_count=self.step_count, update=update, loss=self.loss,
+            minimize=self.minimize, delta_init=delta_init, clip_bounds=self.clip_bounds,
+            similar=self.similar if self.stop_on_success else None,
+            backward_callback=backward_callback)
+
+        return x + delta
 
 
 @dataclass
-class PGDVATAttack(PGDAttack):
+class PerturbationModelAttack(EarlyStoppingMixin, Attack):
+    """The PGD attack (Madry et al., 2017).
+
+    The attack performs `step_count` steps of size `step_size`, while always
+    staying within eps from the initial point.
+    Paper: https://arxiv.org/pdf/1706.06083.pdf
+
+    See the documentation of perturb_iterative.
+    """
+    pert_model_f: vmi.PerturbationModel = partial(vmi.Additive, ())
+    pert_model_init: Callable = None
+    project_params: Union[Callable, float] = 0.1
+    optim_f: Callable = vo.ProcessedGradientDescent
+    step_size: float = 2 / 255
+    step_count: int = 40
+    grad_processing: Union[str, Callable] = 'sign'
+
+    def __post_init__(self):
+        if not callable(self.project_params):
+            eps = self.project_params
+
+            def project_params(pmodel):
+                params = pmodel.named_parameters()
+                default_vals = pmodel.named_default_parameters(minimum_shape=True)
+                for (name, p), (name_, d) in zip(params, default_vals):
+                    assert name == name_  # TODO: remove
+                    p.clamp_(min=d - eps, max=d + eps)
+
+            self.project_params = project_params
+        if not callable(self.grad_processing):
+            self.grad_processing = _get_grad_processing(self.grad_processing)
+
+    def _perturb(self, model, x, y=None, pmodel=None, backward_callback=None):
+        if pmodel is None:
+            pmodel = self.pert_model_f()
+            pmodel(x)
+            if self.pert_model_init is not None:
+                self.pert_model_init(pmodel)
+
+        optim_f = partial(self.optim_f, lr=self.step_size, process_grad=self.grad_processing)
+
+        pmodel, x_adv = perturb_iterative_with_perturbation_model(
+            model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
+            minimize=self.minimize, pert_model=pmodel, project_params=self.project_params,
+            clip_bounds=self.clip_bounds, similar=self.similar if self.stop_on_success else None,
+            backward_callback=backward_callback)
+
+        return x_adv
+
+
+@dataclass
+class PGDAttack(EarlyStoppingMixin, Attack):
+    """The PGD attack (Madry et al., 2017).
+
+    The attack performs `step_count` steps of size `step_size`, while always
+    staying within eps from the initial point.
+    Paper: https://arxiv.org/pdf/1706.06083.pdf
+
+    See the documentation of perturb_iterative.
+    """
+    eps: float = 8 / 255
+    step_size: float = 2 / 255
+    step_count: int = 40
+    grad_processing: Union[str, Callable] = 'sign'
+    rand_init: bool = True
+    p: float = np.inf
+
+    def _project_params(self, pmodel):
+        with torch.no_grad():
+            pmodel.addend.set_(ops.batch.project_to_p_ball(pmodel.addend, r=self.eps, p=self.p))
+
+    def _pert_model_init(self, pmodel):
+        with torch.no_grad():
+            if self.rand_init:
+                pmodel.addend.set_(
+                    (rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds)))
+            else:
+                pmodel.addend.zero_()
+
+    def __post_init__(self):
+        if isinstance(self.grad_processing, str):
+            self.grad_processing = _get_grad_processing(self.grad_processing)
+
+        self._base = PerturbationModelAttack(
+            loss=self.loss, minimize=self.minimize, clip_bounds=self.clip_bounds,
+            to_virtual_target=self.to_virtual_target, stop_on_success=self.stop_on_success,
+            similar=self.similar, pert_model_f=partial(vmi.Additive, ()),
+            pert_model_init=self._pert_model_init, project_params=self._project_params,
+            optim_f=vo.ProcessedGradientDescent, step_size=self.step_size,
+            step_count=self.step_count, grad_processing=self.grad_processing)
+
+    def _perturb(self, model, x, y=None, delta_init=None, backward_callback=None):
+        pert = partial(self._base._perturb, model, x, y, backward_callback=backward_callback)
+        if delta_init is not None:
+            pmodel = vmi.Additive(())
+            pmodel.addend.data = delta_init
+            return pert(pmodel)
+        return pert()
+
+
+@dataclass
+class PGDLDSAttack(PGDAttack):
     to_virtual_target: Callable = _to_soft_target
     loss: Callable = dc.field(default_factory=KLDivLossWithLogits)
 
@@ -424,11 +814,8 @@ class VATUpdate(AttackStepUpdate):
     xi: float  # optimization perturation size
     p: Number
 
-    def __call__(self, delta, grad, x):
+    def __call__(self, delta, grad):
         return delta.set_(ops.batch.normalize_by_norm(grad, self.p).mul_(self.xi))
-
-    def finish(self, delta, x):
-        return ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)
 
 
 @dataclass
@@ -445,9 +832,11 @@ class VATAttack(Attack):
     def _perturb(self, model, x, y=None, backward_callback=None):
         delta_init = rand_init_delta(x, self.p, self.xi, self.clip_bounds)
         update = VATUpdate(xi=self.xi, eps=self.eps, p=self.p)
-        return perturb_iterative(model, x, y, step_count=self.step_count, update=update,
-                                 loss=self.loss, minimize=self.minimize, delta_init=delta_init,
-                                 clip_bounds=self.clip_bounds, backward_callback=backward_callback)
+        delta = perturb_iterative(model, x, y, step_count=self.step_count, update=update,
+                                  loss=self.loss, minimize=self.minimize, delta_init=delta_init,
+                                  clip_bounds=self.clip_bounds, backward_callback=backward_callback)
+        delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)
+        return x + delta
 
 
 # DDN ##############################################################################################
@@ -470,7 +859,7 @@ class DDN(EarlyStoppingMixin, Attack):
     step_size: float = 2 / 255
     max_step_count: int = 200
     gamma: float = 0.1
-    grad_preprocessing: str = 'sign'
+    grad_processing: str = 'sign'
     rand_init: bool = True
     p: float = 2
 
