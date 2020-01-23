@@ -1,3 +1,5 @@
+import torch
+
 from vidlu.utils.func import func_to_class, class_to_func, make_multiinput
 
 from .color import *
