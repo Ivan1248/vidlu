@@ -1,18 +1,20 @@
 from abc import ABC
 from argparse import Namespace
-from collections import OrderedDict
+import collections
 import functools
 from functools import reduce, partial
-from typing import Union
-from collections import Mapping, Sequence
+from typing import Union, Callable, Sequence, Mapping
 import itertools
 from os import PathLike
+from fractions import Fraction
+import re
+import warnings
 
+import numpy as np
 import torch
 from torch import nn
 import torch.functional as F
 from torch.utils.checkpoint import checkpoint
-import numpy as np
 
 from vidlu.modules.utils import try_get_module_name_from_call_stack
 from vidlu.utils.collections import NameDict
@@ -61,9 +63,17 @@ def _extract_tensors(*args, **kwargs):
     for a in itertools.chain(args, kwargs.values()):
         if isinstance(a, torch.Tensor):
             yield a
-        elif isinstance(a, (Mapping, Sequence)):
-            for x in _extract_tensors(a):
+        elif isinstance(a, Sequence):
+            for x in _extract_tensors(*a):
                 yield x
+        elif isinstance(a, Mapping):
+            for x in _extract_tensors(*a.values()):
+                yield x
+
+
+def _try_get_device_from_args(*args, **kwargs):
+    x = next(_extract_tensors(*args, **kwargs), None)
+    return None if x is None else x.device
 
 
 def _buildable(*superclasses):
@@ -76,23 +86,21 @@ def _buildable(*superclasses):
 
         def __call__(self, *args, **kwargs):
             try:
-                input_tensors = _extract_tensors(*args, **kwargs)
-                device = tryable(lambda: list(input_tensors)[0].device, None)()
-                if not self._built:
+                if self._built:
+                    return super().__call__(*args, **kwargs)
+                else:
+                    device = _try_get_device_from_args(*args, **kwargs)
                     if type(self).build != BuildableModExt.build:
                         self.build(*args, **kwargs)
-                        if device is not None:
-                            self.to(device)
-                    result = super().__call__(*args, **kwargs)
+                    if device is not None:
+                        self.to(device)
                     if type(self).post_build != BuildableModExt.post_build:
+                        super().__call__(*args, **kwargs)
                         self.post_build(*args, **kwargs)
                         if device is not None:
                             self.to(device)
-                        result = super().__call__(*args, **kwargs)
                     self._built = True
-                else:
-                    result = super().__call__(*args, **kwargs)
-                return result
+                    return super().__call__(*args, **kwargs)
             except Exception as e:
                 print(f"Error in {try_get_module_name_from_call_stack(self)}, {type(self)}")
                 raise e
@@ -108,7 +116,10 @@ def _buildable(*superclasses):
             pass
 
         def clone(self):
-            return type(self)(**self.args)
+            arguments = dict(self.args)
+            args = arguments.pop('args', ())
+            kwargs = arguments.pop('kwargs', {})
+            return type(self)(*args, **arguments, **kwargs)
 
     return BuildableModExt
 
@@ -125,8 +136,10 @@ def _modifiable(*superclasses):
                 del self._modifiers[k]
             return self
 
-        def _call_with_modifiers(self, name, *x):
-            return self._modifiers.get(name, identity)(getattr(self, name))(*x)
+        def _call_with_modifier(self, name, *x):
+            modifier = self._modifiers.get(name, None)
+            module = self._modules[name]
+            return (modifier(module) if modifier else module)(*x)
 
     return ModifibleModExt
 
@@ -179,24 +192,35 @@ def _stochastic(*superclasses):  # TODO: implement
     return StochasticModExt
 
 
-def _debuggable(*superclasses):
-    class DebbugableModExt(*superclasses):
+def _potentially_invertible(*superclasses):
+    class InvertibleModExt(*superclasses):
+        @property
+        def inverse(self):
+            try:
+                if hasattr(self, 'make_inverse'):
+                    if not hasattr(self, '_inverse_cache'):
+                        self._inverse_cache = (self.make_inverse(),)
+                    return self._inverse_cache[0]
+            except AttributeError as e:
+                # Turn it into a TypeError so that it doesn't get turned into a confusing
+                # AttributeError saying that this module has no `inverse` attribute
+                raise TypeError(f"An inverse for the module `{type(self)}` is not defined: {e}")
+            raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
 
-        def forward(self, *args, **kwargs):
-            y = super().forward(*args, **kwargs)
-            # print(try_get_module_name_from_call_stack(self), parameter_count(self))
-            return y
+        @inverse.setter
+        def inverse(self, value):
+            self._inverse_cache = (value,)
 
-    return DebbugableModExt
+        def make_inverse(self):
+            if hasattr(self, 'inverse_forward'):
+                return Func(self.inverse_forward)
+            raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
+
+    return InvertibleModExt
 
 
 def _extended(*superclasses):
-    return [e(*superclasses) for e in [_buildable, _extended_interface]]
-
-
-class InvertibleModuleMixin:
-    def inverse(self):
-        raise NotImplementedError()
+    return [e(*superclasses) for e in [_buildable, _extended_interface, _potentially_invertible]]
 
 
 # Core Modules #####################################################################################
@@ -204,11 +228,12 @@ class InvertibleModuleMixin:
 class Module(*_extended(nn.Module, ABC), nn.Module):
     # Based on https://github.com/MagNet-DL/magnet/blob/master/magnet/nodes/nodes.py
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         super().__init__()
-        if type(self).__init__ is not Module.__init__:
-            args = class_initializer_locals_c()
-            self.args = NameDict(args)
+        if len(args) + len(kwargs) > 0:
+            self.args = NameDict(args=args, **kwargs)
+        elif type(self).__init__ is not Module.__init__:
+            self.args = NameDict(class_initializer_locals_c())
         self._built = False
 
     def __str__(self):
@@ -216,12 +241,12 @@ class Module(*_extended(nn.Module, ABC), nn.Module):
                 + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
 
 
-class RevIdentity(nn.Identity, InvertibleModuleMixin):
-    def reverse(self, y):
-        return y
+class Identity(*_extended(nn.Identity)):
+    def __init__(self):
+        super().__init__(self)
 
-    def inverse(self):
-        return RevIdentity()
+    def make_inverse(self):
+        return self
 
 
 def _to_sequential_init_args(*args, **kwargs):
@@ -231,7 +256,7 @@ def _to_sequential_init_args(*args, **kwargs):
                 "If keyword arguments are supplied, no positional arguments are allowed.")
         args = [kwargs]
     if len(args) == 1 and isinstance(args[0], dict):
-        args = [OrderedDict(args[0])]
+        args = [collections.OrderedDict(args[0])]
     return args
 
 
@@ -272,11 +297,11 @@ class Seq(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
         if len(self._modules) == 0 and len(input) != 1:
             raise RuntimeError("A `Seq` with no children can only accept 1 argument.")
         for name in self._modules:
-            input = (self._call_with_modifiers(name, *input),)
+            input = (self._call_with_modifier(name, *input),)
         return input[0]
 
-    def inverse(self):
-        result = Seq({k: m.inverse() for k, m in reversed(self._modules.items())})
+    def make_inverse(self):
+        result = Seq({k: m.inverse for k, m in reversed(self._modules.items())})
         result._modifiers = self._modifiers
         return result
 
@@ -286,14 +311,13 @@ class ModuleTable(Seq):
         raise NotImplementedError
 
 
-# Fork, parallel and reduction ################################################################
+# Fork, parallel, reduction, ... ###################################################################
 
 def tuple_to_varargs_method(f):
     @functools.wraps(f)
     def wrapper(self, *inputs):
-        if len(inputs) == 1:
-            if isinstance(inputs[0], Sequence):  # tuple, not any sequence
-                inputs = inputs[0]
+        if len(inputs) == 1 and isinstance(inputs[0], tuple):  # tuple, not any sequence
+            inputs = inputs[0]
         return f(self, *inputs)
 
     return wrapper
@@ -303,7 +327,7 @@ class Fork(ModuleTable):
     def forward(self, input):
         return tuple(m(input) for m in self)
 
-    def inverhtose(self):
+    def make_inverse(self):
         return Fork({k.m.inverse() for k, m in self.named_children()})
 
 
@@ -356,8 +380,10 @@ class Sum(Module):
             if oo.shape != shape:
                 print(try_get_module_name_from_call_stack(self),
                       ' '.join(str(tuple(x.shape)) for x in inputs))
-        y = inputs[0].clone()
-        for x in inputs[1:]:
+        if len(inputs) == 1:
+            return inputs[0]
+        y = inputs[0] + inputs[1]
+        for x in inputs[2:]:
             y += x
         return y
 
@@ -369,6 +395,174 @@ class Concat(Module):
     @tuple_to_varargs_method
     def forward(self, *inputs):
         return torch.cat(inputs, self.args.dim)
+
+
+class Split(Module):
+    def __init__(self, split_size_or_sections: Union[int, Sequence], dim=1):
+        super().__init__()
+
+    def forward(self, x):
+        return x.split(self.args.split_size_or_sections, dim=self.args.dim)
+
+    def make_inverse(self):
+        return Concat(self.args.dim)
+
+
+class Chunk(Module):
+    def __init__(self, chunk_count: int, dim=1):
+        super().__init__()
+
+    def forward(self, x):
+        return x.chunk(self.args.chunk_count, dim=self.args.dim)
+
+    def make_inverse(self):
+        return Concat(self.args.dim)
+
+
+class Permute(Module):
+    def __init__(self, *dims):
+        super().__init__()
+
+    def forward(self, x):
+        return x.permute(*self.args.dims)
+
+    def make_inverse(self):
+        dims = self.args.dims
+        inv_dims = [-1] * len(dims)
+        for i, d in enumerate(dims):
+            inv_dims[d] = i
+        return Permute(*inv_dims)
+
+
+class Transpose(Module):
+    def __init__(self, dim0, dim1):
+        super().__init__()
+
+    def forward(self, x):
+        return x.transpose(self.args.dim0, self.args.dim1)
+
+    def make_inverse(self):
+        return self
+
+
+class BatchReshape(Module):
+    def __init__(self, *shape_or_func: Union[tuple, Callable[[tuple], tuple]]):
+        if len(shape_or_func) == 1 and callable(shape_or_func[0]):
+            shape_or_func = shape_or_func[0]
+        super().__init__()
+
+    def build(self, x):
+        self.orig_shape = x.shape[1:]
+        shape = self.args.shape_or_func
+        self.shape = shape(*self.orig_shape) if callable(shape) else shape
+
+    def forward(self, x):
+        return x.reshape(x.shape[0], *self.shape)
+
+    def inverse_forward(self, y):
+        return y.reshape(y.shape[0], *self.orig_shape)
+
+
+def _parse_auto_reshape_arg(dims_or_factors):
+    dims_or_factors = re.findall(r" *(\([^)]*\)|[^(),]*) *(?:,|$)", dims_or_factors)
+    return [-1 if x.strip() != '-1' else
+            _parse_auto_reshape_arg(x[1:-1]) if x[0] == '(' else
+            Fraction(x[1:].strip()) if x[0] == '*' else
+            int(x) for x in dims_or_factors]
+
+
+class AutoReshape(Module):
+    """A reshape module that can be adaptive to input shape."""
+
+    def __init__(self, dims_or_factors: Union[str, Sequence]):
+        super().__init__()
+        if isinstance(dims_or_factors, str):
+            self.dims_or_factors = _parse_auto_reshape_arg(dims_or_factors)
+
+    def build(self, x):
+        def get_subshape(d, dims_or_factors):
+            other = d // np.prod(f for f in dims_or_factors if f != -1)
+
+            return sum([int(d * f) if isinstance(f, Fraction) else
+                        int(d * (1 - other)) if f == -1 else
+                        f for f in dims_or_factors], [])
+
+        self.shape = [get_subshape(d, f) if isinstance(f, Sequence) else
+                      [int(d * f) if isinstance(f, Fraction) else f] for d, f in
+                      zip(x.shape, self.dims_or_factors)]
+
+    def forward(self, x):
+        self.orig_shape = x.shape
+        return x.reshape(*self.shape)
+
+    def make_inverse(self):
+        return BatchReshape(*self.orig_shape)
+
+
+class Contiguous(Module):
+    def forward(self, x):
+        return x.contiguous()
+
+    def make_inverse(self):
+        return Identity()
+
+
+class ContiguousInv(Identity):
+    def forward(self, x):
+        return x
+
+    def make_inverse(self):
+        return Contiguous()
+
+
+class Index(Module):
+    def __init__(self, *args):
+        super().__init__()
+
+    def forward(self, x):
+        return x.__getitem__(*self.args.args)
+
+
+class To(Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, kwargs=kwargs)
+
+    def __call__(self, x):
+        return x.to(*self.args.args, **self.args.kwargs)
+
+
+class Clamp(nn.Module):
+    def __init__(self, min_=None, max_=None, inplace=False):
+        self.min_, self.max_, self.inplace = min_, max_, inplace
+
+    def forward(self, x):
+        return torch.clamp(x, min=self.min_, max=self.max_, out=x if self.inplace else None)
+
+
+# Debugging ########################################################################################
+
+class Print(Identity):
+    def __init__(self, func, text=""):
+        super().__init__()
+        self.func, self.text = func, text
+
+    def forward(self, x):
+        print(self.text, self.func(x))
+        return x
+
+
+class PrintAround(Module):
+    def __init__(self, module, before=None, after=None):
+        super().__init__()
+        self.module, self.before, self.after = module, before, after
+
+    def forward(self, x):
+        if self.before:
+            print(self.before(x))
+        y = self.module(x)
+        if self.after:
+            print(self.after(y))
+        return y
 
 
 # Wrapped modules ##################################################################################
@@ -480,12 +674,37 @@ class Linear(WrappedModule):
 
 class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
-                 num_features=None):
+                 num_features=None, support_checkpointing=False):
+        self.support_checkpointing = support_checkpointing
+        del support_checkpointing
         super().__init__()
         self.orig = None
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
+
+    # This is probably commented for reproducibility of existing algorithms
+    def forward(self, input):
+        """Modified forward to make it work with checkpoints as it should.
+
+        Based on
+        https://github.com/csrhddlam/pytorch-checkpoint
+        """
+
+        if input.requires_grad or not self.support_checkpointing:
+            if not input.requires_grad:
+                warnings.warn("The default implementation of BatchNorm does not"
+                              + " work correctly with checkpointing. Set"
+                              + " `support_checkpointing=True` to fix it.")
+            return super().forward(input)
+
+        self.orig._check_input_dim(input)
+
+        exponential_average_factor = 0.0
+
+        return F.batch_norm(
+            input, self.running_mean, self.running_var, self.weight, self.bias,
+            self.training or not self.track_running_stats, exponential_average_factor, self.eps)
 
 
 class GhostBatchNorm(BatchNorm):
@@ -553,8 +772,8 @@ for name, cls in inspect.getmembers(nn, inspect.isclass):
 # Additional generally useful M ##############################################################
 
 
-class Func(Module):
-    def __init__(self, func):
+class _Func(Module):
+    def __init__(self, func, func_inv=None):
         super().__init__()
         self._func = func
 
@@ -562,15 +781,17 @@ class Func(Module):
         return self._func(*args, **kwargs)
 
 
-class RevFunc(Func):
+class Func(_Func):
     def __init__(self, func, func_inv=None):
         super().__init__(func)
-        self._func_inv = func_inv or None
+        self._func_inv = func_inv
 
-    def reverse(self, y):
-        if not self._func_inv:
-            raise RuntimeError("The inverse function is not defined.")
-        return self._func_inv(y)
+    def make_inverse(self):
+        if self._inv is None:
+            raise RuntimeError("Inverse not defined.")
+        inv = Func(self._inv, self._func)
+        inv.inverse = self
+        return inv
 
 
 # Stochastic #######################################################################################
@@ -628,11 +849,9 @@ class Adapter(Module):
 
 
 def parameter_count(module) -> Namespace:
-    from numpy import prod
-
     trainable, non_trainable = 0, 0
     for _, p in module.named_parameters():
-        n = prod(p.size())
+        n = np.prod(p.size())
         if p.requires_grad:
             trainable += n
         else:
@@ -652,15 +871,12 @@ def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
     """
     if isinstance(path, str):
         path = path.split('.') if path != '' else []
-    for name in [tryable(int, default_value=n)(n) for n in path]:
-        if isinstance(name, str):
-            if not hasattr(root_module, name):
-                raise AttributeError(
-                    f"'{type(root_module).__name__}' has no submodule '{name}'. It has children:"
-                    + f" {', '.join(list(k for k, v in root_module.named_children()))}.")
-            root_module = getattr(root_module, name)
-        elif isinstance(name, int):
-            root_module = root_module[name]
+    for name in path:
+        if not hasattr(root_module, name):
+            raise AttributeError(
+                f"The '{type(root_module).__name__}' instance has no submodule '{name}'. It has"
+                + f"  children: {', '.join(list(k for k, v in root_module.named_children()))}.")
+        root_module = getattr(root_module, name)
     return root_module
 
 
