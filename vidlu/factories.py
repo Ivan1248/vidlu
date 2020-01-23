@@ -20,7 +20,7 @@ from vidlu.utils.func import (argtree_partial, find_empty_params_deep,
 
 def _print_all_args_message(func):
     print("All arguments:")
-    print(f"Argument tree of the model ({func.func}):")
+    print(f"Argument tree ({func.func}):")
     tree.print_tree(ArgTree.from_func(func), depth=1)
 
 
@@ -108,7 +108,7 @@ def get_data_preparation(*datasets):
     dataset = datasets[0]
     from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
     fields = tuple(dataset[0].keys())
-    if fields == ('x', 'y'):
+    if set('xy').issubset(fields):
         return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
                                         func_name='prepare')
     raise ValueError(f"Unknown record format: {fields}.")
@@ -169,19 +169,22 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
             else:
                 stats = eval("dict(" + input_adapter_str[len("standardize("):])
                 stats = {k: torch.tensor(v) for k, v in stats.items()}
-            return M.RevFunc(imt.Standardize(**stats), imt.Destandardize(**stats))
+            return M.Func(imt.Standardize(**stats), imt.Destandardize(**stats))
         elif input_adapter_str == "id":  # min 0, max 1 is expected for images
-            return M.RevIdentity()
+            return M.Identity()
         else:
-            raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}")
+            try:
+                return eval(input_adapter_str)
+            except Exception as e:
+                raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}, \n{e}")
     raise NotImplementedError()
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
     from torch import nn
-    import vidlu.modules as M
-    import vidlu.modules.components as mc
+    import vidlu.modules as vm
+    import vidlu.modules.components as vmc
     import torchvision.models as tvmodels
 
     if prep_dataset is None and (problem is None or init_input is None):
@@ -199,7 +202,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_class = getattr(models, model_name) if hasattr(models, model_name) else eval(model_name)
     argtree = defaults.get_model_argtree(model_class, problem)
     argtree_arg = (
-        eval(f"t({argtree_arg[0]})", dict(nn=nn, M=M, mc=mc, tvmodels=tvmodels, t=ArgTree))
+        eval(f"t({argtree_arg[0]})",
+             dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=ArgTree,
+                  partial=partial))
         if len(argtree_arg) == 1 else ArgTree())
     argtree.update(argtree_arg)
 
@@ -230,7 +235,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
     if verbosity > 1:
         print(model)
-    print('Parameter count:', M.parameter_count(model))
+    print('Parameter count:', vm.parameter_count(model))
 
     return model
 
@@ -316,7 +321,7 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
 
     config = eval(f"tc.TrainerConfig({trainer_str})",
                   dict(optim=optim, lr_scheduler=lr_scheduler, ta=ta, tc=tc, te=te, ts=ts,
-                       attacks=attacks, jitter=jitter, t=ArgTree, partial=partial))
+                       attacks=attacks, jitter=jitter, t=ArgTree, partial=partial, Empty=Empty))
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     if 'optimizer_f' in config and 'weight_decay' in default_args(config.optimizer_f):
         raise RuntimeError("The `weight_decay` argument should be passed to the trainer directly"
