@@ -190,5 +190,5 @@ class MorsicTPSWarp(PerturbationModel):
         return dict(theta=x.new_zeros((x.shape[0], self.c_dst.shape[0] + 2, 2)).squeeze(-1))
 
     def forward(self, x):
-        grid = vmf.tps_grid(self.theta, torch.tensor(self.c_dst), x.shape)
+        grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
         return F.grid_sample(x, grid)

@@ -100,7 +100,7 @@ def tps(theta, ctrl, grid):
     N, H, W, T = *grid.shape[:3], ctrl.shape[-2]
 
     if ctrl.dim() == 2:
-        ctrl = ctrl.unsqueeze_(0)
+        ctrl = ctrl.unsqueeze(0)
     D = (grid[..., None, 1:] - ctrl[:, None, None, ...]).norm(2, dim=-1)
     U = (D ** 2) * torch.log(D + 1e-9)  # NHWT, RBF values
 
