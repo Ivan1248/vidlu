@@ -1,5 +1,10 @@
+from typing import Callable
+
 import torch.optim
 from torch.optim.optimizer import required, Optimizer
+import numpy as np
+
+from vidlu import ops
 
 
 class GradientSignDescent(torch.optim.SGD):
@@ -85,3 +90,16 @@ class ProcessedGradientDescent(torch.optim.SGD):
                 p.add_(-group['lr'], process_grad(d_p))
 
         return loss
+
+def get_grad_processing(name) -> Callable:
+    if name == 'sign':
+        return lambda g: g.sign()
+    elif name.startswith('normalize'):
+        if '_' in name:
+            p = name.split('_', 1)[1]
+            p = np.inf if p == 'inf' else eval(p)
+        else:
+            p = 2
+        return lambda g: g / ops.batch.norm(g, p, keep_dims=True)
+    elif 'raw':
+        return lambda g: g
