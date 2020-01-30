@@ -5,16 +5,6 @@ import numpy as np
 import torch
 
 
-# operations
-
-def profile(func, on_cuda=True):
-    with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
-        output = func()
-    if on_cuda:
-        torch.cuda.synchronize()
-    return output, prof.key_averages().table('cuda_time_total')
-
-
 def one_hot(indices: torch.Tensor, c: int, dtype=None):
     """Returns a one-hot array.
 
@@ -84,23 +74,23 @@ def project_to_1_ball_i(x, max_norm=1, max_iter=20, eps=1e-6, inplace=False):
     return x.clamp_(min=0).mul_(sign)
 
 
-def linear_min_on_p_ball(grad, max_norm, p):
+def linear_min_on_p_ball(x, max_norm, p):
     """Finds the minimum of a function on a `p`-ball with norm `max_norm`.
 
     Args:
-        grad (Tensor): gradient of the linear function.
+        x (Tensor): gradient of the linear function.
         max_norm (float or int or Tensor): a number or an array with the same
             number of elements as grad.
         p (int):
     """
     if p == np.inf:
-        return grad.sign().mul_(max_norm)
+        return x.sign().mul_(max_norm)
     elif p == 2:
-        return (max_norm * grad).div_(grad.norm(p=p))
+        return (max_norm * x).div_(x.norm(p=p))
     elif p == 1:  # only 1 element can be modified in a single update
-        sol = torch.zeros_like(grad)
-        maxind = torch.argmax(grad.abs())
-        sol.view(-1)[maxind] = torch.sign(grad.view(-1)[maxind])
+        sol = torch.zeros_like(x)
+        maxind = torch.argmax(x.abs())
+        sol.view(-1)[maxind] = torch.sign(x.view(-1)[maxind])
         return sol
     else:
         raise ValueError(f"Frank-Wolfe LMO solving not implemented for p={p}.")
@@ -124,7 +114,7 @@ def atanh(x, inplace=False):
 
 
 def harder_tanh(x, h=1, inplace=False):
-    """A generalization of tanh that converges to tanh for h → 0 and
+    """A generalization of tanh that converges to tanh for h → +0 and
     x ↦ min(max(x, 0), 1) for h → ∞, probably"""
     if h == 0:
         return x.tanh_() if inplace else x.tanh()
@@ -147,9 +137,10 @@ def soft_clamp(x, min_, max_, eps, inplace=False):
         x = x.clone()
     l, h = min_ + eps, max_ - eps
     high = x > h
+    # ASutograd error if mul_ used instead of mul
     if len(high) > 0:
-        x[high] = x[high].sub_(h).div_(eps).tanh_().mul_(eps).add_(h)
+        x[high] = x[high].sub_(h).div_(eps).tanh_().mul(eps).add_(h)
     low = x < l
     if len(low) > 0:
-        x[low] = x[low].sub_(l).div_(eps).tanh_().mul_(eps).add_(l)
+        x[low] = x[low].sub_(l).div_(eps).tanh_().mul(eps).add_(l)
     return x
