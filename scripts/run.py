@@ -22,6 +22,10 @@ def train(args):
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
         rseed(seed)
 
+    if args.debug:
+        print("Debug: Autograd anomaly detection on.")
+        torch.autograd.set_detect_anomaly(True)
+
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
@@ -30,10 +34,6 @@ def train(args):
     if not args.no_init_test:
         print('Evaluating initially...')
         e.trainer.eval(e.data.test)
-
-    if args.debug:
-        print("Debug: Autograd anomaly detection on.")
-        torch.autograd.set_detect_anomaly(True)
 
     print(('Continuing' if args.resume else 'Starting') + ' training...')
     training_datasets = {k: v for k, v in e.data.items() if k.startswith("train")}
@@ -91,7 +91,8 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
     # device
-    parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.", default="cuda:0")
+    parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.",
+                        default="cuda:0")
     # experiment result saving, state checkpoints
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
