@@ -8,7 +8,7 @@ import itertools
 import os
 import pickle
 from collections.abc import Sequence
-from typing import Union, Callable, Mapping, Literal
+from typing import Union, Callable, Mapping  #, Literal
 from pathlib import Path
 import shutil
 import warnings
@@ -313,7 +313,7 @@ class Dataset(Sequence):
 
 class FieldsMap:
     # TODO: use @vuf.type_checked()
-    def __init__(self, field_to_func, *, mode: Literal['override', 'replace'] = 'override'):
+    def __init__(self, field_to_func, *, mode: "Literal['override', 'replace']" = 'override'):
         if not mode in ('override', 'replace'):
             raise ValueError(f"Invalid mode argument '{mode}' is not in {'override', 'replace'}.")
         self.field_to_func = field_to_func
