@@ -130,3 +130,13 @@ def concatenate_tensors_trees(*args, tree_type=None):
 def reset_cuda():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
+
+
+# Profiling
+
+def profile(func, on_cuda=True):
+    with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
+        output = func()
+    if on_cuda:
+        torch.cuda.synchronize()
+    return output, prof.key_averages().table('cuda_time_total')
