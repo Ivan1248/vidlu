@@ -82,6 +82,7 @@ class AttackState:
     y: torch.Tensor
     x_adv: torch.Tensor
     output: torch.Tensor
+    loss: torch.Tensor
     loss_sum: float
     reg_loss_sum: float
     grad: torch.Tensor
@@ -230,22 +231,6 @@ def rand_init_delta(x, p, eps, bounds, batch=False):
     delta = delta.mul_(eps)
 
     return x + delta if bounds is None else torch.clamp(x + delta, *bounds) - x
-
-
-# Iterative attacks ################################################################################
-
-def _get_grad_processing(name) -> Callable:
-    if name == 'sign':
-        return lambda g: g.sign()
-    elif name.startswith('normalize'):
-        if '_' in name:
-            p = name.split('_', 1)[1]
-            p = np.inf if p == 'inf' else eval(p)
-        else:
-            p = 2
-        return lambda g: g / ops.batch.norm(g, p, keep_dims=True)
-    elif 'raw':
-        return lambda g: g * len(g)
 
 
 # Attack step updates ##############################################################################
@@ -457,6 +442,7 @@ def perturb_iterative_with_perturbation_model_hacky(
 
     pmodel = pert_model or vmi.Additive(())
     pmodel(x)  # initialoze perturbation model (parameter shapes have to be inferred from x)
+    pmodel.train()
     optim = optim_f(pmodel.parameters())
     project_params = project_params or (lambda _: None)
 
@@ -513,6 +499,7 @@ def perturb_iterative_with_perturbation_model_hacky(
                 p_all[index] = p
                 p.set_(p_all)
 
+    pmodel.eval()
     return pmodel, pmodel(x)
 
 
@@ -584,6 +571,7 @@ def perturb_iterative_with_perturbation_model(
 
     pmodel = pert_model or vmi.Additive(())
     pmodel(x)  # initialoze perturbation model (parameter shapes have to be inferred from x)
+    pmodel.train()
     optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
     project_params = project_params or (lambda _: None)
 
@@ -602,15 +590,19 @@ def perturb_iterative_with_perturbation_model(
             x, y, x_adv = [a[index] for a in storage]
 
         output = model(x_adv)
+        unred_loss = loss_fn(output, y)
         loss, reg_loss, loss_no_mask = _reduce_losses(
-            unred_loss=loss_fn(output, y),
+            unred_loss=unred_loss,
             unred_reg_loss=reg_loss_fn(pmodel, x, y, x_adv, output) if reg_loss_fn else None,
             nonadv_mask=nonadv_mask)
         optim.zero_grad()
         ((loss if minimize else -loss) + reg_loss).backward()  # minimized
 
-        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss_no_mask.item(),
-                            reg_loss_sum=reg_loss.item(), grad=None, step=i, pmodel=pmodel)
+        # print(i, pmodel.gamma.grad.abs().mean(), pmodel.gamma.unique())
+
+        state = AttackState(
+            x=x, y=y, output=output, x_adv=x_adv, loss=unred_loss, loss_sum=loss_no_mask.item(),
+            reg_loss_sum=reg_loss.item(), grad=None, step=i, pmodel=pmodel)
         backward_callback(state)
         del output, loss, reg_loss, loss_no_mask  # free some memory
 
@@ -630,7 +622,8 @@ def perturb_iterative_with_perturbation_model(
             if len(index) == 0:
                 break
 
-    return pmodel, x_adv
+    pmodel.eval()
+    return pmodel, x_adv.detach()
 
 
 # Attacks ##########################################################################################
@@ -660,7 +653,7 @@ class PGDUpdate(AttackStepUpdate):
                         if isinstance(project_or_p, (Number, type(np.inf)))
                         else project_or_p)
         if isinstance(self.grad_processing, str):
-            self.grad_processing = _get_grad_processing(self.grad_processing)
+            self.grad_processing = vo.get_grad_processing(self.grad_processing)
 
     def __call__(self, delta, grad):
         pgrad = self.grad_processing(grad)
@@ -714,10 +707,9 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
     pert_model_f: vmi.PerturbationModel = partial(vmi.Additive, ())
     pert_model_init: Callable = None
     project_params: Union[Callable, float] = 0.1
-    optim_f: Callable = vo.ProcessedGradientDescent
+    optim_f: Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
     step_size: float = 2 / 255
     step_count: int = 40
-    grad_processing: Union[str, Callable] = 'sign'
 
     def __post_init__(self):
         if not callable(self.project_params):
@@ -725,23 +717,22 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
 
             def project_params(pmodel):
                 params = pmodel.named_parameters()
-                default_vals = pmodel.named_default_parameters(minimum_shape=True)
+                default_vals = pmodel.named_default_parameters(full_size=False)
                 for (name, p), (name_, d) in zip(params, default_vals):
                     assert name == name_  # TODO: remove
                     p.clamp_(min=d - eps, max=d + eps)
 
             self.project_params = project_params
-        if not callable(self.grad_processing):
-            self.grad_processing = _get_grad_processing(self.grad_processing)
 
     def _perturb(self, model, x, y=None, pmodel=None, backward_callback=None):
-        if pmodel is None:
-            pmodel = self.pert_model_f()
-            pmodel(x)
-            if self.pert_model_init is not None:
-                self.pert_model_init(pmodel)
+        with torch.no_grad():
+            if pmodel is None:
+                pmodel = self.pert_model_f()
+                pmodel(x)
+                if self.pert_model_init is not None:
+                    self.pert_model_init(pmodel)
 
-        optim_f = partial(self.optim_f, lr=self.step_size, process_grad=self.grad_processing)
+        optim_f = partial(self.optim_f, lr=self.step_size)
 
         pmodel, x_adv = perturb_iterative_with_perturbation_model(
             model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
@@ -765,41 +756,35 @@ class PGDAttack(EarlyStoppingMixin, Attack):
     eps: float = 8 / 255
     step_size: float = 2 / 255
     step_count: int = 40
-    grad_processing: Union[str, Callable] = 'sign'
     rand_init: bool = True
     p: float = np.inf
+    optim_f = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
 
+    @torch.no_grad()
     def _project_params(self, pmodel):
-        with torch.no_grad():
-            pmodel.addend.set_(ops.batch.project_to_p_ball(pmodel.addend, r=self.eps, p=self.p))
+        pmodel.addend.set_(ops.batch.project_to_p_ball(pmodel.addend, r=self.eps, p=self.p))
 
+    @torch.no_grad()
     def _pert_model_init(self, pmodel):
-        with torch.no_grad():
-            if self.rand_init:
-                pmodel.addend.set_(
-                    (rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds)))
-            else:
-                pmodel.addend.zero_()
+        if self.rand_init:
+            pmodel.addend.set_((rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds)))
+        else:
+            pmodel.addend.zero_()
 
     def __post_init__(self):
-        if isinstance(self.grad_processing, str):
-            self.grad_processing = _get_grad_processing(self.grad_processing)
-
+        fields = (f.name for f in dc.fields(PerturbationModelAttack) if f.init)
         self._base = PerturbationModelAttack(
-            loss=self.loss, minimize=self.minimize, clip_bounds=self.clip_bounds,
-            to_virtual_target=self.to_virtual_target, stop_on_success=self.stop_on_success,
-            similar=self.similar, pert_model_f=partial(vmi.Additive, ()),
-            pert_model_init=self._pert_model_init, project_params=self._project_params,
-            optim_f=vo.ProcessedGradientDescent, step_size=self.step_size,
-            step_count=self.step_count, grad_processing=self.grad_processing)
+            **{k: getattr(self, k) for k in fields if hasattr(self, k)},
+            pert_model_f=partial(vmi.Additive, ()), pert_model_init=self._pert_model_init,
+            project_params=self._project_params)
 
     def _perturb(self, model, x, y=None, delta_init=None, backward_callback=None):
-        pert = partial(self._base._perturb, model, x, y, backward_callback=backward_callback)
+        perturb = partial(self._base._perturb, model, x, y, backward_callback=backward_callback)
         if delta_init is not None:
             pmodel = vmi.Additive(())
             pmodel.addend.data = delta_init
-            return pert(pmodel)
-        return pert()
+            return perturb(pmodel)
+        return perturb()
 
 
 @dataclass
