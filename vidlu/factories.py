@@ -309,7 +309,9 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 
 # Training and evaluation ##########################################################################
 
+# noinspection PyUnresolvedReferences
 def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
+    import math
     from torch import optim
     from torch.optim import lr_scheduler
     import vidlu.training.adversarial as ta
@@ -318,10 +320,10 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     import vidlu.training.steps as ts
     from vidlu.training.adversarial import attacks
     from vidlu.transforms import jitter
+    t = ArgTree
 
-    config = eval(f"tc.TrainerConfig({trainer_str})",
-                  dict(optim=optim, lr_scheduler=lr_scheduler, ta=ta, tc=tc, te=te, ts=ts,
-                       attacks=attacks, jitter=jitter, t=ArgTree, partial=partial, Empty=Empty))
+    config = eval(f"tc.TrainerConfig({trainer_str})")
+
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     if 'optimizer_f' in config and 'weight_decay' in default_args(config.optimizer_f):
         raise RuntimeError("The `weight_decay` argument should be passed to the trainer directly"
