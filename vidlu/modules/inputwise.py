@@ -175,7 +175,7 @@ class Warp(PerturbationModel):
 
 
 class MorsicTPSWarp(PerturbationModel):
-    param_defaults = dict(theta=dict(value=0., bounds=[0, 1]))
+    param_defaults = dict(theta=dict(value=0., bounds=[-0.5, 0.5]))
 
     def __init__(self, grid_shape=(2, 2)):
         super().__init__()
