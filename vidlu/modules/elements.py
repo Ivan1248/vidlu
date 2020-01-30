@@ -445,6 +445,14 @@ class Transpose(Module):
         return self
 
 
+class Reshape(Module):
+    def __init__(self, shape):
+        super().__init__()
+
+    def forward(self, x):
+        return torch.reshape(x, (x.shape[0], *self.args.shape))
+
+
 class BatchReshape(Module):
     def __init__(self, *shape_or_func: Union[tuple, Callable[[tuple], tuple]]):
         if len(shape_or_func) == 1 and callable(shape_or_func[0]):
