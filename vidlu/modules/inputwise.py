@@ -1,6 +1,8 @@
 from typing import Sequence
+from functools import partial
 
 import torch
+import torch.nn.functional as F
 
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
@@ -24,9 +26,10 @@ class BatchParameter(torch.nn.Parameter):
         return param
 
 
-def _get_param(shape, factory_or_value):
-    return BatchParameter(factory_or_value(shape, requires_grad=True) if callable(factory_or_value)
-                          else torch.full(shape, factory_or_value, requires_grad=True))
+def _get_param(x, factory_or_value):
+    factory = (factory_or_value if callable(factory_or_value)
+               else partial(torch.full, fill_value=factory_or_value))
+    return factory(x.shape, device=x.device)
 
 
 def _complete_shape(shape_tail, input_shape):
@@ -38,14 +41,17 @@ class PerturbationModel(E.Module):
     param_defaults = dict()
 
     def build(self, x):
-        self.input_shape = x.shape
-        for k, v in self.create_default_params(x.shape).items():  # TODO: devicd
-            setattr(self, k, v)
+        # dummy_x has properties like x, but takes up almost no memory
+        self.dummy_x = x.new_zeros(()).expand(x.shape)
+        default_params = self.create_default_params(x)
+        assert set(default_params) == set(self.param_defaults)
+        for k, v in default_params.items():
+            setattr(self, k, BatchParameter(v, requires_grad=True))
 
-    def create_default_params(self, input_shape):
-        raise NotImplementedError()
+    def create_default_params(self, x):
+        raise NotImplementedError(f"{type(self)}")
 
-    def default_parameters(self, minimum_shape=False, recurse=True):
+    def default_parameters(self, full_size, recurse=True):
         r"""Returns an iterator over default module parameters.
 
         Args:
@@ -61,10 +67,10 @@ class PerturbationModel(E.Module):
         Yields:
             Parameter: module parameter
         """
-        for _, param in self.named_default_parameters(minimum_shape=minimum_shape, recurse=recurse):
+        for _, param in self.named_default_parameters(full_size=full_size, recurse=recurse):
             yield param
 
-    def named_default_parameters(self, minimum_shape=False, prefix='', recurse=True):
+    def named_default_parameters(self, full_size, prefix='', recurse=True):
         r"""Returns an iterator over just created default module parameters,
         yielding both the name of the default parameter and the parameter.
 
@@ -82,8 +88,8 @@ class PerturbationModel(E.Module):
         Yields:
             (string, Tensor): Tuple containing the name and parameter
         """
-        getpd = ((lambda m: ((k, v['value']) for k, v in m.param_defaults.items())) if minimum_shape
-                 else lambda m: m.create_default_params(self.input_shape).items())
+        getpd = ((lambda m: m.create_default_params(self.dummy_x).items()) if full_size
+                 else (lambda m: ((k, v['value']) for k, v in m.param_defaults.items())))
         return self._named_members(
             lambda m: getpd(m) if isinstance(m, PerturbationModel) else iter(()),
             prefix=prefix, recurse=recurse)
@@ -96,11 +102,12 @@ class SimplePerturbationModel(PerturbationModel):
         super().__init__()
         self.equivariant_dims = equivariant_dims
 
-    def create_default_params(self, input_shape):
-        shape = list(input_shape)
+    def create_default_params(self, x):
+        shape = list(x.shape)
         for d in self.args.equivariant_dims:
-            shape[d if d >= 0 else len(input_shape) - d] = 1
-        return {k: _get_param(shape, self.param_defaults[k]['value'])
+            shape[d if d >= 0 else len(x.shape) - d] = 1
+        dum = x.new_zeros(()).expand(shape)
+        return {k: _get_param(dum, self.param_defaults[k]['value'])
                 for k, v in self.param_defaults.items()}
 
     # def difference_from_default_params(self):
@@ -110,9 +117,10 @@ class SimplePerturbationModel(PerturbationModel):
 
 class AlterGamma(SimplePerturbationModel):
     param_defaults = dict(gamma=dict(value=1., bounds=[0, 500]))
+    eps = 1e-8
 
     def forward(self, x):
-        return x.pow(self.gamma)
+        return x.mul_(1 - 2 * self.eps).add_(self.eps).pow(self.gamma)
 
 
 class AlterLogGamma(SimplePerturbationModel):
@@ -153,10 +161,34 @@ class Whiten(SimplePerturbationModel):
 
 
 class Warp(PerturbationModel):
-    param_defaults = dict(factor=dict(value=0., bounds=[0, 1]))
+    param_defaults = dict(flow=dict(value=0., bounds=[0, 1]))
 
-    def create_default_params(self, input_shape):
-        return dict(flow=torch.zeros((input_shape[0], 2, *input_shape[2:]), requires_grad=True))
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.args = dict(mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+
+    def create_default_params(self, x):
+        return dict(flow=x.new_zeros((x.shape[0], 2, *x.shape[2:])))
 
     def forward(self, x):
-        return vmf.warp(x, self.flow)
+        return vmf.warp(x, self.flow, **self.args)
+
+
+class MorsicTPSWarp(PerturbationModel):
+    param_defaults = dict(theta=dict(value=0., bounds=[0, 1]))
+
+    def __init__(self, grid_shape=(2, 2)):
+        super().__init__()
+        self.grid_shape = grid_shape
+
+    def build(self, x):
+        k = dict(device=x.device, dtype=x.dtype)
+        self.c_dst = vmf.uniform_grid_2d(self.grid_shape, **k).view(-1, 2)
+        super().build(x)
+
+    def create_default_params(self, x):
+        return dict(theta=x.new_zeros((x.shape[0], self.c_dst.shape[0] + 2, 2)).squeeze(-1))
+
+    def forward(self, x):
+        grid = vmf.tps_grid(self.theta, torch.tensor(self.c_dst), x.shape)
+        return F.grid_sample(x, grid)
