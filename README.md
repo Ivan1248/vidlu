@@ -18,7 +18,7 @@ A deep learning library for research with emphasis on computer vision, based on 
     -   [x] high generality/customizability of components and models (deep arguments) (not completely satisfactory)
     -   [x] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)
     -   [x] extraction of intermediate outputs without changing the module (`vidlu.modules.with_intermediate_outputs`, using `register_forward_hook`)    
-    -   [x] For many elementary modules which can be invertible, the `inverse` property returns its inverse module. The inverse which is defined either via a `make_inverse` or `inverse_forward`. A `Seq` which consists of only invertible modules (like `Identity`, `Permute`, `FactorReshape`, ...) is automatically invertible.
+    -   [x] For many elementary modules which can be invertible, the `inverse` property returns its inverse module. The inverse is defined either via a `make_inverse` or `inverse_forward`. A `Seq` which consists of only invertible modules (like `Identity`, `Permute`, `FactorReshape`, ...) is automatically invertible.
     -   [x] perturbation models with parameters with batch dimension
 -   models (convolutional) with training algorithms
     -   classification
@@ -50,6 +50,8 @@ A deep learning library for research with emphasis on computer vision, based on 
     -   [x] PGD: stop on success
     -   [x] PGD: support for "adversarial training for free"
     -   [x] VAT attack
+    -   [x] perturbation models
+    -   [x] support for optimizers
     -   [ ] CW
     -   [ ] DDN (arXiv:1811.09600)
     -   [ ] Frank-Wolfe constrained optimization
