@@ -1,5 +1,7 @@
 from typing import Sequence
 from functools import partial
+import inspect
+from vidlu.utils.torch import round_float_to_int
 
 import torch
 import torch.nn.functional as F
@@ -39,6 +41,16 @@ def _complete_shape(shape_tail, input_shape):
 
 class PerturbationModel(E.Module):
     param_defaults = dict()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.forward_arg_count = 0
+        unlimited_param_kinds = (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+        for p in inspect.signature(self.forward).parameters.values():
+            self.forward_arg_count += 1
+            if p.kind not in unlimited_param_kinds:
+                self.forward_arg_count = -1
+                break
 
     def build(self, x):
         # dummy_x has properties like x, but takes up almost no memory
@@ -93,6 +105,17 @@ class PerturbationModel(E.Module):
         return self._named_members(
             lambda m: getpd(m) if isinstance(m, PerturbationModel) else iter(()),
             prefix=prefix, recurse=recurse)
+
+    def __call__(self, *args, **kwargs):
+        n = self.forward_arg_count
+        if len(args) + len(kwargs) == 1 or n == -1:
+            return super().__call__(*args, **kwargs)
+        elif len(args) <= n:
+            return (*super().__call__(*args[:n]), *args[n:], *tuple(kwargs.values()))
+        else:
+            r = n - len(args)
+            kw, unchanged = dict(tuple(kwargs.items())[:r]), tuple(kwargs.values())[r:]
+            return super().__call__(*args, **kw) + unchanged
 
 
 class SimplePerturbationModel(PerturbationModel):
@@ -177,18 +200,39 @@ class Warp(PerturbationModel):
 class MorsicTPSWarp(PerturbationModel):
     param_defaults = dict(theta=dict(value=0., bounds=[-0.5, 0.5]))
 
-    def __init__(self, grid_shape=(2, 2)):
+    def __init__(self, grid_shape=(2, 2), align_corners=True, padding_mode='zeros',
+                 label_padding_mode=-1):
         super().__init__()
-        self.grid_shape = grid_shape
 
     def build(self, x):
         k = dict(device=x.device, dtype=x.dtype)
-        self.c_dst = vmf.uniform_grid_2d(self.grid_shape, **k).view(-1, 2)
+        self.c_dst = vmf.uniform_grid_2d(self.args.grid_shape, **k).view(-1, 2)
         super().build(x)
 
     def create_default_params(self, x):
         return dict(theta=x.new_zeros((x.shape[0], self.c_dst.shape[0] + 2, 2)).squeeze(-1))
 
-    def forward(self, x):
+    def forward(self, x, y=None):
         grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
-        return F.grid_sample(x, grid)
+        k = dict(mode='bilinear', padding_mode='zeros') if 'float' in f"{x.dtype}" else dict(
+            mode='')
+        x_p = F.grid_sample(x, grid, mode='bilinear', padding_mode=self.args.padding_mode,
+                            align_corners=self.args.align_corners)
+        lpm = self.args.label_padding_mode
+        if y is None:
+            return x_p
+        elif y.dim() < 3:
+            y_p = y
+        else:
+            y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)[:, None, ...]
+            if not isinstance(lpm, str) and lpm != 0:
+                y_p = F.grid_sample(y_p - lpm, grid, mode='nearest',
+                                    padding_mode='zeros',
+                                    align_corners=self.args.align_corners).add_(lpm)
+            else:
+                y_p = F.grid_sample(y_p, grid, mode='nearest', padding_mode=lpm,
+                                    align_corners=self.args.align_corners).squeeze_(1)
+            y_p.squeeze_(1)
+            if y_p.dtype is not y.dtype:
+                y_p = round_float_to_int(y_p, y.dtype)
+        return x_p, y_p

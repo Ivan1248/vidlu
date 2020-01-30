@@ -44,11 +44,12 @@ warp_attack = partial(attacks.PerturbationModelAttack,
                       project_params=1.)
 
 morsic_tps_warp_attack = partial(attacks.PerturbationModelAttack,
-                                 pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2)),
+                                 pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2),
+                                                      label_padding_mode='zeros'),
                                  pert_model_init=lambda pmodel: pmodel.theta.uniform_(-.1, .1),
-                                 step_size=0.05,
-                                 step_count=7,  # TODO: change
-                                 project_params=.2)
+                                 step_size=0.01,
+                                 step_count=7,
+                                 project_params=.3)
 
 entmin_attack = partial(madry_cifar10_attack,
                         minimize=False,
