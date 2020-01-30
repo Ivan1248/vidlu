@@ -6,7 +6,6 @@ import vidlu.transforms.image as iti
 
 
 def prepare_label(y):
-    """ Turns the label into torch.int64"""
     if isinstance(y, np.ndarray):
         if 'float' in str(y.dtype):
             return torch.tensor(y)
