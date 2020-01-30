@@ -5,16 +5,17 @@ import torch
 from torch import optim
 
 from vidlu.data import Record
-from vidlu.modules import get_submodule, losses
+from vidlu.modules import get_submodule
 from vidlu.transforms import jitter
 from vidlu.utils.collections import NameDict
 from vidlu.utils.func import params, Empty, Missing
 from vidlu.utils.misc import dict_difference
 from vidlu.training.adversarial import attacks
 from vidlu.training.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
-import torch.nn.functional as F
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
+
+from vidlu.training.adversarial.configs import *
 
 
 # Extend output
@@ -45,42 +46,6 @@ class FineTuningOptimizerMaker:
         params_ = ([dict(params=groups[k].values(), lr=f * lr) for k, f in self.finetuning.items()]
                    + [dict(params=remaining.values())])
         return optimizer_f(params_, weight_decay=trainer.weight_decay, **kwargs)
-
-
-# Adversarial attacks
-
-madry_cifar10_attack = partial(attacks.PGDAttack,
-                               eps=8 / 255,
-                               step_size=2 / 255,
-                               grad_processing='sign',
-                               step_count=10,  # TODO: change
-                               clip_bounds=(0, 1))
-
-pert_model_attack = partial(attacks.PerturbationModelAttack,
-                            eps=8 / 255,
-                            step_size=2 / 255,
-                            grad_processing='sign',
-                            step_count=10,  # TODO: change
-                            clip_bounds=(0, 1))
-
-entmin_attack = partial(madry_cifar10_attack,
-                        minimize=False,
-                        loss=lambda logits, _: losses.entropy(logits))
-
-virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
-                                     get_prediction='hard')
-
-vat_pgd_cifar10_attack = partial(madry_cifar10_attack,
-                                 get_prediction='soft',
-                                 loss=partial(F.kl_div, reduction='batchmean'))
-
-mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
-                                    eps=0.3,
-                                    step_size=0.1,
-                                    grad_processing='sign',
-                                    step_count=40,  # TODO: change
-                                    clip_bounds=(0, 1),
-                                    stop_on_success=True)
 
 
 # Trainer configs ##################################################################################
