@@ -159,6 +159,12 @@ class ClassificationModel(DiscriminativeModel):
     pass
 
 
+class LogisticRegression(ClassificationModel):
+    __init__ = partialmethod(ClassificationModel.__init__,
+                             backbone_f=partial(M.Reshape, (-1, 1, 1)),
+                             init=partial(initialization.kaiming_resnet, module=Reserved))
+
+
 class SegmentationModel(DiscriminativeModel):
     def forward(self, x, shape='same'):
         self.set_modifiers(
