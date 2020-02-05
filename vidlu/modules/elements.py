@@ -16,7 +16,7 @@ from torch import nn
 import torch.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from vidlu.modules.utils import try_get_module_name_from_call_stack
+from vidlu.modules.utils import try_get_module_name_from_call_stack, sole_tuple_to_varargs
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
 from vidlu.utils.func import params, tryable, identity
@@ -115,10 +115,11 @@ def _buildable(*superclasses):
             """
             pass
 
-        def clone(self):
+        def clone(self, **kwargs_override):
             arguments = dict(self.args)
             args = arguments.pop('args', ())
             kwargs = arguments.pop('kwargs', {})
+            kwargs.update(**kwargs_override)
             return type(self)(*args, **arguments, **kwargs)
 
     return BuildableModExt
@@ -260,14 +261,7 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-class Seq(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
-    """
-    A wrapper around torch.nn.Seq to enable passing a dict as the only
-    parameter whereas in torch.nn.Seq only OrderedDict is accepted
-    currently.
-    It also supports slicing using strings.
-    """
-
+class MultiModule(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
     def __init__(self, *args, **kwargs):
         super().__init__(*_to_sequential_init_args(*args, **kwargs))
 
@@ -306,24 +300,31 @@ class Seq(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
         return result
 
 
-class ModuleTable(Seq):
+class Seq(MultiModule):
+    """
+    A wrapper around torch.nn.Seq to enable passing a dict as the only
+    parameter whereas in torch.nn.Seq only OrderedDict is accepted
+    currently.
+    It also supports slicing using strings.
+    """
+
     def forward(self, *input):
-        raise NotImplementedError
+        if len(self._modules) == 0 and len(input) != 1:
+            raise RuntimeError("A `Seq` with no children can only accept 1 argument.")
+        for name in self._modules:
+            input = (self._call_with_modifier(name, *input),)
+        return input[0]
+
+    def make_inverse(self):
+        result = Seq({k: m.inverse for k, m in reversed(self._modules.items())})
+        result._modifiers = self._modifiers
+        return result
 
 
 # Fork, parallel, reduction, ... ###################################################################
 
-def tuple_to_varargs_method(f):
-    @functools.wraps(f)
-    def wrapper(self, *inputs):
-        if len(inputs) == 1 and isinstance(inputs[0], tuple):  # tuple, not any sequence
-            inputs = inputs[0]
-        return f(self, *inputs)
 
-    return wrapper
-
-
-class Fork(ModuleTable):
+class Fork(MultiModule):
     def forward(self, input):
         return tuple(m(input) for m in self)
 
@@ -331,9 +332,9 @@ class Fork(ModuleTable):
         return Fork({k.m.inverse() for k, m in self.named_children()})
 
 
-class Parallel(ModuleTable):
-    @tuple_to_varargs_method
+class Parallel(MultiModule):
     def forward(self, *inputs):
+        inputs = sole_tuple_to_varargs(inputs)
         if len(self) == 1:
             return [self[0](x) for x in inputs]
         elif len(inputs) != len(self):
@@ -343,13 +344,47 @@ class Parallel(ModuleTable):
         return tuple(m(x) for m, x in zip(self, inputs))
 
 
+# class TuplePack(MultiModule):
+#     def forward(self, input):
+#         return (input,)
+#
+# class TupleUnpack(MultiModule):
+#     def forward(self, input):
+#         if not len(input)==1:
+#             raise RuntimeError("The input should be a single-element tuple.")
+#         return input[0]
+
+
+class Merge(nn.Module):
+    def forward(self, *inputs):
+        inputs = sole_tuple_to_varargs(inputs)
+        result = []
+        for x in inputs:
+            (result.extend if isinstance(x, tuple) else result.append)(x)
+        return tuple(result)
+
+
+class TupleSplit(nn.Module):
+    def __init__(self, split_indices):
+        super().__init__()
+
+    def forward(self, x):
+        result = []
+        last_si = 0
+        for si in self.args.split_indices:
+            result.append(x[last_si:si])
+            last_si = si
+        result.append(x[self.args.split_indices[-1]:])
+        return tuple(result)
+
+
 class Reduce(Module):
     def __init__(self, func):
         self.func = func
         super().__init__()
 
-    @tuple_to_varargs_method
     def forward(self, *inputs):
+        inputs = sole_tuple_to_varargs(inputs)
         return reduce(self.func, inputs[1:], inputs[0].clone())
 
 
@@ -369,12 +404,12 @@ def pasum(x):
     return x[0]
 
 
-class Sum(Module):
+class Sum(Module):  # TODO: rename to "Add"
     def __init__(self):
         super().__init__()
 
-    @tuple_to_varargs_method
     def forward(self, *inputs):
+        inputs = sole_tuple_to_varargs(inputs)
         shape = inputs[0].shape
         for oo in inputs[1:]:
             if oo.shape != shape:
@@ -392,8 +427,8 @@ class Concat(Module):
     def __init__(self, dim=1):
         super().__init__()
 
-    @tuple_to_varargs_method
     def forward(self, *inputs):
+        inputs = sole_tuple_to_varargs(inputs)
         return torch.cat(inputs, self.args.dim)
 
 

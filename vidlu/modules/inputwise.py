@@ -5,9 +5,11 @@ from vidlu.utils.torch import round_float_to_int
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
+from vidlu.modules.utils import sole_tuple_to_varargs
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -42,15 +44,19 @@ def _complete_shape(shape_tail, input_shape):
 class PerturbationModel(E.Module):
     param_defaults = dict()
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, forward_arg_count=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.forward_arg_count = 0
-        unlimited_param_kinds = (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
-        for p in inspect.signature(self.forward).parameters.values():
-            self.forward_arg_count += 1
-            if p.kind not in unlimited_param_kinds:
-                self.forward_arg_count = -1
-                break
+        if forward_arg_count is None:
+            self.forward_arg_count = 0
+            unlimited_param_kinds = (
+                inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+            for p in inspect.signature(self.forward).parameters.values():
+                self.forward_arg_count += 1
+                if p.kind in unlimited_param_kinds:
+                    self.forward_arg_count = -1
+                    break
+        else:
+            self.forward_arg_count = forward_arg_count
 
     def build(self, x):
         # dummy_x has properties like x, but takes up almost no memory
@@ -60,10 +66,24 @@ class PerturbationModel(E.Module):
         for k, v in default_params.items():
             setattr(self, k, BatchParameter(v, requires_grad=True))
 
-    def create_default_params(self, x):
-        raise NotImplementedError(f"{type(self)}")
+    def __call__(self, *args, **kwargs):
+        args = sole_tuple_to_varargs(args)
+        n = self.forward_arg_count
+        if len(args) + len(kwargs) == 1 or n == -1:  # everything fits
+            result = super().__call__(*args, **kwargs)
+        elif len(args) >= n:  # args don't fit
+            result = (super().__call__(args[0]),) if n == 1 else super().__call__(*args[:n])
+            result += (*args[n:], *tuple(kwargs.values()))
+        else:  # kwargs don't fit
+            r = n - len(args)
+            kw, unchanged = dict(tuple(kwargs.items())[:r]), tuple(kwargs.values())[r:]
+            result = super().__call__(*args, **kw) + unchanged
+        return result
 
-    def default_parameters(self, full_size, recurse=True):
+    def create_default_params(self, x):
+        return dict()
+
+    def default_parameters(self, full_size: bool, recurse=True):
         r"""Returns an iterator over default module parameters.
 
         Args:
@@ -82,7 +102,7 @@ class PerturbationModel(E.Module):
         for _, param in self.named_default_parameters(full_size=full_size, recurse=recurse):
             yield param
 
-    def named_default_parameters(self, full_size, prefix='', recurse=True):
+    def named_default_parameters(self, full_size: bool, prefix='', recurse=True):
         r"""Returns an iterator over just created default module parameters,
         yielding both the name of the default parameter and the parameter.
 
@@ -100,22 +120,38 @@ class PerturbationModel(E.Module):
         Yields:
             (string, Tensor): Tuple containing the name and parameter
         """
-        getpd = ((lambda m: m.create_default_params(self.dummy_x).items()) if full_size
+        getpd = ((lambda m: m.create_default_params(m.dummy_x).items()) if full_size
                  else (lambda m: ((k, v['value']) for k, v in m.param_defaults.items())))
         return self._named_members(
             lambda m: getpd(m) if isinstance(m, PerturbationModel) else iter(()),
             prefix=prefix, recurse=recurse)
 
-    def __call__(self, *args, **kwargs):
-        n = self.forward_arg_count
-        if len(args) + len(kwargs) == 1 or n == -1:
-            return super().__call__(*args, **kwargs)
-        elif len(args) <= n:
-            return (*super().__call__(*args[:n]), *args[n:], *tuple(kwargs.values()))
-        else:
-            r = n - len(args)
-            kw, unchanged = dict(tuple(kwargs.items())[:r]), tuple(kwargs.values())[r:]
-            return super().__call__(*args, **kw) + unchanged
+    def reset_parameters(self):
+        for (name, data), (name_, def_value) in zip(self.named_parameters(),
+                                                    self.named_default_parameters(True)):
+            assert name == name_
+            data.set_(def_value)
+
+
+def default_parameters(pert_model, full_size: bool, recurse=True):
+    return PerturbationModel.default_parameters(pert_model, full_size, recurse=recurse)
+
+
+def named_default_parameters(pert_model, full_size: bool, recurse=True):
+    return PerturbationModel.named_default_parameters(pert_model, full_size, recurse=recurse)
+
+
+def reset_parameters(pert_model):
+    PerturbationModel.reset_parameters(pert_model)
+
+
+class PerturbationModelWrapper(PerturbationModel):
+    def __init__(self, module_f, forward_arg_count=None):
+        super().__init__(forward_arg_count=forward_arg_count)
+        self.module = module_f if isinstance(module_f, nn.Module) else module_f()
+
+    def forward(self, *args, **kwargs):
+        return self.module(*args, **kwargs)
 
 
 class SimplePerturbationModel(PerturbationModel):
@@ -201,6 +237,7 @@ class MorsicTPSWarp(PerturbationModel):
     param_defaults = dict(theta=dict(value=0., bounds=[-0.5, 0.5]))
 
     def __init__(self, grid_shape=(2, 2), align_corners=True, padding_mode='zeros',
+                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
                  label_padding_mode=-1):
         super().__init__()
 
@@ -216,7 +253,8 @@ class MorsicTPSWarp(PerturbationModel):
         grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
         k = dict(mode='bilinear', padding_mode='zeros') if 'float' in f"{x.dtype}" else dict(
             mode='')
-        x_p = F.grid_sample(x, grid, mode='bilinear', padding_mode=self.args.padding_mode,
+        x_p = F.grid_sample(x, grid, mode=self.args.interpolation_mode,
+                            padding_mode=self.args.padding_mode,
                             align_corners=self.args.align_corners)
         lpm = self.args.label_padding_mode
         if y is None:
@@ -224,15 +262,20 @@ class MorsicTPSWarp(PerturbationModel):
         elif y.dim() < 3:
             y_p = y
         else:
-            y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)[:, None, ...]
+            y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)
+            no_channel_dim = y.dim() == 3
+            if no_channel_dim:
+                y_p = y_p[:, None, ...]
             if not isinstance(lpm, str) and lpm != 0:
-                y_p = F.grid_sample(y_p - lpm, grid, mode='nearest',
+                y_p = F.grid_sample(y_p - lpm, grid, mode=self.args.label_interpolation_mode,
                                     padding_mode='zeros',
                                     align_corners=self.args.align_corners).add_(lpm)
             else:
-                y_p = F.grid_sample(y_p, grid, mode='nearest', padding_mode=lpm,
+                y_p = F.grid_sample(y_p, grid, mode=self.args.label_interpolation_mode,
+                                    padding_mode=lpm,
                                     align_corners=self.args.align_corners).squeeze_(1)
-            y_p.squeeze_(1)
+            if no_channel_dim:
+                y_p.squeeze_(1)
             if y_p.dtype is not y.dtype:
                 y_p = round_float_to_int(y_p, y.dtype)
         return x_p, y_p
