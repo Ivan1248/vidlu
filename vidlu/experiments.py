@@ -119,8 +119,8 @@ class TrainingExperiment:
         a = training_args
         with indent_print("Selecting device..."):
             if a.device is None:
-                a.device = torch.device("cuda:0")
-                #a.device = torch.device(
+                a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+                # a.device = torch.device(
                 #    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
             print(f"device: {a.device}")
         with indent_print('Initializing data...'):
