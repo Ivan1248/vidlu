@@ -81,7 +81,7 @@ class AttackState:
     x: torch.Tensor
     y: torch.Tensor
     x_adv: torch.Tensor
-    y_: torch.Tensor
+    y_adv: torch.Tensor
     output: torch.Tensor
     loss: torch.Tensor
     loss_sum: float
@@ -573,6 +573,7 @@ def perturb_iterative_with_perturbation_model(
     pmodel = pert_model or vmi.Additive(())
     pmodel(x)  # initialize perturbation model (parameter shapes have to be inferred from x)
     pmodel.train()
+
     optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
     project_params = project_params or (lambda _: None)
 
@@ -603,7 +604,7 @@ def perturb_iterative_with_perturbation_model(
         # print(i, pmodel.gamma.grad.abs().mean(), pmodel.gamma.unique())
 
         state = AttackState(
-            x=x, y=y, output=output, x_adv=x_adv, y_=y_, loss=unred_loss,
+            x=x, y=y, output=output, x_adv=x_adv, y_adv=y_, loss=unred_loss,
             loss_sum=loss_no_mask.item(), reg_loss_sum=reg_loss.item(), grad=None, step=i,
             pert_model=pmodel)
         backward_callback(state)
@@ -617,8 +618,9 @@ def perturb_iterative_with_perturbation_model(
 
             optim.step()
             project_params(pmodel)
-            if clip_bounds is not None and torch.any(x_adv.clamp_(*clip_bounds) != x_adv):
-                warnings.warn(f"The perturbed input has values out of bounds {clip_bounds}.")
+
+            if clip_bounds is not None:
+                x_adv.clamp_(*clip_bounds)
 
         if stop_on_success:
             x, y, x_adv = storage
@@ -720,14 +722,15 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
 
             def project_params(pmodel):
                 params = pmodel.named_parameters()
-                default_vals = pmodel.named_default_parameters(full_size=False)
+                default_vals = vmi.named_default_parameters(pmodel, full_size=False)
                 for (name, p), (name_, d) in zip(params, default_vals):
                     assert name == name_  # TODO: remove
                     p.clamp_(min=d - eps, max=d + eps)
 
             self.project_params = project_params
 
-    def _perturb(self, model, x, y=None, pert_model=None, init_pert_model=True, backward_callback=None):
+    def _perturb(self, model, x, y=None, pert_model=None, init_pert_model=True,
+                 backward_callback=None):
         with torch.no_grad():
             if pert_model is None:
                 pert_model = self.pert_model_f()
