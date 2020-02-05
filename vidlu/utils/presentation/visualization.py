@@ -249,7 +249,7 @@ def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
 
     def get_frame(img, lab, img_adv, pred):
         fuse = lambda im, seg: fuse_images(im, colorize_segmentation(seg + 1, colors), 0.2)
-        return compose([[img, img_adv], [fuse(img, lab), fuse(img_adv, pred)]])
+        return compose([[img, img_adv], [fuse(img_adv, lab), fuse(img_adv, pred)]])
 
     from PIL import Image
     print("Saving predictions")
@@ -263,7 +263,7 @@ def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
             import torch
             with torch.no_grad():
                 y = model(s.x).argmax(1)
-                args = [s.x.permute(0, 2, 3, 1), y, s.x_adv.permute(0, 2, 3, 1), s.output.argmax(1)]
+                args = [s.x.permute(0, 2, 3, 1), s.y_adv, s.x_adv.permute(0, 2, 3, 1), s.output.argmax(1)]
                 args = [a[0].detach().cpu().numpy() for a in args]
                 x = get_frame(*args)
                 im = np.round(x * 255).astype('uint8')
