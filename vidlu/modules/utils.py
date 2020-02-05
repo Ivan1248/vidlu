@@ -109,3 +109,7 @@ def eval_no_param_grad(*modules):
 
 
 func_to_module_class = partial(func_to_class, superclasses=nn.Module, method_name='forward')
+
+
+def sole_tuple_to_varargs(inputs):  # tuple, not any sequence type
+    return inputs[0] if len(inputs) == 1 and isinstance(inputs[0], tuple) else inputs
