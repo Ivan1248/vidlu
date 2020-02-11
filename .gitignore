@@ -141,6 +141,9 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# other files
+# other/
+
 # PyBuilder
 target/
 
@@ -181,8 +184,9 @@ venv.bak/
 
 # End of https://www.gitignore.io/api/python,pycharm+all,jupyternotebook
 
-# vscode
+# vscode, vs
 .vscode/
+.vs/
 
 
 # other

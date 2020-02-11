@@ -1,0 +1,59 @@
+inplace relu
+checkpoint
+pds.top_level_items
+center_crop poslije normalizacije
+
+x oblikovanje komponenti za algoritme učenja i njihovo parsiranje
+x evaluacijske metrike
+
+x Reproducirati CIFAR za ResNet
+x Reproducirati CIFAR za Densenet
+
+x nastavak učenja od checkpointa
+x spremanje informacija o učenju
+o Densenet RelU na kraju značajki
+x spremanje / učitavanje modela za resnet i densenet
+x inicijalizacija Imagenetom
+
+o usrednjavanje gradijenata po grupi
+
+
+o Reproducirati SwiftNet na Cityscapesu
+o Reproducirati Ladder-Densenet na Cityscapesu
+
+o Isprobati da samo zadnji dio mreže bude stohastičan
+
+o Reproducirati jedan članak s prepoznavanjem anomalija autoenkoderom
+
+o VAT
+o Lee, GAN
+o Petrin sustav za pseudolabeling
+
+x neprijateljski napadi
+x neprijateljsko učenje
+
+o isprobati pažnju ili pametniji pooling kod klasifikacije -- može biti korisno kod neprijateljskog učenja
+
+o logger umjesto verbisityja
+
+o umjesto dopunskog BN-a, u gubitkom neprijateljskih primjera poticati statistike kao kod čistih primjera
+o učiti razlikovati neprijateljske primjere od priordnih kod neprijateljskog učenja (slično kao sectretly generative classifier), usporediti dodatnu glavu s logsumexp-om<
+  - PGD raditi tako da naprijetaljski primjer ne bude prejak radi stabilnosti učenja
+o multiplikativni šum
+o PGD sa šumom u svakom koraku kao kod SGLD-a
+o pomoćni klasifikator koji prepoznaje koji dijelovi su previše izmijenjeni (nejednoznačni). Kako?
+o pogledati kakva je entropija na krivo segmentiranim dijelovima slike kod robusnog klasifikatora
+o cityscapes robusna inicijalizacija nep. učenje
+o mIoU po klasama
+o multiscale
+o VAT - segmentacija
+o VAT - gusto na klasifikaciji
+o tablica: obični, slučajno, imagenet, robusni imagenet
+o prepoznavanje OOD-a na robusnim modelima,ODIN
+o VAT citsycapes
+o prijateljski (ili miješani) VAT - prijateljski primjer i originalni primjer moraju imati što sličniju predikciju (Na koji se blokira gradijent?)
+o sumjerljivost normi perturbacije u ovisn
+o test (free) adversarial training with warm start
+o AT s ranim zaustavljanjem bez projekcije
+o dubina
+o stabilniji CD uz veće pert. u neg. fazi
