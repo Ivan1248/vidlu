@@ -95,6 +95,11 @@ adversarial = TrainerConfig(
     eval_step=ts.AdversarialEvalStep(),
     train_step=ts.AdversarialTrainStep())
 
+adversarial_combined = TrainerConfig(
+    te.AdversarialTraining,
+    eval_step=ts.AdversarialEvalStep(),
+    train_step=ts.AdversarialCombinedLossTrainStep())
+
 adversarial_free = TrainerConfig(
     te.AdversarialTraining,
     eval_step=ts.AdversarialEvalStep(),
