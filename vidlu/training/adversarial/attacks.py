@@ -17,6 +17,7 @@ from vidlu import ops
 from vidlu.utils.misc import Event
 import vidlu.modules.inputwise as vmi
 import vidlu.optim as vo
+import vidlu.utils.torch as vut
 
 
 # Prediction transformations #######################################################################
@@ -106,6 +107,16 @@ _to_target_wiki = dict(
 
 # Attack ###########################################################################################
 
+
+@torch.no_grad()
+def _perturbation_model_from_perturbation(pert_or_x_adv, x=None):
+    pert = pert_or_x_adv - x if x is not None else pert_or_x_adv
+    pert_model = vmi.Additive(())
+    pert_model(pert)
+    pert_model.addend.set_(pert)
+    return pert_model
+
+
 @dataclass
 class Attack:
     """Adversarial attack (input attack) base class.
@@ -133,10 +144,41 @@ class Attack:
     to_virtual_target: Union[Callable, str] = _to_hard_target
 
     on_virtual_label_computed = Event()
+    compute_model_grads: bool = False
 
     def __post_init__(self):
         if isinstance(self.to_virtual_target, str):
             self.to_virtual_target = _to_target_wiki[self.to_virtual_target]
+
+    def __call__(self, model, x, y=None, output=None, **kwargs):
+        """Generates an adversarial perturbation model.
+
+        `attack(model, x, y)(x)` should give the same result as
+        `attack.perturb(model, x, y)`.
+
+        Args:
+            model (Module): model.
+            x (Tensor): input tensor.
+            y (Tensor, optional): target/label tensor. If `None`, the prediction
+                obtained from `self.to_virtual_target(output)` is used as the
+                label.
+            output (Tensor, optional): output for use as a target. If `None`
+                it is obtained by calling `model(x)` (and then transformad with
+                `self.to_virtual_target`).
+
+        Return:
+            (torch.nn.Module) An adversarial perturbation model with paameters
+        """
+
+        if y is None:
+            y = self._get_virtual_target(model, output, x)
+        if type(self)._get_perturbation is not Attack._get_perturbation:
+            pert = self._get_perturbation(model, x, y=y, **kwargs)
+            return (_perturbation_model_from_perturbation(pert) if isinstance(pert, torch.Tensor)
+                    else pert)
+        elif type(self)._perturb is not Attack._perturb:
+            x_adv = self._perturb(model, x, y=y, **kwargs)
+            return _perturbation_model_from_perturbation(x_adv, x)
 
     def perturb(self, model, x, y=None, output=None, **kwargs):
         """Generates an adversarial example.
@@ -155,15 +197,18 @@ class Attack:
             Perturbed input.
         """
         if y is None:
-            with torch.no_grad():
-                output = model(x) if output is None else output
-                y = self.to_virtual_target(output)
-                self.on_virtual_label_computed(dict(output=output, y=y))
-        x_adv = self._perturb(model, x.detach(), y.detach(), **kwargs)
-        if self.clip_bounds is not None:
-            x_adv = self._clip(x_adv)
+            y = self._get_virtual_target(model, output, x)
+        if type(self)._perturb is not Attack._perturb:
+            return self._perturb(model, x, y=y, **kwargs)
+        elif type(self)._get_perturbation is not Attack._get_perturbation:
+            return self._get_perturbation(model, x, y=y, **kwargs)(x)
 
-        return x_adv
+    def _get_virtual_target(self, model, output, x):
+        with torch.no_grad():
+            output = model(x) if output is None else output
+            y = self.to_virtual_target(output)
+            self.on_virtual_label_computed(dict(output=output, y=y))
+            return y
 
     def _get_output_and_loss_s_and_grad(self, model, x, y=None):
         x.requires_grad_()
@@ -179,6 +224,10 @@ class Attack:
         # has to be implemented in subclasses
         raise NotImplementedError()
 
+    def _get_perturbation(self, model, x, y=None, output=None, **kwargs):
+        # has to be implemented in subclasses
+        raise NotImplementedError()
+
 
 @dataclass
 class EarlyStoppingMixin:
@@ -191,7 +240,8 @@ class DummyAttack(Attack):
         output, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         if backward_callback is not None:
             backward_callback(
-                AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s.item(), grad=grad))
+                AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s.item(), grad=grad,
+                            loss=None, reg_loss_sum=0))
         return x
 
 
@@ -208,7 +258,7 @@ class GradientSignAttack(Attack):
     def _perturb(self, model, x, y=None):
         output, _, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         with torch.no_grad:
-            return x + self.eps * grad.sign()
+            return self._clip(x + self.eps * grad.sign())
 
 
 @torch.no_grad()
@@ -261,7 +311,7 @@ def zero_grad(delta):
 
 
 def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
-                      delta_init=None, clip_bounds=(0, 1), similar=None, backward_callback=None):
+                      initial_pert=None, clip_bounds=(0, 1), similar=None, backward_callback=None):
     """Iteratively optimizes the loss over the input.
 
     Args:
@@ -275,7 +325,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
             step.
         loss: a loss function.
         minimize (bool): Whether the attack should minimize the loss.
-        delta_init (optional): Initial delta.
+        initial_pert (optional): Initial perturbation.
         clip_bounds (optional): Minimum and maximum input value pair.
         similar (optional): a function that tells whether the attack is
             successful example-wise based on the predictions and the true
@@ -293,7 +343,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
     loss_fn, rloss_fn = loss if isinstance(loss, Sequence) else (loss, None)
     backward_callback = backward_callback or (lambda _: None)
 
-    delta = torch.zeros_like(x) if delta_init is None else delta_init.detach().clone()
+    delta = torch.zeros_like(x) if initial_pert is None else initial_pert.detach().clone()
     delta.requires_grad_()
 
     if stop_on_success:  # store arrays because they shrink as attacks succeed
@@ -501,7 +551,8 @@ def perturb_iterative_with_perturbation_model_hacky(
                 p.set_(p_all)
 
     pmodel.eval()
-    return pmodel, pmodel(x)
+    with torch.no_grad():
+        return pmodel, pmodel(x)
 
 
 def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
@@ -529,7 +580,7 @@ def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
 def perturb_iterative_with_perturbation_model(
         model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
         project_params=None, clip_bounds=(0, 1), similar=None, masking_mode='loss',
-        backward_callback=None):
+        backward_callback=None, compute_model_grads=False):
     """Iteratively optimizes the loss over the input.
     Compared to `perturb_iterative`, uses an optimizer instead of an update
     function and stopping on success (when `similar` is provided) does not
@@ -566,6 +617,7 @@ def perturb_iterative_with_perturbation_model(
     Returns:
         The perturbation model.
     """
+
     stop_on_success = similar is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
@@ -592,14 +644,15 @@ def perturb_iterative_with_perturbation_model(
             x, x_adv = [a[index] for a in (x, x_adv)]
             y, y_ = (y[index],) * 2 if y_ is y else (a[index] for a in (y, y_))
 
-        output = model(x_adv)
-        unred_loss = loss_fn(output, y_)
-        loss, reg_loss, loss_no_mask = _reduce_losses(
-            unred_loss=unred_loss,
-            unred_reg_loss=reg_loss_fn(pmodel, x, y_, x_adv, output) if reg_loss_fn else None,
-            nonadv_mask=nonadv_mask)
-        optim.zero_grad()
-        ((loss if minimize else -loss) + reg_loss).backward()  # minimized
+        with vut.switch_requires_grad(model, compute_model_grads):
+            output = model(x_adv)
+            unred_loss = loss_fn(output, y_)
+            loss, reg_loss, loss_no_mask = _reduce_losses(
+                unred_loss=unred_loss,
+                unred_reg_loss=reg_loss_fn(pmodel, x, y_, x_adv, output) if reg_loss_fn else None,
+                nonadv_mask=nonadv_mask)
+            optim.zero_grad()
+            ((loss if minimize else -loss) + reg_loss).backward()  # minimized
 
         # print(i, pmodel.gamma.grad.abs().mean(), pmodel.gamma.unique())
 
@@ -628,7 +681,7 @@ def perturb_iterative_with_perturbation_model(
                 break
 
     pmodel.eval()
-    return pmodel, x_adv.detach()
+    return pmodel
 
 
 # Attacks ##########################################################################################
@@ -683,20 +736,20 @@ class PGDAttackOld(EarlyStoppingMixin, Attack):
     rand_init: bool = True
     p: float = np.inf
 
-    def _perturb(self, model, x, y=None, delta_init=None, backward_callback=None):
-        if delta_init is None:
-            delta_init = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
-                          else torch.zeros_like(x))
+    def _perturb(self, model, x, y=None, initial_pert=None, backward_callback=None):
+        if initial_pert is None:
+            initial_pert = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
+                            else torch.zeros_like(x))
 
         update = PGDUpdate(step_size=self.step_size, eps=self.eps,
                            grad_processing=self.grad_processing, project_or_p=self.p)
         delta = perturb_iterative(
             model, x, y, step_count=self.step_count, update=update, loss=self.loss,
-            minimize=self.minimize, delta_init=delta_init, clip_bounds=self.clip_bounds,
+            minimize=self.minimize, initial_pert=initial_pert, clip_bounds=self.clip_bounds,
             similar=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback)
 
-        return x + delta
+        return self._clip(x + delta)
 
 
 @dataclass
@@ -729,8 +782,8 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
 
             self.project_params = project_params
 
-    def _perturb(self, model, x, y=None, pert_model=None, init_pert_model=True,
-                 backward_callback=None):
+    def _get_perturbation(self, model, x, y=None, pert_model=None, init_pert_model=True,
+                          backward_callback=None):
         with torch.no_grad():
             if pert_model is None:
                 pert_model = self.pert_model_f()
@@ -740,13 +793,11 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
 
         optim_f = partial(self.optim_f, lr=self.step_size)
 
-        pmodel, x_adv = perturb_iterative_with_perturbation_model(
+        return perturb_iterative_with_perturbation_model(
             model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
             minimize=self.minimize, pert_model=pert_model, project_params=self.project_params,
             clip_bounds=self.clip_bounds, similar=self.similar if self.stop_on_success else None,
-            backward_callback=backward_callback)
-
-        return x_adv
+            backward_callback=backward_callback, compute_model_grads=self.compute_model_grads)
 
 
 @dataclass
@@ -784,13 +835,13 @@ class PGDAttack(EarlyStoppingMixin, Attack):
             pert_model_f=partial(vmi.Additive, ()), pert_model_init=self._pert_model_init,
             project_params=self._project_params)
 
-    def _perturb(self, model, x, y=None, delta_init=None, backward_callback=None):
-        perturb = partial(self._base._perturb, model, x, y, backward_callback=backward_callback)
-        if delta_init is not None:
+    def _get_perturbation(self, model, x, y=None, initial_pert=None, backward_callback=None):
+        p = partial(self._base._get_perturbation, model, x, y, backward_callback=backward_callback)
+        if initial_pert is not None:
             pert_model = vmi.Additive(())
-            pert_model.addend.data = delta_init
-            return perturb(pert_model)
-        return perturb()
+            pert_model.addend.data = initial_pert
+            return p(pert_model)
+        return p()
 
 
 @dataclass
@@ -814,17 +865,17 @@ class VATAttack(Attack):
     to_virtual_target: Callable = _to_soft_target
     loss: Callable = dc.field(default_factory=KLDivLossWithLogits)
 
-    # TODO: set default CIFAR eps, xi and delta_init
+    # TODO: set default CIFAR eps, xi and initial_pert
     eps: float = 10  # * 448/32
     xi: float = 1e-6  # * 448/32
     step_count: int = 1
     p: Number = 2
 
     def _perturb(self, model, x, y=None, backward_callback=None):
-        delta_init = rand_init_delta(x, self.p, self.xi, self.clip_bounds)
+        initial_pert = rand_init_delta(x, self.p, self.xi, self.clip_bounds)
         update = VATUpdate(xi=self.xi, eps=self.eps, p=self.p)
         delta = perturb_iterative(model, x, y, step_count=self.step_count, update=update,
-                                  loss=self.loss, minimize=self.minimize, delta_init=delta_init,
+                                  loss=self.loss, minimize=self.minimize, initial_pert=initial_pert,
                                   clip_bounds=self.clip_bounds, backward_callback=backward_callback)
         delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)
         return x + delta

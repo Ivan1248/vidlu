@@ -51,7 +51,7 @@ morsic_tps_warp_attack = partial(attacks.PerturbationModelAttack,
                                  pert_model_init=lambda pmodel: vmi.reset_parameters(pmodel),
                                  step_size=0.01,
                                  step_count=7,
-                                 project_params=.3)  # TODO: semantic segmentation
+                                 project_params=.2)  # TODO: semantic segmentation
 
 entmin_attack = partial(madry_cifar10_attack,
                         minimize=False,

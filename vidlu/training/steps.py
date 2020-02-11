@@ -253,7 +253,7 @@ class AdversarialCombinedLossTrainStep:
         virtual (bool): A value determining whether virtual adversarial examples
             should be used (using the predicted label).
     """
-    use_attack_loss: bool
+    use_attack_loss: bool = False
     clean_weight: float = 0.5
     adv_weight: float = None
     virtual: bool = False
@@ -273,6 +273,7 @@ class AdversarialCombinedLossTrainStep:
         loss_c = trainer.loss(output_c, y).mean()
         output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
         loss_adv = (trainer.attack if self.use_attack_loss else trainer).loss(output_adv, y).mean()
+
         do_optimization_step(trainer.optimizer,
                              loss=self.clean_weight * loss_c + self.adv_weight * loss_adv)
 
@@ -336,7 +337,7 @@ class AdversarialTrainMultiStep:
         with batchnorm_stats_tracking_off(trainer.model) if self.train_mode else ctx_suppress():
             perturb = trainer.attack.perturb
             if self.reuse_pert:
-                perturb = partial(perturb, delta_init=self.last_pert)
+                perturb = partial(perturb, initial_pert=self.last_pert)
             x_adv = perturb(trainer.model, x, None if self.virtual else y, backward_callback=step)
             if self.reuse_pert:
                 self.last_pert = x_adv - x
