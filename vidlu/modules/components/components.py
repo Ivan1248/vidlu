@@ -653,7 +653,7 @@ class MDenseTransition(E.Seq):
     def build(self, x):
         a = self.args
         out_channels = round(sum(y.shape[1] for y in x) * a.compression)
-        starts = E.Parallel([Seq() for _ in range(len(x))])
+        starts = E.Parallel([E.Seq() for _ in range(len(x))])
         for s in starts:
             s.add_modules(norm=a.norm_f(),
                           act=a.act_f())
