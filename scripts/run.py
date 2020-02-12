@@ -22,10 +22,6 @@ def train(args):
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
         rseed(seed)
 
-    if args.debug:
-        print("Debug: Autograd anomaly detection on.")
-        torch.autograd.set_detect_anomaly(True)
-
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
@@ -48,6 +44,11 @@ def train(args):
     e.cpman.remove_old_checkpoints()
 
     print(f'Trained model saved in {e.cpman.experiment_dir}')
+
+def path(args):
+    e = TrainingExperiment.from_args(
+        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+    print(e.cpman.experiment_dir)
 
 
 def test(args):
@@ -108,6 +109,7 @@ def add_standard_arguments(parser, func):
                         help="RNG seed. Default: `int(time()) % 100`.")
     # reporting, debugging
     parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
+    parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.", action='store_true')
     parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=1)
     parser.set_defaults(func=func)
 
@@ -117,6 +119,9 @@ subparsers = parser.add_subparsers()
 
 parser_train = subparsers.add_parser("train")
 add_standard_arguments(parser_train, train)
+
+parser_train = subparsers.add_parser("path")
+add_standard_arguments(parser_train, path)
 
 parser_test = subparsers.add_parser("test")
 add_standard_arguments(parser_test, test)
@@ -128,5 +133,23 @@ args = parser.parse_args()
 
 with indent_print("Arguments:"):
     print(args)
+
+if args.debug:
+    print("Debug: Autograd anomaly detection on.")
+    torch.autograd.set_detect_anomaly(True)
+
+if args.warnings_as_errors:
+    import traceback
+    import warnings
+    import sys
+
+    def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
+        log = file if hasattr(file, 'write') else sys.stderr
+        traceback.print_stack(file=log)
+        log.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+    warnings.showwarning = warn_with_traceback
+    #warnings.simplefilter("always")
+
 
 args.func(args)
