@@ -11,6 +11,8 @@ import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
 
+import dataclasses as dc
+
 
 class BatchParameter(torch.nn.Parameter):
     r"""A kind of Tensor that is to be considered a batch of parameters, i.e.
@@ -44,8 +46,8 @@ def _complete_shape(shape_tail, input_shape):
 class PerturbationModel(E.Module):
     param_defaults = dict()
 
-    def __init__(self, *args, forward_arg_count=None, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, forward_arg_count=None):
+        super().__init__()
         if forward_arg_count is None:
             self.forward_arg_count = 0
             unlimited_param_kinds = (
@@ -146,9 +148,9 @@ def reset_parameters(pert_model):
 
 
 class PerturbationModelWrapper(PerturbationModel):
-    def __init__(self, module_f, forward_arg_count=None):
+    def __init__(self, module, forward_arg_count=None):
         super().__init__(forward_arg_count=forward_arg_count)
-        self.module = module_f if isinstance(module_f, nn.Module) else module_f()
+        self.module = module
 
     def forward(self, *args, **kwargs):
         return self.module(*args, **kwargs)
@@ -165,8 +167,8 @@ class SimplePerturbationModel(PerturbationModel):
         shape = list(x.shape)
         for d in self.args.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
-        dum = x.new_zeros(()).expand(shape)
-        return {k: _get_param(dum, self.param_defaults[k]['value'])
+        dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
+        return {k: _get_param(dummy, self.param_defaults[k]['value'])
                 for k, v in self.param_defaults.items()}
 
     # def difference_from_default_params(self):
@@ -231,6 +233,54 @@ class Warp(PerturbationModel):
 
     def forward(self, x):
         return vmf.warp(x, self.flow, **self.args)
+
+
+class MorsicTPSWarp(PerturbationModel):
+    param_defaults = dict(theta=dict(value=0., bounds=[-0.5, 0.5]))
+
+    def __init__(self, grid_shape=(2, 2), align_corners=True, padding_mode='zeros',
+                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
+                 label_padding_mode=-1):
+        super().__init__()
+
+    def build(self, x):
+        k = dict(device=x.device, dtype=x.dtype)
+        self.c_dst = vmf.uniform_grid_2d(self.args.grid_shape, **k).view(-1, 2)
+        super().build(x)
+
+    def create_default_params(self, x):
+        return dict(theta=x.new_zeros((x.shape[0], self.c_dst.shape[0] + 2, 2)).squeeze(-1))
+
+    def forward(self, x, y=None):
+        grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
+        k = dict(mode='bilinear', padding_mode='zeros') if 'float' in f"{x.dtype}" else dict(
+            mode='')
+        x_p = F.grid_sample(x, grid, mode=self.args.interpolation_mode,
+                            padding_mode=self.args.padding_mode,
+                            align_corners=self.args.align_corners)
+        lpm = self.args.label_padding_mode
+        if y is None:
+            return x_p
+        elif y.dim() < 3:
+            y_p = y
+        else:
+            y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)
+            no_channel_dim = y.dim() == 3
+            if no_channel_dim:
+                y_p = y_p[:, None, ...]
+            if not isinstance(lpm, str) and lpm != 0:
+                y_p = F.grid_sample(y_p - lpm, grid, mode=self.args.label_interpolation_mode,
+                                    padding_mode='zeros',
+                                    align_corners=self.args.align_corners).add_(lpm)
+            else:
+                y_p = F.grid_sample(y_p, grid, mode=self.args.label_interpolation_mode,
+                                    padding_mode=lpm,
+                                    align_corners=self.args.align_corners).squeeze_(1)
+            if no_channel_dim:
+                y_p.squeeze_(1)
+            if y_p.dtype is not y.dtype:
+                y_p = round_float_to_int(y_p, y.dtype)
+        return x_p, y_p
 
 
 class MorsicTPSWarp(PerturbationModel):

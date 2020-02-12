@@ -41,6 +41,23 @@ def clamp(x, min, max, inplace=False):
     return torch.min(torch.max(x, min, out=out), max, out=out)
 
 
+def random_uniform_(x, from_, to, generator=None):
+    """Like `torch.tensor.unifom_` but works with `from_` and `to` being a pair
+    of arrays describing a hypercube.
+
+    Args:
+        x: input array.
+        from_ (Tensor or float): lower bound.
+        to (Tensor or float): upper bound.
+
+    Returns:
+        An array with values bounded with `min` and `max`.
+    """
+    if not isinstance(from_, torch.Tensor):
+        return x.uniform_(from_, to, generator=generator)
+    return x.uniform_(generator=generator).mul_(to - from_).add_(from_)
+
+
 def project_to_1_ball(x, max_norm=1, inplace=False):
     """from https://gist.github.com/daien/1272551"""
     sign = x.sign()
