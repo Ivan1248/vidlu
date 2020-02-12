@@ -71,6 +71,8 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
 
         optional_input = try_input()
         if optional_input is not None:
+            if optional_input == 'i':
+                optional_input = 'embed()'
             try:
                 exec(optional_input)
             except Exception as ex:
