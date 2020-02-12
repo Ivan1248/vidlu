@@ -127,13 +127,13 @@ def ent(y, t, attack=trainer.attack):
     return loss
 
 
-#trainer.attack.loss = ent, segreggrad
-trainer.attack.loss = NLLLossWithLogits() #, segreggrad
+# trainer.attack.loss = ent, segreggrad
+trainer.attack.loss = NLLLossWithLogits()  # , segreggrad
 
 visualization.generate_adv_iter_segmentations(dataset=data.test.map(trainer.prepare_batch),
                                               model=trainer.model,
                                               attack=trainer.attack,
-                                              save_dir="/home/igrubisic/robust_seg_lossmax_30_2_200")
+                                              save_dir="/home/igrubisic/warp_seg")
 
 # semseg, VAT
 
@@ -216,9 +216,16 @@ trainer.eval_attack.eps *= 4
 trainer.eval_attack.loss = lambda *a, **k: -trainer.eval_attack.loss(*a, **k)
 
 # show adversarial examples
-trainer.eval_attack.eps=10000
-trainer.eval_attack.step_size=10
-trainer.eval_attack.step_count=10
+embed()
+
+import vidlu.modules.inputwise as vmi
+
+trainer.eval_attack.pert_model_f = vmi.Warp
+
+trainer.eval_attack.eps = 100
+trainer.eval_attack.step_size = 10
+trainer.eval_attack.step_count = 100
+trainer.eval_attack.stop_on_success = False
 
 import torch
 
