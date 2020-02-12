@@ -266,7 +266,7 @@ class AdversarialCombinedLossTrainStep:
         x, y = trainer.prepare_batch(batch)
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
-        x_adv = trainer.attack.perturb(x, None if self.virtual else y)
+        x_adv = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
 
         trainer.model.train()
         output_c, other_outputs_c = trainer.extend_output(trainer.model(x))
