@@ -1,11 +1,10 @@
-from collections.abc import Callable
 import dataclasses as dc
 from dataclasses import dataclass
 from functools import partial
 from numbers import Number
-from typing import Union, Sequence
 import warnings
 from time import sleep
+import typing as T
 
 import numpy as np
 import torch
@@ -16,6 +15,7 @@ from vidlu.modules.losses import NLLLossWithLogits, KLDivLossWithLogits
 from vidlu import ops
 from vidlu.utils.misc import Event
 import vidlu.modules.inputwise as vmi
+import vidlu.modules as vm
 import vidlu.optim as vo
 import vidlu.utils.torch as vut
 
@@ -138,10 +138,10 @@ class Attack:
         `clip_bounds` should be set to `None` (default) if adversarial inputs
          do not have to be clipped.
     """
-    loss: Callable = dc.field(default_factory=partial(NLLLossWithLogits, ignore_index=-1))
+    loss: T.Callable = dc.field(default_factory=partial(NLLLossWithLogits, ignore_index=-1))
     minimize: bool = False
     clip_bounds: tuple = (0, 1)
-    to_virtual_target: Union[Callable, str] = _to_hard_target
+    to_virtual_target: T.Union[T.Callable, str] = _to_hard_target
 
     on_virtual_label_computed = Event()
     compute_model_grads: bool = False
@@ -232,7 +232,7 @@ class Attack:
 @dataclass
 class EarlyStoppingMixin:
     stop_on_success: bool = False
-    similar: Callable = dc.field(default_factory=ClassMatches)
+    similar: T.Callable = dc.field(default_factory=ClassMatches)
 
 
 class DummyAttack(Attack):
@@ -340,7 +340,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
         Perturbed inputs.
     """
     stop_on_success = similar is not None
-    loss_fn, rloss_fn = loss if isinstance(loss, Sequence) else (loss, None)
+    loss_fn, rloss_fn = loss if isinstance(loss, T.Sequence) else (loss, None)
     backward_callback = backward_callback or (lambda _: None)
 
     delta = torch.zeros_like(x) if initial_pert is None else initial_pert.detach().clone()
@@ -444,7 +444,7 @@ def _extract_nonadv(pmodel, adv_mask, masking_mode, pm_params_all, index, y, x, 
 
 def perturb_iterative_with_perturbation_model_hacky(
         model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
-        project_params=None, clip_bounds=(0, 1), similar=None, masking_mode='loss', prune=True,
+        projection=None, clip_bounds=(0, 1), similar=None, masking_mode='loss', prune=True,
         backward_callback=None):
     """Iteratively optimizes the loss over the input.
     Compared to `perturb_iterative`, uses an optimizer instead of an update
@@ -488,14 +488,14 @@ def perturb_iterative_with_perturbation_model_hacky(
                       " condition without guarantee. Set `prune=False` if you want to guarantee no"
                       " errors but make it slower.")
     stop_on_success = similar is not None
-    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, Sequence) else (loss_fn, None)
+    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
 
     pmodel = pert_model or vmi.Additive(())
     pmodel(x)  # initialoze perturbation model (parameter shapes have to be inferred from x)
     pmodel.train()
     optim = optim_f(pmodel.parameters())
-    project_params = project_params or (lambda _: None)
+    projection = projection or (lambda _: None)
 
     if stop_on_success:
         nonadv_mask = None
@@ -533,7 +533,7 @@ def perturb_iterative_with_perturbation_model_hacky(
             del state  # free some memory and remove references to the graph
 
             optim.step()
-            project_params(pmodel)
+            projection(pmodel)
 
             if clip_bounds is not None and torch.any(x_adv.clamp_(*clip_bounds) != x_adv):
                 warnings.warn(f"The perturbed input has values out of bounds {clip_bounds}.")
@@ -579,7 +579,7 @@ def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
 
 def perturb_iterative_with_perturbation_model(
         model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
-        project_params=None, clip_bounds=(0, 1), similar=None, masking_mode='loss',
+        projection=None, clip_bounds=(0, 1), similar=None, masking_mode='loss',
         backward_callback=None, compute_model_grads=False):
     """Iteratively optimizes the loss over the input.
     Compared to `perturb_iterative`, uses an optimizer instead of an update
@@ -619,7 +619,7 @@ def perturb_iterative_with_perturbation_model(
     """
 
     stop_on_success = similar is not None
-    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, Sequence) else (loss_fn, None)
+    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
 
     pmodel = pert_model or vmi.Additive(())
@@ -627,7 +627,7 @@ def perturb_iterative_with_perturbation_model(
     pmodel.train()
 
     optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
-    project_params = project_params or (lambda _: None)
+    projection = projection or (lambda _: None)
 
     if stop_on_success:
         with torch.no_grad():
@@ -670,7 +670,7 @@ def perturb_iterative_with_perturbation_model(
             del state  # free some memory
 
             optim.step()
-            project_params(pmodel)
+            projection(pmodel)
 
             if clip_bounds is not None:
                 x_adv.clamp_(*clip_bounds)
@@ -701,10 +701,10 @@ class PGDUpdate(AttackStepUpdate):
     """
     step_size: float
     eps: float
-    grad_processing: Union[Callable, str] = torch.sign
-    project_or_p: dc.InitVar[Union[Number, type(np.inf), Callable]] = np.inf
+    grad_processing: T.Union[T.Callable, str] = torch.sign
+    project_or_p: dc.InitVar[T.Union[Number, type(np.inf), T.Callable]] = np.inf
     # derived
-    project: Callable = dc.field(init=False)
+    project: T.Callable = dc.field(init=False)
 
     def __post_init__(self, project_or_p):
         self.project = (partial(ops.batch.project_to_p_ball, p=project_or_p)
@@ -754,48 +754,45 @@ class PGDAttackOld(EarlyStoppingMixin, Attack):
 
 @dataclass
 class PerturbationModelAttack(EarlyStoppingMixin, Attack):
-    """The PGD attack (Madry et al., 2017).
-
-    The attack performs `step_count` steps of size `step_size`, while always
-    staying within eps from the initial point.
-    Paper: https://arxiv.org/pdf/1706.06083.pdf
-
-    See the documentation of perturb_iterative.
-    """
     pert_model_f: vmi.PerturbationModel = partial(vmi.Additive, ())
-    pert_model_init: Callable = None
-    project_params: Union[Callable, float] = 0.1
-    optim_f: Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
-    step_size: float = 2 / 255
+    optim_f: T.Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
+    initializer: T.Callable[[vmi.PerturbationModel], None] = None
+    projection: T.Union[float, T.Callable[[vmi.PerturbationModel], None]] = 0.1
+    step_size: T.Union[float, T.Mapping[str, float]] = 0.05
     step_count: int = 40
 
     def __post_init__(self):
-        if not callable(self.project_params):
-            eps = self.project_params
+        if not callable(self.projection):
+            eps = self.projection
 
-            def project_params(pmodel):
+            def projection(pmodel):
                 params = pmodel.named_parameters()
                 default_vals = vmi.named_default_parameters(pmodel, full_size=False)
                 for (name, p), (name_, d) in zip(params, default_vals):
                     assert name == name_  # TODO: remove
                     p.clamp_(min=d - eps, max=d + eps)
 
-            self.project_params = project_params
+            self.projection = projection
 
-    def _get_perturbation(self, model, x, y=None, pert_model=None, init_pert_model=True,
+    def _get_perturbation(self, model, x, y=None, pert_model=None, initialize_pert_model=True,
                           backward_callback=None):
         with torch.no_grad():
             if pert_model is None:
                 pert_model = self.pert_model_f()
                 pert_model(x)
-            if init_pert_model and self.pert_model_init is not None:
-                self.pert_model_init(pert_model)
+            if initialize_pert_model and self.initializer is not None:
+                self.initializer(pert_model)
 
-        optim_f = partial(self.optim_f, lr=self.step_size)
+        if isinstance(self.step_size, T.Mapping):
+            optim_f = lambda p: self.optim_f(
+                [dict(params=[vm.get_submodule(pert_model, name)], lr=step)
+                 for name, step in self.step_size.items()])
+        else:
+            optim_f = partial(self.optim_f, lr=self.step_size)
 
         return perturb_iterative_with_perturbation_model(
             model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
-            minimize=self.minimize, pert_model=pert_model, project_params=self.project_params,
+            minimize=self.minimize, pert_model=pert_model, projection=self.projection,
             clip_bounds=self.clip_bounds, similar=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback, compute_model_grads=self.compute_model_grads)
 
@@ -833,7 +830,7 @@ class PGDAttack(EarlyStoppingMixin, Attack):
         self._base = PerturbationModelAttack(
             **{k: getattr(self, k) for k in fields if hasattr(self, k)},
             pert_model_f=partial(vmi.Additive, ()), pert_model_init=self._pert_model_init,
-            project_params=self._project_params)
+            projection=self._project_params)
 
     def _get_perturbation(self, model, x, y=None, initial_pert=None, backward_callback=None):
         p = partial(self._base._get_perturbation, model, x, y, backward_callback=backward_callback)
@@ -846,8 +843,8 @@ class PGDAttack(EarlyStoppingMixin, Attack):
 
 @dataclass
 class PGDLDSAttack(PGDAttack):
-    to_virtual_target: Callable = _to_soft_target
-    loss: Callable = dc.field(default_factory=KLDivLossWithLogits)
+    to_virtual_target: T.Callable = _to_soft_target
+    loss: T.Callable = dc.field(default_factory=KLDivLossWithLogits)
 
 
 @dataclass
@@ -862,8 +859,8 @@ class VATUpdate(AttackStepUpdate):
 
 @dataclass
 class VATAttack(Attack):
-    to_virtual_target: Callable = _to_soft_target
-    loss: Callable = dc.field(default_factory=KLDivLossWithLogits)
+    to_virtual_target: T.Callable = _to_soft_target
+    loss: T.Callable = dc.field(default_factory=KLDivLossWithLogits)
 
     # TODO: set default CIFAR eps, xi and initial_pert
     eps: float = 10  # * 448/32
