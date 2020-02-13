@@ -237,10 +237,16 @@ class Warp(PerturbationModel):
 
 def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
                  align_corners=True, label_interpolation_mode='bilinear',
-                 label_padding_mode='zeros'):
-    x_p = F.grid_sample(x, grid, mode=interpolation_mode, padding_mode=padding_mode,
-                        align_corners=align_corners)
-    lpm = label_padding_mode
+                 label_padding_mode=-1):
+    pm, lpm = ['zeros' if x == 0 else x for x in [padding_mode, label_padding_mode]]
+
+    if isinstance(pm, str):
+        x_p = F.grid_sample(x, grid, mode=interpolation_mode, padding_mode=pm,
+                            align_corners=align_corners).squeeze_(1)
+    else:
+        x_p = F.grid_sample(x - pm, grid, mode=interpolation_mode, padding_mode='zeros',
+                            align_corners=align_corners).add_(pm)
+
     if y is None:
         return x_p
     elif y.dim() < 3:
@@ -250,13 +256,13 @@ def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='z
         no_channel_dim = y.dim() == 3
         if no_channel_dim:
             y_p = y_p[:, None, ...]
-        if not isinstance(lpm, str) and lpm != 0:
+        if isinstance(lpm, str):
+            y_p = F.grid_sample(y_p, grid, mode=label_interpolation_mode, padding_mode=lpm,
+                                align_corners=align_corners).squeeze_(1)
+        else:
             y_p = F.grid_sample(y_p - lpm, grid, mode=label_interpolation_mode,
                                 padding_mode='zeros',
                                 align_corners=align_corners).add_(lpm)
-        else:
-            y_p = F.grid_sample(y_p, grid, mode=label_interpolation_mode, padding_mode=lpm,
-                                align_corners=align_corners).squeeze_(1)
         if no_channel_dim:
             y_p.squeeze_(1)
         if y_p.dtype is not y.dtype:
