@@ -3,7 +3,8 @@ from argparse import Namespace
 import collections
 import functools
 from functools import reduce, partial
-from typing import Union, Callable, Sequence, Mapping
+import typing as T
+
 import itertools
 from os import PathLike
 from fractions import Fraction
@@ -63,10 +64,10 @@ def _extract_tensors(*args, **kwargs):
     for a in itertools.chain(args, kwargs.values()):
         if isinstance(a, torch.Tensor):
             yield a
-        elif isinstance(a, Sequence):
+        elif isinstance(a, T.Sequence):
             for x in _extract_tensors(*a):
                 yield x
-        elif isinstance(a, Mapping):
+        elif isinstance(a, T.Mapping):
             for x in _extract_tensors(*a.values()):
                 yield x
 
@@ -433,7 +434,7 @@ class Concat(Module):
 
 
 class Split(Module):
-    def __init__(self, split_size_or_sections: Union[int, Sequence], dim=1):
+    def __init__(self, split_size_or_sections: T.Union[int, T.Sequence], dim=1):
         super().__init__()
 
     def forward(self, x):
@@ -489,7 +490,7 @@ class Reshape(Module):
 
 
 class BatchReshape(Module):
-    def __init__(self, *shape_or_func: Union[tuple, Callable[[tuple], tuple]]):
+    def __init__(self, *shape_or_func: T.Union[tuple, T.Callable[[tuple], tuple]]):
         if len(shape_or_func) == 1 and callable(shape_or_func[0]):
             shape_or_func = shape_or_func[0]
         super().__init__()
@@ -517,7 +518,7 @@ def _parse_auto_reshape_arg(dims_or_factors):
 class AutoReshape(Module):
     """A reshape module that can be adaptive to input shape."""
 
-    def __init__(self, dims_or_factors: Union[str, Sequence]):
+    def __init__(self, dims_or_factors: T.Union[str, T.Sequence]):
         super().__init__()
         if isinstance(dims_or_factors, str):
             self.dims_or_factors = _parse_auto_reshape_arg(dims_or_factors)
@@ -530,7 +531,7 @@ class AutoReshape(Module):
                         int(d * (1 - other)) if f == -1 else
                         f for f in dims_or_factors], [])
 
-        self.shape = [get_subshape(d, f) if isinstance(f, Sequence) else
+        self.shape = [get_subshape(d, f) if isinstance(f, T.Sequence) else
                       [int(d * f) if isinstance(f, Fraction) else f] for d, f in
                       zip(x.shape, self.dims_or_factors)]
 
@@ -635,7 +636,7 @@ def _get_conv_padding(padding_type, kernel_size, dilation):
     def get_padding(k, d):
         return (k - 1) * d // 2 if padding_type == 'half' else (k - 1) * d
 
-    if any(isinstance(x, Sequence) for x in [kernel_size, dilation]):
+    if any(isinstance(x, T.Sequence) for x in [kernel_size, dilation]):
         if isinstance(dilation, int):
             dilation = [dilation] * len(kernel_size)
         elif isinstance(kernel_size, int):
@@ -903,7 +904,7 @@ def parameter_count(module) -> Namespace:
     return Namespace(trainable=trainable, non_trainable=non_trainable)
 
 
-def get_submodule(root_module, path: Union[str, Sequence]) -> Module:
+def get_submodule(root_module, path: T.Union[str, T.Sequence]) -> T.Union[Module, torch.Tensor]:
     """
     Returns a submodule of `root_module` that corresponds to `path`. It works
     for other attributes (e.g. Parameters) too.
@@ -927,7 +928,7 @@ def join_sequentials(a, b):
     return Seq(**{k: v for k, v in a.named_children()}, **{k: v for k, v in b.named_children()})
 
 
-def deep_split(root: nn.Module, split_path: Union[list, str]):
+def deep_split(root: nn.Module, split_path: T.Union[list, str]):
     if isinstance(split_path, str):
         split_path = [] if split_path == '' else split_path.split('.')
     if len(split_path) == 0:
