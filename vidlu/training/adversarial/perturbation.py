@@ -61,6 +61,7 @@ class ChannelGammaHsv(_PMW):
 
 # Initializers and projections
 
+
 @dc.dataclass
 class LInfBallUniformInitializer:
     param_path_to_bounds: T.Mapping[str, T.Sequence[T.Union[float, torch.Tensor]]]
@@ -88,7 +89,7 @@ class ClampProjection:
             vo.clamp(vm.get_submodule(pert_model, path), *bounds, inplace=True)
 
 
-@dc.dataclass()
+@dc.dataclass
 class ScalingProjection:
     param_path_to_radius: T.Mapping[str, float]
     dim: T.Union[int, T.Sequence[int]] = -1
