@@ -154,7 +154,7 @@ def soft_clamp(x, min_, max_, eps, inplace=False):
         x = x.clone()
     l, h = min_ + eps, max_ - eps
     high = x > h
-    # ASutograd error if mul_ used instead of mul
+    # Autograd error if mul_ used instead of mul
     if len(high) > 0:
         x[high] = x[high].sub_(h).div_(eps).tanh_().mul(eps).add_(h)
     low = x < l

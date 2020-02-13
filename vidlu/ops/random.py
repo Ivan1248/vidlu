@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.distributions as D
 
-
+@torch.no_grad()
 def generalized_normal_distribution(p, loc, scale):
     if p in [np.inf, 'inf']:
         return D.Uniform(loc - scale, loc + scale)
@@ -13,7 +13,7 @@ def generalized_normal_distribution(p, loc, scale):
     elif p == 1:
         return D.Laplace(loc, scale)
 
-
+@torch.no_grad()
 def generalized_normal_sample(p, loc=0, scale=1, shape=(), dtype=None, device=None):
     """Samples from a generalized normal distribution with a diagonal covariance
     matrix with 1 degree of freedom.
@@ -42,7 +42,7 @@ def generalized_normal_sample(p, loc=0, scale=1, shape=(), dtype=None, device=No
     elif p == 1:
         return D.Laplace(loc, scale).rsample(shape)
 
-
+@torch.no_grad()
 def uniform_sample_from_p_ball(p, shape=(), device=None, dtype=None):
     """Samples from a uniform distribution over unit a p-ball.
 
