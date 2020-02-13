@@ -235,52 +235,33 @@ class Warp(PerturbationModel):
         return vmf.warp(x, self.flow, **self.args)
 
 
-class MorsicTPSWarp(PerturbationModel):
-    param_defaults = dict(theta=dict(value=0., bounds=[-0.5, 0.5]))
-
-    def __init__(self, grid_shape=(2, 2), align_corners=True, padding_mode='zeros',
-                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
-                 label_padding_mode=-1):
-        super().__init__()
-
-    def build(self, x):
-        k = dict(device=x.device, dtype=x.dtype)
-        self.c_dst = vmf.uniform_grid_2d(self.args.grid_shape, **k).view(-1, 2)
-        super().build(x)
-
-    def create_default_params(self, x):
-        return dict(theta=x.new_zeros((x.shape[0], self.c_dst.shape[0] + 2, 2)).squeeze(-1))
-
-    def forward(self, x, y=None):
-        grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
-        k = dict(mode='bilinear', padding_mode='zeros') if 'float' in f"{x.dtype}" else dict(
-            mode='')
-        x_p = F.grid_sample(x, grid, mode=self.args.interpolation_mode,
-                            padding_mode=self.args.padding_mode,
-                            align_corners=self.args.align_corners)
-        lpm = self.args.label_padding_mode
-        if y is None:
-            return x_p
-        elif y.dim() < 3:
-            y_p = y
+def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
+                 align_corners=True, label_interpolation_mode='bilinear',
+                 label_padding_mode='zeros'):
+    x_p = F.grid_sample(x, grid, mode=interpolation_mode, padding_mode=padding_mode,
+                        align_corners=align_corners)
+    lpm = label_padding_mode
+    if y is None:
+        return x_p
+    elif y.dim() < 3:
+        y_p = y
+    else:
+        y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)
+        no_channel_dim = y.dim() == 3
+        if no_channel_dim:
+            y_p = y_p[:, None, ...]
+        if not isinstance(lpm, str) and lpm != 0:
+            y_p = F.grid_sample(y_p - lpm, grid, mode=label_interpolation_mode,
+                                padding_mode='zeros',
+                                align_corners=align_corners).add_(lpm)
         else:
-            y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)
-            no_channel_dim = y.dim() == 3
-            if no_channel_dim:
-                y_p = y_p[:, None, ...]
-            if not isinstance(lpm, str) and lpm != 0:
-                y_p = F.grid_sample(y_p - lpm, grid, mode=self.args.label_interpolation_mode,
-                                    padding_mode='zeros',
-                                    align_corners=self.args.align_corners).add_(lpm)
-            else:
-                y_p = F.grid_sample(y_p, grid, mode=self.args.label_interpolation_mode,
-                                    padding_mode=lpm,
-                                    align_corners=self.args.align_corners).squeeze_(1)
-            if no_channel_dim:
-                y_p.squeeze_(1)
-            if y_p.dtype is not y.dtype:
-                y_p = round_float_to_int(y_p, y.dtype)
-        return x_p, y_p
+            y_p = F.grid_sample(y_p, grid, mode=label_interpolation_mode, padding_mode=lpm,
+                                align_corners=align_corners).squeeze_(1)
+        if no_channel_dim:
+            y_p.squeeze_(1)
+        if y_p.dtype is not y.dtype:
+            y_p = round_float_to_int(y_p, y.dtype)
+    return x_p, y_p
 
 
 class MorsicTPSWarp(PerturbationModel):
@@ -301,31 +282,39 @@ class MorsicTPSWarp(PerturbationModel):
 
     def forward(self, x, y=None):
         grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
-        k = dict(mode='bilinear', padding_mode='zeros') if 'float' in f"{x.dtype}" else dict(
-            mode='')
-        x_p = F.grid_sample(x, grid, mode=self.args.interpolation_mode,
-                            padding_mode=self.args.padding_mode,
-                            align_corners=self.args.align_corners)
-        lpm = self.args.label_padding_mode
-        if y is None:
-            return x_p
-        elif y.dim() < 3:
-            y_p = y
-        else:
-            y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)
-            no_channel_dim = y.dim() == 3
-            if no_channel_dim:
-                y_p = y_p[:, None, ...]
-            if not isinstance(lpm, str) and lpm != 0:
-                y_p = F.grid_sample(y_p - lpm, grid, mode=self.args.label_interpolation_mode,
-                                    padding_mode='zeros',
-                                    align_corners=self.args.align_corners).add_(lpm)
-            else:
-                y_p = F.grid_sample(y_p, grid, mode=self.args.label_interpolation_mode,
-                                    padding_mode=lpm,
-                                    align_corners=self.args.align_corners).squeeze_(1)
-            if no_channel_dim:
-                y_p.squeeze_(1)
-            if y_p.dtype is not y.dtype:
-                y_p = round_float_to_int(y_p, y.dtype)
-        return x_p, y_p
+        return _grid_sample(x, y=y, grid=grid,
+                            **{k: self.args[k]
+                               for k in ['interpolation_mode', 'padding_mode',
+                                         'label_interpolation_mode', 'label_padding_mode']})
+
+
+class TPSWarp(PerturbationModel):
+    param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
+
+    def __init__(self, control_grid_shape=(2, 2), control_grid_align_corners=False,
+                 align_corners=True,
+                 padding_mode='zeros',
+                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
+                 label_padding_mode=-1):
+        super().__init__()
+
+    def build(self, x):
+        k = dict(device=x.device, dtype=x.dtype)
+        with torch.no_grad():
+            cgs = self.args.control_grid_shape
+            self.c_src = vmf.uniform_grid_2d(cgs, **k).view(-1, 2)
+            if not self.args.control_grid_align_corners:
+                cgs = x.new(cgs).view(1, 2)
+                self.c_src.mul_(1 - 1 / cgs).add_(1 - 0.5 / cgs)
+        super().build(x)
+
+    def create_default_params(self, x):
+        return dict(offsets=x.new_zeros((x.shape[0], *self.c_src.shape)))
+
+    def forward(self, x, y=None):
+        c_src = self.c_src.unsqueeze(0).expand_as(self.offsets)
+        grid = vmf.tps_grid_from_points(c_src, c_src + self.offsets, size=x.shape)
+        return _grid_sample(x, y=y, grid=grid,
+                            **{k: self.args[k]
+                               for k in ['interpolation_mode', 'padding_mode',
+                                         'label_interpolation_mode', 'label_padding_mode']})

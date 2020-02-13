@@ -73,11 +73,15 @@ morsic_tps_warp_attack = partial(attacks.PerturbationModelAttack,
                                  projection=.2)  # TODO: semantic segmentation
 
 
-def get_standard_pert_modeL_attack_params(param_to_bounds, step_size_factor=0.5,
-                                          initializer_f=perturbation.RandomUniformInitializer,
+def get_standard_pert_modeL_attack_params(param_to_bounds, param_to_initialization_params=None,
+                                          step_size_factor=0.5,
+                                          initializer_f=perturbation.LInfBallUniformInitializer,
                                           projection_f=perturbation.ClampProjection):
+    if param_to_initialization_params is None:
+        param_to_initialization_params = param_to_bounds
     param_to_step_size = {k: v[1] / 4 for k, v in param_to_bounds.items()}
-    return dict(step_size=param_to_step_size, initializer=initializer_f(param_to_bounds),
+    return dict(step_size=param_to_step_size,
+                initializer=initializer_f(param_to_bounds),
                 projection=projection_f(param_to_bounds))
 
 
@@ -93,3 +97,11 @@ channel_gamma_hsv_attack = partial(
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=perturbation.ChannelGammaHsv,
     **get_channeL_gamma_hsv_attack_params())
+
+tps_warp_attack = partial(
+    attacks.PerturbationModelAttack,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    pert_model_f=partial(vmi.TPSWarp, control_grid_shape=(2, 2)),
+    step_size=0.01,
+    initializer=perturbation.NormalInitializer({'offsets': (0, 0.04)}),
+    projection=perturbation.ScalingProjection({'offsets': 0.1}, p=2, dim=-1))

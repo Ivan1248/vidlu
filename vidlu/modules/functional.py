@@ -137,7 +137,7 @@ def tps_grid(theta, ctrl, size):
     k = dict(device=theta.device, dtype=theta.dtype)
     grid = uniform_grid_2d((H, W), with_h_coord=True, h_dim=0, **k).unsqueeze(0).expand(N, H, W, 3)
     z = tps(theta, ctrl, grid)
-    return grid[..., 1:].add(z).mul(2).sub_(1)  # [-1,1] range for F.sample_grid
+    return grid[..., 1:].add(z).mul(2).sub(1)  # [-1,1] range for F.sample_grid
 
 
 def tps_sparse(theta, ctrl, xy):
@@ -162,9 +162,9 @@ def uniform_grid_2d(shape, low=0., high=1., with_h_coord=False, h_dim=2, dtype=N
     return torch.stack(mg, dim=-1)
 
 
-def tps_fit(c, lambd=0., reduced=False):
-    """Fits a 1D thin plate spline to
-    
+def _tps_fit(c, lambd=0., reduced=False):
+    """Fits a 1D thin plate spline.
+
     Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
     Translated to PyTorch by Marin Oršić.
     """
@@ -178,6 +178,7 @@ def tps_fit(c, lambd=0., reduced=False):
     n = c.shape[0]
 
     U = u(d(c, c))
+
     K = U + torch.eye(n, device=c.device) * lambd
 
     P = torch.ones((n, 3), device=c.device)
@@ -191,20 +192,63 @@ def tps_fit(c, lambd=0., reduced=False):
     A[:n, -3:] = P
     A[-3:, :n] = P.t()
 
+    #theta = torch.cholesky_solve(v.unsqueeze(-1), torch.cholesky(A))  # p has structure w,a
+    #LU, pivots = torch.lu(A)
+    #theta = torch.lu_solve(v.unsqueeze(-1), LU, pivots)
+
     theta = torch.solve(v.unsqueeze(-1), A)[0]  # p has structure w,a
+    #theta = torch.cholesky_solve(v.unsqueeze(-1), torch.cholesky(A))  # p has structure w,a
     return theta[1:] if reduced else theta
 
 
-def tps_theta_from_points(c_src, c_dst, reduced=False):
-    delta = c_src.sub(c_dst)
+def _tps_fit(c, lamb=0., reduced=False):
+    """Fits a 1D thin plate spline and supports batch inputs.
+
+    Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
+    """
+
+    def d(a, b):
+        return a[..., :, None, :2].sub(b[..., None, :, :2]).norm(2, dim=-1)
+
+    def u(x, eps=1e-6):
+        return x.pow(2).mul(x.abs().add(eps).log())
+
+    batch_shape, nc = c.shape[:-2], c.shape[-2]
+
+    U = u(d(c, c))
+
+    K = U if lamb == 0 else U + torch.eye(nc, device=c.device).unsqueeze(0) * lamb
+
+    P = torch.ones((*batch_shape, nc, 3), device=c.device)
+    P[..., 1:] = c[..., :2]
+
+    v = torch.zeros((*batch_shape, nc + 3), device=c.device)
+    v[..., :nc] = c[..., -1]
+
+    A = torch.zeros((*batch_shape, nc + 3, nc + 3), device=c.device)
+    A[..., :nc, :nc] = K
+    A[..., :nc, -3:] = P
+    A[..., -3:, :nc] = P.transpose(-1, -2)
+
+    theta = torch.solve(v.unsqueeze(-1), A)[0]  # p has structure w,a
+    return theta[..., 1:] if reduced else theta
+
+
+def tps_params_from_points(c_src, c_dst, reduced=False):
+    delta = c_src - c_dst
 
     cx = torch.cat([c_dst, delta[..., 0, None]], dim=-1)
     cy = torch.cat([c_dst, delta[..., 1, None]], dim=-1)
 
-    theta_dx = tps_fit(cx, reduced=reduced)
-    theta_dy = tps_fit(cy, reduced=reduced)
+    theta_dx = _tps_fit(cx, reduced=reduced)
+    theta_dy = _tps_fit(cy, reduced=reduced)
 
     return torch.cat([theta_dx, theta_dy], -1)
+
+
+def tps_grid_from_points(c_src, c_dst, size, reduced=False):
+    theta = tps_params_from_points(c_src, c_dst, reduced=reduced)
+    return tps_grid(theta, c_dst, size=size)
 
 
 if __name__ == '__main__':
