@@ -59,6 +59,7 @@ yst = np.tanh(x * 2 - 1) / 2 + 0.5
 plt.plot(x, y1, label='tanh')
 
 plt.plot(x, ylim, label='lim')
+
 for k in reversed([1, 2, 4, 8, 16, 32, 64, 128]):
     # y = -np.log(np.exp(-k * x) + np.exp(-k)) / k
     # y = 1 / (np.exp(-k * x) + np.exp(-k)) / k * np.exp(-k * x) * k
