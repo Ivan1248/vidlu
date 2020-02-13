@@ -49,16 +49,6 @@ class ChannelGammaHsv(_PMW):
             soft_clamp=_PMW(partial(vo.soft_clamp, min_=0, max_=1, eps=0.01), forward_arg_count=1)))
 
 
-class ChannelGammaHsv(_PMW):
-    def __init__(self):
-        super().__init__(vm.Seq(
-            gamma=vmi.AlterLogGamma((2, 3)),
-            to_hsv=_PMW(voi.rgb_to_hsv, forward_arg_count=1),
-            additive=vmi.Additive((2, 3)),
-            to_rgb=_PMW(voi.hsv_to_rgb, forward_arg_count=1),
-            soft_clamp=_PMW(partial(vo.soft_clamp, min_=0, max_=1, eps=0.01), forward_arg_count=1)))
-
-
 # Initializers and projections
 
 
