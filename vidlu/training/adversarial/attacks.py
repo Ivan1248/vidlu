@@ -82,12 +82,12 @@ class AttackState:
     x: torch.Tensor
     y: torch.Tensor
     x_adv: torch.Tensor
-    y_adv: torch.Tensor
     output: torch.Tensor
     loss: torch.Tensor
     loss_sum: float
     reg_loss_sum: float
     grad: torch.Tensor
+    y_adv: torch.Tensor = None
     step: int = None
     loss_mean: float = dc.field(init=False)
     reg_loss_mean: float = dc.field(init=False)
@@ -96,6 +96,8 @@ class AttackState:
     def __post_init__(self):
         self.loss_mean = self.loss_sum / len(self.x)
         self.reg_loss_mean = self.reg_loss_sum / len(self.x)
+        if self.y_adv is None:
+            self.y_adv = self.y
 
 
 # get_prediction ###################################################################################
@@ -352,14 +354,15 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
     for i in range(step_count):
         x_adv = x + delta
         output = model(x_adv)
-        loss = loss_fn(output, y).view(len(x), -1).mean(1).sum()
+        unred_loss = loss_fn(output, y)
+        loss = unred_loss.view(len(x), -1).mean(1).sum()
         reg_loss = rloss_fn(x, delta, output, y).view(len(x), -1).mean(1).sum() if rloss_fn \
             else torch.tensor(0.)
         zero_grad(delta)
         ((-loss if minimize else loss) - reg_loss).backward()  # maximized
 
         state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
-                            reg_loss_sum=reg_loss.item(), grad=delta.grad, step=i)
+                            reg_loss_sum=reg_loss.item(), grad=delta.grad, step=i, loss=unred_loss)
         backward_callback(state)
 
         with torch.no_grad():
@@ -798,6 +801,12 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
 
 
 @dataclass
+class VirtualPerturbationModelAttack(PerturbationModelAttack):
+    to_virtual_target: T.Callable = _to_soft_target
+    loss: T.Callable = dc.field(default_factory=KLDivLossWithLogits)
+
+
+@dataclass
 class PGDAttack(EarlyStoppingMixin, Attack):
     """The PGD attack (Madry et al., 2017).
 
@@ -819,21 +828,19 @@ class PGDAttack(EarlyStoppingMixin, Attack):
         pmodel.addend.set_(ops.batch.project_to_p_ball(pmodel.addend, r=self.eps, p=self.p))
 
     @torch.no_grad()
-    def _pert_model_init(self, pmodel):
+    def _initializer(self, pmodel):
         if self.rand_init:
             pmodel.addend.set_((rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds)))
         else:
             pmodel.addend.zero_()
 
-    def __post_init__(self):
-        fields = (f.name for f in dc.fields(PerturbationModelAttack) if f.init)
-        self._base = PerturbationModelAttack(
-            **{k: getattr(self, k) for k in fields if hasattr(self, k)},
-            pert_model_f=partial(vmi.Additive, ()), pert_model_init=self._pert_model_init,
-            projection=self._project_params)
-
     def _get_perturbation(self, model, x, y=None, initial_pert=None, backward_callback=None):
-        p = partial(self._base._get_perturbation, model, x, y, backward_callback=backward_callback)
+        fields = (f.name for f in dc.fields(PerturbationModelAttack) if f.init)
+        base_attack = PerturbationModelAttack(
+            **{k: getattr(self, k) for k in fields if hasattr(self, k)},
+            pert_model_f=partial(vmi.Additive, ()), initializer=self._initializer,
+            projection=self._project_params)
+        p = partial(base_attack._get_perturbation, model, x, y, backward_callback=backward_callback)
         if initial_pert is not None:
             pert_model = vmi.Additive(())
             pert_model.addend.data = initial_pert
@@ -849,7 +856,6 @@ class PGDLDSAttack(PGDAttack):
 
 @dataclass
 class VATUpdate(AttackStepUpdate):
-    eps: float  # final perturbation size
     xi: float  # optimization perturation size
     p: Number
 
@@ -870,12 +876,13 @@ class VATAttack(Attack):
 
     def _perturb(self, model, x, y=None, backward_callback=None):
         initial_pert = rand_init_delta(x, self.p, self.xi, self.clip_bounds)
-        update = VATUpdate(xi=self.xi, eps=self.eps, p=self.p)
+        update = VATUpdate(xi=self.xi, p=self.p)
         delta = perturb_iterative(model, x, y, step_count=self.step_count, update=update,
                                   loss=self.loss, minimize=self.minimize, initial_pert=initial_pert,
-                                  clip_bounds=self.clip_bounds, backward_callback=backward_callback)
-        delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)
-        return x + delta
+                                  clip_bounds=None, backward_callback=backward_callback)
+        with torch.no_grad():
+            delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)  # TODO: clip bounds
+            return x + delta
 
 
 # DDN ##############################################################################################

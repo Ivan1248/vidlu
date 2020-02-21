@@ -365,7 +365,8 @@ class VATTrainStep:
         x, y = trainer.prepare_batch(batch)
         output, other_outputs = trainer.extend_output(trainer.model(x))
         loss = trainer.loss(output, y).mean()
-        target = attack.to_virtual_target(output)
+        with torch.no_grad():
+            target = attack.to_virtual_target(output)
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
                 x_adv = attack.perturb(trainer.model, x, target)
@@ -380,37 +381,52 @@ class VATTrainStep:
 
 @torch.no_grad()
 def _prepare_semisupervised_vat_input(trainer, batch):
+    x_u = None
     if isinstance(batch, BatchTuple):
         (x_l, y_l), (x_u, *_) = [trainer.prepare_batch(b) for b in batch]
-        x = torch.cat([x_l, x_u], 0)
     else:
         x_l, y_l = trainer.prepare_batch(batch)
-        x = x_l
-    return x, x_l, y_l, len(x_l)
+    return x_l, y_l, x_u
+
+
+def _get_unsupervised_vat_outputs(output, other_outputs, unsupervised_start_index):
+    output_uns, probs_uns = output, other_outputs.probs
+    if unsupervised_start_index > 0:
+        output_uns, probs_uns = (o[unsupervised_start_index:] for o in (output_uns, probs_uns))
+    return output_uns, probs_uns
 
 
 @dataclass
 class SemisupervisedVATEvalStep:
+    unsupervised_loss_on_labeled: bool = True
+
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x, x_l, y_l, n_l = _prepare_semisupervised_vat_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_vat_input(trainer, batch)
+        if x_u is None:
+            x_uns = x_all = x_l
+            uns_start = 0
+        else:
+            x_all = torch.cat([x_l, x_u])
+            x_uns = x_all if self.unsupervised_loss_on_labeled else x_u
+            uns_start = len(x_l) if self.unsupervised_loss_on_labeled else 0
 
         with torch.no_grad():
-            output, other_outputs = trainer.extend_output(model(x))
-
-        x_adv = attack.perturb(model, x, other_outputs.probs)
+            output, other_outputs = trainer.extend_output(model(x_all))
+            output_uns, probs_uns = _get_unsupervised_vat_outputs(output, other_outputs, uns_start)
+        x_adv = attack.perturb(model, x_uns, probs_uns)
 
         with torch.no_grad():
             output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-            loss_adv = attack.loss(output_adv, attack.to_virtual_target(output).detach()).mean()
+            loss_adv = attack.loss(output_adv, attack.to_virtual_target(output_uns)).mean()
 
-            output_l = output[:n_l]
+            output_l = output[:len(x_l)]
             loss_l = trainer.loss(output_l, y_l).mean()
 
-        other_outputs_l = type(other_outputs)({k: v[:n_l] for k, v in other_outputs.items()})
-        return NameDict(x=x, output=output, other_outputs=other_outputs, output_l=output_l,
+        other_outputs_l = type(other_outputs)({k: v[:len(x_l)] for k, v in other_outputs.items()})
+        return NameDict(x=x_all, output=output, other_outputs=other_outputs, output_l=output_l,
                         other_outputs_l=other_outputs_l, loss_l=loss_l.item(), x_adv=x_adv,
                         loss_adv=loss_adv.item(), x_l=x_l, target=y_l, output_adv=output_adv,
                         other_outputs_adv=other_outputs_adv)
@@ -420,29 +436,35 @@ class SemisupervisedVATEvalStep:
 class SemisupervisedVATTrainStep:
     alpha: float = 1
     attack_eval_model: bool = False
+    unsupervised_loss_on_labeled: bool = True
 
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
         model.train()
 
-        x, x_l, y_l, n_l = _prepare_semisupervised_vat_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_vat_input(trainer, batch)
+        x_all = torch.cat([x_l, x_u])
+        x_uns = x_all if self.unsupervised_loss_on_labeled else x_u
+        uns_start = 0 if self.unsupervised_loss_on_labeled else len(x_l)
 
-        output, other_outputs = trainer.extend_output(model(x))
-
+        output, other_outputs = trainer.extend_output(model(x_all))
+        output_uns, probs_uns = _get_unsupervised_vat_outputs(output, other_outputs, uns_start)
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
-                x_adv = attack.perturb(model, x, other_outputs.probs)
+                x_adv = attack.perturb(model, x_uns, probs_uns.detach())
                 # NOTE: putting this outside of batchnorm_stats_tracking_off harms learning:
                 output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
+            with torch.no_grad():
+                target_uns = attack.to_virtual_target(output_uns)
+            loss_adv = attack.loss(output_adv, target_uns).mean()
 
-            loss_adv = attack.loss(output_adv, attack.to_virtual_target(output).detach()).mean()
-
-        output_l = output[:n_l]
+        output_l = output[:len(x_l)]
         loss_l = trainer.loss(output_l, y_l).mean()
+
         do_optimization_step(trainer.optimizer, loss=loss_l + self.alpha * loss_adv)
 
-        other_outputs_l = type(other_outputs)({k: v[:n_l] for k, v in other_outputs.items()})
-        return NameDict(x=x, output=output, other_outputs=other_outputs, output_l=output_l,
+        other_outputs_l = type(other_outputs)({k: v[:len(x_l)] for k, v in other_outputs.items()})
+        return NameDict(x=x_all, output=output, other_outputs=other_outputs, output_l=output_l,
                         other_outputs_l=other_outputs_l, loss_l=loss_l.item(),
                         loss_adv=loss_adv.item(), x_l=x_l, target=y_l, x_adv=x_adv,
                         output_adv=output_adv, other_outputs_adv=other_outputs_adv)
