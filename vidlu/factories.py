@@ -15,6 +15,9 @@ from vidlu.utils.collections import NameDict
 from vidlu.utils.func import (argtree_partial, find_empty_params_deep,
                               ArgTree, params, Empty, default_args, EscapedArgTree)
 
+import vidlu.data_utils.dataset_transforms as dt
+import vidlu.utils.tree as vut
+
 
 # Factory messages #################################################################################
 
@@ -80,6 +83,11 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
     """
     from vidlu import data
 
+    if ':' in data_str:
+        data_str, transform_str = data_str.split(':', 1)
+    else:
+        transform_str = None
+
     name_options_subsets_tuples = parse_data_str(data_str)
 
     get_parted_dataset = data.DatasetFactory(datasets_dir)
@@ -94,6 +102,13 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
         if k in data:
             raise ValueError(f'"{k}" shouldn\'t occur more than once in `data_str`.')
         data[k] = {s: getattr(pds, s) for s in subsets}
+
+    if transform_str is not None:
+        flat_data = dict([((k1, k2), v) for k1, d in data.items() for k2, v in d.items()])
+        values = eval(transform_str, dict(d=list(flat_data.values()),
+                                          **{k: v for k, v in vars(dt).items() if
+                                             not k.startswith('_')}))
+        data = dict(((f'data{i}', {'sub0': v}) for i, v in enumerate(values)))
     return data
 
 
@@ -123,7 +138,7 @@ def get_prepared_data(data_str: str, datasets_dir, cache_dir):
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     if ':' in data_str:
-        names, data_str = [x.strip() for x in data_str.split(':')]
+        names, data_str = [x.strip() for x in data_str.split(':', 1)]
         names = [x.strip() for x in names.split(',')]
         if not all(x.startswith('train') or x.startswith('test') for x in names):
             raise ValueError('All dataset identifiers should start with either "train" or "test".'
