@@ -1,6 +1,6 @@
 from functools import partial
 from numbers import Number
-from typing import Union, Sequence
+import typing as T
 
 from torch import Tensor
 import torch.nn.functional as nnF
@@ -105,19 +105,19 @@ HFlip = func_to_module_class(hflip, name="HFlip")
 
 # Random
 
-def _resolve_padding(input_padding: Union[Number, str, Sequence], shape: Sequence):
+def _resolve_padding(input_padding: T.Union[Number, str, T.Sequence], shape: T.Sequence):
     if isinstance(input_padding, Number):
         result = (input_padding, input_padding)
     elif input_padding == 'half':
         result = tuple(a / 2 for a in shape)
-    elif isinstance(input_padding, Sequence) and len(input_padding) == 2:
+    elif isinstance(input_padding, T.Sequence) and len(input_padding) == 2:
         result = input_padding
     else:
         raise ValueError("Invalid `input_padding` argument value.")
     return np.array(result)
 
 
-def random_crop_args(x: Union[Tensor, Sequence], shape, overflow=0):
+def random_crop_args(x: T.Union[Tensor, T.Sequence], shape, overflow=0):
     input_shape, shape = np.array(x[0].shape[-2:]), np.array(shape)
     overflow = _resolve_padding(overflow, shape)
     p0 = np.random.rand(2) * (input_shape - shape) - overflow / 2
@@ -129,7 +129,7 @@ def random_crop_args(x: Union[Tensor, Sequence], shape, overflow=0):
     return dict(location=num.round_to_int(p0), shape=feasible_shape)
 
 
-def random_crop(x: Union[Tensor, Sequence], shape, overflow=0):
+def random_crop(x: T.Union[Tensor, T.Sequence], shape, overflow=0):
     return crop(x, **random_crop_args(x, shape, overflow=overflow))
 
 

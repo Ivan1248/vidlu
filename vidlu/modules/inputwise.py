@@ -1,4 +1,4 @@
-from typing import Sequence
+import typing as T
 from functools import partial
 import inspect
 from vidlu.utils.torch import round_float_to_int
@@ -159,7 +159,7 @@ class PerturbationModelWrapper(PerturbationModel):
 class SimplePerturbationModel(PerturbationModel):
     param_defaults = dict()
 
-    def __init__(self, equivariant_dims: Sequence):
+    def __init__(self, equivariant_dims: T.Sequence):
         super().__init__()
         self.equivariant_dims = equivariant_dims
 

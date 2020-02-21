@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+import typing as T
 from vidlu.utils.func import valmap
 
 from .dataset import Dataset
@@ -13,8 +13,8 @@ class _PartSplit:
         self.ratio = ratio
 
 
-def _generate_parts(part_to_ds: Dict[str, Dataset],
-                    part_to_split: Dict[str, Tuple[Tuple[str, str], float]] = None):
+def _generate_parts(part_to_ds: T.Dict[str, Dataset],
+                    part_to_split: T.Dict[str, T.Tuple[T.Tuple[str, str], float]] = None):
     part_to_split = {k: _PartSplit(*v) for k, v in
                      part_to_split.items()}
     parts = set()

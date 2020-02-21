@@ -1,4 +1,4 @@
-from typing import Union, Callable, Mapping, Sequence
+import typing as T
 from functools import partial
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
@@ -57,9 +57,9 @@ class Engine(object):
 
         def train_and_store_loss(engine, batch):
             inputs, targets = batch
-            optimizer.zero_grad()
             outputs = model(inputs)
             loss = loss_fn(outputs, targets).mean()
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             return loss.item()
@@ -174,12 +174,12 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 
     if isinstance(batch, feature_type):
         return _prepare(batch)
-    elif isinstance(batch, (Mapping, Record)):
+    elif isinstance(batch, (T.Mapping, Record)):
         return type(batch)({k: _prepare(x) for k, x in batch.items()})
     elif isinstance(batch, BatchTuple):
         return BatchTuple(default_prepare_batch(b, feature_type, device, non_blocking)
                           for b in batch)
-    elif isinstance(batch, Sequence):
+    elif isinstance(batch, T.Sequence):
         return type(batch)(_prepare(x) for x in batch)
     raise TypeError(f"Invalid batch type {type(batch)}")
 
@@ -221,16 +221,16 @@ class _MetricsMixin:
 
 @dataclass
 class Evaluator(_MetricsMixin):
-    model: Callable = Missing
-    loss_f: InitVar[Callable] = Missing
-    prepare_batch: Callable = default_prepare_batch
-    data_loader_f: Callable = partial(DataLoader, num_workers=2)
+    model: T.Callable = Missing
+    loss_f: InitVar[T.Callable] = Missing
+    prepare_batch: T.Callable = default_prepare_batch
+    data_loader_f: T.Callable = partial(DataLoader, num_workers=2)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=list)
-    extend_output: Callable = extend_output
-    eval_step: Callable = Missing
+    extend_output: T.Callable = extend_output
+    eval_step: T.Callable = Missing
 
-    loss: Callable = dc.field(init=False)
+    loss: T.Callable = dc.field(init=False)
 
     def __post_init__(self, loss_f):
         self.prepare_batch = partial(self.prepare_batch, device=M.utils.get_device(self.model),
@@ -244,7 +244,7 @@ class Evaluator(_MetricsMixin):
 
     @staticmethod
     def _broadcast(obj, n):
-        if isinstance(obj, Sequence):
+        if isinstance(obj, T.Sequence):
             if len(obj) != n:
                 raise RuntimeError(f"`obj` already is a `Sequence` but its size"
                                    + f" ({len(obj)}) is not `n` = {n}.")
@@ -256,6 +256,9 @@ class Evaluator(_MetricsMixin):
         batch_sizes = self._broadcast(batch_size, len(datasets))
         data_loaders = [dl_f(ds, batch_size=bs, shuffle=shuffle, drop_last=drop_last, **kwargs)
                         for ds, dl_f, bs in zip(datasets, data_loader_fs, batch_sizes)]
+        N = len(datasets[0])
+        if len(datasets) and any(len(d) < N for d in datasets[1:]):
+            warnings.warn(f"The primary dataset is smaller than a/the secondary.")
         return data_loaders[0] if len(datasets) == 1 else ZipDataLoader(*data_loaders)
 
     def eval(self, *datasets, batch_size=None):
@@ -273,17 +276,17 @@ class Trainer(Evaluator):
 
     eval_batch_size: int = None
     weight_decay: float = None  # R
-    optimizer_f: InitVar[Callable] = None  # O
+    optimizer_f: InitVar[T.Callable] = None  # O
     epoch_count: int = Missing  # O
-    lr_scheduler_f: InitVar[Callable] = ConstLR  # O
-    train_step: Callable = Missing  # O
-    jitter: Callable = None  # D
-    optimizer_maker: InitVar[Callable] = None
-    extension_fs: InitVar[Sequence] = ()  # D
+    lr_scheduler_f: InitVar[T.Callable] = ConstLR  # O
+    train_step: T.Callable = Missing  # O
+    jitter: T.Callable = None  # D
+    optimizer_maker: InitVar[T.Callable] = None
+    extension_fs: InitVar[T.Sequence] = ()  # D
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
-    extensions: Sequence = dc.field(init=False)
+    extensions: T.Sequence = dc.field(init=False)
 
     def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker, extension_fs):
         super().__post_init__(loss_f)

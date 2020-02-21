@@ -3,7 +3,7 @@ from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+import typing as T
 
 import torch
 import torch.nn as nn
@@ -26,11 +26,11 @@ class TrainingExperimentFactoryArgs:
     model: str
     trainer: str
     metrics: str
-    params: Optional[str]
+    params: T.Optional[str]
     experiment_suffix: str
     resume: bool
     redo: bool
-    device: Optional[torch.device]
+    device: T.Optional[torch.device]
     verbosity: int
 
 

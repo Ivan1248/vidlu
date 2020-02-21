@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Mapping
+import typing as T
 
 
 # Dictionary-like trees ############################################################################
@@ -29,13 +29,13 @@ def flatten(tree, tree_type=None) -> list:
     return out
 
 
-def unflatten(path_to_value: list, tree_type=dict):
+def unflatten(path_to_value: T.Union[T.Iterable[tuple], T.Mapping], tree_type=dict):
     class Leaf:  # used to encode leaves to distinguish lists from
         def __init__(self, item):
             self.item = item
 
     subtrees = defaultdict(list)
-    if isinstance(path_to_value, Mapping):
+    if isinstance(path_to_value, T.Mapping):
         path_to_value = path_to_value.items()
     for path, value in path_to_value:
         if len(path) > 1:

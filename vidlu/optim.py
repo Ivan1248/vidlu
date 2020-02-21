@@ -1,4 +1,4 @@
-from typing import Callable
+import typing as T
 
 import torch.optim
 from torch.optim.optimizer import required, Optimizer
@@ -91,7 +91,7 @@ class ProcessedGradientDescent(torch.optim.SGD):
 
         return loss
 
-def get_grad_processing(name) -> Callable:
+def get_grad_processing(name) -> T.Callable:
     if name == 'sign':
         return lambda g: g.sign()
     elif name.startswith('normalize'):

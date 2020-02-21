@@ -63,7 +63,7 @@ class LInfBallUniformInitializer:
 
 @dc.dataclass
 class NormalInitializer:
-    param_path_to_mean_std: T.Mapping[str, T.Sequence[T.Tuple[float, float]]]
+    param_path_to_mean_std: T.Mapping[str, T.Tuple[float, float]]
 
     def __call__(self, pert_model):
         for path, (mean, std) in self.param_path_to_mean_std.items():
