@@ -48,11 +48,11 @@ entmin_attack = partial(madry_cifar10_attack,
                         loss=lambda logits, _: losses.entropy(logits))
 
 virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
-                                     get_prediction='hard')
+                                     to_virtual_target='hard')
 
 vat_pgd_cifar10_attack = partial(madry_cifar10_attack,
-                                 get_prediction='soft',
-                                 loss=partial(F.kl_div, reduction='batchmean'))
+                                 to_virtual_target='soft',
+                                 loss=losses.kl_div_loss_with_logits)
 
 mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
                                     eps=0.3,
@@ -85,7 +85,7 @@ def get_standard_pert_modeL_attack_params(param_to_bounds, param_to_initializati
                 projection=projection_f(param_to_bounds))
 
 
-def get_channeL_gamma_hsv_attack_params(log_gamma_bounds=(-0.4, 0.4), hsv_addend_bounds=(-0.1, 0.1),
+def get_channel_gamma_hsv_attack_params(log_gamma_bounds=(-0.4, 0.4), hsv_addend_bounds=(-0.1, 0.1),
                                         step_size_factor=0.5):
     param_to_bounds = {'module.gamma.log_gamma': log_gamma_bounds,
                        'module.additive.addend': hsv_addend_bounds}
@@ -96,12 +96,12 @@ channel_gamma_hsv_attack = partial(
     attacks.PerturbationModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=perturbation.ChannelGammaHsv,
-    **get_channeL_gamma_hsv_attack_params())
+    **get_channel_gamma_hsv_attack_params())
 
 tps_warp_attack = partial(
     attacks.PerturbationModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.TPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,
-    initializer=perturbation.NormalInitializer({'offsets': (0, 0.04)}),
+    initializer=perturbation.NormalInitializer({'offsets': (0, 0.1)}),
     projection=perturbation.ScalingProjection({'offsets': 0.1}, p=2, dim=-1))

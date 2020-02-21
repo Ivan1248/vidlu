@@ -32,13 +32,29 @@ def classification_extend_output(output):
 # Optimizer makers
 
 @dataclass
+class ModelIndependentOptimizerMaker:
+    name_to_params: dict
+
+    def __call__(self, optimizer_f, model, **kwargs):
+        groups = {k: {f'{k}.{k_}': dict(params=p, **v)
+                      for k_, p in get_submodule(model, k).named_parameters()}
+                  for k, v in self.name_to_params.items()}
+        remaining = dict(model.named_parameters())
+        for g in groups.values():
+            remaining = dict_difference(remaining, g)
+        params_ = ([dict(params=groups[k].values()) for k, f in self.name_to_params.items()]
+                   + [dict(params=remaining.values())])
+        return optimizer_f(params_, **kwargs)
+
+
+@dataclass
 class FineTuningOptimizerMaker:
     finetuning: dict
 
     def __call__(self, trainer, optimizer_f, **kwargs):
-        groups = {
-            k: {f'{k}.{k_}': p for k_, p in get_submodule(trainer.model, k).named_parameters()}
-            for k in self.finetuning}
+        groups = {k: {f'{k}.{k_}': p
+                      for k_, p in get_submodule(trainer.model, k).named_parameters()}
+                  for k in self.finetuning}
         remaining = dict(trainer.model.named_parameters())
         for g in groups.values():
             remaining = dict_difference(remaining, g)
