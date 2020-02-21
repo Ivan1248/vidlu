@@ -7,8 +7,8 @@ Dataset objects should be considered immutable.
 import itertools
 import os
 import pickle
-from collections.abc import Sequence
-from typing import Union, Callable, Mapping  #, Literal
+import typing as T
+from collections import abc
 from pathlib import Path
 import shutil
 import warnings
@@ -60,7 +60,7 @@ def _split_on_common_suffix(strings):
 
 # Dataset ######################################################################
 
-class Dataset(Sequence):
+class Dataset(abc.Sequence):
     """An abstract class representing a Dataset.
 
     All subclasses should override ``__len__``, that provides the size of the
@@ -71,7 +71,7 @@ class Dataset(Sequence):
     _instance_count = 0
 
     def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
-                 info: Mapping = None, data=None):
+                 info: T.Mapping = None, data=None):
         self.name = name or getattr(data, 'name', None)
         if self.name is None:
             if type(self) is Dataset:
@@ -117,7 +117,7 @@ class Dataset(Sequence):
 
         if isinstance(idx, slice):
             ds = SubrangeDataset(self, idx)
-        elif isinstance(idx, (Sequence, np.ndarray)):
+        elif isinstance(idx, (T.Sequence, np.ndarray)):
             ds = SubDataset(self, idx)
         else:
             if idx < 0:
@@ -218,14 +218,45 @@ class Dataset(Sequence):
         """ Collates examples of a batch dataset or a zip dataset. """
         return CollateDataset(self, collate_func, func_name=func_name, **kwargs)
 
-    def filter(self, func, *, func_name=None, **kwargs):
+    def filter(self, predicate, *, func_name=None, **kwargs):
         """
         Creates a dataset containing only the elements for which `func` evaluates
         to True.
         """
-        indices = np.array([i for i, d in enumerate(self) if func(d)])
+        indices = np.array(list(self.filter_indices(predicate)))
         func_name = func_name or f'{_subset_hash(indices):x}'
         return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
+
+    def filter_indices(self, predicate):
+        """
+        Returns the indices of elements matching the predicate.
+        """
+        return (i for i, d in enumerate(self) if predicate(d))
+
+    def filter_split_indices(self, predicates, progress_bar=None):
+        """
+        Splits the dataset indices into disjoint subsets matching predicates.
+        """
+        progress_bar = progress_bar or (lambda x: x)
+        indiceses = [[] for p in predicates] + [[]]
+        for i, d in enumerate(progress_bar(self)):
+            for j, p in enumerate(predicates):
+                if p(d):
+                    indiceses[j].append(i)
+                    break
+                indiceses[-1].append(i)
+        return indiceses
+
+    def filter_split(self, predicates, *, func_names=None, **kwargs):
+        """
+        Splits the dataset indices into disjoint subsets matching predicates.
+        """
+        indiceses = self.filter_split_indices(predicates)
+        func_names = func_names or [f'{_subset_hash(indices):x}' for indices in indiceses]
+        if isinstance(func_names, str):
+            func_names = [f"{func_names}_{i}" for i in range(len(predicates) + 1)]
+        return [SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
+                for indices, func_name in zip(indiceses, func_names)]
 
     def map(self, func, *, func_name=None, **kwargs):
         """ Creates a dataset with elements transformed with `func`. """
@@ -255,11 +286,11 @@ class Dataset(Sequence):
         """
         return RepeatDataset(self, number_of_repeats, **kwargs)
 
-    def split(self, *, ratio: float = None, position: int = None):
-        if (ratio is None) == (position is None):
+    def split(self, *, ratio: float = None, index: int = None):
+        if (ratio is None) == (index is None):
             raise ValueError("Either ratio or position needs to be specified.")
-        pos = position or round(ratio * len(self))
-        return self[:pos], self[pos:]
+        pos = index or round(ratio * len(self))
+        return self[:index], self[index:]
 
     def join(self, *other, **kwargs):
         datasets = [self] + list(other)
@@ -291,13 +322,13 @@ class Dataset(Sequence):
                 print(f"Deleted {cache_path}")
         if isinstance(self.data, Dataset):
             self.data.clear_hdd_cache()
-        elif isinstance(self.data, Sequence):
+        elif isinstance(self.data, T.Sequence):
             for ds in self.data:
                 if isinstance(ds, Dataset):
                     ds.clear_hdd_cache()
 
     @staticmethod
-    def from_getitem_func(func, len, **kwargs):
+    def from_getitem_func(func, len, data=None, **kwargs):
         class _Data:
             def __len__(self):
                 return len
@@ -390,7 +421,7 @@ class CacheDataset(Dataset):
         else:
             self._print(
                 f"Caching {cache_size}/{len(dataset)} of the dataset in RAM...")
-            self._cached_data = [dataset[i] for i in trange(cache_size)]
+            self._cached_data = [dataset[i] for i in trange(cache_size, desc="CacheDataset")]
 
     def get_example(self, idx):
         cache_hit = self._cache_all or idx < len(self._cached_data)
@@ -411,7 +442,8 @@ class HDDAndRAMCacheDataset(Dataset):
                 self._print("Loading dataset cache from HDD...")
                 with open(cache_path, 'rb') as f:
                     n = (len(dataset) - 1) // chunk_size + 1  # ceil
-                    chunks = [pickle.load(f) for _ in trange(n)]
+                    chunks = [pickle.load(f)
+                              for _ in trange(n, desc="Loading dataset cache from HDD")]
                     data = list(itertools.chain(*chunks))
             except Exception as ex:
                 self._print(ex)
@@ -419,7 +451,7 @@ class HDDAndRAMCacheDataset(Dataset):
                 os.remove(cache_path)
         if data is None:
             self._print(f"Caching whole dataset in RAM...")
-            data = [x for x in tqdm(dataset)]
+            data = [x for x in tqdm(dataset, desc="Caching whole dataset in RAM")]
 
             self._print("Saving dataset cache to HDD...")
 
@@ -434,7 +466,7 @@ class HDDAndRAMCacheDataset(Dataset):
 
             with open(cache_path, 'wb') as f:
                 # examples pickled in chunks because of memory constraints
-                for x in tqdm(to_chunks(data)):
+                for x in tqdm(to_chunks(data), desc="Saving dataset cache to HDD"):
                     pickle.dump(x, f, protocol=4)
         super().__init__(modifiers="cache_hdd_ram", info=dataset.info, data=data, **kwargs)
 
@@ -564,7 +596,7 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
 class SubDataset(Dataset):
     __slots__ = ("_len", "_get_index")
 
-    def __init__(self, dataset, indices: Union[Sequence, Callable], **kwargs):
+    def __init__(self, dataset, indices: T.Union[T.Sequence, T.Callable], **kwargs):
         # convert indices to smaller int type if possible
         if isinstance(indices, slice):
             self._len = len(dataset)

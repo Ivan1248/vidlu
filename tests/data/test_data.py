@@ -93,7 +93,7 @@ class TestDataset:
 
         ds1, ds2 = ds.repeat(4).split(ratio=0.5)
         assert len(ds1) == len(ds2) and all(a == b for a, b in zip(ds1, ds2))
-        ds1, ds2 = ds.repeat(4).split(position=4 * len(ds) // 2)
+        ds1, ds2 = ds.repeat(4).split(index=4 * len(ds) // 2)
         assert len(ds1) == len(ds2) and all(a == b for a, b in zip(ds1, ds2))
         ds1, ds2 = ds[:3].split(ratio=0.5)
         assert len(ds1) + len(ds2) == len(ds[:3]) == 3
