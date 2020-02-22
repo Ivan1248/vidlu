@@ -329,6 +329,7 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     import math
     from torch import optim
     from torch.optim import lr_scheduler
+    from vidlu.modules import losses
     import vidlu.training.adversarial as ta
     import vidlu.training.configs as tc
     import vidlu.training.extensions as te
