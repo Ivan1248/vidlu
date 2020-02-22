@@ -264,7 +264,7 @@ class GradientSignAttack(Attack):
 
 
 @torch.no_grad()
-def rand_init_delta(x, p, eps, bounds, batch=False):
+def rand_init_delta(x, p, eps, bounds, batch):
     """Generates a random perturbation from a unit p-ball scaled by eps.
 
     Args:
@@ -276,7 +276,7 @@ def rand_init_delta(x, p, eps, bounds, batch=False):
 
     """
     kw = dict(dtype=x.dtype, device=x.device)
-    if batch:  # TODO: optimize
+    if batch and p not in [np.inf, 'inf']:  # TODO: optimize
         delta = torch.stack(tuple(ops.random.uniform_sample_from_p_ball(p, x.shape[1:], **kw)
                                   for _ in range(x.shape[0])))
     else:
@@ -710,6 +710,7 @@ class PGDUpdate(AttackStepUpdate):
     project: T.Callable = dc.field(init=False)
 
     def __post_init__(self, project_or_p):
+        super().__post_init__()
         self.project = (partial(ops.batch.project_to_p_ball, p=project_or_p)
                         if isinstance(project_or_p, (Number, type(np.inf)))
                         else project_or_p)
@@ -723,7 +724,7 @@ class PGDUpdate(AttackStepUpdate):
 
 
 @dataclass
-class PGDAttackOld(EarlyStoppingMixin, Attack):
+class PGDAttackOld(Attack, EarlyStoppingMixin ):
     """The PGD attack (Madry et al., 2017).
 
     The attack performs `step_count` steps of size `step_size`, while always 
@@ -741,7 +742,8 @@ class PGDAttackOld(EarlyStoppingMixin, Attack):
 
     def _perturb(self, model, x, y=None, initial_pert=None, backward_callback=None):
         if initial_pert is None:
-            initial_pert = (rand_init_delta(x, self.p, self.eps, self.clip_bounds) if self.rand_init
+            initial_pert = (rand_init_delta(x, self.p, self.eps, self.clip_bounds, True)
+                            if self.rand_init
                             else torch.zeros_like(x))
 
         update = PGDUpdate(step_size=self.step_size, eps=self.eps,
@@ -756,7 +758,7 @@ class PGDAttackOld(EarlyStoppingMixin, Attack):
 
 
 @dataclass
-class PerturbationModelAttack(EarlyStoppingMixin, Attack):
+class PerturbationModelAttack(Attack, EarlyStoppingMixin):
     pert_model_f: vmi.PerturbationModel = partial(vmi.Additive, ())
     optim_f: T.Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
     initializer: T.Callable[[vmi.PerturbationModel], None] = None
@@ -765,6 +767,7 @@ class PerturbationModelAttack(EarlyStoppingMixin, Attack):
     step_count: int = 40
 
     def __post_init__(self):
+        super().__post_init__()
         if not callable(self.projection):
             eps = self.projection
 
@@ -807,7 +810,7 @@ class VirtualPerturbationModelAttack(PerturbationModelAttack):
 
 
 @dataclass
-class PGDAttack(EarlyStoppingMixin, Attack):
+class PGDAttack(Attack, EarlyStoppingMixin):
     """The PGD attack (Madry et al., 2017).
 
     The attack performs `step_count` steps of size `step_size`, while always
@@ -830,7 +833,8 @@ class PGDAttack(EarlyStoppingMixin, Attack):
     @torch.no_grad()
     def _initializer(self, pmodel):
         if self.rand_init:
-            pmodel.addend.set_((rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds)))
+            pmodel.addend.set_((rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds,
+                                                True)))
         else:
             pmodel.addend.zero_()
 
@@ -875,13 +879,14 @@ class VATAttack(Attack):
     p: Number = 2
 
     def _perturb(self, model, x, y=None, backward_callback=None):
-        initial_pert = rand_init_delta(x, self.p, self.xi, self.clip_bounds)
+        initial_pert = rand_init_delta(x, self.p, self.xi, self.clip_bounds, True)
         update = VATUpdate(xi=self.xi, p=self.p)
         delta = perturb_iterative(model, x, y, step_count=self.step_count, update=update,
                                   loss=self.loss, minimize=self.minimize, initial_pert=initial_pert,
                                   clip_bounds=None, backward_callback=backward_callback)
         with torch.no_grad():
-            delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)  # TODO: clip bounds
+            delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(
+                self.eps)  # TODO: clip bounds
             return x + delta
 
 
@@ -889,7 +894,7 @@ class VATAttack(Attack):
 
 
 @dataclass
-class DDN(EarlyStoppingMixin, Attack):
+class DDN(Attack, EarlyStoppingMixin):
     """DDN attack: decoupling the direction and norm of the perturbation to
     achieve a small L2 norm in few steps.
 
