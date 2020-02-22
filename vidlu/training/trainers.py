@@ -246,8 +246,9 @@ class Evaluator(_MetricsMixin):
     def _broadcast(obj, n):
         if isinstance(obj, T.Sequence):
             if len(obj) != n:
-                raise RuntimeError(f"`obj` already is a `Sequence` but its size"
-                                   + f" ({len(obj)}) is not `n` = {n}.")
+                raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
+                                   f"not `n` = {n}. Check whether batch_size and evaL_batch_size"
+                                   f"are correctly set.")
             return obj
         return [obj] * n
 
