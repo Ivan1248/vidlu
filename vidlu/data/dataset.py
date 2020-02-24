@@ -289,7 +289,7 @@ class Dataset(abc.Sequence):
     def split(self, *, ratio: float = None, index: int = None):
         if (ratio is None) == (index is None):
             raise ValueError("Either ratio or position needs to be specified.")
-        pos = index or round(ratio * len(self))
+        index = index or round(ratio * len(self))
         return self[:index], self[index:]
 
     def join(self, *other, **kwargs):
