@@ -15,7 +15,7 @@ from vidlu.utils.collections import NameDict
 from vidlu.utils.func import (argtree_partial, find_empty_params_deep,
                               ArgTree, params, Empty, default_args, EscapedArgTree)
 
-import vidlu.data_utils.dataset_transforms as dt
+import vidlu.data_utils.dataset_ops as do
 import vidlu.utils.tree as vut
 
 
@@ -106,7 +106,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
     if transform_str is not None:
         flat_data = dict([((k1, k2), v) for k1, d in data.items() for k2, v in d.items()])
         values = eval(transform_str, dict(d=list(flat_data.values()),
-                                          **{k: v for k, v in vars(dt).items() if
+                                          **{k: v for k, v in vars(do).items() if
                                              not k.startswith('_')}))
         data = dict(((f'data{i}', {'sub0': v}) for i, v in enumerate(values)))
     return data
