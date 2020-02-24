@@ -878,6 +878,15 @@ class Dropout2d(_DropoutNd):
                            inplace=self.inplace)
 
 
+class AdditiveGaussianNoise(StochasticModule):
+    def __init__(self, std):
+        super().__init__()
+
+    def forward(self, x):
+        return x + torch.randn_like(x).mul_(self.args.std) \
+            if self.training or self.stochastic_eval else x
+
+
 # Utilities ########################################################################################
 
 class Adapter(Module):
