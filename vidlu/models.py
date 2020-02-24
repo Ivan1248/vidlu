@@ -4,7 +4,8 @@ from fractions import Fraction as Frac
 import torch
 
 import vidlu.modules as M
-import vidlu.modules.components as mc
+import vidlu.modules as vm
+import vidlu.modules.components as vmc
 from vidlu.training import initialization
 from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (Reserved, Empty, default_args)
@@ -13,12 +14,12 @@ from vidlu.utils.func import (Reserved, Empty, default_args)
 # Backbones ########################################################################################
 
 
-def resnet_v1_backbone(depth, base_width=default_args(mc.ResNetV1Backbone).base_width,
-                       small_input=default_args(mc.ResNetV1Backbone).small_input,
-                       block_f=partial(default_args(mc.ResNetV1Backbone).block_f,
+def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base_width,
+                       small_input=default_args(vmc.ResNetV1Backbone).small_input,
+                       block_f=partial(default_args(vmc.ResNetV1Backbone).block_f,
                                        kernel_sizes=Reserved),
                        dim_change=None,
-                       backbone_f=mc.ResNetV1Backbone):
+                       backbone_f=vmc.ResNetV1Backbone):
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
     bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
@@ -39,9 +40,9 @@ def resnet_v1_backbone(depth, base_width=default_args(mc.ResNetV1Backbone).base_
 
 
 resnet_v2_backbone = partial(resnet_v1_backbone,
-                             block_f=partial(default_args(mc.ResNetV2Backbone).block_f,
+                             block_f=partial(default_args(vmc.ResNetV2Backbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=mc.ResNetV2Backbone)
+                             backbone_f=vmc.ResNetV2Backbone)
 
 
 def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
@@ -54,17 +55,17 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
     assert zagoruyko_depth == depth, \
         f"Invalid depth = {zagoruyko_depth} != {depth} = zagoruyko_depth"
 
-    return mc.ResNetV2Backbone(base_width=16,
-                               small_input=small_input,
-                               group_lengths=[blocks_per_group] * group_count,
-                               width_factors=[width_factor] * 2,
-                               block_f=partial(block_f, kernel_sizes=ksizes),
-                               dim_change=dim_change)
+    return vmc.ResNetV2Backbone(base_width=16,
+                                small_input=small_input,
+                                group_lengths=[blocks_per_group] * group_count,
+                                width_factors=[width_factor] * 2,
+                                block_f=partial(block_f, kernel_sizes=ksizes),
+                                dim_change=dim_change)
 
 
 def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3),
-                      block_f=partial(default_args(mc.DenseNetBackbone).block_f,
-                                      kernel_sizes=Reserved), backbone_f=mc.DenseNetBackbone):
+                      block_f=partial(default_args(vmc.DenseNetBackbone).block_f,
+                                      kernel_sizes=Reserved), backbone_f=vmc.DenseNetBackbone):
     # TODO: dropout 0.2
     # dropout if no pds augmentation
     depth_to_group_lengths = {
@@ -94,35 +95,35 @@ def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3)
 
 
 mdensenet_backbone = partial(densenet_backbone,
-                             block_f=partial(default_args(mc.MDenseNetBackbone).block_f,
+                             block_f=partial(default_args(vmc.MDenseNetBackbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=mc.MDenseNetBackbone)
+                             backbone_f=vmc.MDenseNetBackbone)
 fdensenet_backbone = partial(densenet_backbone,
-                             block_f=partial(default_args(mc.FDenseNetBackbone).block_f,
+                             block_f=partial(default_args(vmc.FDenseNetBackbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=mc.FDenseNetBackbone)
+                             backbone_f=vmc.FDenseNetBackbone)
 
 
 def irevnet_backbone(init_stride=2,
                      group_lengths=[6, 16, 72, 6],
                      width_factors=(Frac(1, 4), Frac(1, 4), 1),
-                     block_f=partial(default_args(mc.IRevNetBackbone).block_f,
+                     block_f=partial(default_args(vmc.IRevNetBackbone).block_f,
                                      kernel_sizes=(3, 3, 3)),
                      base_width=None):
     group_count = len(group_lengths)
-    return mc.iRevNetBackboneHyb(nBlocks=group_lengths,
-                                 nStrides=[1] + [2] * (group_count - 1),
-                                 nClasses=10,
-                                 nChannels=None if base_width is None else [
+    return vmc.iRevNetBackboneHyb(nBlocks=group_lengths,
+                                  nStrides=[1] + [2] * (group_count - 1),
+                                  nClasses=10,
+                                  nChannels=None if base_width is None else [
                                      base_width * 4 ** i for i in range(group_count)],
-                                 init_ds=init_stride,
-                                 in_shape=[3, 32, 32])
+                                  init_ds=init_stride,
+                                  in_shape=[3, 32, 32])
 
-    return mc.IRevNetBackbone(init_stride=init_stride,
-                              group_lengths=group_lengths,
-                              width_factors=width_factors,
-                              base_width=base_width,
-                              block_f=block_f)
+    return vmc.IRevNetBackbone(init_stride=init_stride,
+                               group_lengths=group_lengths,
+                               width_factors=width_factors,
+                               base_width=base_width,
+                               block_f=block_f)
 
 
 # Models ###########################################################################################
@@ -226,7 +227,7 @@ class SwiftNet(SegmentationModel):
                  backbone_f=resnet_v1_backbone,
                  laterals=tuple(f"bulk.unit{i}_{j}.sum"
                                 for i, j in zip(range(3), [1] * 3)),
-                 ladder_width=128, head_f=mc.heads.SegmentationHead, input_adapter=None,
+                 ladder_width=128, head_f=vmc.heads.SegmentationHead, input_adapter=None,
                  init=partial(initialization.kaiming_resnet, module=Reserved)):
         """
 
@@ -237,14 +238,14 @@ class SwiftNet(SegmentationModel):
             laterals:
             ladder_width:
         """
-        super().__init__(backbone_f=partial(mc.KresoLadderNet,
+        super().__init__(backbone_f=partial(vmc.KresoLadderNet,
                                             backbone_f=backbone_f,
                                             laterals=laterals,
                                             ladder_width=ladder_width,
                                             context_f=partial(
-                                                mc.DenseSPP, bottleneck_size=128, level_size=42,
+                                                vmc.DenseSPP, bottleneck_size=128, level_size=42,
                                                 out_size=128, grid_sizes=(8, 4, 2)),
-                                            up_blend_f=partial(mc.LadderUpsampleBlend,
+                                            up_blend_f=partial(vmc.LadderUpsampleBlend,
                                                                pre_blending='sum'),
                                             post_activation=True),
                          head_f=partial(head_f, kernel_size=3),
@@ -275,7 +276,7 @@ class LadderDensenet(DiscriminativeModel):
             laterals = tuple(
                 f"bulk.db{i}.unit{j}.sum"  # TODO: automatic based on backbone
                 for i, j in zip(range(3), [1] * 3))
-        super().__init__(backbone_f=partial(mc.KresoLadderNet,
+        super().__init__(backbone_f=partial(vmc.KresoLadderNet,
                                             backbone_f=backbone_f,
                                             laterals=laterals,
                                             ladder_width=ladder_width),
@@ -301,8 +302,8 @@ class Autoencoder(Model):
 # Adversarial autoencoder
 
 class AdversarialAutoencoder(Autoencoder):
-    def __init__(self, encoder_f=mc.AAEEncoder, decoder_f=mc.AAEDecoder,
-                 discriminator_f=mc.AAEDiscriminator,
+    def __init__(self, encoder_f=vmc.AAEEncoder, decoder_f=vmc.AAEDecoder,
+                 discriminator_f=vmc.AAEDiscriminator,
                  prior_rand_f=partial(torch.randn, std=0.3), init=None):
         super().__init__(encoder_f, decoder_f, init)
         self.discriminator = discriminator_f()
