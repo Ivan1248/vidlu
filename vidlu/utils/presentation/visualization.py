@@ -198,7 +198,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
                 pred_disp = colorize_segmentation(pred_disp + 1, colors)
 
             def _get_class_representative():
-                cr = get_class_representative(pred)
+                cr = get_class_representative(int(pred))
                 return black if cr is None else scale_min_max(cr)
 
             pred_img = (_get_class_representative() if classification
