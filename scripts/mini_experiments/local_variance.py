@@ -36,9 +36,10 @@ def hf_local_variance(x):
 
 def pyramid(x, factors=[1, 2, 4, 8, 16, 32]):
     size = x.shape[-2:]
-    pyr = [F.interpolate(x, scale_factor=1 / s, mode='bilinear') for s in factors]
+    pyr = [F.interpolate(x, scale_factor=1 / s, mode='bilinear', align_corners=False)
+           for s in factors]
     pyr = map(local_variance, pyr)
-    return [F.interpolate(x, size=size, mode='bilinear') for x in pyr]
+    return [F.interpolate(x, size=size, mode='bilinear', align_corners=False) for x in pyr]
 
 
 def combined_scale(x):
@@ -56,4 +57,5 @@ def apply_single(fun, x):
 
 
 Viewer().display(data,
-                 lambda r: [torch_to_numpy(r.x), torch_to_numpy(r.x)/torch_to_numpy(12 * apply_single(combined_scale, r.x.cuda()) ** 0.5)])
+                 lambda r: [torch_to_numpy(r.x), torch_to_numpy(r.x) / torch_to_numpy(
+                     12 * apply_single(combined_scale, r.x.cuda()) ** 0.5)])
