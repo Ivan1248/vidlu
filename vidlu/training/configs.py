@@ -129,8 +129,19 @@ vat = TrainerConfig(
 
 semisupervised_vat = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(),
-    train_step=ts.SemisupervisedVATTrainStep())
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False))
+
+semisupervised_vat_l = TrainerConfig(
+    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True))
+
+semisupervised_vat_entmin = TrainerConfig(
+    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
+                                             entropy_loss_coef=1))
 
 classification = TrainerConfig(
     supervised,
