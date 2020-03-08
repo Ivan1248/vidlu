@@ -3,6 +3,7 @@ from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
+import time
 import typing as T
 
 import torch
@@ -45,9 +46,11 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
                    + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
 
     @trainer.training.epoch_completed.add_handler
-    def on_epoch_completed(_):
-        trainer.eval(data.test)
-        cpman.save(trainer.state_dict(), summary=logger.state_dict())  # checkpoint
+    def on_epoch_completed(es):
+        if es.epoch % max(1, len(data.test) // len(data.train)) == 0 \
+                or es.epoch == es.max_epochs - 1:
+            trainer.eval(data.test)
+            cpman.save(trainer.state_dict(), summary=logger.state_dict())  # checkpoint
 
     def report_metrics(es, is_validation=False):
         def eval_str(metrics):
@@ -64,7 +67,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
 
     # noinspection PyUnresolvedReferences
     @trainer.evaluation.iteration_completed.add_handler
-    def on_eval_iteration_completed(state):
+    def interact(state):
         from IPython import embed
         from vidlu.utils.presentation import visualization
         nonlocal trainer, data
@@ -85,7 +88,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
             if remaining >= es.batch_count // 5 or remaining == 0:
                 report_metrics(es)
 
-        on_eval_iteration_completed(es)
+        interact(es)
 
     trainer.evaluation.epoch_completed.add_handler(partial(report_metrics, is_validation=True))
 
