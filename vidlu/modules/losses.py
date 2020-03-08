@@ -37,6 +37,10 @@ def entropy(logits):
     return -(log_probs.exp() * log_probs).sum(1)
 
 
+def cross_entropy_loss_with_logits(logits, target_probs):
+    return -(target_probs * logits.log_softmax(1)).sum(1)
+
+
 def reduce_loss(x, batch_reduction: "Literal['sum', 'mean']" = None,
                 elements_reduction: "Literal['sum', 'mean']" = None):
     if batch_reduction == elements_reduction and batch_reduction is not None:
