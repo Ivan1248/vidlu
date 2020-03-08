@@ -629,7 +629,8 @@ def perturb_iterative_with_perturbation_model(
     pmodel(x)  # initialize perturbation model (parameter shapes have to be inferred from x)
     pmodel.train()
 
-    optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
+    if step_count > 0:
+        optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
     projection = projection or (lambda _: None)
 
     if stop_on_success:
@@ -724,7 +725,7 @@ class PGDUpdate(AttackStepUpdate):
 
 
 @dataclass
-class PGDAttackOld(Attack, EarlyStoppingMixin ):
+class PGDAttackOld(Attack, EarlyStoppingMixin):
     """The PGD attack (Madry et al., 2017).
 
     The attack performs `step_count` steps of size `step_size`, while always 
