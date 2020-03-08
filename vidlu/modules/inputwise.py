@@ -294,7 +294,7 @@ class MorsicTPSWarp(PerturbationModel):
                                          'label_interpolation_mode', 'label_padding_mode']})
 
 
-class TPSWarp(PerturbationModel):
+class BackwardTPSWarp(PerturbationModel):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
     def __init__(self, control_grid_shape=(2, 2), control_grid_align_corners=False,
@@ -319,7 +319,7 @@ class TPSWarp(PerturbationModel):
 
     def forward(self, x, y=None):
         c_src = self.c_src.unsqueeze(0).expand_as(self.offsets)
-        grid = vmf.tps_grid_from_points(c_src, c_src + self.offsets, size=x.shape)
+        grid = vmf.backward_tps_grid_from_points(c_src, c_src + self.offsets, size=x.shape)
         return _grid_sample(x, y=y, grid=grid,
                             **{k: self.args[k]
                                for k in ['interpolation_mode', 'padding_mode',

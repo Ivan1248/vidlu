@@ -2,6 +2,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+import vidlu.utils.torch as vut
+
 
 def dimensional_function(f_list, *args, **kwargs):
     return f_list[len(args[0].size()) - 3](*args, **kwargs)
@@ -20,6 +22,22 @@ def avg_pool(x, kernel_size, stride=None, padding=0, ceil_mode=False, count_incl
 
 def global_avg_pool(x):
     return adaptive_avg_pool(x, 1).squeeze()
+
+
+class _Swish(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        return x * x.sigmoid()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x = ctx.saved_variables[0]
+        sx = x.sigmoid()
+        return (1 - sx).mul_(x).add_(1).mul_(sx).mul_(grad_output)
+
+
+swish = _Swish.apply
 
 
 def warp(x, flow, mode='bilinear', padding_mode='zeros', align_corners=True):
@@ -123,7 +141,7 @@ def tps_grid(theta, ctrl, size):
             Batch size N, T+3 model parameters for T control points in dx and
             dy.
         ctrl: NxTx2 tensor, or Tx2 tensor
-            T control points in normalized image coordinates [0..1]
+            T control points in normalized image coordinates from [0, 1]
         size: tuple
             Output grid size as NxCxHxW. C unused. This defines the output image
             size when sampling.
@@ -159,49 +177,17 @@ def uniform_grid_2d(shape, low=0., high=1., with_h_coord=False, h_dim=2, dtype=N
     mg = list(reversed(mg))
     if with_h_coord:
         mg.insert(h_dim, mg[0].new_ones(()).expand(mg[0].shape))
-    return torch.stack(mg, dim=-1)
+    return torch.stack(mg, dim=-1)  # X/W, Y/H
 
 
-def _tps_fit(c, lambd=0., reduced=False):
-    """Fits a 1D thin plate spline.
-
-    Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
-    Translated to PyTorch by Marin Oršić.
-    """
-
-    def d(a, b):
-        return a[:, None, :2].sub(b[None, :, :2]).norm(2, dim=-1)
-
-    def u(x, eps=1e-6):
-        return x.pow(2).mul(x.abs().add(eps).log())
-
-    n = c.shape[0]
-
-    U = u(d(c, c))
-
-    K = U + torch.eye(n, device=c.device) * lambd
-
-    P = torch.ones((n, 3), device=c.device)
-    P[..., 1:] = c[..., :2]
-
-    v = torch.zeros(n + 3, device=c.device)
-    v[:n] = c[..., -1]
-
-    A = torch.zeros((n + 3, n + 3), device=c.device)
-    A[:n, :n] = K
-    A[:n, -3:] = P
-    A[-3:, :n] = P.t()
-
-    #theta = torch.cholesky_solve(v.unsqueeze(-1), torch.cholesky(A))  # p has structure w,a
-    #LU, pivots = torch.lu(A)
-    #theta = torch.lu_solve(v.unsqueeze(-1), LU, pivots)
-
-    theta = torch.solve(v.unsqueeze(-1), A)[0]  # p has structure w,a
-    #theta = torch.cholesky_solve(v.unsqueeze(-1), torch.cholesky(A))  # p has structure w,a
-    return theta[1:] if reduced else theta
+def grid_2d_points_to_indices(grid_points, shape, grid_low=0., grid_high=1.):
+    indices = grid_points.div(grid_high - grid_low).mul_(
+        grid_points.new([shape[1] - 1, shape[0] - 1]))
+    indices = indices.add_(0.5).long()
+    return torch.stack([indices[..., 1], indices[..., 0]], dim=-1)
 
 
-def _tps_fit(c, lamb=0., reduced=False):
+def _backward_tps_fit(c_dst_d, lamb=0., reduced=False, eps=1e-6):
     """Fits a 1D thin plate spline and supports batch inputs.
 
     Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
@@ -210,45 +196,121 @@ def _tps_fit(c, lamb=0., reduced=False):
     def d(a, b):
         return a[..., :, None, :2].sub(b[..., None, :, :2]).norm(2, dim=-1)
 
-    def u(x, eps=1e-6):
+    def phi(x):
         return x.pow(2).mul(x.abs().add(eps).log())
 
-    batch_shape, nc = c.shape[:-2], c.shape[-2]
+    batch_shape, n = c_dst_d.shape[:-2], c_dst_d.shape[-2]
 
-    U = u(d(c, c))
+    P = phi(d(c_dst_d, c_dst_d))
 
-    K = U if lamb == 0 else U + torch.eye(nc, device=c.device).unsqueeze(0) * lamb
+    Phi = P if lamb == 0 else P + torch.eye(n, device=c_dst_d.device).unsqueeze(0) * lamb
 
-    P = torch.ones((*batch_shape, nc, 3), device=c.device)
-    P[..., 1:] = c[..., :2]
+    C = torch.ones((*batch_shape, n, 3), device=c_dst_d.device)
+    C[..., 1:] = c_dst_d[..., :2]
 
-    v = torch.zeros((*batch_shape, nc + 3), device=c.device)
-    v[..., :nc] = c[..., -1]
+    v = torch.zeros((*batch_shape, n + 3), device=c_dst_d.device)
+    v[..., :n] = c_dst_d[..., -1]
 
-    A = torch.zeros((*batch_shape, nc + 3, nc + 3), device=c.device)
-    A[..., :nc, :nc] = K
-    A[..., :nc, -3:] = P
-    A[..., -3:, :nc] = P.transpose(-1, -2)
+    L = torch.zeros((*batch_shape, n + 3, n + 3), device=c_dst_d.device)
+    L[..., :n, :n] = Phi
+    L[..., :n, -3:] = C
+    L[..., -3:, :n] = C.transpose(-1, -2)
 
-    theta = torch.solve(v.unsqueeze(-1), A)[0]  # p has structure w,a
+    theta = torch.solve(v.unsqueeze(-1), L)[0]  # p has structure w,a
     return theta[..., 1:] if reduced else theta
 
 
-def tps_params_from_points(c_src, c_dst, reduced=False):
+def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
+    """Fits a 1D thin plate spline and supports batch inputs.
+
+    Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
+    """
+
+    def d(a, b):
+        return a[..., :, None, :2].sub(b[..., None, :, :2]).norm(2, dim=-1)
+
+    def phi(x):
+        return x.pow(2).mul(x.abs().add(eps).log())
+
+    batch_shape, n = c_src_v.shape[:-2], c_src_v.shape[-2]
+
+    P = phi(d(c_src_v, c_src_v))
+
+    Phi = P if lamb == 0 else P + torch.eye(n, device=c_src_v.device).unsqueeze(0) * lamb
+
+    C = torch.ones((*batch_shape, n, 3), device=c_src_v.device)
+    C[..., 1:] = c_src_v[..., :2]
+
+    v = torch.zeros((*batch_shape, n + 3), device=c_src_v.device)
+    v[..., :n] = c_src_v[..., -1]
+
+    L = torch.zeros((*batch_shape, n + 3, n + 3), device=c_src_v.device)
+    L[..., :n, :n] = Phi
+    L[..., :n, -3:] = C
+    L[..., -3:, :n] = C.transpose(-1, -2)
+
+    theta = torch.solve(v.unsqueeze(-1), L)[0]  # p has structure w,a
+    return theta[..., 1:] if reduced else theta
+
+
+def backward_tps_params_from_points(c_src, c_dst, reduced=False):
     delta = c_src - c_dst
 
-    cx = torch.cat([c_dst, delta[..., 0, None]], dim=-1)
-    cy = torch.cat([c_dst, delta[..., 1, None]], dim=-1)
+    c_dst_dx = torch.cat([c_dst, delta[..., 0, None]], dim=-1)
+    c_dst_dy = torch.cat([c_dst, delta[..., 1, None]], dim=-1)
 
-    theta_dx = _tps_fit(cx, reduced=reduced)
-    theta_dy = _tps_fit(cy, reduced=reduced)
+    theta_dx = _backward_tps_fit(c_dst_dx, reduced=reduced)
+    theta_dy = _backward_tps_fit(c_dst_dy, reduced=reduced)
 
     return torch.cat([theta_dx, theta_dy], -1)
 
 
+def tps_params_from_points(c_src, c_dst, reduced=False):
+    delta = c_dst - c_src
+
+    c_src_dx = torch.cat([c_src, delta[..., 0, None]], dim=-1)
+    c_src_dy = torch.cat([c_src, delta[..., 1, None]], dim=-1)
+
+    theta_dx = _tps_fit(c_src_dx, reduced=reduced)
+    theta_dy = _tps_fit(c_src_dy, reduced=reduced)
+
+    return torch.cat([theta_dx, theta_dy], -1)
+
+
+def backward_tps_grid_from_points(c_src, c_dst, size, reduced=False):
+    theta = backward_tps_params_from_points(c_src, c_dst, reduced=reduced)
+    return tps_grid(theta, c_dst, size=size)
+
+
 def tps_grid_from_points(c_src, c_dst, size, reduced=False):
     theta = tps_params_from_points(c_src, c_dst, reduced=reduced)
-    return tps_grid(theta, c_dst, size=size)
+    return tps_grid(theta, c_src, size=size)
+
+def gaussian_forward_warp_v2(features, flow, sigma=1., normalize=True):
+    """
+    :type features: torch.tensor: B, C, H, W
+    :type flow: torch.tensor: B, 2, H, W
+    """
+    epsilon = 1e-6
+    B, C, H, W = features.shape
+    xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
+    yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
+    xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
+    grid_own_coords = torch.cat((xx, yy), 1).float().to(flow.device) # B, 2, H, W
+    grid_own_coords.requires_grad = False
+    grid_other_coords = grid_own_coords.clone().view(B, 2, H*W)
+    grid_other_coords = grid_other_coords.view(B, 2, H*W, 1, 1).repeat(1, 1, 1, H, W) # B, 2, H*W, H, W
+    grid_other_coords.requires_grad = False
+    exact_flow = grid_own_coords.view(B, 2, 1, H, W) - grid_other_coords
+    estimated_flow = flow.view(B, 2, H * W, 1, 1).repeat(1, 1, 1, H, W)
+    weights = torch.exp(-(((estimated_flow - exact_flow) ** 2) / sigma).sum(1)) # B, H*W, H, W
+    future_features = torch.bmm(features.view(B, C, H*W), weights.view(B, H*W, H*W)) # B, C, H*W
+    future_features = future_features.view(B, C, H, W)
+    if normalize:
+        future_features /= (weights.sum(1) + epsilon).unsqueeze(1)
+    return future_features
+
 
 
 if __name__ == '__main__':
