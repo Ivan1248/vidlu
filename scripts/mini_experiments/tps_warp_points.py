@@ -33,7 +33,7 @@ with torch.no_grad():
 
 forward = False
 
-gridfw = vmf.tps_grid_from_points_s(c_src, c_src + offsets, size=x.shape)
+gridfw = vmf.tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 
 N, C, H, W = x.shape
 k = dict(device=x.device, dtype=x.dtype)
@@ -45,7 +45,7 @@ x_warped = vmf.gaussian_forward_warp_v2(x, (gridfw - base_grid).permute(0, 3, 1,
 flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
 timages += [x_warped]
 
-gridbw = vmf.tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
+gridbw = vmf.backward_tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 x_warped = F.grid_sample(x, gridbw).squeeze_(1)
 timages += [x_warped]
 
