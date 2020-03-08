@@ -115,7 +115,7 @@ def irevnet_backbone(init_stride=2,
                                   nStrides=[1] + [2] * (group_count - 1),
                                   nClasses=10,
                                   nChannels=None if base_width is None else [
-                                     base_width * 4 ** i for i in range(group_count)],
+                                      base_width * 4 ** i for i in range(group_count)],
                                   init_ds=init_stride,
                                   in_shape=[3, 32, 32])
 
@@ -195,6 +195,12 @@ class ResNetV2(ClassificationModel):
     __init__ = partialmethod(ResNetV1.__init__,
                              backbone_f=partial(resnet_v2_backbone, base_width=64))
 
+    # def post_build(self, *args, **kwargs):
+    #     from torch.utils.checkpoint import checkpoint
+    #     for unit_name, unit in self.backbone.named_children():
+    #         print('Checkpointing ' + unit_name)
+    #         self.backbone.set_modifiers(**{unit_name: lambda module: partial(checkpoint, module)})
+
 
 class WideResNet(ResNetV2):
     __init__ = partialmethod(ResNetV2.__init__, backbone_f=wide_resnet_backbone)
@@ -255,7 +261,7 @@ class SwiftNet(SegmentationModel):
     def post_build(self, *args, **kwargs):
         from torch.utils.checkpoint import checkpoint
         for unit_name, unit in self.backbone.backbone.bulk.named_children():
-            print(unit_name)
+            print('Checkpointing ' + unit_name)
             self.backbone.backbone.bulk.set_modifiers(
                 **{unit_name: lambda module: partial(checkpoint, module)})
 
