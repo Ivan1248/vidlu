@@ -218,19 +218,21 @@ class Dataset(abc.Sequence):
         """ Collates examples of a batch dataset or a zip dataset. """
         return CollateDataset(self, collate_func, func_name=func_name, **kwargs)
 
-    def filter(self, predicate, *, func_name=None, **kwargs):
+    def filter(self, predicate, *, func_name=None, progress_bar=None, **kwargs):
         """
         Creates a dataset containing only the elements for which `func` evaluates
         to True.
         """
-        indices = np.array(list(self.filter_indices(predicate)))
+        indices = np.array(list(self.filter_indices(predicate, progress_bar=progress_bar)))
         func_name = func_name or f'{_subset_hash(indices):x}'
         return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
 
-    def filter_indices(self, predicate):
+    def filter_indices(self, predicate, progress_bar=None):
         """
         Returns the indices of elements matching the predicate.
         """
+        if progress_bar:
+            return (i for i, d in enumerate(progress_bar(self)) if predicate(d))
         return (i for i, d in enumerate(self) if predicate(d))
 
     def filter_split_indices(self, predicates, progress_bar=None):
