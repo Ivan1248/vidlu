@@ -101,7 +101,34 @@ channel_gamma_hsv_attack = partial(
 tps_warp_attack = partial(
     attacks.PerturbationModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
-    pert_model_f=partial(vmi.TPSWarp, control_grid_shape=(2, 2)),
-    step_size=0.01,
+    pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
+    step_size=0.01,  # 0.01 the image height/width
     initializer=perturbation.NormalInitializer({'offsets': (0, 0.1)}),
     projection=perturbation.ScalingProjection({'offsets': 0.1}, p=2, dim=-1))
+
+import vidlu.transforms.jitter as vtj
+
+
+class BatchRandAugment:
+    def __init__(self, m, n):
+        self.base = vtj.RandAugment(m, n)
+
+    def __call__(self, input):
+        return torch.stack([self.base((x, None))[0] for x in input])
+
+
+randaugment = partial(
+    attacks.PerturbationModelAttack,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    pert_model_f=partial(
+        lambda *a, **k: vmi.PerturbationModelWrapper(BatchRandAugment(3, 4), forward_arg_count=1)),
+    step_size=0,
+)
+
+tps_warp_attack_weaker = partial(
+    attacks.PerturbationModelAttack,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
+    step_size=0.01,  # 0.01 the image height/width
+    initializer=perturbation.NormalInitializer({'offsets': (0, 0.03)}),
+    projection=perturbation.ScalingProjection({'offsets': 0.03}, p=2, dim=-1))
