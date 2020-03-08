@@ -31,7 +31,19 @@ def trace_calls():
     sys.settrace(tracefunc)
 
 
-def crash_after(proc, *datetime_args):
-    if datetime.utcnow() <= datetime(*datetime_args):
-        proc()
-    raise AssertionError("")
+def crash_after(*args, format='%Y-%m-%d', message=None):
+    if len(args) == 1 and isinstance(args[0], str):
+        crashtime = datetime.strptime(args[0], format)
+    elif len(args) > 1 and isinstance(args[0], int):
+        if isinstance(args[-1], str):
+            message, args = args[-1], args[:-1]
+        crashtime = datetime(*args)
+    else:
+        crashtime = args[0]
+    message = "" if message is None else f" Message: {message}"
+    if datetime.utcnow() > crashtime:
+        raise AssertionError(
+            f"crash_after is crashing because the time {crashtime} has passed. {message}")
+    else:
+        warnings.warn(
+            f"crash_after is not crashing because the time {crashtime} has not passed. {message}")
