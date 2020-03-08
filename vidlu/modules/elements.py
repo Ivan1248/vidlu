@@ -720,6 +720,9 @@ class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
                  num_features=None, support_checkpointing=False):
         self.support_checkpointing = support_checkpointing
+        if support_checkpointing:
+            raise NotImplementedError()
+
         del support_checkpointing
         super().__init__()
         self.orig = None
@@ -727,25 +730,28 @@ class BatchNorm(WrappedModule):
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
 
-    # This is probably commented for reproducibility of existing algorithms
     def forward(self, input):
         """Modified forward to make it work with checkpoints as it should.
 
         Based on
         https://github.com/csrhddlam/pytorch-checkpoint
         """
+        if not self.training:
+            return super().forward(input)
 
-        if input.requires_grad or not self.support_checkpointing:
+        if not self.support_checkpointing:
             if not input.requires_grad:
                 warnings.warn("The default implementation of BatchNorm does not"
                               + " work correctly with checkpointing. Set"
                               + " `support_checkpointing=True` to fix it.")
             return super().forward(input)
 
+        if input.requires_grad:
+            return super().forward(input)
+
         self.orig._check_input_dim(input)
 
         exponential_average_factor = 0.0
-
         return F.batch_norm(
             input, self.running_mean, self.running_var, self.weight, self.bias,
             self.training or not self.track_running_stats, exponential_average_factor, self.eps)
