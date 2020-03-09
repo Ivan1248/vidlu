@@ -2,9 +2,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from vidlu import ops
 from vidlu.utils.func import class_to_func
-from vidlu.utils.torch import batchnorm_stats_tracking_off, save_grads
+from vidlu.torch_utils import batchnorm_stats_tracking_off, save_grads
 
 
 # Cross entropy ####################################################################################

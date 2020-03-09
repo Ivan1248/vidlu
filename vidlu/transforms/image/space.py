@@ -7,8 +7,8 @@ import torch.nn.functional as nnF
 import numpy as np
 
 from vidlu.utils import num
-from vidlu.utils.func import func_to_class, class_to_func, make_multiinput
-from vidlu.utils.torch import is_int_tensor, round_float_to_int
+from vidlu.utils.func import make_multiinput
+from vidlu.torch_utils import is_int_tensor, round_float_to_int
 from vidlu.modules.utils import func_to_module_class
 
 

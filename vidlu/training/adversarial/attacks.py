@@ -17,7 +17,7 @@ from vidlu.utils.misc import Event
 import vidlu.modules.inputwise as vmi
 import vidlu.modules as vm
 import vidlu.optim as vo
-import vidlu.utils.torch as vut
+import vidlu.torch_utils as vtu
 
 
 # Prediction transformations #######################################################################
@@ -648,7 +648,7 @@ def perturb_iterative_with_perturbation_model(
             x, x_adv = [a[index] for a in (x, x_adv)]
             y, y_ = (y[index],) * 2 if y_ is y else (a[index] for a in (y, y_))
 
-        with vut.switch_requires_grad(model, compute_model_grads):
+        with vtu.switch_requires_grad(model, compute_model_grads):
             output = model(x_adv)
             unred_loss = loss_fn(output, y_)
             loss, reg_loss, loss_no_mask = _reduce_losses(

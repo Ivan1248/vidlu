@@ -1,12 +1,12 @@
 from contextlib import suppress as ctx_suppress
 from dataclasses import dataclass
-from functools import lru_cache, partial
+from functools import partial
 
 import torch
 
 from vidlu.data import BatchTuple
 from vidlu.utils.collections import NameDict
-from vidlu.utils.torch import (concatenate_tensors_trees, switch_training,
+from vidlu.torch_utils import (concatenate_tensors_trees, switch_training,
                                batchnorm_stats_tracking_off)
 import vidlu.modules.losses as vml
 
@@ -386,9 +386,6 @@ class VATTrainStep:
                         loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
 
 
-from vidlu.utils.debug import crash_after
-
-
 # crash_after('2020-03-04', message="remove VAT")
 # from torch import nn
 #
@@ -521,7 +518,6 @@ class SemisupervisedVATEvalStep:
                         other_outputs_l=other_outputs_l, loss_l=loss_l.item(), x_adv=x_adv,
                         loss_adv=loss_adv.item(), x_l=x_l, target=y_l, output_adv=output_adv,
                         other_outputs_adv=other_outputs_adv)
-
 
 
 @dataclass

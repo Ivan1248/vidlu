@@ -1,17 +1,14 @@
 import typing as T
 from functools import partial
 import inspect
-from vidlu.utils.torch import round_float_to_int
+from vidlu.torch_utils import round_float_to_int
 
 import torch
 import torch.nn.functional as F
-from torch import nn
 
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
-
-import dataclasses as dc
 
 
 class BatchParameter(torch.nn.Parameter):

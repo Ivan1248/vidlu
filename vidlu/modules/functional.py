@@ -1,8 +1,5 @@
 import torch
-from torch import nn
 from torch.nn import functional as F
-
-import vidlu.utils.torch as vut
 
 
 def dimensional_function(f_list, *args, **kwargs):
@@ -314,7 +311,7 @@ def gaussian_forward_warp_v2(features, flow, sigma=1., normalize=True):
 
 
 if __name__ == '__main__':
-    from torchvision.transforms.functional import to_tensor, to_pil_image, resize
+    from torchvision.transforms.functional import to_tensor, to_pil_image
     from PIL import Image
     import matplotlib.pyplot as plt
 
