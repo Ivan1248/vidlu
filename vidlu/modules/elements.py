@@ -262,7 +262,7 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-class MultiModule(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
+class ModuleTable(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequential):
     def __init__(self, *args, **kwargs):
         super().__init__(*_to_sequential_init_args(*args, **kwargs))
 
@@ -301,7 +301,7 @@ class MultiModule(*_extended(nn.Sequential), _modifiable(nn.Sequential), nn.Sequ
         return result
 
 
-class Seq(MultiModule):
+class Seq(ModuleTable):
     """
     A wrapper around torch.nn.Seq to enable passing a dict as the only
     parameter whereas in torch.nn.Seq only OrderedDict is accepted
@@ -325,7 +325,7 @@ class Seq(MultiModule):
 # Fork, parallel, reduction, ... ###################################################################
 
 
-class Fork(MultiModule):
+class Fork(ModuleTable):
     def forward(self, input):
         return tuple(m(input) for m in self)
 
@@ -333,7 +333,7 @@ class Fork(MultiModule):
         return Fork({k.m.inverse() for k, m in self.named_children()})
 
 
-class Parallel(MultiModule):
+class Parallel(ModuleTable):
     def forward(self, *inputs):
         inputs = sole_tuple_to_varargs(inputs)
         if len(self) == 1:

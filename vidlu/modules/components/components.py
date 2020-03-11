@@ -321,7 +321,7 @@ class DenseSPP(E.Module):
         self.grid_sizes = grid_sizes
         self.upsample = upsample
         self.input_block = block_f(base_width=bottleneck_size)  # reduces the number of channels
-        self.pyramid = E.MultiModule(
+        self.pyramid = E.ModuleTable(
             {f'block{i}': block_f(base_width=level_size) for i in range(len(grid_sizes))})
         self.fuse_block = block_f(base_width=out_size)
         self.square_grid = square_grid
