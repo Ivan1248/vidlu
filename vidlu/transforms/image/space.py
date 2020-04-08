@@ -46,6 +46,8 @@ Pad = func_to_module_class(pad)
 
 @make_multiinput
 def pad_to_shape(x, shape, mode='constant', value=0):
+    if value == 'mean':
+        value = x.mean((1, 2))
     padding = np.array(shape) - np.array(x.shape[-2:])
     if np.all(padding == 0):
         return x
@@ -143,7 +145,8 @@ def random_hflip(x: Tensor, p=0.5) -> Tensor:
 RandomHFlip = func_to_module_class(random_hflip)
 
 
-def random_scale_crop(x, shape, max_scale, min_scale=None, overstepping=0, is_segmentation=False):
+def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0, is_segmentation=False,
+                      align_corners=None):
     multiple = isinstance(x, tuple)
     xs = x if multiple else (x,)
     if isinstance(is_segmentation, bool):
@@ -156,14 +159,14 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overstepping=0, is_se
 
     scale = np.random.rand() * (max_scale - min_scale) + min_scale
 
-    xs = random_crop(xs, shape=np.array(shape) / scale, overflow=overstepping)
+    xs = random_crop(xs, shape=np.array(shape) / scale, overflow=overflow)
 
     shape = tuple(
         d for d in
         np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int)))
-    xs = tuple(
-        (resize_segmentation if iss else partial(resize, mode='bilinear'))(x, shape=shape)
-        for x, iss in zip(xs, is_segmentation))
+    xs = tuple((resize_segmentation if iss
+                else partial(resize, mode='bilinear', align_corners=align_corners))(x, shape=shape)
+               for x, iss in zip(xs, is_segmentation))
     return xs if multiple else xs[0]
 
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 import warnings
-
+import typing as T
 import torch
 
 from vidlu.transforms.image import RandomCrop, RandomHFlip, Pad, RandomScaleCrop, PadToShape
@@ -53,15 +53,20 @@ class SegRandCropHFlip(SegmentationJitter):
 class SegRandScaleCropPadHFlip(SegmentationJitter):
     shape: tuple
     max_scale: float
-    overstepping: object
+    overflow: object
     min_scale: float = None
+    align_corners: bool = True
+    image_pad_value: T.Union[torch.Tensor, float, T.Literal['mean']] = 'mean'
+    label_pad_value = -1
 
     def apply(self, xy):
         xy = RandomScaleCrop(shape=self.shape, max_scale=self.max_scale,
-                             min_scale=self.min_scale, overstepping=self.overstepping,
-                             is_segmentation=(False, True))(tuple(xy))
+                             min_scale=self.min_scale, overflow=self.overflow,
+                             is_segmentation=(False, True),
+                             align_corners=self.align_corners)(tuple(xy))
         x, y = RandomHFlip()(xy)
-        return PadToShape(self.shape, value=x.mean((1, 2)))(x), PadToShape(self.shape, value=-1)(y)
+        return (PadToShape(self.shape, value=self.image_pad_value)(x),
+                PadToShape(self.shape, value=self.label_pad_value)(y))
 
 
 class RandAugment(ClassificationJitter):
