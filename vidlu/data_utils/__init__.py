@@ -58,7 +58,7 @@ def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
     elem_size = next(parted_dataset.items())[1].approx_example_size()
     size = elem_size * sum(len(ds) for _, ds in parted_dataset.top_level_items())
     free_space = shutil.disk_usage(cache_dir).free
-    space_left = size - free_space
+    space_left = free_space - size
 
     def transform(ds):
         ds_cached = ds.cache_hdd(f"{cache_dir}/datasets")
@@ -81,7 +81,7 @@ def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
 class CachingDatasetFactory(DatasetFactory):
     def __init__(self, datasets_dir_or_factory, cache_dir, add_statistics=False):
         ddof = datasets_dir_or_factory
-        super().__init__(ddof.datasets_dir if isinstance(ddof, DatasetFactory) else ddof)
+        super().__init__(ddof.datasets_dirs if isinstance(ddof, DatasetFactory) else ddof)
         self.add_statistics = add_statistics
         self.cache_dir = cache_dir
 

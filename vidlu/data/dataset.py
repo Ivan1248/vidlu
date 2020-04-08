@@ -483,6 +483,9 @@ class HDDCacheDataset(Dataset):
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
         self.cache_dir = to_valid_path(Path(cache_dir) / self.identifier)
         self.separate_fields = separate_fields
+        if len(dataset) ==0:
+            warnings.warn(f"The dataset {dataset} is empty.")
+            return
         if separate_fields:
             if not isinstance(dataset[0], Record):
                 raise ValueError(

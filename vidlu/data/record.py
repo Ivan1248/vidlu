@@ -1,7 +1,7 @@
 from collections.abc import Sequence, KeysView, ValuesView, ItemsView
 from functools import reduce
 
-from vidlu.utils.func import param_count
+import vidlu.utils.func as vuf
 
 
 # Record
@@ -10,7 +10,7 @@ class _LazyField:
     __slots__ = "get"
 
     def __init__(self, get):
-        if param_count(get) not in [0, 1]:
+        if vuf.param_count(get) not in [0, 1]:
             raise ValueError("get should be a callable with either 0 (simple lazy evaluation) or 1"
                              + " parameter (in case of referring back to the 'Record' object).")
         self.get = get
@@ -78,7 +78,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
                 key = tuple(self.keys())[key]
             val = self._dict[key]
             if isinstance(val, _LazyField):
-                val = self._dict[key] = val.get() if param_count(val.get) == 0 else val.get(self)
+                val = self._dict[key] = val.get() if vuf.param_count(val.get) == 0 \
+                    else val.get(self)
             return val
 
     def __iter__(self):  # returns values, Iterable

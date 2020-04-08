@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+import warnings
 
 import torch
 
@@ -59,7 +60,8 @@ def translate_densenet(state_dict):
             r"features.{a:conv|norm}0.{e:(.*)}":
                 r"backbone.root.{a}.orig.{e}",
             r"features.denseblock{a:(\d+)}.denselayer{b:(\d+)}.{c:conv|norm}.{d:(\d+)}.{e}":
-                r"backbone.bulk.db{`int(a)-1`}.unit{`int(b)-1`}.block.{c}{`int(d)-1`}.orig.{e}",
+                r"backbone.bulk.db{`int(a)-1`}.unit{`int(b)-1`}.fork"
+                + r".block.{c}{`int(d)-1`}.orig.{e}",
             r"features.transition{a:(\d+)}.{b:conv|norm}.{e}":
                 r"backbone.bulk.transition{`int(a)-1`}.{b}.orig.{e}",
             r"features.norm(\d+).{e:(.*)}":  # the number matching the (\d+) is ignored
@@ -72,6 +74,10 @@ def translate_densenet(state_dict):
 
 
 def translate_swiftnet(state_dict):
+    warnings.warn(f"'backbone.img_mean' ({state_dict['backbone.img_mean']}) and 'backbone.img_std' "
+                  + f"({state_dict['backbone.img_std']}) removed from state_dict.")
+    del state_dict['backbone.img_std']
+    del state_dict['backbone.img_mean']
     state_dict = translate_dict_keys(
         state_dict,
         {  # backbone
