@@ -101,6 +101,21 @@ class PerturbationModel(E.Module):
         for _, param in self.named_default_parameters(full_size=full_size, recurse=recurse):
             yield param
 
+    def _named_members_repeatable(self, get_members_fn, prefix='', recurse=True):
+        r"""Helper method for yielding various names + members of modules.
+        Modified so that memo contains names instead of values, which may not be
+        unique."""
+        memo = set()  # Set containing names instead of values
+        modules = self.named_modules(prefix=prefix) if recurse else [(prefix, self)]
+        for module_prefix, module in modules:
+            members = get_members_fn(module)
+            for k, v in members:
+                name = module_prefix + ('.' if module_prefix else '') + k
+                if name in memo:
+                    continue
+                memo.add(name)
+                yield name, v
+
     def named_default_parameters(self, full_size: bool, prefix='', recurse=True):
         r"""Returns an iterator over just created default module parameters,
         yielding both the name of the default parameter and the parameter.
@@ -121,7 +136,7 @@ class PerturbationModel(E.Module):
         """
         getpd = ((lambda m: m.create_default_params(m.dummy_x).items()) if full_size
                  else (lambda m: ((k, v['value']) for k, v in m.param_defaults.items())))
-        return self._named_members(
+        return self._named_members_repeatable(
             lambda m: getpd(m) if isinstance(m, PerturbationModel) else iter(()),
             prefix=prefix, recurse=recurse)
 
@@ -233,7 +248,7 @@ class Warp(PerturbationModel):
 
 
 def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
-                 align_corners=True, label_interpolation_mode='bilinear',
+                 align_corners=True, label_interpolation_mode='nearest',
                  label_padding_mode=-1):
     pm, lpm = ['zeros' if x == 0 else x for x in [padding_mode, label_padding_mode]]
 
