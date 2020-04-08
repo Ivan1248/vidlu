@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 from .. import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
+import vidlu.utils.path as vup
 from vidlu.transforms import numpy as numpy_transforms
 
 from ._cityscapes_labels import labels as cslabels
@@ -244,9 +245,9 @@ class MNIST(Dataset):
             download_path.unlink()
 
     @staticmethod
-    def load_array(path, x):
+    def load_array(path, is_x):
         with open(path, 'rb') as f:
-            return (np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 28, 28) if x
+            return (np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 28, 28) if is_x
                     else np.frombuffer(f.read(), np.uint8, offset=8))
 
     def get_example(self, idx):
@@ -303,23 +304,19 @@ class Cifar10(Dataset):
 
         h, w, ch = 32, 32, 3
         if ss == 'train':
-            train_x = np.ndarray((0, h * w * ch), dtype=np.uint8)
-            train_y = []
+            x = np.ndarray((0, h * w * ch), dtype=np.uint8)
+            y = []
             for i in range(1, 6):
                 ds = unpickle(data_dir / f'data_batch_{i}')
-                train_x = np.vstack((train_x, ds['data']))
-                train_y += ds['labels']
-            train_x = train_x.reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
-            train_y = np.array(train_y, dtype=np.int8)
-            self.x, self.y = train_x, train_y
-        elif ss == 'test':
+                x = np.vstack((x, ds['data']))
+                y += ds['labels']
+            x = x.reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
+            y = np.array(y, dtype=np.int8)
+        else:  # ss == 'test':
             ds = unpickle(data_dir / 'test_batch')
-            test_x = ds['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
-            test_y = np.array(ds['labels'], dtype=np.int8)
-            self.x, self.y = test_x, test_y
-        else:
-            raise ValueError("The value of subset must be in {'train','test'}.")
-        self.x, self.y = map(to_shared_array, [self.x, self.y])
+            x = ds['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
+            y = np.array(ds['labels'], dtype=np.int8)
+        self.x, self.y = map(to_shared_array, [x, y])
         super().__init__(subset=subset,
                          info=dict(class_count=10, problem='classification', in_ram=True),
                          modifiers=['random_labels'] if self.random_labels else None)
@@ -724,8 +721,7 @@ class CamVid(Dataset):
     def __init__(self, data_dir, subset='train', downsampling=1):
         _check_subsets(self.__class__, subset)
         if downsampling < 1:
-            raise ValueError(
-                "downsampling must be greater or equal to 1.")
+            raise ValueError("downsampling must be greater or equal to 1.")
 
         data_dir = Path(data_dir)
         self.download_if_necessary(data_dir)
@@ -769,29 +765,36 @@ class Cityscapes(Dataset):
     default_dir = 'Cityscapes'
 
     def __init__(self, data_dir, subset='train', downsampling=1):
+        data_dir = Path(data_dir)
         _check_subsets(self.__class__, subset)
         if downsampling < 1:
-            raise ValueError(
-                "downsampling must be greater or equal to 1.")
+            raise ValueError("downsampling must be greater or equal to 1.")
 
         self._downsampling = downsampling
         self._shape = np.array([1024, 2048]) // downsampling
 
-        img_suffix = "_leftImg8bit.png"
-        lab_suffix = "_gtFine_labelIds.png"
-        self._id_to_label = {l.id: l.trainId for l in cslabels}
+        if 'leftImg8bit' in (x.name for x in data_dir.glob('*')):
+            images_dir, labels_dir = 'leftImg8bit', 'gtFine'
+            img_suffix, lab_suffix = "_leftImg8bit.png", "_gtFine_labelIds.png"
+            self._id_to_label = {l.id: l.trainId for l in cslabels}
+        else:  # IK's / MO's format
+            images_dir, labels_dir = 'rgb', 'labels'
+            img_suffix, lab_suffix = ".ppm", ".png"
+            self._id_to_label = {i: i for i in range(19)}
+            self._id_to_label[19] = -1
 
-        self._images_dir = Path(f'{data_dir}/leftImg8bit/{subset}')
-        self._labels_dir = Path(f'{data_dir}/gtFine/{subset}')
-        self._image_list = [x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]
-        self._image_list = list(sorted(self._image_list))
+        self._images_dir = data_dir / f'{images_dir}/{subset}'
+        self._labels_dir = data_dir / f'{labels_dir}/{subset}'
+        self._image_list = list(sorted([
+            x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]))
         self._label_list = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._image_list]
 
         info = dict(problem='semantic_segmentation', class_count=19,
                     class_names=[l.name for l in cslabels if l.trainId >= 0],
-                    class_colors=[l.color for l in cslabels if l.trainId >= 0])
+                    class_colors=[l.color for l in cslabels if l.trainId >= 0],
+                    in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
         modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=info)
+        super().__init__(subset=subset, modifiers=modifiers, info=info, )
 
     def get_example(self, idx):
         im_path = self._images_dir / self._image_list[idx]
@@ -813,8 +816,7 @@ class WildDash(Dataset):
     def __init__(self, data_dir, subset='val', downsampling=1):
         _check_subsets(self.__class__, subset)
         if downsampling < 1:
-            raise ValueError(
-                "downsampling must be greater or equal to 1.")
+            raise ValueError("downsampling must be greater or equal to 1.")
 
         self._subset = subset
 
@@ -977,6 +979,54 @@ class VOC2012Segmentation(Dataset):
 
 
 # Other
+
+class DarkZurich(Dataset):
+    subsets = ['train', 'val', 'val_ref']
+    default_dir = 'dark_zurich'
+
+    def __init__(self, data_dir, subset='train', downsampling=1):
+        _check_subsets(self.__class__, subset)
+        if downsampling < 1:
+            raise ValueError("downsampling must be greater or equal to 1.")
+
+        data_dir = Path(data_dir)
+
+        self._downsampling = downsampling
+
+        corresp_dir = data_dir / "corresp" / subset
+        gps_dir = data_dir / "gps" / subset
+        rgb_anon_dir = data_dir / "gps" / subset
+
+        img_dir = data_dir / '701_StillsRaw_full'
+        lab_dir = data_dir / 'LabeledApproved_full'
+        lines = (data_dir / f'{subset}.txt').read_text().splitlines()
+        self._img_lab_list = [(str(img_dir / f'{x}.png'), str(lab_dir / f'{x}_L.png'))
+                              for x in lines]
+        # info = dict(
+        #     problem='semantic_segmentation',
+        #     class_count=11,
+        #     class_names=list(CamVid.class_groups_colors.keys()),
+        #     class_colors=[next(iter(v.values())) for v in
+        #                   CamVid.class_groups_colors.values()])
+        #
+        # self.color_to_label = dict()
+        # for i, class_name_color in enumerate(CamVid.class_groups_colors.values()):
+        #     for _, color in class_name_color.items():
+        #         self.color_to_label[color] = i
+        # self.color_to_label[(0, 0, 0)] = -1
+        #
+        # modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
+        # super().__init__(subset=subset, modifiers=modifiers, info=info)
+
+    def get_example(self, idx):
+        ip, lp = self._img_lab_list[idx]
+        # df = self._downsampling
+        # return _make_record(
+        #     x_=lambda: load_image_with_downsampling(ip, df),
+        #     y_=lambda: load_segmentation_with_downsampling(lp, df, self.color_to_label))
+
+    def __len__(self):
+        return len(self._img_lab_list)
 
 
 class ISUN(Dataset):
