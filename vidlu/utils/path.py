@@ -2,21 +2,29 @@ import os
 import tempfile
 from pathlib import Path
 import re
+#import psutil
 
 
 # Path #############################################################################################
 
-def find_in_ancestor(path, ancestor_sibling_path):
+def find_in_directories(dirs, child):
+    for candidate in (Path(d) / child for d in dirs):
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"None of {dirs} contains '{child}'.")
+
+
+def find_in_ancestors(start_path, subpath):
     """
     `ancestor_sibling_path` can be the name of a sibling directory (or some
     descendant of the sibling) to some ancestor of `path` or `path`
     """
-    path = Path(path).absolute()
-    for anc in path.parents:
-        candidate = anc / ancestor_sibling_path
+    start_path = Path(start_path).absolute()
+    for anc in start_path.parents:
+        candidate = anc / subpath
         if candidate.exists():
             return candidate
-    raise FileNotFoundError("No ancestor sibling found")
+    raise FileNotFoundError(f"No ancestor of {start_path} has a child {subpath}.")
 
 
 def to_valid_path(path):
@@ -87,3 +95,17 @@ def write_text(path, text, append=False):
 def write_lines(path, lines, append=False):
     with open(path, "w+" if append else "w") as file:
         file.writelines(lines)
+
+
+def get_partition(path):
+    bestMatch = ""
+    partition = None
+    for part in psutil.disk_partitions():
+        if path.startswith(part.mountpoint) and len(bestMatch) < len(part.mountpoint):
+            partition, bestMatch = part, part.mountpoint
+    return partition
+
+
+def get_fs_type(path):
+    # https://stackoverflow.com/questions/25283882/determining-the-filesystem-type-from-a-path-in-python
+    return get_partition(path).fstype
