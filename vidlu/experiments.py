@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 
 from vidlu import gpu_utils, factories
-from vidlu.modules import get_submodule
+import vidlu.modules as vm
 from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
@@ -108,6 +108,17 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
 
 # Experiment #######################################################################################
 
+def _check_dirs(dirs):
+    for name in ['DATASETS', 'CACHE', 'SAVED_STATES', 'PRETRAINED']:
+        dirs_ = getattr(dirs, name)
+        if isinstance(dirs_, (str, Path)):
+            dirs_ = [dirs_]
+        for d in dirs_:
+            if d is None or not Path(d).is_dir():
+                raise NotADirectoryError(f"dirs.{name}={getattr(dirs, name)} is not"
+                                         f" a directory path or a sequence thereof.")
+
+
 @dataclass
 class TrainingExperiment:
     model: nn.Module
@@ -118,9 +129,7 @@ class TrainingExperiment:
 
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
-        for d in ['DATASETS', 'CACHE', 'SAVED_STATES', 'PRETRAINED']:
-            if getattr(dirs, d) is None or not Path(getattr(dirs, d)).is_dir():
-                raise NotADirectoryError(f"dirs.{d}={getattr(dirs, d)} is not a directory.")
+        _check_dirs(dirs)
         a = training_args
         with indent_print("Selecting device..."):
             if a.device is None:
@@ -158,7 +167,7 @@ class TrainingExperiment:
         elif a.params is not None:
             parameters, dest = factories.get_translated_parameters(params_str=a.params,
                                                                    params_dir=dirs.PRETRAINED)
-            module = get_submodule(model, dest)
+            module = vm.get_submodule(model, dest)
             try:
                 module.load_state_dict(parameters, strict=True)
             except RuntimeError as ex:
