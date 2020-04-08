@@ -7,6 +7,8 @@ from . import datasets
 from .datasets import Dataset
 from .. import PartedDataset
 
+import vidlu.utils.path as vup
+
 
 @dc.dataclass
 class _DatasetInfo:
@@ -27,8 +29,10 @@ _default_splits = {
 
 
 class DatasetFactory:
-    def __init__(self, datasets_dir):
-        self.datasets_dir = Path(datasets_dir)
+    def __init__(self, datasets_dir_or_dirs):
+        if isinstance(datasets_dir_or_dirs, str):
+            datasets_dir_or_dirs = [datasets_dir_or_dirs]
+        self.datasets_dirs = list(map(Path, datasets_dir_or_dirs))
 
     def __call__(self, name: str, **kwargs):
         name = name.lower()
@@ -36,7 +40,7 @@ class DatasetFactory:
             raise KeyError(f'No dataset has the name "{name}".')
         info = _ds_to_info[name]
         subsets = info.cls.subsets
-        path_args = [self.datasets_dir / info.path] if info.path else []
+        path_args = [vup.find_in_directories(self.datasets_dirs, info.path)] if info.path else []
         if len(info.cls.subsets) == 0:
             subsets = ['all']
             load = lambda s: info.cls(*path_args, **{**info.kwargs, **kwargs})
