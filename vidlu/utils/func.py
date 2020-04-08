@@ -403,8 +403,7 @@ def multiinput_method(func):
     return wrapper
 
 
-def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__call__',
-                  name=None, ):
+def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__call__', name=None):
     from inspect import signature, Parameter
     name = name or text.to_pascal_case(func.__name__)  # PascalCase
     pnames = list(signature(func).parameters.keys())
