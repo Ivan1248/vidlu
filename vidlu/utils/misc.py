@@ -99,9 +99,7 @@ def download(url, output_path, md5=None):
             for chunk in iter(lambda: f.read(1024 * 1024), b''):
                 md5o.update(chunk)
         md5c = md5o.hexdigest()
-        if md5c != md5:
-            return False
-        return True
+        return md5c == md5
 
     if md5 is not None and os.path.isfile(output_path) and check_integrity(output_path, md5):
         print(f'Using downloaded and verified file: {output_path}')
