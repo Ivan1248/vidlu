@@ -129,7 +129,7 @@ def tps(theta, ctrl, grid):
 
 
 def tps_grid(theta, ctrl, size):
-    """Compute a thin-plate-spline grid from parameters for sampling.
+    """Computes a thin-plate-spline grid from parameters for sampling.
 
     Taken from https://github.com/cheind/py-thin-plate-spline
 
@@ -150,7 +150,8 @@ def tps_grid(theta, ctrl, size):
     """
     N, _, H, W = size
     k = dict(device=theta.device, dtype=theta.dtype)
-    grid = uniform_grid_2d((H, W), with_h_coord=True, h_dim=0, **k).unsqueeze(0).expand(N, H, W, 3)
+    grid = uniform_grid_2d((H, W), homog_coord=True, homog_dim=0, **k)
+    grid = grid.unsqueeze(0).expand(N, H, W, 3)
     z = tps(theta, ctrl, grid)
     return grid[..., 1:].add(z).mul(2).sub(1)  # [-1,1] range for F.sample_grid
 
@@ -165,15 +166,18 @@ def tps_sparse(theta, ctrl, xy):
 
 
 @torch.no_grad()
-def uniform_grid_2d(shape, low=0., high=1., with_h_coord=False, h_dim=2, dtype=None,
+def uniform_grid_2d(shape, low=0., high=1., homog_coord=False, homog_dim=2, dtype=None,
                     device=None):
     # low should be -1.0 for sample_grid
     H, W = shape
+    if not isinstance(low, tuple):
+        low, high = (low,) * 2, (high,) * 2
     k = dict(device=device, dtype=dtype)
-    mg = torch.meshgrid([torch.linspace(low, high, H, **k), torch.linspace(low, high, W, **k)])
+    mg = torch.meshgrid(
+        [torch.linspace(low[0], high[0], H, **k), torch.linspace(low[1], high[1], W, **k)])
     mg = list(reversed(mg))
-    if with_h_coord:
-        mg.insert(h_dim, mg[0].new_ones(()).expand(mg[0].shape))
+    if homog_coord:
+        mg.insert(homog_dim, mg[0].new_ones(()).expand(mg[0].shape))
     return torch.stack(mg, dim=-1)  # X/W, Y/H
 
 
@@ -283,6 +287,7 @@ def tps_grid_from_points(c_src, c_dst, size, reduced=False):
     theta = tps_params_from_points(c_src, c_dst, reduced=reduced)
     return tps_grid(theta, c_src, size=size)
 
+
 def gaussian_forward_warp_v2(features, flow, sigma=1., normalize=True):
     """
     :type features: torch.tensor: B, C, H, W
@@ -294,20 +299,34 @@ def gaussian_forward_warp_v2(features, flow, sigma=1., normalize=True):
     yy = torch.arange(0, H).view(-1, 1).repeat(1, W)
     xx = xx.view(1, 1, H, W).repeat(B, 1, 1, 1)
     yy = yy.view(1, 1, H, W).repeat(B, 1, 1, 1)
-    grid_own_coords = torch.cat((xx, yy), 1).float().to(flow.device) # B, 2, H, W
+    grid_own_coords = torch.cat((xx, yy), 1).float().to(flow.device)  # B, 2, H, W
     grid_own_coords.requires_grad = False
-    grid_other_coords = grid_own_coords.clone().view(B, 2, H*W)
-    grid_other_coords = grid_other_coords.view(B, 2, H*W, 1, 1).repeat(1, 1, 1, H, W) # B, 2, H*W, H, W
+    grid_other_coords = grid_own_coords.clone().view(B, 2, H * W)
+    grid_other_coords = grid_other_coords.view(B, 2, H * W, 1, 1).repeat(1, 1, 1, H,
+                                                                         W)  # B, 2, H*W, H, W
     grid_other_coords.requires_grad = False
     exact_flow = grid_own_coords.view(B, 2, 1, H, W) - grid_other_coords
     estimated_flow = flow.view(B, 2, H * W, 1, 1).repeat(1, 1, 1, H, W)
-    weights = torch.exp(-(((estimated_flow - exact_flow) ** 2) / sigma).sum(1)) # B, H*W, H, W
-    future_features = torch.bmm(features.view(B, C, H*W), weights.view(B, H*W, H*W)) # B, C, H*W
+    weights = torch.exp(-(((estimated_flow - exact_flow) ** 2) / sigma).sum(1))  # B, H*W, H, W
+    future_features = torch.bmm(features.view(B, C, H * W),
+                                weights.view(B, H * W, H * W))  # B, C, H*W
     future_features = future_features.view(B, C, H, W)
     if normalize:
         future_features /= (weights.sum(1) + epsilon).unsqueeze(1)
     return future_features
 
+
+def homography_warp_grid(shape, params, size):
+    N, _, H, W = size
+    k = dict(device=theta.device, dtype=theta.dtype)
+    grid = uniform_grid_2d((H, W), homog_coord=True, homog_dim=0, **k)
+    grid = grid.unsqueeze(0).expand(N, H, W, 3)  # aspect ratio not preserved
+    assert False, "TODO"
+    z = tps(theta, ctrl, grid)
+    return grid[..., 1:].add(z).mul(2).sub(1)  # [-1,1] range for F.sample_grid
+
+
+# def homography_warp_grid(x, )
 
 
 if __name__ == '__main__':
