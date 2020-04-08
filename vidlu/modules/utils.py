@@ -1,7 +1,5 @@
 from torch import nn
-from inspect import isfunction
-from functools import wraps, partial
-import contextlib
+from functools import partial
 
 from vidlu.utils.inspect import find_frame_in_call_stack
 from vidlu.utils.func import func_to_class
