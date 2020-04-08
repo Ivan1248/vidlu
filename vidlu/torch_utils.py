@@ -4,6 +4,8 @@ import torch
 
 from vidlu.utils.func import identity
 
+import torch.utils.checkpoint as tuc
+
 
 def is_float_tensor(x):
     return 'float' in str(x.dtype)
@@ -69,9 +71,9 @@ def switch_training(module, value):
     return switch_attribute(module.modules(), 'training', value)
 
 
-def switch_batchnorm_momentum(module, value=None):
-    return switch_attribute((k for k in module.modules() if type(k).__name__ == 'BatchNorm2d'),
-                            'momentum', value)
+def switch_batchnorm_momentum(module, value):
+    batchnorms = (k for k in module.modules() if type(k).__name__.startswith('BatchNorm'))
+    return switch_attribute(batchnorms, 'momentum', value)
 
 
 @contextlib.contextmanager
@@ -140,3 +142,16 @@ def profile(func, on_cuda=True):
     if on_cuda:
         torch.cuda.synchronize()
     return output, prof.key_averages().table('cuda_time_total')
+
+from torch import nn
+
+class StateAwareCheckpoint:
+    def __init__(self, module, context_managers_fs=(batchnorm_stats_tracking_off,)):
+        self.context_managers_fs = context_managers_fs
+        self.module = module if isinstance(module, nn.Module) else nn.ModuleList(module)
+
+    def __call__(self, func, *args, **kwargs):
+        with contextlib.ExitStack() as stack:
+            for cmf in self.context_managers_fs:
+                stack.enter_context(cmf(self.module))
+            return tuc.checkpoint(func, *args, **kwargs)
