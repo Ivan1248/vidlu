@@ -45,6 +45,7 @@ def train(args):
 
     print(f'Trained model saved in {e.cpman.experiment_dir}')
 
+
 def path(args):
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
@@ -109,7 +110,8 @@ def add_standard_arguments(parser, func):
                         help="RNG seed. Default: `int(time()) % 100`.")
     # reporting, debugging
     parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
-    parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.", action='store_true')
+    parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.",
+                        action='store_true')
     parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=1)
     parser.set_defaults(func=func)
 
@@ -143,13 +145,14 @@ if args.warnings_as_errors:
     import warnings
     import sys
 
+
     def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
         log = file if hasattr(file, 'write') else sys.stderr
         traceback.print_stack(file=log)
         log.write(warnings.formatwarning(message, category, filename, lineno, line))
 
-    warnings.showwarning = warn_with_traceback
-    #warnings.simplefilter("always")
 
+    warnings.showwarning = warn_with_traceback
+    # warnings.simplefilter("always")
 
 args.func(args)
