@@ -9,7 +9,7 @@ import typing as T
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import optim
+from torch import optim, nn
 
 from vidlu.modules.losses import NLLLossWithLogits, KLDivLossWithLogits
 from vidlu import ops
@@ -152,7 +152,7 @@ class Attack:
         if isinstance(self.to_virtual_target, str):
             self.to_virtual_target = _to_target_wiki[self.to_virtual_target]
 
-    def __call__(self, model, x, y=None, output=None, **kwargs):
+    def __call__(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial perturbation model.
 
         `attack(model, x, y)(x)` should give the same result as
@@ -169,9 +169,8 @@ class Attack:
                 `self.to_virtual_target`).
 
         Return:
-            (torch.nn.Module) An adversarial perturbation model with paameters
+            (torch.nn.Module) An adversarial perturbation model with parameters.
         """
-
         if y is None:
             y = self._get_virtual_target(model, output, x)
         if type(self)._get_perturbation is not Attack._get_perturbation:
@@ -182,7 +181,7 @@ class Attack:
             x_adv = self._perturb(model, x, y=y, **kwargs)
             return _perturbation_model_from_perturbation(x_adv, x)
 
-    def perturb(self, model, x, y=None, output=None, **kwargs):
+    def perturb(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial example.
 
         Args:
@@ -620,7 +619,6 @@ def perturb_iterative_with_perturbation_model(
     Returns:
         The perturbation model.
     """
-
     stop_on_success = similar is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
@@ -642,6 +640,10 @@ def perturb_iterative_with_perturbation_model(
 
     for i in range(step_count):
         x_adv, y_ = pmodel(x, y)
+        if clip_bounds is not None:
+            if torch.any(x_adv[0] < clip_bounds[0]) or torch.any(x_adv[0] > clip_bounds[1]):
+                warnings.warn("The perturbation model does not limit input values to clip_bounds.")
+            x_adv.clamp_(*clip_bounds)
 
         if stop_on_success:
             storage = [x, y, x_adv]
@@ -675,9 +677,6 @@ def perturb_iterative_with_perturbation_model(
 
             optim.step()
             projection(pmodel)
-
-            if clip_bounds is not None:
-                x_adv.clamp_(*clip_bounds)
 
         if stop_on_success:
             x, y, x_adv = storage
@@ -776,10 +775,11 @@ class PerturbationModelAttack(Attack, EarlyStoppingMixin):
                 params = pmodel.named_parameters()
                 default_vals = vmi.named_default_parameters(pmodel, full_size=False)
                 for (name, p), (name_, d) in zip(params, default_vals):
-                    assert name == name_  # TODO: remove
+                    assert name == name_, f"{name}, {name_}"  # Do not remove!
                     p.clamp_(min=d - eps, max=d + eps)
 
             self.projection = projection
+        raise RuntimeError("Fix clipping")
 
     def _get_perturbation(self, model, x, y=None, pert_model=None, initialize_pert_model=True,
                           backward_callback=None):
