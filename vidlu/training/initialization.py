@@ -1,4 +1,5 @@
 import warnings
+from itertools import chain
 
 from torch import nn
 
@@ -15,6 +16,7 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=False):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.Linear):
+            m.reset_parameters()
             nn.init.constant_(m.bias, 0)
     if zero_init_residual:
         found = 0
@@ -27,6 +29,9 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=False):
         if not found:
             warnings.warn("Batch normalization module for residual zero-init not found.")
 
+def kaiming_swiftnet(module, nonlinearity='relu'):
+    kaiming_resnet(module, nonlinearity=nonlinearity, zero_init_residual=False)
+
 
 def kaiming_densenet(module, nonlinearity='relu'):
     # from torchvision/models/densenet.py
@@ -38,6 +43,7 @@ def kaiming_densenet(module, nonlinearity='relu'):
             nn.init.constant_(m.weight, 1)
             nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.Linear):
+            m.reset_parameters()
             nn.init.constant_(m.bias, 0)
 
 
