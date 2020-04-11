@@ -26,7 +26,8 @@ class NameDict(Mapping):
 
     def __setitem__(self, name, value):
         if not name.isidentifier():
-            raise KeyError('A NameDict can only have keys that are valid identifiers.')
+            raise KeyError('A NameDict can only have keys that are valid identifiers.'
+                           f' {name} is not.')
         setattr(self, name, value)
 
     def __getattr__(self, item):
