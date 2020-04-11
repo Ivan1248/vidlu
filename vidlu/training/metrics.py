@@ -41,7 +41,8 @@ def multiclass_confusion_matrix(true, pred, class_count):
         A confusion matrix with shape (class_count, class_count).
     """
     pred = one_hot(pred, class_count, dtype=torch.int64)
-    cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.int64, device='cpu')
+    cm = torch.zeros([class_count] * 2, requires_grad=False,
+                     dtype=torch.int64, device='cpu')  # TODO: why CPU
     for c in range(class_count):
         cm[c, :] = pred[true == c, :].sum(0)
     return cm
@@ -119,38 +120,68 @@ class ClassificationMetrics(AccumulatingMetric):
         return compute_classification_metrics(self.cm.cpu().numpy(), returns=self.metrics, eps=eps)
 
 
-class AverageMetric(AccumulatingMetric):
-    def __init__(self, name):
+class _MeanMetric(AccumulatingMetric):
+    def __init__(self, name, extract_func=None):
         self.name = name
-        self._sum, self._n = None, None
+        self.extract_func = extract_func or (lambda x: x[name])
         self.reset()
 
     def reset(self):
         self._sum = KleinSum()
         self._n = EPS
 
+
+class AverageMetric(_MeanMetric):
     def update(self, iter_output):
-        self._sum += iter_output[self.name]
+        self._sum += self.extract_func(iter_output)
         self._n += 1
 
     def compute(self):
-        return {self.name: self._sum.get() / self._n}
+        return {self.name: self._sum.value / self._n}
 
 
-class FuncAverageMetric(AverageMetric):
-    def __init__(self, func, name):
-        self._func = func
-        super().__init__(name)
-
+class HarmonicMeanMetric(_MeanMetric):
     def update(self, iter_output):
-        self._sum += self._func(iter_output)
+        self._sum += 1 / self.extract_func(iter_output)
         self._n += 1
 
+    def compute(self):
+        return {self.name: self._n / self._sum.value}
 
-class MultipleAverageMetrics(AccumulatingMetric):
-    def __init__(self, name_filter):
+
+class _ExtremumMetric(AccumulatingMetric):
+    def __init__(self, name, extremum_func, extract_func=None):
+        self.name = name
+        self.extremum_func = extremum_func
+        self.extract_func = extract_func or (lambda x: x[name])
+        self.reset()
+
+    def reset(self):
+        self._ext = None
+
+    def update(self, iter_output):
+        val = self.extract_func(iter_output)
+        self._ext = self.extremum_func(self._ext or val, val)
+
+    def compute(self):
+        return {self.name: self._ext}
+
+
+class MaxMetric(_ExtremumMetric):
+    def __init__(self, name, extract_func=None):
+        super().__init__(name, max, extract_func=extract_func)
+
+
+class MinMetric(_ExtremumMetric):
+    def __init__(self, name, extract_func=None):
+        super().__init__(name, min, extract_func=extract_func)
+
+
+class _MultiMetric(AccumulatingMetric):
+    def __init__(self, name_filter, metric_f):
         self.name_filter = name_filter
         self.metrics = []
+        self.metric_f = metric_f
 
     def reset(self):
         self.metrics = []
@@ -158,7 +189,7 @@ class MultipleAverageMetrics(AccumulatingMetric):
     @torch.no_grad()
     def update(self, iter_output):
         if len(self.metrics) == 0:
-            self.metrics = [AverageMetric(k) for k in iter_output.keys() if self.name_filter(k)]
+            self.metrics = [self.metric_f(k) for k in iter_output.keys() if self.name_filter(k)]
         for m in self.metrics:
             m.update(iter_output)
 
@@ -167,6 +198,24 @@ class MultipleAverageMetrics(AccumulatingMetric):
         for m in self.metrics or ():
             result.update(m.compute())
         return result
+
+class AverageMultiMetric(_MultiMetric):
+    def __init__(self, name_filter):
+        super().__init__(name_filter=name_filter, metric_f=AverageMetric)
+
+
+class HarmonicMeanMultiMetric(_MultiMetric):
+    def __init__(self, name_filter):
+        super().__init__(name_filter=name_filter, metric_f=HarmonicMeanMetric)
+
+
+class MaxMultiMetric(_MultiMetric):
+    def __init__(self, name_filter):
+        super().__init__(name_filter=name_filter, metric_f=MaxMetric)
+
+class MinMultiMetric(_MultiMetric):
+    def __init__(self, name_filter):
+        super().__init__(name_filter=name_filter, metric_f=MinMetric)
 
 
 class SoftClassificationMetrics(AccumulatingMetric):

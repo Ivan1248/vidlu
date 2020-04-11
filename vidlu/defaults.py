@@ -76,10 +76,13 @@ def get_trainer_args(trainer_extension_fs, dataset):
 def get_metrics(trainer, problem):
     import vidlu.training.metrics as tm
 
+    ret = [partial(tm.MaxMultiMetric, name_filter=lambda k: k.startswith('mem')),
+           partial(tm.HarmonicMeanMultiMetric, name_filter=lambda k: k.startswith('freq'))]
+
     if isinstance(problem, (Classification, SemanticSegmentation)):
         clf_metric_names = ('A', 'mIoU') if isinstance(problem, SemanticSegmentation) else ('A',)
         hard_prediction_name = "other_outputs.hard_prediction"
-        ret = [partial(tm.MultipleAverageMetrics, name_filter=lambda k: k.startswith('loss'))]
+        ret.append(partial(tm.AverageMultiMetric, name_filter=lambda k: k.startswith('loss')))
         if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
             ret.append(partial(tm.with_suffix(tm.ClassificationMetrics, 'adv'),
                                hard_prediction_name="other_outputs_adv.hard_prediction",
