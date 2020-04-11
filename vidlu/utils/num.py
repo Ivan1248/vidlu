@@ -16,7 +16,7 @@ class KleinSum:
         >>>     ks += x
         >>>     s += x
         >>> print(s / n)
-        >>> print(ks.get() / n)
+        >>> print(ks.value / n)
         >>> print(np.sum(numbers) / n)
         >>> print(np.mean(numbers))
 
@@ -29,7 +29,8 @@ class KleinSum:
         self.cs = num_type(0.0)
         self.ccs = num_type(0.0)
 
-    def get(self):
+    @property
+    def value(self):
         return self.s + self.cs + self.ccs
 
     def __iadd__(self, x):
@@ -49,7 +50,7 @@ class KleinSum:
         return self
 
     def __repr__(self):
-        return f"KleinSum({self.get()})"
+        return f"KleinSum(value={self.value})"
 
 
 def round_to_int(x):
