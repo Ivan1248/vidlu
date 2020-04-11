@@ -17,8 +17,6 @@ def one_hot(indices: torch.Tensor, c: int, dtype=None):
         A one-hot array with the last array dimension of size `c` and ones at
         `indices`.
     """
-    if dtype is torch.int64:
-        warnings.warn("You can use one_hot from torch.nn.functional instead.")
     y_flat = indices.view(-1, 1)
     return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=indices.device)
             .scatter_(1, y_flat, 1).view(*indices.shape, -1))
