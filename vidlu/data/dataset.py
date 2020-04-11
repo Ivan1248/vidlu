@@ -275,6 +275,9 @@ class Dataset(abc.Sequence):
         """
         return self.map(FieldsMap(field_to_func), func_name=func_name, **kwargs)
 
+    def enumerate(self, offset=0):
+        return EnumeratedDataset(self, offset=offset)
+
     def permute(self, seed=53, **kwargs):
         """ Creates a permutation of the dataset. """
         indices = np.random.RandomState(seed=seed).permutation(len(self))
@@ -371,6 +374,18 @@ class MapDataset(Dataset):
 
     def get_example(self, idx):
         return self.func(self.data[idx])
+
+
+class EnumeratedDataset(Dataset):
+    __slots__ = ("offset",)
+
+    def __init__(self, dataset, offset=0, **kwargs):
+        super().__init__(modifiers=f'enumerated({offset})', data=dataset, **kwargs)
+        self.offset = offset
+
+    def get_example(self, idx):
+        r = self.data[idx]
+        return type(r)(r, id=idx) if isinstance(r, T.Mapping) else r + type(r)((idx,))
 
 
 class ZipDataset(Dataset):
@@ -483,7 +498,7 @@ class HDDCacheDataset(Dataset):
         super().__init__(modifiers=modifier, data=dataset, **kwargs)
         self.cache_dir = to_valid_path(Path(cache_dir) / self.identifier)
         self.separate_fields = separate_fields
-        if len(dataset) ==0:
+        if len(dataset) == 0:
             warnings.warn(f"The dataset {dataset} is empty.")
             return
         if separate_fields:
