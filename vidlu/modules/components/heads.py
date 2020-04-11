@@ -21,7 +21,7 @@ class ClassificationHead1D(E.Seq):
 
 class FixedSizeSegmentationHead(E.Seq):
     def __init__(self, class_count, shape=None, kernel_size=1, pre_activation=False,
-                 norm_f=D.norm_f, act_f=D.act_f):
+                 norm_f=D.norm_f, act_f=E.ReLU):
         pre_act = dict(act=act_f(), norm=norm_f()) if pre_activation else {}
         super().__init__(
             **pre_act,

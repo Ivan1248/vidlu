@@ -78,7 +78,7 @@ class StandardRootBlock(E.Seq):
         act_f: Activation module factory.
     """
 
-    def __init__(self, out_channels: int, small_input, norm_f=D.norm_f, act_f=D.act_f):
+    def __init__(self, out_channels: int, small_input, norm_f=D.norm_f, act_f=E.ReLU):
         if small_input:  # CIFAR
             super().__init__(conv=E.Conv(out_channels, 3, padding='half', bias=False))
         else:
@@ -134,7 +134,7 @@ class PreactBlock(E.Seq):
     """
 
     def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1,
-                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=D.act_f,
+                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
                  conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved, dilation=Reserved),
                  noise_f=None):
@@ -171,7 +171,7 @@ class PostactBlock(E.Seq):
     """
 
     def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1,
-                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=D.act_f,
+                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
                  conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved, dilation=Reserved),
                  noise_f=None):
@@ -262,7 +262,7 @@ class Baguette(E.Seq):
 
 
 class SqueezeExcitation(E.Module):
-    def __init__(self, channel, reduction=16, squeeze_f=nn.AdaptiveAvgPool2d, act_f=D.act_f):
+    def __init__(self, channel, reduction=16, squeeze_f=nn.AdaptiveAvgPool2d, act_f=E.ReLU):
         super().__init__()
 
     def build(self, x):
@@ -581,7 +581,7 @@ class ResNetV2Backbone(ResNetV1Backbone):
 # DenseNet #########################################################################################
 
 class DenseTransition(E.Seq):
-    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=D.act_f,
+    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=E.ReLU,
                  conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(E.AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
@@ -637,7 +637,7 @@ class DenseNetBackbone(E.Seq):
 # MDenseNet ########################################################################################
 
 class MDenseTransition(E.Seq):
-    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=D.act_f,
+    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=E.ReLU,
                  conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(E.AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
@@ -788,7 +788,7 @@ class VGGBackbone(E.Seq):
 
 
 class VGGClassifier(E.Seq):
-    def __init__(self, fc_dim, class_count, act_f=D.act_f, noise_f=nn.Dropout):
+    def __init__(self, fc_dim, class_count, act_f=E.ReLU, noise_f=nn.Dropout):
         super().__init__()
         widths = [fc_dim] * 2 + [class_count]
         for i, w in enumerate(widths):
@@ -818,7 +818,7 @@ class FCNEncoder(E.Seq):
 
 class SimpleEncoder(E.Seq):
     def __init__(self, kernel_sizes=(4,) * 4, widths=(32, 64, 128, 256), z_width=32,
-                 norm_f=D.norm_f, act_f=D.ReLU, conv_f=D.conv_f):
+                 norm_f=D.norm_f, act_f=E.ReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add_module(f'conv{i}',
@@ -847,7 +847,7 @@ class AAEEncoder(E.Seq):
 
 class AAEDecoder(E.Seq):
     def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
-                 norm_f=D.norm_f, act_f=D.ReLU, convt_f=D.convt_f):
+                 norm_f=D.norm_f, act_f=E.ReLU, convt_f=D.convt_f):
         super().__init__()
         self.add_module('linear_h', E.Linear(h_dim))
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
@@ -859,7 +859,7 @@ class AAEDecoder(E.Seq):
 
 
 class AAEDiscriminator(E.Seq):
-    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=D.norm_f, act_f=D.ReLU):
+    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=D.norm_f, act_f=E.ReLU):
         super().__init__()
         for i in range(2):
             # batch normalization?
