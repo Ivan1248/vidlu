@@ -1,6 +1,6 @@
 from functools import partial, partialmethod
 from collections.abc import Sequence
-import math
+import typing as T
 
 import torch
 from torch import nn
@@ -401,12 +401,11 @@ class KresoContext(E.Seq):
 
 
 class KresoLadderNet(E.Module):
-    def __init__(self, backbone_f, laterals, ladder_width, context_f=DenseSPP,
-                 up_blend_f=LadderUpsampleBlend, post_activation=False):
+    def __init__(self, backbone_f, laterals: T.Sequence[str], ladder_width: int,
+                 context_f=DenseSPP, up_blend_f=LadderUpsampleBlend, post_activation=False):
         super().__init__()
-        self.laterals = laterals
-        # self.backbone = E.IntermediateOutputsModuleWrapper(backbone_f(), laterals)
         self.backbone = backbone_f()
+        self.laterals = laterals
         self.context = context_f()
         self.ladder = KresoLadder(ladder_width, up_blend_f)
         defaults = default_args(default_args(up_blend_f).blend_block_f)
@@ -414,7 +413,6 @@ class KresoLadderNet(E.Module):
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
 
     def forward(self, x):
-        # context_input, skips = self.backbone(x)
         context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
         context = self.context(context_input)
         ladder_output = self.ladder(context, laterals[::-1])
@@ -599,15 +597,11 @@ class DenseTransition(E.Seq):
             pool=Reserved.call(self.args.pool_f, stride=2))
 
 
-class DenseUnit(E.Module):
+class DenseUnit(E.Seq):
     def __init__(self,
                  block_f=argtree_partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1),
                                          act_f=ArgTree(inplace=True))):
-        super().__init__()
-        self.block = block_f()
-
-    def forward(self, x):
-        return torch.cat([x, self.block(x)], 1)
+        super().__init__(fork=E.Fork(skip=E.Identity(), block=block_f()), cat=E.Concat())
 
 
 class DenseBlock(E.Seq):
@@ -824,7 +818,7 @@ class FCNEncoder(E.Seq):
 
 class SimpleEncoder(E.Seq):
     def __init__(self, kernel_sizes=(4,) * 4, widths=(32, 64, 128, 256), z_width=32,
-                 norm_f=D.norm_f, act_f=nn.ReLU, conv_f=D.conv_f):
+                 norm_f=D.norm_f, act_f=D.ReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add_module(f'conv{i}',
@@ -853,7 +847,7 @@ class AAEEncoder(E.Seq):
 
 class AAEDecoder(E.Seq):
     def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
-                 norm_f=D.norm_f, act_f=nn.ReLU, convt_f=D.convt_f):
+                 norm_f=D.norm_f, act_f=D.ReLU, convt_f=D.convt_f):
         super().__init__()
         self.add_module('linear_h', E.Linear(h_dim))
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
@@ -865,7 +859,7 @@ class AAEDecoder(E.Seq):
 
 
 class AAEDiscriminator(E.Seq):
-    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=D.norm_f, act_f=nn.ReLU):
+    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=D.norm_f, act_f=D.ReLU):
         super().__init__()
         for i in range(2):
             # batch normalization?
@@ -919,7 +913,7 @@ class IRevNetUnit(E.Module):
     def inverse_forward(self, y):
         h1 = self.baguette.inverse(y[0])
         h0 = self.baguette.inverse(y[1] - self.block(h1))
-        return self.input_pad.inverse(a)
+        return self.input_pad.inverse([h0, h1])
 
 
 class IRevNetGroups(E.Seq):
