@@ -1,9 +1,10 @@
 import contextlib
+import typing as T
 
 import torch
+from torch import nn
 
 from vidlu.utils.func import identity
-
 import torch.utils.checkpoint as tuc
 
 
@@ -72,13 +73,15 @@ def switch_training(module, value):
 
 
 def switch_batchnorm_momentum(module, value):
-    batchnorms = (k for k in module.modules() if type(k).__name__.startswith('BatchNorm'))
-    return switch_attribute(batchnorms, 'momentum', value)
+    modules = (m for m in module.modules()
+               if type(m).__name__.startswith('BatchNorm') and hasattr(m, 'momentum'))
+    return switch_attribute(modules, 'momentum', value)
 
 
 @contextlib.contextmanager
 def batchnorm_stats_tracking_off(module):
-    modules = [m for m in module.modules() if type(m).__name__ == 'BatchNorm2d']
+    modules = [m for m in module.modules()
+               if type(m).__name__.startswith('BatchNorm') and hasattr(m, 'momentum')]
     with switch_attribute(modules, 'momentum', 0), \
          save_tensor_attribute(modules, 'num_batches_tracked'):
         yield
@@ -143,7 +146,26 @@ def profile(func, on_cuda=True):
         torch.cuda.synchronize()
     return output, prof.key_averages().table('cuda_time_total')
 
-from torch import nn
+
+def checkpoint_fix(function, *args, **kwargs):
+    """A workaround for CheckpointFunctionBackward not being set (and called)
+    when the output of `function` is an in-place modified view tensor, e.g
+    `x[:].relu_()`.
+    """
+
+    def wrapper(*args_, **kwargs_):
+        result = function(*args_, **kwargs_)
+        if isinstance(result, torch.Tensor):
+            return result[...] if result._version > 0 else result
+        elif isinstance(result, T.Sequence):
+            return type(result)(r[...] if r._version > 0 else r for r in result)
+        elif isinstance(result, T.Mapping):
+            return type(result)({k: r[...] if r._version > 0 else r for k, r in result.items()})
+        else:
+            raise NotImplementedError()
+
+    return tuc.checkpoint(wrapper, *args, **kwargs)
+
 
 class StateAwareCheckpoint:
     def __init__(self, module, context_managers_fs=(batchnorm_stats_tracking_off,)):
@@ -154,4 +176,4 @@ class StateAwareCheckpoint:
         with contextlib.ExitStack() as stack:
             for cmf in self.context_managers_fs:
                 stack.enter_context(cmf(self.module))
-            return tuc.checkpoint(func, *args, **kwargs)
+            return checkpoint_fix(func, *args, **kwargs)
