@@ -1,7 +1,9 @@
 from functools import partial, partialmethod
 from fractions import Fraction as Frac
+import typing as T
 
 import torch
+from torch import nn
 
 import vidlu.modules as M
 import vidlu.modules as vm
@@ -9,6 +11,7 @@ import vidlu.modules.components as vmc
 from vidlu.training import initialization
 from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (Reserved, Empty, default_args)
+import vidlu.torch_utils as vtu
 
 
 # Backbones ########################################################################################
@@ -18,7 +21,6 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
                        small_input=default_args(vmc.ResNetV1Backbone).small_input,
                        block_f=partial(default_args(vmc.ResNetV1Backbone).block_f,
                                        kernel_sizes=Reserved),
-                       dim_change=None,
                        backbone_f=vmc.ResNetV1Backbone):
     # TODO: dropout
     basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
@@ -168,10 +170,10 @@ class LogisticRegression(ClassificationModel):
 
 class SegmentationModel(DiscriminativeModel):
     def forward(self, x, shape='same'):
-        self.set_modifiers(
-            head=lambda m: lambda h: m(h, shape=x.shape[-2:] if shape == 'same' else shape))
+        handle = self.head.register_forward_pre_hook(
+            lambda m, h: (h[0], x.shape[-2:] if shape == 'same' else shape))
         result = super().forward(x)
-        self.set_modifiers(head=None)
+        handle.remove()
         return result
 
 
@@ -194,12 +196,6 @@ class SegResNetV1(SegmentationModel):
 class ResNetV2(ClassificationModel):
     __init__ = partialmethod(ResNetV1.__init__,
                              backbone_f=partial(resnet_v2_backbone, base_width=64))
-
-    # def post_build(self, *args, **kwargs):
-    #     from torch.utils.checkpoint import checkpoint
-    #     for unit_name, unit in self.backbone.named_children():
-    #         print('Checkpointing ' + unit_name)
-    #         self.backbone.set_modifiers(**{unit_name: lambda module: partial(checkpoint, module)})
 
 
 class WideResNet(ResNetV2):
@@ -229,41 +225,43 @@ class MNISTNet(ClassificationModel):
 
 
 class SwiftNet(SegmentationModel):
+
     def __init__(self,
                  backbone_f=resnet_v1_backbone,
-                 laterals=tuple(f"bulk.unit{i}_{j}.sum"
-                                for i, j in zip(range(3), [1] * 3)),
                  ladder_width=128, head_f=vmc.heads.SegmentationHead, input_adapter=None,
-                 init=partial(initialization.kaiming_resnet, module=Reserved)):
-        """
-
-        laterals contains all but the last block?
-
-        Args:
-            backbone_f:
-            laterals:
-            ladder_width:
-        """
-        super().__init__(backbone_f=partial(vmc.KresoLadderNet,
-                                            backbone_f=backbone_f,
-                                            laterals=laterals,
-                                            ladder_width=ladder_width,
-                                            context_f=partial(
-                                                vmc.DenseSPP, bottleneck_size=128, level_size=42,
-                                                out_size=128, grid_sizes=(8, 4, 2)),
-                                            up_blend_f=partial(vmc.LadderUpsampleBlend,
-                                                               pre_blending='sum'),
-                                            post_activation=True),
-                         head_f=partial(head_f, kernel_size=3),
-                         init=init,
-                         input_adapter=input_adapter)
+                 init=partial(initialization.kaiming_resnet, module=Reserved),
+                 lateral_blocks=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [0] * 3)),
+                 lateral_name: T.Literal['sum', 'act'] = 'act'):
+        if lateral_name not in ('sum', 'act'):
+            raise ValueError("lateral_name should be either 'sum' or 'act'.")
+        super().__init__(
+            backbone_f=partial(vmc.KresoLadderNet,
+                               backbone_f=backbone_f,
+                               laterals=[f"{lb}.{lateral_name}" for lb in lateral_blocks],
+                               ladder_width=ladder_width,
+                               context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
+                                                 out_size=128, grid_sizes=(8, 4, 2)),
+                               up_blend_f=partial(vmc.LadderUpsampleBlend, pre_blending='sum'),
+                               post_activation=True),
+            head_f=partial(head_f, kernel_size=1),
+            init=init,
+            input_adapter=input_adapter)
+        self.lateral_blocks = lateral_blocks
+        self.lateral_name = lateral_name
 
     def post_build(self, *args, **kwargs):
-        from torch.utils.checkpoint import checkpoint
-        for unit_name, unit in self.backbone.backbone.bulk.named_children():
-            print('Checkpointing ' + unit_name)
-            self.backbone.backbone.bulk.set_modifiers(
-                **{unit_name: lambda module: partial(checkpoint, module)})
+        super().post_build()
+        for name, module in self.named_modules():
+            if hasattr(module, 'inplace'):
+                module.inplace = True  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
+        if self.lateral_name == 'sum':
+            for lb in self.lateral_blocks:
+                module = vm.get_submodule(self.backbone.backbone, f"{lb}.act")
+                module.inplace = False
+        for res_unit in self.backbone.backbone.bulk:
+            pass
+            #res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))  # 6260MiB, 5.84/s
+            #res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))  # 6022 5.83  # 6734, 6.3
 
 
 class LadderDensenet(DiscriminativeModel):

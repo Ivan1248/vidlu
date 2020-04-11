@@ -10,12 +10,13 @@ import warnings
 from tqdm import tqdm
 import torch
 
-from vidlu import modules as M
+import vidlu.modules.utils as vmu
 from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
 from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
-from vidlu.utils.misc import Event, CMTimer
+from vidlu.utils.misc import Event, Stopwatch
+import vidlu.training.configs as vtc
 
 
 # Engine based on Ignite Engine ####################################################################
@@ -136,7 +137,7 @@ class Engine(object):
         self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
 
         self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
-        with CMTimer() as t_run:
+        with Stopwatch() as t_run:
             start_time = time.time()
             self.started(self.state)
             if self.state.epoch >= max_epochs:
@@ -144,7 +145,7 @@ class Engine(object):
             while self.state.epoch < max_epochs and not self.should_terminate:
                 self.state.epoch += 1
                 self.epoch_started(self.state)
-                with CMTimer() as t_epoch:
+                with Stopwatch() as t_epoch:
                     self._run_once_on_dataset()
                 hours, mins, secs = _to_hours_mins_secs(t_epoch.time)
                 self._logger.info(
@@ -233,12 +234,11 @@ class Evaluator(_MetricsMixin):
     loss: T.Callable = dc.field(init=False)
 
     def __post_init__(self, loss_f):
-        self.prepare_batch = partial(self.prepare_batch, device=M.utils.get_device(self.model),
+        self.prepare_batch = partial(self.prepare_batch, device=vmu.get_device(self.model),
                                      non_blocking=False)
-        self.eval_step = partial(self.eval_step, self)
         self.loss = loss_f()
 
-        self.evaluation = Engine(lambda e, b: self.eval_step(b))
+        self.evaluation = Engine(lambda e, b: self._run_step(self.eval_step, b))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.iteration_completed.add_handler(self._update_metrics)
 
@@ -262,6 +262,16 @@ class Evaluator(_MetricsMixin):
             warnings.warn(f"The primary dataset is smaller than a/the secondary.")
         return data_loaders[0] if len(datasets) == 1 else ZipDataLoader(*data_loaders)
 
+    def _run_step(self, step, batch):
+        if torch.cuda.is_available():
+            torch.cuda.reset_max_memory_allocated()
+        with Stopwatch() as t:
+            output = step(self, batch)
+        output['freq'] = len(batch) / t.time
+        if isinstance(output, T.Mapping) and torch.cuda.is_available():
+            output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
+        return output
+
     def eval(self, *datasets, batch_size=None):
         data_loader = self.get_data_loader(*datasets, batch_size=batch_size or self.batch_size,
                                            shuffle=True, drop_last=False)
@@ -276,30 +286,22 @@ class Trainer(Evaluator):
     state_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
 
     eval_batch_size: int = None
-    weight_decay: float = None  # R
     optimizer_f: InitVar[T.Callable] = None  # O
     epoch_count: int = Missing  # O
     lr_scheduler_f: InitVar[T.Callable] = ConstLR  # O
     train_step: T.Callable = Missing  # O
     jitter: T.Callable = None  # D
-    optimizer_maker: InitVar[T.Callable] = None
     extension_fs: InitVar[T.Sequence] = ()  # D
 
     optimizer: object = dc.field(init=False)
     lr_scheduler: object = dc.field(init=False)
     extensions: T.Sequence = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, optimizer_maker, extension_fs):
+    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, extension_fs):
         super().__post_init__(loss_f)
 
-        if optimizer_maker is None:
-            if self.weight_decay is None:
-                self.weight_decay = params(optimizer_f).weight_decay
-            elif params(optimizer_f).weight_decay not in [0, Empty]:
-                raise ValueError("The parameter weight_decay of optimizer_f should be unassigned.")
-            self.optimizer = optimizer_f(self.model.parameters(), weight_decay=self.weight_decay)
-        else:
-            self.optimizer = optimizer_maker(self, optimizer_f)
+        self.optimizer = optimizer_f(
+            self.model if isinstance(optimizer_f, vtc.OptimizerMaker) else self.model.parameters())
 
         if 'epoch_count' in params(lr_scheduler_f):
             if params(lr_scheduler_f).epoch_count is not Empty:
@@ -308,9 +310,7 @@ class Trainer(Evaluator):
             lr_scheduler_f = partial(lr_scheduler_f, epoch_count=self.epoch_count)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
 
-        self.train_step = partial(self.train_step, self)
-
-        self.training = Engine(lambda e, b: self.train_step(b))
+        self.training = Engine(lambda e, b: self._run_step(self.train_step, b))
         self.training.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
         self.training.iteration_completed.add_handler(self._update_metrics)

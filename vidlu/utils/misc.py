@@ -177,22 +177,62 @@ class Importer:
 
 # context manager timer
 
-class CMTimer:
-    """Context manager timer"""
-    __slots__ = '_time_func', 'start', 'time'
+class Stopwatch:
+    """A stopwatch that can be used as a context manager.
+
+    Example:
+        with Stopwatch as sw:
+            sleep(1)
+            assert sw.running and sw.time >= 1.
+        assert not sw.running and sw.time >= 1.
+
+    Example:
+        sw = Stopwatch().start()
+        sleep(1)
+        assert sw.running and sw.time >= 1.
+        sw.stop()
+        assert not sw.running and sw.time >= 1.
+
+        sw.reset()
+        assert not sw.running and sw.time == sw.start_time == 0
+    """
+    __slots__ = '_time_func', 'start_time', '_time', 'running'
 
     def __init__(self, time_func=time.time):
         self._time_func = time_func
+        self.reset()
 
     def __enter__(self):
-        self.start = self._time_func()
-        return self
+        return self.start()
 
     def __exit__(self, *args):
-        self.time = self._time_func() - self.start
+        self.stop()
 
     def __str__(self):
-        return f"CMTimer(time={self.time})"
+        return f"BlockTimer(time={self.time})"
+
+    @property
+    def time(self):
+        return self._time + self._time_func() - self.start_time if self.running else self._time
+
+    def reset(self):
+        self._time = 0.
+        self.start_time = None
+        self.running = False
+        return self
+
+    def start(self):
+        if self.running:
+            raise RuntimeError("Stopwatch is already running.")
+        self.start_time = self._time_func()
+        self.running = True
+        return self
+
+    def stop(self):
+        if self.running:
+            self._time = self.time
+            self.running = False
+        return self._time
 
 
 # shared array

@@ -29,39 +29,22 @@ def classification_extend_output(output):
                           hard_prediction_=lambda: logits.argmax(1))
 
 
-# Optimizer makers
-
-@dataclass
-class ModelIndependentOptimizerMaker:
-    name_to_params: dict
-
-    def __call__(self, optimizer_f, model, **kwargs):
-        groups = {k: {f'{k}.{k_}': dict(params=p, **v)
-                      for k_, p in get_submodule(model, k).named_parameters()}
-                  for k, v in self.name_to_params.items()}
-        remaining = dict(model.named_parameters())
-        for g in groups.values():
-            remaining = dict_difference(remaining, g)
-        params_ = ([dict(params=groups[k].values()) for k, f in self.name_to_params.items()]
-                   + [dict(params=remaining.values())])
-        return optimizer_f(params_, **kwargs)
+# Optimizer maker
 
 
 @dataclass
-class FineTuningOptimizerMaker:
-    finetuning: dict
+class OptimizerMaker:
+    def __init__(self, optimizer_f, params, **kwargs):
+        self.optimizer_f, self.params, self.kwargs = optimizer_f, params, kwargs
 
-    def __call__(self, trainer, optimizer_f, **kwargs):
-        groups = {k: {f'{k}.{k_}': p
-                      for k_, p in get_submodule(trainer.model, k).named_parameters()}
-                  for k in self.finetuning}
-        remaining = dict(trainer.model.named_parameters())
-        for g in groups.values():
-            remaining = dict_difference(remaining, g)
-        lr = params(optimizer_f).lr
-        params_ = ([dict(params=groups[k].values(), lr=f * lr) for k, f in self.finetuning.items()]
-                   + [dict(params=remaining.values())])
-        return optimizer_f(params_, weight_decay=trainer.weight_decay, **kwargs)
+    def __call__(self, model):
+        if not isinstance(model, torch.nn.Module):
+            raise ValueError(f"The model argument should be a nn.Module, not {type(model)}.")
+        params = [{**d, 'params': tuple(get_submodule(model, d['params']).parameters())}
+                  for d in self.params]
+        params_lump = set(p for d in params for p in d['params'])
+        remaining_params = tuple(p for p in model.parameters() if p not in params_lump)
+        return self.optimizer_f([{'params': remaining_params}] + params, **self.kwargs)
 
 
 # Trainer configs ##################################################################################
@@ -153,8 +136,7 @@ autoencoder = TrainerConfig(
 
 resnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     classification,
-    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=Empty),
-    weight_decay=1e-4,
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=1e-4),
     epoch_count=200,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
     batch_size=128,
@@ -169,7 +151,7 @@ resnet_cifar_single_classifier_cv = TrainerConfig(
     # as in Computer Vision with a Single (Robust) Classiﬁer
     resnet_cifar,
     # overriding:
-    optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9, weight_decay=Empty),
+    optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9, weight_decay=1e-4),
     epoch_count=350,
     batch_size=256,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[3 / 7, 5 / 7], gamma=0.1))
@@ -177,88 +159,77 @@ resnet_cifar_single_classifier_cv = TrainerConfig(
 wrn_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
     resnet_cifar,
     # overriding
-    weight_decay=5e-4)
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=5e-4))
 
 irevnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
     resnet_cifar,
     # overriding
-    weight_decay=5e-4)
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=5e-4))
 
 densenet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1608.06993
     resnet_cifar,
-    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=Empty, nesterov=True),
+    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=1e-4, nesterov=True),
     epoch_count=100,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.5, 0.75], gamma=0.1),
     batch_size=64)
 
 small_image_classifier = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     classification,
-    weight_decay=0,
-    optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9),
+    optimizer_f=partial(optim.SGD, lr=1e-2, momentum=0.9, weight_decay=0),
     epoch_count=50,
     batch_size=64,
     jitter=jitter.CifarPadRandCropHFlip())
 
 ladder_densenet = TrainerConfig(
     classification,
-    weight_decay=1e-4,
-    optimizer_f=partial(optim.SGD, lr=5e-4, momentum=0.9, weight_decay=Empty),
+    optimizer_f=OptimizerMaker(optim.SGD, [dict(params='backbone.backbone', lr=5e-4 / 5)],
+                               lr=5e-4, momentum=0.9, weight_decay=1e-4),
     lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
     epoch_count=40,
     batch_size=4,
-    optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 5}),
     jitter=jitter.SegRandHFlip())
 
 swiftnet_cityscapes = TrainerConfig(
     classification,
-    weight_decay=1e-4,  # za imagenet 4 puta manje, tj. 16 puta uz množenje r korakom učenja
-    optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=Empty),
+    optimizer_f=OptimizerMaker(optim.Adam,
+                               [dict(params='backbone.backbone', lr=4e-4 / 4, weight_decay=2.5e-5)],
+                               lr=4e-4, betas=(0.9, 0.99), weight_decay=1e-4),
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
     batch_size=14,
-    eval_batch_size=8,
-    optimizer_maker=FineTuningOptimizerMaker({'backbone.backbone': 1 / 4}),
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overstepping='half'))
+    eval_batch_size=6,
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0))
 
 swiftnet_camvid = TrainerConfig(
     swiftnet_cityscapes,
     # overriding:
-    lr_scheduler_f=partial(CosineLR, eta_min=1e-7),
+    lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=600,  # 600
     batch_size=12,
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=2, overstepping='half'))
-
-swiftnet_camvid_scratch = TrainerConfig(
-    swiftnet_camvid,
-    # overriding:
-    epoch_count=900,
-    optimizer_maker=None)
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=2, overflow='half'))
 
 semseg_basic = TrainerConfig(
     classification,
-    weight_decay=1e-4,
-    optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=Empty),
+    optimizer_f=OptimizerMaker(optim.Adam, [dict(params='backbone', lr=4e-4 / 5)],
+                               lr=4e-4, betas=(0.9, 0.99), weight_decay=1e-4),
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=40,
     batch_size=8,
     eval_batch_size=8,  # max 12?
-    optimizer_maker=FineTuningOptimizerMaker({'backbone': 1 / 5}),
     jitter=jitter.SegRandCropHFlip((768, 768)))
 
 # other
 
 mnistnet = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     classification,
-    optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, nesterov=True, weight_decay=Empty),
-    weight_decay=1e-4,
+    optimizer_f=partial(optim.Adam, lr=1e-1, momentum=0.9, nesterov=True, weight_decay=1e-4),
     epoch_count=50,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8], gamma=0.2),
     batch_size=128)
 
 mnistnet_tent = TrainerConfig(
     classification,
-    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=Empty),
-    weight_decay=1e-4,
+    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=1e-4),
     epoch_count=40,
     lr_scheduler_f=None,
     batch_size=100)
@@ -268,8 +239,7 @@ mnistnet_tent = TrainerConfig(
 wrn_cifar_tent = TrainerConfig(
     wrn_cifar,
     # overriding
-    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=Empty),
-    weight_decay=1e-4)
+    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=1e-4))
 
 resnet_cifar_adversarial_esos = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar,

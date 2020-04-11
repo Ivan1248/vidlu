@@ -15,7 +15,7 @@ from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
-from vidlu.utils.misc import try_input, CMTimer
+from vidlu.utils.misc import try_input, Stopwatch
 
 
 # TODO: logger instead of verbosity
@@ -54,7 +54,8 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
 
     def report_metrics(es, is_validation=False):
         def eval_str(metrics):
-            return ', '.join([f"{k}={v:.4f}" for k, v in metrics.items()])
+            return ', '.join([f"{k}=" + (f"{v:.4f}" if isinstance(v, float) else str(v))
+                              for k, v in metrics.items()])
 
         metrics = trainer.get_metric_values(reset=True)
         with indent_print():
@@ -138,11 +139,11 @@ class TrainingExperiment:
                 #    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
             print(f"device: {a.device}")
         with indent_print('Initializing data...'):
-            with CMTimer() as t:
+            with Stopwatch() as t:
                 data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
             print(f"Data initialized in {t.time:.2f} s.")
         with indent_print('Initializing model...'):
-            with CMTimer() as t:
+            with Stopwatch() as t:
                 model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
                                             prep_dataset=next(iter(data.values())), device=a.device,
                                             verbosity=a.verbosity)

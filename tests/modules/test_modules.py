@@ -4,9 +4,7 @@ import torch
 from torch import nn
 import numpy as np
 
-from vidlu.modules import (Module, Func, Conv, Linear, BatchNorm, Seq, Fork, Parallel,
-                           Reduce, Sum, with_intermediate_outputs, deep_split, deep_join,
-                           Identity)
+from vidlu.modules import *
 from vidlu.modules.components import Baguette
 from vidlu.utils.collections import NameDict
 
@@ -170,8 +168,8 @@ class TestDeepSplit:
                      b=Seq(
                          a=Seq(
                              a=Linear(9),
-                             b=Linear(10),
-                             c=Linear(11)),
+                             b=Fork(Linear(10), Linear(5)),
+                             c=Concat()),
                          b=Linear(12)),
                      c=Seq(
                          a=Linear(13)))

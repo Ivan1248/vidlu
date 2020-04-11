@@ -33,7 +33,7 @@ class_count = data.test.info.class_count
 probs = [[]] * class_count
 
 attack = attacks.PGDAttack(step_count=4, minimize=True)
-metric = metrics.MultipleAverageMetrics(name_filter=lambda x: True)
+metric = metrics.AverageMultiMetric(name_filter=lambda x: True)
 batch_size = 96
 for batch in tqdm(trainer.data_loader_f(data.test, batch_size=batch_size, drop_last=True)):
     x, y = trainer.prepare_batch(batch)

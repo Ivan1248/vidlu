@@ -70,7 +70,7 @@ trainer = Trainer(
                               stop_on_success=True),
     ))
 
-for m in [metrics.FuncAverageMetric(lambda iter_output: iter_output.loss, name='loss'),
+for m in [metrics.AverageMetric(name='loss'),
           metrics.ClassificationMetrics(10, metrics=['A']),
           metrics.with_suffix(metrics.ClassificationMetrics, 'adv')(
               10, hard_prediction_name="other_outputs_adv.hard_prediction", metrics=['A'])]:
