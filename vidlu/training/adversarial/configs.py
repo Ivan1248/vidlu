@@ -95,7 +95,7 @@ def get_channel_gamma_hsv_attack_params(log_gamma_bounds=(-0.4, 0.4), hsv_addend
 channel_gamma_hsv_attack = partial(
     attacks.PerturbationModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
-    pert_model_f=perturbation.ChannelGammaHsv,
+    pert_model_f=perturbation.Photometric,
     **get_channel_gamma_hsv_attack_params())
 
 tps_warp_attack = partial(
