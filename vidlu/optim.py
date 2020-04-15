@@ -1,8 +1,9 @@
 import typing as T
+import ast
 
+import numpy as np
 import torch.optim
 from torch.optim.optimizer import required, Optimizer
-import numpy as np
 
 from vidlu import ops
 
@@ -97,7 +98,7 @@ def get_grad_processing(name) -> T.Callable:
     elif name.startswith('normalize'):
         if '_' in name:
             p = name.split('_', 1)[1]
-            p = np.inf if p == 'inf' else eval(p)
+            p = np.inf if p == 'inf' else ast.literal_eval(p)
         else:
             p = 2
         return lambda g: g / ops.batch.norm(g, p, keep_dims=True)

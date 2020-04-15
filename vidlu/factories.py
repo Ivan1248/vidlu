@@ -15,6 +15,10 @@ from vidlu.utils.collections import NameDict
 import vidlu.utils.func as vuf
 from vidlu.data_utils import dataset_ops
 
+# eval
+
+unsafe_eval = eval
+
 
 # Factory messages #################################################################################
 
@@ -93,7 +97,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
                                                    add_statistics=True)
     data = dict()
     for name, options_str, subsets in name_options_subsets_tuples:
-        options = eval(f'dict{options_str or "()"}')
+        options = unsafe_eval(f'dict{options_str or "()"}')
         pds = get_parted_dataset(name, **options)
         k = f"{name}{options_str or ''}"
         if k in data:
@@ -102,9 +106,9 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
 
     if transform_str is not None:
         flat_data = dict([((k1, k2), v) for k1, d in data.items() for k2, v in d.items()])
-        values = eval(transform_str, dict(d=list(flat_data.values()),
-                                          **{k: v for k, v in vars(dataset_ops).items()
-                                             if not k.startswith('_')}))
+        values = unsafe_eval(transform_str, dict(d=list(flat_data.values()),
+                                                 **{k: v for k, v in vars(dataset_ops).items()
+                                                    if not k.startswith('_')}))
         data = dict(((f'data{i}', {'sub0': v}) for i, v in enumerate(values)))
     return data
 
@@ -179,14 +183,14 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
                 stats = dict(mean=torch.from_numpy(data_statistics.mean),
                              std=torch.from_numpy(data_statistics.std))
             else:
-                stats = eval("dict(" + input_adapter_str[len("standardize("):])
+                stats = unsafe_eval("dict(" + input_adapter_str[len("standardize("):])
                 stats = {k: torch.tensor(v) for k, v in stats.items()}
             return M.Func(imt.Standardize(**stats), imt.Destandardize(**stats))
         elif input_adapter_str == "id":  # min 0, max 1 is expected for images
             return M.Identity()
         else:
             try:
-                return eval(input_adapter_str)
+                return unsafe_eval(input_adapter_str)
             except Exception as e:
                 raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}, \n{e}")
     raise NotImplementedError()
@@ -211,12 +215,12 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
-    model_class = getattr(models, model_name) if hasattr(models, model_name) else eval(model_name)
+    model_class = getattr(models, model_name)
     argtree = defaults.get_model_argtree(model_class, problem)
     argtree_arg = (
-        eval(f"t({argtree_arg[0]})",
-             dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
-                  partial=partial))
+        unsafe_eval(f"t({argtree_arg[0]})",
+                    dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
+                         partial=partial))
         if len(argtree_arg) == 1 else vuf.ArgTree())
     argtree.update(argtree_arg)
 
@@ -333,9 +337,10 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     from vidlu.transforms import jitter
     t = vuf.ArgTree
 
-    config = eval(f"tc.TrainerConfig({trainer_str})",
-                  dict(t=t, math=math, optim=optim, lr_scheduler=lr_scheduler, losses=losses, ta=ta,
-                       tc=tc, ts=ts, attacks=attacks, jitter=jitter))
+    config = unsafe_eval(f"tc.TrainerConfig({trainer_str})",
+                         dict(t=t, math=math, optim=optim, lr_scheduler=lr_scheduler, losses=losses,
+                              ta=ta,
+                              tc=tc, ts=ts, attacks=attacks, jitter=jitter))
 
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     trainer_f = partial(Trainer, **tc.to_trainer_args(default_config, config))
