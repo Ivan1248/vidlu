@@ -10,6 +10,8 @@ from tqdm import tqdm
 from vidlu.data import DatasetFactory
 from vidlu.utils import path
 
+from . import dataset_ops
+
 
 # Standardization ##################################################################################
 
@@ -28,7 +30,7 @@ def compute_pixel_mean_std(dataset, scale01=False, progress_bar=False):
 # Cached dataset with normalized inputs ############################################################
 
 
-def _get_standardization(ds, ds_with_info):  # not local for picklability
+def _get_standardization(_, ds_with_info):  # not local for picklability
     return ds_with_info.info.cache['standardization']
 
 

@@ -2,10 +2,7 @@
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 
 import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.ticker import LinearLocator, FormatStrFormatter
 import numpy as np
-from scipy.special import gamma
 
 
 def soft_max(x, y, h=1):
@@ -17,7 +14,7 @@ def soft_min(x, y, h=1):
     # return soft_max(x, y, -h)
 
 
-def soft_clamp(x, min_, max_, h=1):
+def soft_clamp1(x, min_, max_, h=1):
     elh, euh = np.exp(min_ * h), np.exp(max_ * h)
     c = (max_ + min_) / 2
     ech = np.exp(c * h)

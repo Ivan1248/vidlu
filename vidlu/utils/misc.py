@@ -3,7 +3,6 @@ import sys
 import platform
 import os
 import hashlib
-from dataclasses import dataclass
 from pathlib import Path
 import time
 import contextlib

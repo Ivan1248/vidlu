@@ -1,5 +1,3 @@
-import pytest
-
 import torch
 import numpy as np
 
@@ -7,7 +5,7 @@ from vidlu.ops import batch
 
 torch.no_grad()
 
-weaker_tols = dict(rtol=1e-4, atol=1e-05)
+weaker_tols = dict(rtol=1e-4, atol=1e-5)
 
 
 class TestBatchops:
@@ -23,12 +21,15 @@ class TestBatchops:
                     assert torch.allclose(norms[i], torch.norm(e.view(-1), p, dim=0))
 
     def test_project_to_1_ball(self):
-        shapes = [(5, 1), (5, 100, 100), (4, 1000, 1000)]
-        target_norms = [0.001, 1, 1000]
+        shapes = [(5, 5), (5, 100, 100), (4, 1000, 1000)]
+        target_max_norms = [0.001, 1, 1000]
         for s in shapes:
-            for n in target_norms:
+            for n in target_max_norms:
                 x = torch.zeros(s).uniform_(-2, 2)
+                x[:2] /= 2 * x[0].numel()
+                pre_norms = x.view(x.shape[0], -1).abs().sum(1)
                 x_proj = batch.project_to_1_ball(x, n)
                 x_proj = batch.project_to_1_ball(x_proj, n)
                 norms = x_proj.view(x.shape[0], -1).abs().sum(1)
-                assert torch.allclose(norms, torch.full_like(norms, n), **weaker_tols)
+                target_norms = torch.min(torch.full_like(norms, n), pre_norms)
+                assert torch.allclose(norms, target_norms, **weaker_tols)

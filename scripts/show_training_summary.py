@@ -1,14 +1,11 @@
 import argparse
-import pickle
-from argparse import Namespace, ArgumentParser
 
 import torch
 
-from _context import vidlu
-
+# noinspection PyUnresolvedReferences
+import _context
 from vidlu.utils.collections import NameDict
 
-from vidlu.utils.text import FormatScanner
 from vidlu.utils.func import tryable
 from vidlu.utils.presentation.visualization import plot_curves
 import parse

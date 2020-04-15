@@ -59,7 +59,7 @@ def translate_densenet(state_dict):
         {  # backbone
             r"features.{a:conv|norm}0.{e:(.*)}":
                 r"backbone.root.{a}.orig.{e}",
-            r"features.denseblock{a:(\d+)}.denselayer{b:(\d+)}.{c:conv|norm}.{d:(\d+)}.{e}":
+            r"features.denseblock{a:(\d+)}.denselayer{b:(\d+)}.{c:conv|norm}{d:(\d+)}.{e}":
                 r"backbone.bulk.db{`int(a)-1`}.unit{`int(b)-1`}.fork"
                 + r".block.{c}{`int(d)-1`}.orig.{e}",
             r"features.transition{a:(\d+)}.{b:conv|norm}.{e}":

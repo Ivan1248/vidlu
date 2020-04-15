@@ -87,16 +87,16 @@ def rgb_to_luma(im, rec='709'):
 
 # Conversion to RGB
 
-def _hcm_to_rgb(H, C, M):
+def _hcm_to_rgb(h, c, m):
     # https://en.wikipedia.org/wiki/HSL_and_HSV
-    H6 = 6 * H
+    H6 = 6 * h
     min_ = lambda a, b: torch.min(a, b)  # , out=a)
-    one = torch.tensor(1., dtype=C.dtype, device=C.device)
+    one = torch.tensor(1., dtype=c.dtype, device=c.device)
 
     def f(shift):
         Hs = (H6 + shift) % 6
         # Autograd error if mul_ used isntead of mul
-        return M - F.relu(min_(min_(Hs, 4 - Hs), one), inplace=True).mul(C)
+        return m - F.relu(min_(min_(Hs, 4 - Hs), one), inplace=True).mul(c)
 
     return torch.stack([f(5), f(3), f(1)], dim=1)
 
@@ -113,7 +113,7 @@ def hsv_to_rgb(im):
         torch.Tensor: RGB image.
     """
     H, S, V = im[:, 0], im[:, 1], im[:, 2]
-    return _hcm_to_rgb(H, C=V * S, M=V)
+    return _hcm_to_rgb(H, c=V * S, m=V)
 
 
 def hsl_to_rgb(im):
@@ -129,7 +129,7 @@ def hsl_to_rgb(im):
     """
     H, S, L = im[:, 0], im[:, 1], im[:, 2]
     C = (1 - (2 * L).sub_(1).abs_()).mul_(S)
-    return _hcm_to_rgb(H, C, M=(C * 0.5).add_(L))
+    return _hcm_to_rgb(H, C, m=(C * 0.5).add_(L))
 
 
 def hsi_to_rgb(im):
@@ -146,7 +146,7 @@ def hsi_to_rgb(im):
     H, S, I = im[:, 0], im[:, 1], im[:, 2]
     C = (I * S).mul_(3).div_(2 - (((6 * H) % 2).sub_(1)).abs())
     m = (1 - S).mul_(I)
-    return _hcm_to_rgb(H, C, M=C + m)
+    return _hcm_to_rgb(H, C, m=C + m)
 
 
 # might be useful for some other color spaces

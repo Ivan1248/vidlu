@@ -3,7 +3,6 @@ from fractions import Fraction as Frac
 import typing as T
 
 import torch
-from torch import nn
 
 import vidlu.modules as M
 import vidlu.modules as vm
@@ -11,7 +10,6 @@ import vidlu.modules.components as vmc
 from vidlu.training import initialization
 from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (Reserved, Empty, default_args)
-import vidlu.torch_utils as vtu
 
 
 # Backbones ########################################################################################
@@ -107,7 +105,7 @@ fdensenet_backbone = partial(densenet_backbone,
 
 
 def irevnet_backbone(init_stride=2,
-                     group_lengths=[6, 16, 72, 6],
+                     group_lengths=(6, 16, 72, 6),
                      width_factors=(Frac(1, 4), Frac(1, 4), 1),
                      block_f=partial(default_args(vmc.IRevNetBackbone).block_f,
                                      kernel_sizes=(3, 3, 3)),
@@ -180,7 +178,7 @@ class SegmentationModel(DiscriminativeModel):
 class ResNetV1(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=partial(resnet_v1_backbone, base_width=64),
-                             init=partial(initialization.kaiming_resnet, module=Reserved))
+                             init=initialization.kaiming_resnet)
 
 
 class SegResNetV1(SegmentationModel):

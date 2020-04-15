@@ -4,7 +4,6 @@ import typing as T
 import torch
 from torch import nn
 
-from vidlu.utils.func import identity
 import torch.utils.checkpoint as tuc
 
 
@@ -45,7 +44,7 @@ def switch_attribute_if_exists(objects, attrib_name, value):
 
 
 @contextlib.contextmanager
-def save_attribute(objects, attrib_name, copy_func=identity):
+def save_attribute(objects, attrib_name, copy_func=lambda x: x):
     state = {m: copy_func(getattr(m, attrib_name)) for m in objects}
     yield
     for m, v in state.items():
@@ -139,12 +138,16 @@ def reset_cuda():
 
 # Profiling
 
-def profile(func, on_cuda=True):
+def profile(func, on_cuda=True, device=None):
     with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
         output = func()
     if on_cuda:
-        torch.cuda.synchronize()
+        torch.cuda.synchronize(device=device)
     return output, prof.key_averages().table('cuda_time_total')
+
+
+def is_modified(tensor: torch.Tensor):
+    return tensor._version > 0
 
 
 def checkpoint_fix(function, *args, **kwargs):
@@ -156,11 +159,11 @@ def checkpoint_fix(function, *args, **kwargs):
     def wrapper(*args_, **kwargs_):
         result = function(*args_, **kwargs_)
         if isinstance(result, torch.Tensor):
-            return result[...] if result._version > 0 else result
+            return result[...] if is_modified(result) else result
         elif isinstance(result, T.Sequence):
-            return type(result)(r[...] if r._version > 0 else r for r in result)
+            return type(result)(r[...] if is_modified(r) else r for r in result)
         elif isinstance(result, T.Mapping):
-            return type(result)({k: r[...] if r._version > 0 else r for k, r in result.items()})
+            return type(result)({k: r[...] if is_modified(r) else r for k, r in result.items()})
         else:
             raise NotImplementedError()
 

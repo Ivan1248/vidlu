@@ -1,6 +1,6 @@
-import arpeggio
-
 import pytest
+
+import arpeggio
 
 from vidlu.utils import text
 

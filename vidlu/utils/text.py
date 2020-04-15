@@ -2,7 +2,7 @@ from argparse import Namespace
 import re
 
 import arpeggio
-from arpeggio import (Optional, ZeroOrMore, OneOrMore, EOF, ParserPython, PTNodeVisitor,
+from arpeggio import (Optional, ZeroOrMore, OneOrMore, EOF, PTNodeVisitor,
                       visit_parse_tree)
 from arpeggio import RegExMatch as R
 import vidlu.utils.func as func

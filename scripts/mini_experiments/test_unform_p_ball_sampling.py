@@ -1,8 +1,9 @@
-from _context import vidlu
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
+# noinspection PyUnresolvedReferences
+import context_
 from vidlu.ops.random import uniform_sample_from_p_ball
 
 maxi = 9

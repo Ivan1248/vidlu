@@ -1,5 +1,3 @@
-import pytest
-
 import torch
 import vidlu.modules.losses as vml
 import vidlu.ops as vo

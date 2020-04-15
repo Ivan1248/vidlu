@@ -30,7 +30,7 @@ python run.py train "cityscapes(downsampling=2){train,val}" id "SwiftNet,backbon
 python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid"
 
 ## SwiftNet pretrained on Cityscapes
-python run.py train "cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs.pt
+python run.py train "cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
 
 ## SwiftNet pretrained on ImageNet
 python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth"
@@ -58,12 +58,12 @@ python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 python run.py train "mnist{trainval,test}" id "MNISTNet,backbone_f=t(act_f=C.Tent,use_bn=False)" "tc.mnistnet_tent,tc.adversarial,attack_f=attacks.DummyAttack,eval_attack_f=tc.mnistnet_tent_eval_attack"
 
 # show_summary.py
-
 python show_summary.py /home/igrubisic/data/states/cifar10\{trainval\,test\}/ResNetV2\,backbone_f\=t\(depth\=18\,small_input\=True\)/Trainer\,++\{++tc.resnet_cifar\,++dict\(train_step\=tc.SupervisedTrainMultiStep\(8\)\,epoch_count\=200/8\)\}/train_eval_after_multistep/25/summary.p
 
 
 # Semisupervised VAT
 python run.py train "train,train_u,test:camvid{val,train,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth" -r
+python run.py train "train,train_u,test:cifar10{trainval,test}:(*uniform_labels(d[0]).split(index=4000),d[1])" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth" -r
 
 # rsync
 rsync -avzhe ssh --progress pretrained_parameters/ igrubisic@treebeard:/home/igrubisic/data/pretrained_parameters/

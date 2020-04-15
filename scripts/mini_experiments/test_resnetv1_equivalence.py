@@ -1,13 +1,13 @@
 from collections import defaultdict
 
-from IPython import embed
-
 import torchvision
 import torch
 
-from _context import vidlu, dirs
+# noinspection PyUnresolvedReferences
+import _context
+import dirs
 
-from vidlu import factories, models, problem, data, parameters, data_utils, modules
+from vidlu import factories, problem, data, modules
 
 # data = data.datasets.HBlobs(example_shape=(32, 32, 3))
 

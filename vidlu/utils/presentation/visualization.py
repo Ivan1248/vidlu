@@ -4,7 +4,6 @@ from functools import lru_cache
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
 
 
@@ -262,8 +261,8 @@ def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
         def save_frame(s):
             import torch
             with torch.no_grad():
-                y = model(s.x).argmax(1)
-                args = [s.x.permute(0, 2, 3, 1), s.y_adv, s.x_adv.permute(0, 2, 3, 1), s.output.argmax(1)]
+                args = [s.x.permute(0, 2, 3, 1), s.y_adv, s.x_adv.permute(0, 2, 3, 1),
+                        s.output.argmax(1)]
                 args = [a[0].detach().cpu().numpy() for a in args]
                 x = get_frame(*args)
                 im = np.round(x * 255).astype('uint8')

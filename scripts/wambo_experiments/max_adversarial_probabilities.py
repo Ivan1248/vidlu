@@ -1,3 +1,4 @@
+# noinspection PyUnresolvedReferences
 import _context
 import set_cuda_order_pci
 
@@ -6,10 +7,8 @@ from pathlib import Path
 
 from tqdm import tqdm, trange
 
-from vidlu import models, problem, gpu_utils
+from vidlu import gpu_utils
 from vidlu.training import metrics
-from vidlu.utils.collections import NameDict
-from vidlu.utils.func import ArgTree as t, argtree_partial
 from vidlu.training.adversarial import attacks
 import vidlu.factories as vf
 import dirs
@@ -33,7 +32,7 @@ class_count = data.test.info.class_count
 probs = [[]] * class_count
 
 attack = attacks.PGDAttack(step_count=4, minimize=True)
-metric = metrics.AverageMultiMetric(name_filter=lambda x: True)
+metric = metrics.AverageMultiMetric(name_filter=lambda _: True)
 batch_size = 96
 for batch in tqdm(trainer.data_loader_f(data.test, batch_size=batch_size, drop_last=True)):
     x, y = trainer.prepare_batch(batch)

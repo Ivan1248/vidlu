@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from IPython import embed
 import matplotlib.pyplot as plt
 
 pre_cs = torch.load('/home/igrubisic/gta_cs_petra/pre_cs.pt')

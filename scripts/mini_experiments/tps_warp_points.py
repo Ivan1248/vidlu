@@ -1,13 +1,13 @@
-from torchvision.transforms.functional import to_tensor, to_pil_image, resize
+from torchvision.transforms.functional import to_tensor, to_pil_image
 from PIL import Image
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 import cv2
 import numpy as np
-from IPython import embed
 
-from _context import vidlu
+# noinspection PyUnresolvedReferences
+import _context
 import vidlu.modules.functional as vmf
 
 
@@ -41,7 +41,7 @@ mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k
 base_grid = torch.stack(list(reversed(mg)), dim=-1)
 base_grid = base_grid.expand(N, H, W, 2)
 # embed()
-x_warped = vmf.gaussian_forward_warp_v2(x, (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new([W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)
+x_warped = vmf.gaussian_forward_warp_josa(x, (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new([W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)
 flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
 timages += [x_warped]
 

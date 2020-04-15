@@ -9,12 +9,8 @@ def plot_surface(function, rect, offsets=(0.5,), center=0.5, width=256, height=2
 
     Arguments:
         function: surface to be plotted
-        rect:     function domain provided as:
-                ([x_min,y_min], [x_max,y_max])
-        offset:   the level plotted as a contour plot
-
-    Returns:
-        None
+        rect:function domain provided as ([x_min,y_min], [x_max,y_max])
+        offsets: the level plotted as a contour plot
     """
 
     lsw = np.linspace(rect[0][1], rect[1][1], width)

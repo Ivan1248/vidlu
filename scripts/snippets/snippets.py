@@ -44,7 +44,7 @@ ds = data.train
 
 
 def shift_label(i, ds=ds):
-    from vidlu.data import Record;
+    from vidlu.data import Record
     # yt = ds[(i + 1) % len(ds)].y
     yt = ds[(i + 1) % len(ds)].y
     yt[yt != 13] = 0
@@ -92,8 +92,8 @@ visualization.view_predictions(
 # python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,tc.adversarial,epoch_count=200,attack_f=partial(tc.madry_cifar10_attack,step_count=7,eps=2/255,step_size=0.5/255),eval_attack_f=t(step_count=10),eval_batch_size=1" --params "id:/home/igrubisic/data/states/cityscapes{train,val}/SwiftNet,backbone_f=t(depth=18,small_input=False)/tc.swiftnet_cityscapes,tc.adversarial,epoch_count=200,attack_f=partial(tc.madry_cifar10_attack,step_count=7,eps=2/255,step_size=0.5/255),eval_attack_f=t(step_count=10),eval_batch_size=4/resnet(backbone),backbone.backbone+resnet18-5c106cde.pth/_/200/model_state.pth"
 # ffmpeg -i %05d.png -vcodec libx264 -crf 2 -filter:v scale=1024:-1 robust_pgd_50_3_200.avi
 trainer.attack.minimize = False
-trainer.attack.eps = 30 / 255
-trainer.attack.step_size = 2 / 255
+trainer.attack.eps = 20 / 255
+trainer.attack.step_size = 1 / 255
 trainer.attack.step_count = 200
 trainer.attack.rand_init = False
 
@@ -122,18 +122,25 @@ def segreggrad(x, delta, y, t):
 
 def ent(y, t, attack=trainer.attack):
     from vidlu.modules import losses
-    loss = losses.entropy(y).mean()
-    print(y.softmax(1).max(1)[0].mean())
+    loss = losses.entropy(y) #.mean()
+    print(y.mean())
     return loss
 
+def logit_sum(y, t, attack=trainer.attack):
+    from vidlu.modules import losses
+    loss = y.mean(1)
+    print(y.mean())
+    return -loss
 
-# trainer.attack.loss = ent, segreggrad
-trainer.attack.loss = NLLLossWithLogits()  # , segreggrad
+
+#trainer.attack.loss = ent #, segreggrad
+# trainer.attack.loss = NLLLossWithLogits()  # , segreggrad
+trainer.attack.loss = logit_sum  # , segreggrad
 
 visualization.generate_adv_iter_segmentations(dataset=data.test.map(trainer.prepare_batch),
                                               model=trainer.model,
                                               attack=trainer.attack,
-                                              save_dir="/home/igrubisic/warp_seg")
+                                              save_dir="/home/igrubisic/logits_min")
 
 # semseg, VAT
 
@@ -222,10 +229,10 @@ import vidlu.modules.inputwise as vmi
 
 trainer.eval_attack.pert_model_f = vmi.Warp
 
-trainer.eval_attack.eps = 100
-trainer.eval_attack.step_size = 10
+trainer.eval_attack.eps = 0.2
+trainer.eval_attack.step_size = 0.01
 trainer.eval_attack.step_count = 100
-trainer.eval_attack.stop_on_success = False
+trainer.eval_attack.stop_on_success = True
 
 import torch
 
@@ -246,7 +253,7 @@ with torch.no_grad():
     adv = state.output.x_adv[:N]
     clean = state.output.x[:N]
     diff = 0.5 + (adv - clean) * 255 / 80
-    pred = state.output.other_outputs_adv.hard_prediction
+    pred = state.output.other_outputs_adv.hard_prediction[:len(state.output.target)]
     target = state.output.target
 
     fooled = (pred != target)[:N]

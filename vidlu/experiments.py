@@ -3,13 +3,12 @@ from argparse import Namespace
 from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
-import time
 import typing as T
 
 import torch
 import torch.nn as nn
 
-from vidlu import gpu_utils, factories
+from vidlu import factories
 import vidlu.modules as vm
 from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.indent_print import indent_print
@@ -153,7 +152,7 @@ class TrainingExperiment:
                                             dataset=next(iter(data.values())),
                                             verbosity=a.verbosity)
             for m in factories.get_metrics(a.metrics, trainer, dataset=next(iter(data.values()))):
-                trainer.add_metric(m())
+                trainer.metrics.append(m())
         logger = Logger()
         logger.log("Resume command:\n"
                    + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'

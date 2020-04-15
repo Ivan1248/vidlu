@@ -1,5 +1,3 @@
-import numpy as np
-
 from vidlu.data.datasets import DatasetFactory
 
 

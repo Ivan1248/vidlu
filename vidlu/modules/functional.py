@@ -69,19 +69,20 @@ def warp(x, flow, mode='bilinear', padding_mode='zeros', align_corners=True):
     scale = torch.tensor([2 / max(W - m, 1), 2 / max(H - m, 1)], device=x.device, dtype=x.dtype)
     flow = torch.einsum('nfhw,f->nhwf', flow, scale)
 
-    # PWC-Net has this mask multiplied with the output
-    # mask = torch.autograd.Variable(torch.ones(x.size())).to(x.device)
-    # mask = nn.functional.grid_sample(mask, base_grid + flow)
-    # mask[mask < 0.9999] = 0
-    # mask[mask > 0] = 1
-
+    # In the PWC-Net source, the output is multiplied with
+    # mask = warp_ones(flow, mode='bilinear', align_corners=True, binarization_threshold=0.9999)
     return F.grid_sample(x, base_grid + flow, mode=mode, padding_mode=padding_mode,
                          align_corners=align_corners)
 
 
-def warp_ones(flow, mode='bilinear', align_corners=True):
-    return warp(torch.tensor(1, device=flow.device).expand(flow.shape[0], 3, *flow.shape[2:]), flow,
-                mode=mode, padding_mode='zeros', align_corners=align_corners)
+def warp_ones(flow, mode='bilinear', align_corners=True, binarization_threshold=None):
+    result = warp(torch.tensor(1, device=flow.device).expand(flow.shape[0], 3, *flow.shape[2:]),
+                  flow, mode=mode, padding_mode='zeros', align_corners=align_corners)
+    if binarization_threshold is not None:
+        torch.threshold_(result, binarization_threshold)
+        result[result < binarization_threshold] = 0
+        result[result >= 0] = 1
+    return result
 
 
 def tps(theta, ctrl, grid):
@@ -188,39 +189,6 @@ def grid_2d_points_to_indices(grid_points, shape, grid_low=0., grid_high=1.):
     return torch.stack([indices[..., 1], indices[..., 0]], dim=-1)
 
 
-def _backward_tps_fit(c_dst_d, lamb=0., reduced=False, eps=1e-6):
-    """Fits a 1D thin plate spline and supports batch inputs.
-
-    Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
-    """
-
-    def d(a, b):
-        return a[..., :, None, :2].sub(b[..., None, :, :2]).norm(2, dim=-1)
-
-    def phi(x):
-        return x.pow(2).mul(x.abs().add(eps).log())
-
-    batch_shape, n = c_dst_d.shape[:-2], c_dst_d.shape[-2]
-
-    P = phi(d(c_dst_d, c_dst_d))
-
-    Phi = P if lamb == 0 else P + torch.eye(n, device=c_dst_d.device).unsqueeze(0) * lamb
-
-    C = torch.ones((*batch_shape, n, 3), device=c_dst_d.device)
-    C[..., 1:] = c_dst_d[..., :2]
-
-    v = torch.zeros((*batch_shape, n + 3), device=c_dst_d.device)
-    v[..., :n] = c_dst_d[..., -1]
-
-    L = torch.zeros((*batch_shape, n + 3, n + 3), device=c_dst_d.device)
-    L[..., :n, :n] = Phi
-    L[..., :n, -3:] = C
-    L[..., -3:, :n] = C.transpose(-1, -2)
-
-    theta = torch.solve(v.unsqueeze(-1), L)[0]  # p has structure w,a
-    return theta[..., 1:] if reduced else theta
-
-
 def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     """Fits a 1D thin plate spline and supports batch inputs.
 
@@ -254,18 +222,6 @@ def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     return theta[..., 1:] if reduced else theta
 
 
-def backward_tps_params_from_points(c_src, c_dst, reduced=False):
-    delta = c_src - c_dst
-
-    c_dst_dx = torch.cat([c_dst, delta[..., 0, None]], dim=-1)
-    c_dst_dy = torch.cat([c_dst, delta[..., 1, None]], dim=-1)
-
-    theta_dx = _backward_tps_fit(c_dst_dx, reduced=reduced)
-    theta_dy = _backward_tps_fit(c_dst_dy, reduced=reduced)
-
-    return torch.cat([theta_dx, theta_dy], -1)
-
-
 def tps_params_from_points(c_src, c_dst, reduced=False):
     delta = c_dst - c_src
 
@@ -278,21 +234,18 @@ def tps_params_from_points(c_src, c_dst, reduced=False):
     return torch.cat([theta_dx, theta_dy], -1)
 
 
-def backward_tps_grid_from_points(c_src, c_dst, size, reduced=False):
-    theta = backward_tps_params_from_points(c_src, c_dst, reduced=reduced)
-    return tps_grid(theta, c_dst, size=size)
-
-
 def tps_grid_from_points(c_src, c_dst, size, reduced=False):
     theta = tps_params_from_points(c_src, c_dst, reduced=reduced)
     return tps_grid(theta, c_src, size=size)
 
 
-def gaussian_forward_warp_v2(features, flow, sigma=1., normalize=True):
-    """
-    :type features: torch.tensor: B, C, H, W
-    :type flow: torch.tensor: B, 2, H, W
-    """
+def backward_tps_grid_from_points(c_src, c_dst, size, reduced=False):
+    """Creates "backward" TPS grid for grid_sample."""
+    theta = tps_params_from_points(c_dst, c_src, reduced=reduced)
+    return tps_grid(theta, c_dst, size=size)
+
+
+def gaussian_forward_warp_josa(features, flow, sigma=1., normalize=True):
     epsilon = 1e-6
     B, C, H, W = features.shape
     xx = torch.arange(0, W).view(1, -1).repeat(H, 1)
@@ -324,35 +277,3 @@ def homography_warp_grid(shape, params, size):
     assert False, "TODO"
     z = tps(theta, ctrl, grid)
     return grid[..., 1:].add(z).mul(2).sub(1)  # [-1,1] range for F.sample_grid
-
-
-# def homography_warp_grid(x, )
-
-
-if __name__ == '__main__':
-    from torchvision.transforms.functional import to_tensor, to_pil_image
-    from PIL import Image
-    import matplotlib.pyplot as plt
-
-    img = Image.open(
-        '/home/igrubisic/data/datasets/Cityscapes/gtFine/train/aachen/aachen_000000_000019_gtFine_color.png')
-    images = [img]
-
-    m = torch.distributions.uniform.Uniform(-.1, .1)
-
-    src = to_tensor(img).unsqueeze(0)
-
-    c_dst = uniform_grid_2d((1, 1)).view(-1, 2)
-    size = src.shape
-
-    theta = m.sample((src.shape[0], c_dst.shape[0] + 2, 2)).squeeze(-1)
-
-    grid = tps_grid(theta, torch.tensor(c_dst), size)
-    warped = F.grid_sample(src, grid)
-
-    images += [to_pil_image(warped.squeeze())]
-
-    for i, im in enumerate(images):
-        plt.subplot(121 + i)
-        plt.imshow(im)
-    plt.show()

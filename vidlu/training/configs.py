@@ -1,16 +1,12 @@
-from functools import partial
 from dataclasses import dataclass
 
-import torch
 from torch import optim
 
 from vidlu.data import Record
 from vidlu.modules import get_submodule
 from vidlu.transforms import jitter
 from vidlu.utils.collections import NameDict
-from vidlu.utils.func import params, Empty, Missing
-from vidlu.utils.misc import dict_difference
-from vidlu.training.adversarial import attacks
+from vidlu.utils.func import params, Missing
 from vidlu.training.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te

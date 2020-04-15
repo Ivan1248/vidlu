@@ -6,7 +6,8 @@ import torch
 from torch import optim, nn
 from torch.utils.data import DataLoader
 
-from _context import vidlu
+# noinspection PyUnresolvedReferences
+import _context
 from vidlu.data.datasets import MNIST
 from vidlu import models, factories, experiments
 from vidlu.modules import components
@@ -48,8 +49,8 @@ model.to(device)
 # Trainer
 
 def create_optimizer(trainer):
-    delta_params = [v for k, v in model.named_parameters() if k.endswith('delta')]
-    other_params = [v for k, v in model.named_parameters() if not k.endswith('delta')]
+    delta_params = [v for k, v in trainer.model.named_parameters() if k.endswith('delta')]
+    other_params = [v for k, v in trainer.model.named_parameters() if not k.endswith('delta')]
     return optim.Adam([dict(params=other_params), dict(params=delta_params, weight_decay=0.12)],
                       lr=1e-3, weight_decay=0)
 
@@ -58,23 +59,23 @@ trainer = Trainer(
     model=model,
     extend_output=configs.classification_extend_output,
     loss_f=nn.CrossEntropyLoss,
-    train_step=configs.AdversarialTrainStep(),
+    train_step=ts.AdversarialTrainStep(),
     # no attack is used during training (the training is not adversarial)
     eval_step=ts.AdversarialEvalStep(),
     epoch_count=40,
     batch_size=100,
-    optimizer_maker=create_optimizer,
-    extensions=extensions.AdversarialTraining(
+    optimizer_f=create_optimizer,
+    extension_fs=(lambda: extensions.AdversarialTraining(
         attack_f=adversarial.attacks.DummyAttack,
         eval_attack_f=partial(adversarial.attacks.PGDAttack, eps=0.3, step_size=0.1, step_count=20,
                               stop_on_success=True),
-    ))
+    ),))
 
 for m in [metrics.AverageMetric(name='loss'),
           metrics.ClassificationMetrics(10, metrics=['A']),
           metrics.with_suffix(metrics.ClassificationMetrics, 'adv')(
               10, hard_prediction_name="other_outputs_adv.hard_prediction", metrics=['A'])]:
-    trainer.add_metric(m)
+    trainer.metrics.append(m)
 
 # Reporting and evaluation during training
 

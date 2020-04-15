@@ -1,29 +1,27 @@
-from IPython import embed
-
 import torch
 import torch.nn.functional as F
 
-from _context import vidlu
-
-from vidlu import modules, factories, experiments
+# noinspection PyUnresolvedReferences
+import _context
+import dirs
+from vidlu import modules, factories
 from vidlu.utils.presentation.visualization import Viewer
 from vidlu.transforms import image
-import dirs
 
 data = factories.get_prepared_data_for_trainer("Cityscapes(downsampling=4){train}", dirs.DATASETS,
                                                dirs.CACHE).train
 
 
-def filter(x, sigma):
+def filter_(x, sigma):
     return modules.components.GaussianFilter2D(sigma=sigma)(x)
 
 
 def high_pass(x, sigma=2):
-    return x - filter(x, sigma)
+    return x - filter_(x, sigma)
 
 
 def local_mean(x):
-    return filter(x, 4)
+    return filter_(x, 4)
 
 
 def local_variance(x):
@@ -34,7 +32,7 @@ def hf_local_variance(x):
     return local_variance(high_pass(x))
 
 
-def pyramid(x, factors=[1, 2, 4, 8, 16, 32]):
+def pyramid(x, factors=(1, 2, 4, 8, 16, 32)):
     size = x.shape[-2:]
     pyr = [F.interpolate(x, scale_factor=1 / s, mode='bilinear', align_corners=False)
            for s in factors]

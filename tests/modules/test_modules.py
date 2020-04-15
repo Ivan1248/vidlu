@@ -1,9 +1,3 @@
-import pytest
-
-import torch
-from torch import nn
-import numpy as np
-
 from vidlu.modules import *
 from vidlu.modules.components import Baguette
 from vidlu.utils.collections import NameDict
@@ -20,10 +14,12 @@ class TestModule:
         class TModule(Module):
             def __init__(self, *args, **kwargs):
                 super().__init__()
+                self.store_args()
 
         class TModule2(TModule):
             def __init__(self, a, *args, c='v', d=6, **kwargs):
                 super().__init__()
+                self.store_args()
 
         m1 = TModule(1, 2, 3, c='spam')
         assert m1.args == NameDict(args=(1, 2, 3), kwargs={'c': 'spam'})
@@ -88,43 +84,43 @@ class TestSequentialForkParallelReduce:
         inter = ["fork.id", "para.mul3", "para"]
         iomw = with_intermediate_outputs(m, inter)
         for i in range(5):
-            id_ = i
-            add2 = i + 2
-            mul3 = 3 * i ** 2
+            id_ = torch.tensor(i)
+            add2 = id_ + 2
+            mul3 = 3 * id_ ** 2
             para = (add2, mul3)
             sum_ = add2 + mul3
-            assert iomw(torch.tensor(i)) == (sum_, [id_, mul3, para])
+            assert iomw(torch.tensor(i)) == (sum_, (id_, mul3, para))
 
 
 class TestConv:
     def test_build(self):
         x = torch.ones(4, 1, 28, 28)
-        conv = Conv(2, 3).eval()
+        conv = Conv(2, 3, bias=True).eval()
         assert conv.args.in_channels is None
         conv(x)
         assert conv.args.in_channels == x.shape[1]
 
     def test_padding(self):
         for ksize in [1, 3, 5]:
-            conv = Conv(53, ksize, padding=0).eval()
+            conv = Conv(53, ksize, padding=0, bias=False).eval()
             assert conv(torch.ones(4, 1, 28, 28)).shape == (4, 53, 28 - ksize + 1, 28 - ksize + 1)
 
-            conv = Conv(53, ksize, padding='half').eval()
+            conv = Conv(53, ksize, padding='half', bias=False).eval()
             assert conv(torch.ones(4, 1, 28, 28)).shape == (4, 53, 28, 28)
 
-            conv = Conv(53, ksize, padding='full').eval()
+            conv = Conv(53, ksize, padding='full', bias=False).eval()
             assert conv(torch.ones(4, 2, 28, 28)).shape == (4, 53, 28 + ksize - 1, 28 + ksize - 1)
 
     def test_conv_dim(self):
-        conv = Conv(8, 3).eval()
+        conv = Conv(8, 3, bias=True).eval()
         conv(torch.randn(1, 2, 3))
         assert isinstance(conv.orig, nn.Conv1d)
 
-        conv = Conv(8, 3).eval()
+        conv = Conv(8, 3, bias=True).eval()
         conv(torch.randn(1, 2, 3, 4))
         assert isinstance(conv.orig, nn.Conv2d)
 
-        conv = Conv(8, 3).eval()
+        conv = Conv(8, 3, bias=True).eval()
         conv(torch.randn(1, 2, 3, 4, 5))
         assert isinstance(conv.orig, nn.Conv3d)
 
@@ -157,7 +153,7 @@ class TestBatchNorm:
 class TestBaguette:
     def test_baguette(self):
         bk = Baguette(2)
-        bki = bk.inverse
+        assert bk.inverse is bk.inverse
         x = torch.arange(2 * 4 * 8 * 6).view(2, 4, 8, 6)
         assert torch.all(bk.inverse(bk(x)) == x)
 

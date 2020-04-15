@@ -30,7 +30,7 @@ _default_splits = {
 
 class DatasetFactory:
     def __init__(self, datasets_dir_or_dirs):
-        if isinstance(datasets_dir_or_dirs, str):
+        if isinstance(datasets_dir_or_dirs, os.PathLike):
             datasets_dir_or_dirs = [datasets_dir_or_dirs]
         self.datasets_dirs = list(map(Path, datasets_dir_or_dirs))
 

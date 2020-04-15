@@ -1,6 +1,7 @@
 from contextlib import suppress as ctx_suppress
 from dataclasses import dataclass
 from functools import partial
+import typing as T
 
 import torch
 
@@ -139,7 +140,7 @@ class SupervisedSlidingBatchTrainStep:
 @dataclass
 class SupervisedTrainAcummulatedBatchStep:
     batch_split_factor: int
-    reduction: "Literal['mean', 'sum']" = 'mean'
+    reduction: T.Literal['mean', 'sum'] = 'mean'
 
     def __post_init__(self):
         if self.reduction not in ['mean', 'sum']:

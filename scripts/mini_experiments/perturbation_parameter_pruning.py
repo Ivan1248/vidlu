@@ -1,4 +1,4 @@
-import torch, time
+import torch
 
 REQUEST_GRAPH_DELETION = True  # if True, the error always occurs, if False, only sometimes
 TEST_REPEAT_COUNT = 10000  # 200
@@ -6,7 +6,6 @@ TEST_REPEAT_COUNT = 10000  # 200
 
 def run_loop():
     x = torch.ones((32, 64, 64), requires_grad=True)
-    out = None
 
     while x.shape[0] > 0:
         yield x.shape  # for printing

@@ -29,6 +29,7 @@ def clamp(x, min, max, inplace=False):
         x: input array.
         min (Tensor or float): lower bound.
         max (Tensor or float): upper bound.
+        inplace (bool): whether to do operation inplace. Default: `False`.
 
     Returns:
         An array with values bounded with `min` and `max`.

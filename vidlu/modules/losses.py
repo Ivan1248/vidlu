@@ -1,3 +1,5 @@
+import typing as T
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -40,8 +42,8 @@ def cross_entropy_loss_with_logits(logits, target_probs):
     return -(target_probs * logits.log_softmax(1)).sum(1)
 
 
-def reduce_loss(x, batch_reduction: "Literal['sum', 'mean']" = None,
-                elements_reduction: "Literal['sum', 'mean']" = None):
+def reduce_loss(x, batch_reduction: T.Literal['sum', 'mean', None] = None,
+                elements_reduction: T.Literal['sum', 'mean', None] = None):
     if batch_reduction == elements_reduction and batch_reduction is not None:
         return getattr(torch, batch_reduction)(x)
     if elements_reduction is not None:

@@ -203,26 +203,27 @@ class AffineCoupling(E.Module):
 class ProportionSplit(E.Module):
     def __init__(self, proportion: float, dim=1):
         super().__init__()
+        self.proportion, self.dim = proportion, dim
 
     def forward(self, x):
-        return x.split(round(self.args.proportion * x.shape[1]), dim=self.args.dim)
+        return x.split(round(self.proportion * x.shape[1]), dim=self.dim)
 
     def make_inverse(self):
-        return E.Concat(dim=self.args.dim)
+        return E.Concat(dim=self.dim)
 
 
 class PadChannels(E.Module):
     def __init__(self, padding):
-        padding = [0, padding] if isinstance(padding, int) else list(padding)
-        super().__init__()
         if len(padding) != 2:
             raise ValueError("`padding` should be a single `int` or a sequence of length 2.")
+        super().__init__()
+        self.padding = [0, padding] if isinstance(padding, int) else list(padding)
 
     def forward(self, x):  # injective
-        return F.pad(x, [0, 0, 0, 0] + self.args.padding)
+        return F.pad(x, [0, 0, 0, 0] + self.padding)
 
     def make_inverse(self):
-        return UnpadChannels(self.args.padding)
+        return UnpadChannels(self.padding)
 
 
 class UnpadChannels(E.Module):
@@ -232,7 +233,7 @@ class UnpadChannels(E.Module):
         return x[:, self.padding[0]:x.shape[1] - self.padding[1], :, :]
 
     def make_inverse(self):
-        return PadChannels(self.args.padding)
+        return PadChannels(self.padding)
 
 
 class Baguette(E.Seq):
@@ -264,13 +265,14 @@ class Baguette(E.Seq):
 class SqueezeExcitation(E.Module):
     def __init__(self, channel, reduction=16, squeeze_f=nn.AdaptiveAvgPool2d, act_f=E.ReLU):
         super().__init__()
+        self.store_args()
 
     def build(self, x):
         a = self.args
         self.attention = E.Seq(
             squeeze=a.squeeze_f(output_size=1),
-            lin0=E.Linear(x.shape[1] // self.args.reduction, bias=False),
-            act0=self.args.act_f(),
+            lin0=E.Linear(x.shape[1] // a.reduction, bias=False),
+            act0=a.act_f(),
             lin1=E.Linear(x.shape[1], bias=False),
             act1=nn.Sigmoid(),
             resh=E.BatchReshape(x.shape[1], 1, 1))
@@ -300,6 +302,7 @@ class Resize(E.Module):
 
     def __init__(self, size=None, scale_factor=None, mode='nearest', align_corners=False):
         super().__init__()
+        self.store_args()
 
     def forward(self, x):
         a = self.args
@@ -344,7 +347,7 @@ class DenseSPP(E.Module):
 # Ladder Upsampling ################################################################################
 
 
-class LadderUpsampleBlend(E.Seq):
+class LadderUpsampleBlend(E.Module):
     """ For LadderDenseNet and SwiftNet. """
     _pre_blendings = dict(
         sum=E.Sum,
@@ -357,15 +360,14 @@ class LadderUpsampleBlend(E.Seq):
         if pre_blending not in self._pre_blendings:
             raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
                              + f"It should be one of {tuple(self._pre_blendings.keys())}.")
-        block_f = Reserved.partial(blend_block_f, width_factors=[1])
-        self.args.block_f = block_f
+        self.block_f = Reserved.partial(blend_block_f, width_factors=[1])
 
         self.project = None
         self.pre_blend = self._pre_blendings[pre_blending]()
-        self.blend = block_f(base_width=out_channels, kernel_sizes=[3])
+        self.blend = self.block_f(base_width=out_channels, kernel_sizes=[3])
 
     def build(self, x, skip):
-        self.project = Reserved.partial(self.args.block_f, base_width=x.shape[1])(kernel_sizes=[1])
+        self.project = Reserved.partial(self.block_f, base_width=x.shape[1])(kernel_sizes=[1])
 
     def forward(self, x, skip):
         # resize is not defined in build because it depends on skip.shape
@@ -378,11 +380,11 @@ class LadderUpsampleBlend(E.Seq):
 class KresoLadder(E.Module):
     def __init__(self, width, up_blend_f=LadderUpsampleBlend):
         super().__init__()
+        self.width, self.up_blend_f = width, up_blend_f
         self.up_blends = None
 
     def build(self, x, skips):
-        self.up_blends = nn.ModuleList(
-            [self.args.up_blend_f(self.args.width) for _ in range(len(skips))])
+        self.up_blends = nn.ModuleList([self.up_blend_f(self.width) for _ in range(len(skips))])
 
     def forward(self, x, skips):
         ups = [x]
@@ -409,6 +411,7 @@ class KresoLadderNet(E.Module):
         self.context = context_f()
         self.ladder = KresoLadder(ladder_width, up_blend_f)
         defaults = default_args(default_args(up_blend_f).blend_block_f)
+        self.post_activation = post_activation
         if post_activation:
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
 
@@ -416,7 +419,7 @@ class KresoLadderNet(E.Module):
         context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
         context = self.context(context_input)
         ladder_output = self.ladder(context, laterals[::-1])
-        return self.act(self.norm(ladder_output)) if self.args.post_activation else ladder_output
+        return self.act(self.norm(ladder_output)) if self.post_activation else ladder_output
 
 
 # ResNetV1 #########################################################################################
@@ -437,19 +440,19 @@ def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
 
 
 class ResNetV1Unit(E.Seq):
-    def __init__(self, block_f=PostactBlock,
-                 dim_change='proj'):
-        _check_block_args(block_f)
-        super().__init__()
+    def __init__(self, block_f=PostactBlock, dim_change='proj'):
         if dim_change not in ['pad', 'proj', 'conv3']:
             raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+        _check_block_args(block_f)
+        super().__init__()
+        self.block_f, self.dim_change = block_f, dim_change
 
     def build(self, x):
-        block_args = default_args(self.args.block_f)
+        block_args = default_args(self.block_f)
         shortcut = _get_resnetv1_shortcut(
             in_width=x.shape[1], out_width=block_args.base_width * block_args.width_factors[-1],
-            stride=block_args.stride, dim_change=self.args.dim_change, norm_f=block_args.norm_f)
-        block_f = self.args.block_f
+            stride=block_args.stride, dim_change=self.dim_change, norm_f=block_args.norm_f)
+        block_f = self.block_f
         block = Reserved.call(block_f)[:-1]  # block without the last activation
         self.add_modules(
             fork=E.Fork(
@@ -522,18 +525,19 @@ def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change):
 
 class ResNetV2Unit(E.Seq):
     def __init__(self, block_f=PreactBlock, dim_change='proj'):
-        _check_block_args(block_f)
-        super().__init__()
         if dim_change not in ['pad', 'proj', 'conv3']:
             raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+        _check_block_args(block_f)
+        super().__init__()
+        self.block_f, self.dim_change = block_f, dim_change
 
     def build(self, x):
-        block_f = self.args.block_f
+        block_f = self.block_f
         block = block_f()
 
-        dim_change = self.args.dim_change
+        dim_change = self.dim_change
         in_width = x.shape[1]
-        block_args = default_args(self.args.block_f)
+        block_args = default_args(self.block_f)
         out_width = block_args.base_width * block_args.width_factors[-1]
         stride = block_args.stride
         if stride == 1 and in_width == out_width:
@@ -559,18 +563,7 @@ class ResNetV2Groups(ResNetV1Groups):
 
 
 class ResNetV2Backbone(ResNetV1Backbone):
-    """ Pre-activation resnet backbone.
-
-    Args:
-        base_width (int): number of channels in the output of the root block and the base width of
-            blocks in the first group.
-        small_input (bool): If True, the root block doesn't reduce spatial dimensions. E.g. it
-            should be `True` for CIFAR-10, but `False` for ImageNet.
-        group_lengths:
-        width_factors:
-        block_f:
-        dim_change:
-    """
+    """ Pre-activation resnet backbone."""
 
     __init__ = partialmethod(ResNetV1Backbone.__init__,
                              block_f=default_args(ResNetV2Groups).block_f,
@@ -587,7 +580,7 @@ class DenseTransition(E.Seq):
         super().__init__()
         self.add_modules(norm=norm_f(),
                          act=act_f())
-        if self.args.noise_f is not None:
+        if noise_f is not None:
             self.add_module(noise=noise_f())
         self.args = NameDict(compression=compression, conv_f=conv_f, pool_f=pool_f)
 
@@ -641,8 +634,7 @@ class MDenseTransition(E.Seq):
                  conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(E.AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
-        self.args = NameDict(compression=compression, norm_f=norm_f, act_f=act_f, conv_f=conv_f,
-                             noise_f=noise_f, pool_f=pool_f)
+        self.store_args()
 
     def build(self, x):
         a = self.args
@@ -662,6 +654,7 @@ class MDenseTransition(E.Seq):
 class MDenseUnit(E.Module):
     def __init__(self, block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
         super().__init__()
+        self.block_f=block_f
         self.block_starts = E.Parallel()
         self.sum = E.Sum()
         block = block_f()
@@ -669,7 +662,7 @@ class MDenseUnit(E.Module):
         self.block_end = block[self._split_index:]
 
     def build(self, x):
-        self.block_starts.extend([self.args.block_f()[:self._split_index] for _ in range(len(x))])
+        self.block_starts.extend([self.block_f()[:self._split_index] for _ in range(len(x))])
 
     def forward(self, x):
         return x + [self.block_end(self.sum(self.block_starts(x)))]
@@ -804,6 +797,7 @@ class VGGClassifier(E.Seq):
 class FCNEncoder(E.Seq):
     def __init__(self, block_f=default_args(VGGBackbone).block_f,
                  pool_f=partial(E.MaxPool, ceil_mode=True), fc_dim=4096, noise_f=nn.Dropout2d):
+        # TODO: do something with pool_f
         super().__init__()
         self.add_module('vgg_backbone', VGGBackbone(block_f=block_f))
         conv_f = default_args(block_f).conv_f
@@ -859,7 +853,7 @@ class AAEDecoder(E.Seq):
 
 
 class AAEDiscriminator(E.Seq):
-    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, norm_f=D.norm_f, act_f=E.ReLU):
+    def __init__(self, h_dim=default_args(AAEDecoder).h_dim, act_f=E.ReLU):
         super().__init__()
         for i in range(2):
             # batch normalization?
@@ -891,6 +885,7 @@ def _get_irevnet_unit_input_padding(x, block_out_ch, stride, force_bijection):
 class IRevNetUnit(E.Module):
     def __init__(self, first=False, block_f=PreactBlock, force_surjection=False):
         super().__init__()
+        self.store_args()
         self.input_pad, self.baguette, self.block = [None] * 3
 
     def build(self, x):
@@ -938,6 +933,7 @@ class IRevNetBackbone(E.Seq):
                  groups_f=IRevNetGroups):
         _check_block_args(block_f)
         super().__init__()
+        self.store_args()
 
     def build(self, x):
         a = self.args
@@ -1020,7 +1016,7 @@ class irevnet_block(nn.Module):
             x1 = self.psi.forward(x1)
             x2 = self.psi.forward(x2)
         y1 = Fx2 + x1
-        return (x2, y1)
+        return x2, y1
 
     def inverse(self, x):
         """ bijective or injecitve block inverse """

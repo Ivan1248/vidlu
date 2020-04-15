@@ -51,7 +51,8 @@ print(timeit(10, lambda: np.sum(narrays, 0)))
 
 # Torch ########################################################################
 
-import time, torch
+import time
+import torch
 
 
 def timeit(n, proc):
@@ -104,10 +105,6 @@ def timeit(n, proc):
     for _ in range(n):
         proc()
     return time.clock() - start
-
-
-def py_sum(arrays):
-    assert sum(arrays).shape == arrays[0].shape
 
 
 def np_sum(arrays):
@@ -187,26 +184,6 @@ def timeit(n, proc):
     return time.clock() - start
 
 
-def pasum(x):
-    def sum_pairs(l, r):
-        return [a + b for a, b in zip(l, r)]
-
-    def split(x):
-        l, r = x[:len(x) // 2], x[len(x) // 2:]
-        r, rem = r[:len(l)], r[len(l):]
-        return x, r, rem
-
-    while len(x) > 1:
-        l, r, rem = split(x)
-        x = sum_pairs(l, r) + rem
-
-    return x[0]
-
-
-def py_sum(arrays):
-    return sum(arrays)
-
-
 def py_sum_inplace(arrays):
     a = arrays[0]
     for i in range(1, len(arrays)):
@@ -220,10 +197,6 @@ def py_sum_inplace3(arrays):
         if i > 0:
             a += x
     return a
-
-
-def stack_sum(arrays):
-    return torch.sum(torch.stack(arrays), 0)
 
 
 n_repeats = 100

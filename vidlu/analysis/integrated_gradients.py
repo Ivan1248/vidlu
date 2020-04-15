@@ -78,9 +78,8 @@ def integrated_gradients(inp, target, get_predictions_and_gradients, baseline, s
     predictions, grads = get_predictions_and_gradients(scaled_inputs, target)
 
     # trapezoidal rule
-    integrated_gradients = (inp - baseline).mul_(torch.trapz(grads, dim=0))
-
-    return integrated_gradients, predictions
+    ig = (inp - baseline).mul_(torch.trapz(grads, dim=0))
+    return ig, predictions
 
 
 def random_baseline_integrated_gradients(inp, target, get_predictions_and_gradients,

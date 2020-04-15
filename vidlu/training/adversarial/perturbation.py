@@ -3,14 +3,10 @@ import dataclasses as dc
 import typing as T
 
 import torch
-from torch import nn
-import torch.nn.functional as F
 
 import vidlu.modules as vm
-import vidlu.modules.components as vmc
 import vidlu.modules.inputwise as vmi
 from vidlu.modules.inputwise import PerturbationModelWrapper as _PMW
-import vidlu.transforms.image as vti
 import vidlu.ops.image as voi
 import vidlu.ops as vo
 
@@ -39,7 +35,7 @@ class AlgTohchabTorbiwasc(_PMW):
             soft_clamp=_PMW(partial(vo.soft_clamp, min_=0, max_=1, eps=0.01), forward_arg_count=1)))
 
 
-class Photometric(_PMW):
+class ChannelGammaHsv(_PMW):
     def __init__(self, forward_arg_count=None):
         super().__init__(
             vm.Seq(

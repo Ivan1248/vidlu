@@ -1,8 +1,9 @@
 import argparse
 
+# noinspection PyUnresolvedReferences
 import _context
 from vidlu.data.misc import pickle_sizeof
-from vidlu.transforms import image, jitter
+from vidlu.transforms import image
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
 from vidlu.factories import get_prepared_data

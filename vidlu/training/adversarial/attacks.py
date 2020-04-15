@@ -3,13 +3,12 @@ from dataclasses import dataclass
 from functools import partial
 from numbers import Number
 import warnings
-from time import sleep
 import typing as T
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import optim, nn
+from torch import nn
 
 from vidlu.modules.losses import NLLLossWithLogits, KLDivLossWithLogits
 from vidlu import ops
@@ -111,7 +110,7 @@ _to_target_wiki = dict(
 
 
 @torch.no_grad()
-def _perturbation_model_from_perturbation(pert_or_x_adv, x=None):
+def _pert_to_pert_model(pert_or_x_adv, x=None):
     pert = pert_or_x_adv - x if x is not None else pert_or_x_adv
     pert_model = vmi.Additive(())
     pert_model(pert)
@@ -146,7 +145,7 @@ class Attack:
     to_virtual_target: T.Union[T.Callable, str] = _to_hard_target
 
     on_virtual_label_computed = Event()
-    compute_model_grads: bool = False
+    compute_model_grads: bool = False  # TODO: use
 
     def __post_init__(self):
         if isinstance(self.to_virtual_target, str):
@@ -173,13 +172,12 @@ class Attack:
         """
         if y is None:
             y = self._get_virtual_target(model, output, x)
-        if type(self)._get_perturbation is not Attack._get_perturbation:
-            pert = self._get_perturbation(model, x, y=y, **kwargs)
-            return (_perturbation_model_from_perturbation(pert) if isinstance(pert, torch.Tensor)
-                    else pert)
-        elif type(self)._perturb is not Attack._perturb:
-            x_adv = self._perturb(model, x, y=y, **kwargs)
-            return _perturbation_model_from_perturbation(x_adv, x)
+        if (pert := self._get_perturbation(model, x, y=y, **kwargs)) is not NotImplemented:
+            return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
+        elif (x_adv := self._perturb(model, x, y=y, **kwargs)) is not NotImplemented:
+            return _pert_to_pert_model(x_adv, x)
+        else:
+            raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
 
     def perturb(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial example.
@@ -197,12 +195,7 @@ class Attack:
         Return:
             Perturbed input.
         """
-        if y is None:
-            y = self._get_virtual_target(model, output, x)
-        if type(self)._perturb is not Attack._perturb:
-            return self._perturb(model, x, y=y, **kwargs)
-        elif type(self)._get_perturbation is not Attack._get_perturbation:
-            return self._get_perturbation(model, x, y=y, **kwargs)(x)
+        return self(model, x, y=y, output=output, **kwargs)(x)
 
     def _get_virtual_target(self, model, output, x):
         with torch.no_grad():
@@ -223,11 +216,11 @@ class Attack:
 
     def _perturb(self, model, x, y=None, **kwargs):
         # has to be implemented in subclasses
-        raise NotImplementedError()
+        return NotImplemented
 
     def _get_perturbation(self, model, x, y=None, output=None, **kwargs):
         # has to be implemented in subclasses
-        raise NotImplementedError()
+        return NotImplemented
 
 
 @dataclass
@@ -444,119 +437,6 @@ def _extract_nonadv(pmodel, adv_mask, masking_mode, pm_params_all, index, y, x, 
     return adv_mask.logical_not_() if mask_loss else None
 
 
-def perturb_iterative_with_perturbation_model_hacky(
-        model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
-        projection=None, clip_bounds=(0, 1), similar=None, masking_mode='loss', prune=True,
-        backward_callback=None):
-    """Iteratively optimizes the loss over the input.
-    Compared to `perturb_iterative`, uses an optimizer instead of an update
-    function and stopping on success (when `similar` is provided) does not
-    speed up optimization unless the optimization succeeds on all inputs.
-
-    Args:
-        model: Forward pass function.
-        x: Inputs.
-        y: Input labels.
-        step_count: (Max.) number of iterations.
-        optim_f: optimizer.
-        loss: A loss function that returns one ore more values per input.
-        minimize (bool): Whether the attack should minimize the loss.`
-        pert_model: A function returning a perturbation model that has "batch
-            parameters" of type `vidlu.BatchParameter`. If `None`, an
-            elementwise perturbation model is created.
-        clip_bounds (optional): Minimum and maximum input value pair.
-        similar (optional): A function that tells whether the attack is
-            successful example-wise based on the predictions and the true
-            labels. If it is provided, optimization is stopped when `similar`
-            returns `False`. Otherwise,`step_count` of iterations is performed
-            on every example. Besides the batch size, the shape of the output
-            can also be the shape of the loss function output (if `masking_mode`
-            is `'loss'`) or the input shape (if `masking_mode` is `'grad'`).
-        masking_mode (Literal['loss', 'grad']): If `similar` is provided and
-            returns multiple values per input, `masking_mode` determines whether
-            loss or the gradient is to be masked for early stopping of the
-            optimization.
-        prune (bool): if True and the `similar` function is provided, batches
-            are pruned when possible to speed up computation.
-        backward_callback: A callback function called after the gradient has
-            been computed. It can be used for e.g. updating model parameters
-            during input optimization (adversarial training for free).
-
-    Returns:
-        The perturbation model.
-    """
-    if prune:
-        warnings.warn("If pruning is enabled, this procedure relies on an hack used to avoid a race"
-                      " condition without guarantee. Set `prune=False` if you want to guarantee no"
-                      " errors but make it slower.")
-    stop_on_success = similar is not None
-    loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
-    backward_callback = backward_callback or (lambda _: None)
-
-    pmodel = pert_model or vmi.Additive(())
-    pmodel(x)  # initialoze perturbation model (parameter shapes have to be inferred from x)
-    pmodel.train()
-    optim = optim_f(pmodel.parameters())
-    projection = projection or (lambda _: None)
-
-    if stop_on_success:
-        nonadv_mask = None
-        if prune:
-            with torch.no_grad():
-                x_all = x
-                index, x, y = torch.arange(len(x)), x.detach().clone(), y.detach().clone()
-                pm_params_all = [p.detach().clone() for p in pmodel.parameters()]
-        else:
-            pm_params_all, index = None, None
-    else:
-        masking_mode, pm_params_all = '', None
-
-    for i in range(step_count):
-        x_adv = pmodel(x)
-        output = model(x_adv)
-
-        loss, reg_loss, loss_no_mask = _reduce_losses(
-            unred_loss=loss_fn(output, y),
-            unred_reg_loss=reg_loss_fn(pmodel, x, y, x_adv, output) if reg_loss_fn else None,
-            nonadv_mask=nonadv_mask)
-        optim.zero_grad()
-        ((loss if minimize else -loss) + reg_loss).backward()  # minimized
-
-        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss_no_mask.item(),
-                            reg_loss_sum=reg_loss.item(), grad=None, step=i, pert_model=pmodel)
-        backward_callback(state)
-        del output, loss, reg_loss, loss_no_mask
-
-        with torch.no_grad():
-            if stop_on_success:
-                nonadv_mask = _extract_nonadv(
-                    pmodel, similar(state) if minimize else ~similar(state),
-                    masking_mode, pm_params_all, index, y, x, prune=prune)
-            del state  # free some memory and remove references to the graph
-
-            optim.step()
-            projection(pmodel)
-
-            if clip_bounds is not None and torch.any(x_adv.clamp_(*clip_bounds) != x_adv):
-                warnings.warn(f"The perturbed input has values out of bounds {clip_bounds}.")
-            if len(x) == 0:
-                break
-            if i < step_count - 1:
-                del x_adv  # request graph deletion by removing the last reference
-                sleep(0.002)  # a hack to give PyTorch time to reset Autograd metadata
-
-    if stop_on_success and prune:  # store the final parameters of the unsuccesful examples
-        with torch.no_grad():
-            x = x_all
-            for p_all, p in zip(pm_params_all, pmodel.parameters()):
-                p_all[index] = p
-                p.set_(p_all)
-
-    pmodel.eval()
-    with torch.no_grad():
-        return pmodel, pmodel(x)
-
-
 def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
     """Used by `perturb_iterative_with_perturbation_model` to optionally prune
     batches and mask gradients."""
@@ -597,9 +477,15 @@ def perturb_iterative_with_perturbation_model(
             supported.
         loss_fn: A loss function that returns one ore more values per input.
             minimize (bool): Whether the attack should minimize the loss.`
+        minimize: whether to minimize loss instead of maximizing. Default:
+            `False`.
         pert_model: A function returning a perturbation model that has "batch
             parameters" of type `vidlu.BatchParameter`. If `None`, an
             elementwise perturbation model is created.
+        projection: a procedure is applied on the perturbation model and that
+            constraints on its parameters are within constraints.
+        compute_model_grads: It `True`, gradients with respect to model
+            parameters are computed, otherwise not. Default: `False`.
         clip_bounds (optional): Minimum and maximum input value pair.
         similar (optional): A function that tells whether the attack is
             successful example-wise based on the predictions and the true
@@ -659,8 +545,6 @@ def perturb_iterative_with_perturbation_model(
                 nonadv_mask=nonadv_mask)
             optim.zero_grad()
             ((loss if minimize else -loss) + reg_loss).backward()  # minimized
-
-        # print(i, pmodel.gamma.grad.abs().mean(), pmodel.gamma.unique())
 
         state = AttackState(
             x=x, y=y, output=output, x_adv=x_adv, y_adv=y_, loss=unred_loss,
@@ -845,12 +729,13 @@ class PGDAttack(Attack, EarlyStoppingMixin):
             **{k: getattr(self, k) for k in fields if hasattr(self, k)},
             pert_model_f=partial(vmi.Additive, ()), initializer=self._initializer,
             projection=self._project_params)
-        p = partial(base_attack._get_perturbation, model, x, y, backward_callback=backward_callback)
+        get_pert = partial(base_attack._get_perturbation, model, x, y,
+                           backward_callback=backward_callback)
         if initial_pert is not None:
             pert_model = vmi.Additive(())
             pert_model.addend.data = initial_pert
-            return p(pert_model)
-        return p()
+            return get_pert(pert_model)
+        return get_pert()
 
 
 @dataclass
@@ -894,85 +779,85 @@ class VATAttack(Attack):
 # DDN ##############################################################################################
 
 
-@dataclass
-class DDN(Attack, EarlyStoppingMixin):
-    """DDN attack: decoupling the direction and norm of the perturbation to
-    achieve a small L2 norm in few steps.
-
-    Args:
-        eps_init (float, optional): Initial value for the norm.
-        step_size (float): Optimization step size.
-        max_step_count (int): Maxmimum number of steps for the optimization.
-        gamma (float, optional): Factor by which the norm will be modified.
-            new_norm = norm * (1 + or - gamma).
-        p (float): p-norm p. If specified,
-    """
-    eps_init: float = 1.
-    step_size: float = 2 / 255
-    max_step_count: int = 200
-    gamma: float = 0.1
-    grad_processing: str = 'sign'
-    rand_init: bool = True
-    p: float = 2
-
-    def _perturb(self, model, x, y=None, backward_callback=None):
-        n = x.shape[0]
-        delta = torch.zeros_like(x, requires_grad=True)
-        norm = torch.full((n,), self.init_norm, device=self.device, dtype=torch.float)
-        worst_norm = torch.max(x, 1 - x).view(n, -1).norm(p=2, dim=1)
-
-        # Setup optimizers
-        optimizer = optim.SGD([delta], lr=1)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.max_step_count,
-                                                         eta_min=0.01)
-
-        best_norm = worst_norm.clone()
-        best_delta = torch.zeros_like(x)
-        adv_found = torch.zeros(x.size(0), dtype=torch.uint8, device=x.device)
-
-        for i in range(self.max_step_count):
-            scheduler.step()
-
-            curr_norm = delta.data.view(n, -1).norm(p=self.p, dim=1)
-            x_adv = x + delta
-            output = model(x_adv)
-            loss = self.loss(output, y).view(len(x), -1).mean(1).sum()
-            grad = delta.grad  # .detach().clone() unnecessary
-
-            state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
-                                grad=grad, step=i)
-            backward_callback(state)
-
-            is_adv = self.similar(state) if self.minimize else ~self.similar(state)
-            is_smaller = curr_norm < best_norm
-            is_smaller_adv = is_adv ^ is_smaller
-            adv_found[is_smaller_adv] = True
-            best_norm[is_smaller_adv] = curr_norm[is_smaller_adv]
-            best_delta[is_smaller_adv] = delta.data[is_smaller_adv]
-
-            optimizer.zero_grad()
-            loss.backward()
-
-            # renorming gradient
-            grad_norms = ops.batch.norm(grad, p=self.p)
-            delta.grad.div_(ops.batch.redim_as(grad_norms, grad))
-            # avoid nan or inf if gradient is 0
-            if (grad_norms == 0).any():
-                delta.grad[grad_norms == 0] = torch.randn_like(delta.grad[grad_norms == 0])
-
-            optimizer.step()
-
-            norm.mul_(1 - (2 * is_adv.float() - 1) * self.gamma)
-            norm = torch.min(norm, worst_norm)
-
-            delta.data.mul_((norm / delta.data.view(n, -1).norm(2, 1)).view(-1, 1, 1, 1))
-            delta.data.add_(x)
-            delta.data.clamp_(0, 1).sub_(x)
-
-        if self.max_norm:
-            best_delta.renorm_(p=2, dim=0, maxnorm=self.max_norm)
-
-        return x + best_delta
+# @dataclass
+# class DDN(Attack, EarlyStoppingMixin):
+#     """DDN attack: decoupling the direction and norm of the perturbation to
+#     achieve a small L2 norm in few steps.
+#
+#     Args:
+#         eps_init (float, optional): Initial value for the norm.
+#         step_size (float): Optimization step size.
+#         max_step_count (int): Maxmimum number of steps for the optimization.
+#         gamma (float, optional): Factor by which the norm will be modified.
+#             new_norm = norm * (1 + or - gamma).
+#         p (float): p-norm p. If specified,
+#     """
+#     eps_init: float = 1.
+#     step_size: float = 2 / 255
+#     max_step_count: int = 200
+#     gamma: float = 0.1
+#     grad_processing: str = 'sign'
+#     rand_init: bool = True
+#     p: float = 2
+#
+#     def _perturb(self, model, x, y=None, backward_callback=None):
+#         n = x.shape[0]
+#         delta = torch.zeros_like(x, requires_grad=True)
+#         norm = torch.full((n,), self.init_norm, device=self.device, dtype=torch.float)
+#         worst_norm = torch.max(x, 1 - x).view(n, -1).norm(p=2, dim=1)
+#
+#         # Setup optimizers
+#         optimizer = optim.SGD([delta], lr=1)
+#         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.max_step_count,
+#                                                          eta_min=0.01)
+#
+#         best_norm = worst_norm.clone()
+#         best_delta = torch.zeros_like(x)
+#         adv_found = torch.zeros(x.size(0), dtype=torch.uint8, device=x.device)
+#
+#         for i in range(self.max_step_count):
+#             scheduler.step()
+#
+#             curr_norm = delta.data.view(n, -1).norm(p=self.p, dim=1)
+#             x_adv = x + delta
+#             output = model(x_adv)
+#             loss = self.loss(output, y).view(len(x), -1).mean(1).sum()
+#             grad = delta.grad  # .detach().clone() unnecessary
+#
+#             state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
+#                                 grad=grad, step=i)
+#             backward_callback(state)
+#
+#             is_adv = self.similar(state) if self.minimize else ~self.similar(state)
+#             is_smaller = curr_norm < best_norm
+#             is_smaller_adv = is_adv ^ is_smaller
+#             adv_found[is_smaller_adv] = True
+#             best_norm[is_smaller_adv] = curr_norm[is_smaller_adv]
+#             best_delta[is_smaller_adv] = delta.data[is_smaller_adv]
+#
+#             optimizer.zero_grad()
+#             loss.backward()
+#
+#             # renorming gradient
+#             grad_norms = ops.batch.norm(grad, p=self.p)
+#             delta.grad.div_(ops.batch.redim_as(grad_norms, grad))
+#             # avoid nan or inf if gradient is 0
+#             if (grad_norms == 0).any():
+#                 delta.grad[grad_norms == 0] = torch.randn_like(delta.grad[grad_norms == 0])
+#
+#             optimizer.step()
+#
+#             norm.mul_(1 - (2 * is_adv.float() - 1) * self.gamma)
+#             norm = torch.min(norm, worst_norm)
+#
+#             delta.data.mul_((norm / delta.data.view(n, -1).norm(2, 1)).view(-1, 1, 1, 1))
+#             delta.data.add_(x)
+#             delta.data.clamp_(0, 1).sub_(x)
+#
+#         if self.max_norm:
+#             best_delta.renorm_(p=2, dim=0, maxnorm=self.max_norm)
+#
+#         return x + best_delta
 
 
 # CW ###############################################################################################

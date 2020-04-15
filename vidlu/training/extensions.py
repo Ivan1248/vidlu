@@ -1,4 +1,3 @@
-from vidlu.training.adversarial.attacks import Attack
 from vidlu.utils.func import params, Empty, ArgTree, argtree_partial
 
 

@@ -10,6 +10,7 @@ class SlugUnit(Module):
     def __init__(self, change_dim=False,
                  block_f=partial(PreactBlock, kernel_sizes=[1, 3], width_factors=[4, 1])):
         super().__init__()
+        self.store_args()
         self.blocks = None
 
     def build(self, inputs):

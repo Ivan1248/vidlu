@@ -1,5 +1,3 @@
-import functools
-
 import numpy as np
 import torch
 from . import _single as single
@@ -147,6 +145,32 @@ def l2_distace_sqr(x, y, keep_dims=False):
     return abs_pow_sum(x - y, 2, keep_dims=keep_dims)
 
 
+def project_to_simplex(x, r, inplace=False):
+    """Batch version, based on https://gist.github.com/daien/1272551
+
+    Args:
+        x (Tensor): input.
+        r (Number or Tensor): the norm of the ball of the inverse weighting of
+            vector dimensions if `r` has the same number of array dimensions as
+            `x`. The extreme case is that `r` has the same shape as `x` (which is
+            currently not implemented).
+        inplace (bool): whether the input should be in-place modified.
+    """
+    sign = x.sign()
+    x = x.abs_() if inplace else x.abs()
+    sorted_, _ = x.view(x.shape[0], -1).sort(descending=True)
+    # cumulative sums of sorted values with r subtracted
+    cssmns = sorted_.cumsum(dim=1) - r
+    ind = torch.arange(1, sorted_.shape[1] + 1, dtype=torch.float)
+    pconds = (sorted_ * ind) > cssmns
+    # number of > 0 elements of the optimal solutions
+    rhos = x.new_tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
+    # Lagrange multiplier associated to the simplex constraint
+    thetas = x.new_tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
+    # compute the projection by thresholding v using theta
+    return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
+
+
 def project_to_1_ball(x, r, inplace=False):
     """Batch version, based on https://gist.github.com/daien/1272551
 
@@ -156,17 +180,17 @@ def project_to_1_ball(x, r, inplace=False):
             vector dimensions if `r` has the same number of array dimensions as
             `x`. The extreme case is that `r` has the same shape as `x` (which is
             currently not implemented).
-        inplace:
+        inplace (bool): whether the input should be in-place modified.
     """
-    sign = x.sign()
-    x = x.abs_() if inplace else x.abs()
-    sorted_, _ = x.view(x.shape[0], -1).sort(descending=True)
-    cssmns = sorted_.cumsum(dim=1) - r
-    ind = torch.arange(1, sorted_.shape[1] + 1, dtype=torch.float)
-    pconds = (sorted_ * ind) > cssmns
-    rhos = x.new_tensor([ind[cond][-1] for i, cond in enumerate(pconds)])
-    thetas = x.new_tensor([cssmns[i, cond][-1] for i, cond in enumerate(pconds)]) / rhos
-    return x.sub_(redim_as(thetas, x, True)).clamp_(min=0).mul_(sign)
+    normsgte = x.view(x.shape[0], -1).norm(p=1, dim=1) >= r
+    normsgte_sum = normsgte.sum()
+    if normsgte_sum == len(x):
+        return project_to_simplex(x, r, inplace=inplace)
+    elif normsgte_sum > 0:
+        result = x if inplace else x.clone()
+        result[normsgte] = project_to_simplex(x[normsgte], r, inplace=True)
+        return result
+    return x
 
 
 def normalize_by_norm(x, p, inplace=False, eps=1e-8):  # todo: use torch.renorm
@@ -197,6 +221,7 @@ def project_to_p_ball(x, r, p, inplace=False):
         x: inputs.
         r: p-ball radius/radii.
         p: p-norm p.
+        inplace (bool): whether to do operation inplace. Default: `False`.
     """
     # TODO: non-scalar r
     if p == np.inf:

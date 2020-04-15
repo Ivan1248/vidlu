@@ -5,7 +5,7 @@ def _id_or_index_batch_param(p, keep_grad, idx):
     pi = p
     if isinstance(pi, vmi.BatchParameter):
         pi = p.__getitem__(idx)
-        if p.grad is not None:
+        if keep_grad and p.grad is not None:
             pi.grad = p.grad.__getitem__(idx)
     return pi
 

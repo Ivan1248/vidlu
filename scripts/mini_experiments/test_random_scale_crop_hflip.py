@@ -1,7 +1,8 @@
-from _context import vidlu
 import torch
 
-from vidlu.transforms import image, jitter
+# noinspection PyUnresolvedReferences
+import _context
+from vidlu.transforms import jitter
 
 input_shape = (1024, 2048)
 crop_shape = (768, 768)

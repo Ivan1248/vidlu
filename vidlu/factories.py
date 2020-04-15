@@ -12,11 +12,8 @@ from vidlu.data import DataLoader
 from vidlu.training import Trainer
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
-from vidlu.utils.func import (argtree_partial, find_empty_params_deep,
-                              ArgTree, params, Empty, default_args, EscapedArgTree)
-
-import vidlu.data_utils.dataset_ops as do
-import vidlu.utils.tree as vut
+import vidlu.utils.func as vuf
+from vidlu.data_utils import dataset_ops
 
 
 # Factory messages #################################################################################
@@ -24,11 +21,11 @@ import vidlu.utils.tree as vut
 def _print_all_args_message(func):
     print("All arguments:")
     print(f"Argument tree ({func.func}):")
-    tree.print_tree(ArgTree.from_func(func), depth=1)
+    tree.print_tree(vuf.ArgTree.from_func(func), depth=1)
 
 
 def _print_missing_args_message(func):
-    empty_args = list(find_empty_params_deep(func))
+    empty_args = list(vuf.find_empty_params_deep(func))
     if len(empty_args) != 0:
         print("Unassigned arguments:")
         for ea in empty_args:
@@ -106,7 +103,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
     if transform_str is not None:
         flat_data = dict([((k1, k2), v) for k1, d in data.items() for k2, v in d.items()])
         values = eval(transform_str, dict(d=list(flat_data.values()),
-                                          **{k: v for k, v in vars(do).items()
+                                          **{k: v for k, v in vars(dataset_ops).items()
                                              if not k.startswith('_')}))
         data = dict(((f'data{i}', {'sub0': v}) for i, v in enumerate(values)))
     return data
@@ -218,12 +215,12 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     argtree = defaults.get_model_argtree(model_class, problem)
     argtree_arg = (
         eval(f"t({argtree_arg[0]})",
-             dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=ArgTree,
+             dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
                   partial=partial))
-        if len(argtree_arg) == 1 else ArgTree())
+        if len(argtree_arg) == 1 else vuf.ArgTree())
     argtree.update(argtree_arg)
 
-    model_f = argtree_partial(
+    model_f = vuf.argtree_partial(
         model_class,
         **argtree,
         input_adapter=get_input_adapter(
@@ -324,7 +321,6 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 
 # Training and evaluation ##########################################################################
 
-# noinspection PyUnresolvedReferences
 def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     import math
     from torch import optim
@@ -332,18 +328,16 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     from vidlu.modules import losses
     import vidlu.training.adversarial as ta
     import vidlu.training.configs as tc
-    import vidlu.training.extensions as te
     import vidlu.training.steps as ts
     from vidlu.training.adversarial import attacks
     from vidlu.transforms import jitter
-    t = ArgTree
+    t = vuf.ArgTree
 
-    config = eval(f"tc.TrainerConfig({trainer_str})")
+    config = eval(f"tc.TrainerConfig({trainer_str})",
+                  dict(t=t, math=math, optim=optim, lr_scheduler=lr_scheduler, losses=losses, ta=ta,
+                       tc=tc, ts=ts, attacks=attacks, jitter=jitter))
 
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
-    if 'optimizer_f' in config and 'weight_decay' in default_args(config.optimizer_f):
-        raise RuntimeError("The `weight_decay` argument should be passed to the trainer directly"
-                           + " instead of to the optimizer.")
     trainer_f = partial(Trainer, **tc.to_trainer_args(default_config, config))
 
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)

@@ -21,7 +21,6 @@ from tqdm import tqdm, trange
 from vidlu.utils.misc import slice_len, query_yes_no
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
-import vidlu.utils.func as vuf
 
 from .record import Record
 from .misc import default_collate, pickle_sizeof
@@ -240,7 +239,7 @@ class Dataset(abc.Sequence):
         Splits the dataset indices into disjoint subsets matching predicates.
         """
         progress_bar = progress_bar or (lambda x: x)
-        indiceses = [[] for p in predicates] + [[]]
+        indiceses = [[] for _ in range(len(predicates) + 1)]
         for i, d in enumerate(progress_bar(self)):
             for j, p in enumerate(predicates):
                 if p(d):
@@ -333,7 +332,7 @@ class Dataset(abc.Sequence):
                     ds.clear_hdd_cache()
 
     @staticmethod
-    def from_getitem_func(func, len, data=None, **kwargs):
+    def from_getitem_func(func, len, **kwargs):
         class _Data:
             def __len__(self):
                 return len
@@ -349,7 +348,7 @@ class Dataset(abc.Sequence):
 
 class FieldsMap:
     # TODO: use @vuf.type_checked()
-    def __init__(self, field_to_func, *, mode: "Literal['override', 'replace']" = 'override'):
+    def __init__(self, field_to_func, *, mode: T.Literal['override', 'replace'] = 'override'):
         if not mode in ('override', 'replace'):
             raise ValueError(f"Invalid mode argument '{mode}' is not in {'override', 'replace'}.")
         self.field_to_func = field_to_func
@@ -620,7 +619,7 @@ class SubDataset(Dataset):
         # convert indices to smaller int type if possible
         if isinstance(indices, slice):
             self._len = len(dataset)
-            start, stop, step = indices.indices(slice_len(indices, self.length))
+            start, stop, step = indices.indices(slice_len(indices, self._len))
             self._get_index = lambda i: start + step * i
             modifier = f"[{start}:{stop}:{step if step != 0 else ''}]"
         else:

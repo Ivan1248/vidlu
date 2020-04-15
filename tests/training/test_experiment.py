@@ -1,11 +1,7 @@
 from pathlib import Path
-
-import pytest
-
 from argparse import Namespace
 
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
-import vidlu.training.configs as tc
 
 
 def get_dirs(tmpdir):

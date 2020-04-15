@@ -2,14 +2,14 @@ from abc import ABC
 from argparse import Namespace
 import collections
 import functools
-from functools import reduce, partial
+from functools import reduce
 import typing as T
-import inspect
 import itertools
 from os import PathLike
 from fractions import Fraction
 import re
 import warnings
+import inspect
 
 import numpy as np
 import torch
@@ -20,7 +20,7 @@ import torch.utils.checkpoint as cp
 
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
-from vidlu.utils.func import params, tryable, identity, compose
+import vidlu.utils.func as vuf
 import vidlu.torch_utils as vtu
 
 import vidlu.modules.utils as vmu
@@ -34,46 +34,10 @@ _replaces = []
 def replaces(*names):
     for name in names:
         _replaces.append(name)
-        # del globals()[name]
     return lambda x: x
 
 
 # Module class extensions ##########################################################################
-
-
-def _extended_interface(*superclasses):
-    class ExtendedInterfaceModExt(*superclasses):
-        def add_module(self, *args, **kwargs):
-            if len(args) == 2 and len(kwargs) == 0:
-                name, module = args
-            elif len(args) == 0 and len(kwargs) == 1:
-                name, module = next(iter(kwargs.items()))
-            else:
-                raise RuntimeError(
-                    "Either 2 positional arguments or a single keyword argument is required.")
-            super().add_module(name, module)
-
-        def add_modules(self, *args, **kwargs):
-            for name, module in dict(*args, **kwargs).items():
-                super().add_module(name, module)
-
-        @property
-        def device(self):
-            param = next(self.parameters(), None)
-            return None if param is None else param[0].device
-
-        def load_state_dict(self, state_dict_or_path, strict=True):
-            """Handle a path being given instead of a file. (preferred since it
-            automatically maps to the correct device). Taken from MagNet."""
-            sd = state_dict_or_path
-            if isinstance(sd, PathLike):
-                sd = torch.load(sd, map_location=self.device)
-            return super().load_state_dict(sd, strict=strict)
-
-        def with_intermediate_outputs(self, submodule_paths: list):
-            return with_intermediate_outputs(self, submodule_paths)
-
-    return ExtendedInterfaceModExt
 
 
 def _extract_tensors(*args, **kwargs):
@@ -91,104 +55,6 @@ def _extract_tensors(*args, **kwargs):
 def _try_get_device_from_args(*args, **kwargs):
     x = next(_extract_tensors(*args, **kwargs), None)
     return None if x is None else x.device
-
-
-def _enhanced(*superclasses):
-    class BuildableModExt(*superclasses):
-        def __init__(self, *args, **kwargs):
-            super().__init__()
-            if len(args) + len(kwargs) > 0:
-                self.args = NameDict(args=args, **kwargs)
-            elif type(self).__init__ is not BuildableModExt.__init__:  # !!!!
-                self.args = NameDict(class_initializer_locals_c())
-            self._built = False
-            self._check = None
-
-        def _mark_if_modified(self, out, inp_to_ver):
-            if isinstance(out, torch.Tensor):
-                return mark_modified(out, out._version != inp_to_ver.get(out, out._version))
-            elif isinstance(out, T.Sequence):
-                return type(out)(self._mark_if_modified(o, inp_to_ver) for o in out)
-            elif isinstance(out, T.Mapping):
-                return type(out)((k, self._mark_if_modified(o, inp_to_ver)) for k, o in out.items())
-
-        def _call_with_check(self, *args, **kwargs):
-            self.check_input(*args, **kwargs)  # single check after the parent is built
-            del self._check
-            inp_to_ver = {a: a._version for a in _extract_tensors(*args, **kwargs)}
-            return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
-
-        def __call__(self, *args, **kwargs):
-            try:
-                if self._built:
-                    if hasattr(self, '_check'):  # checks are performed on the second input
-                        if self._check is None:
-                            self._check = hash((*args, *kwargs.values()))
-                        elif self._check != hash((*args, *kwargs.values())):
-                            return self._call_with_check(*args, **kwargs)
-                    return super().__call__(*args, **kwargs)
-                else:
-                    device = _try_get_device_from_args(*args, **kwargs)
-                    if type(self).build != BuildableModExt.build:
-                        self.build(*args, **kwargs)
-                    if device is not None:
-                        self.to(device)
-                    if type(self).post_build != BuildableModExt.post_build:
-                        super().__call__(*args, **kwargs)
-                        self.post_build(*args, **kwargs)
-                        if device is not None:
-                            self.to(device)
-                    self._built = True
-                    return super().__call__(*args, **kwargs)
-            except Exception as e:
-                print(f"Error in {vmu.try_get_module_name_from_call_stack(self)}, {type(self)}")
-                raise e
-
-        def build(self, *args, **kwargs):
-            """This is run before the first evaluation"""
-            pass
-
-        def post_build(self, *args, **kwargs):
-            """This is run after the first evaluation (if overriden)."""
-            pass
-
-        def check_input(self, *args, **kwargs):
-            """Checks whether the input is not in-place modified.
-
-            This is evaluated when the module is called a second time,
-            i.e. when the parent is built. It should not to modify the module.
-            """
-            if is_modified(args[0]):
-                module_name = vmu.try_get_module_name_from_call_stack(self)
-                raise RuntimeError(f"The input of {module_name} is in-place modified.")
-
-        def clone(self, **kwargs_override):
-            arguments = dict(self.args)
-            args = arguments.pop('args', ())
-            kwargs = arguments.pop('kwargs', {})
-            kwargs.update(**kwargs_override)
-            return type(self)(*args, **arguments, **kwargs)
-
-        def __str__(self):
-            return (type(self).__name__ + "("
-                    + ", ".join(f"{k}={v}" for k, v in self.args.items()) + ")")
-
-    return BuildableModExt
-
-
-def _splittable(*superclasses):
-    class SplittableModExt(*superclasses):
-        def split(self, submodule_name):
-            raise NotImplementedError(f"Splitting not implemented for module type {type(self)}")
-
-        def deep_split(self, submodule_path):
-            raise NotImplementedError(
-                f"Deep splitting not implemented for module type {type(self)}")
-
-        def join(self, other):
-            raise NotImplementedError(f"Joining not implemented for module type {type(self)}")
-
-    return SplittableModExt
 
 
 def _stochastic(*superclasses):  # TODO: implement
@@ -221,9 +87,6 @@ def _stochastic(*superclasses):  # TODO: implement
         def sample(self, *args, stochastic_run_id=None, sample_count=None):
             return super().__call__(*args, stochastic_run_id=None, sample_count=None)
 
-        def sample1(self, *args, sample_count=None):
-            pass
-
         def is_stochastic(self):
             return is_stochastic(self)
 
@@ -239,44 +102,140 @@ def _stochastic(*superclasses):  # TODO: implement
     return StochasticModExt
 
 
-def _potentially_invertible(*superclasses):
-    class InvertibleModExt(*superclasses):
-        @property
-        def inverse(self):
-            try:
-                if hasattr(self, 'make_inverse'):
-                    if not hasattr(self, '_inverse_cache'):
-                        self._inverse_cache = (self.make_inverse(),)
-                    return self._inverse_cache[0]
-            except AttributeError as e:
-                # Turn it into a TypeError so that it doesn't get turned into a confusing
-                # AttributeError saying that this module has no `inverse` attribute
-                raise TypeError(f"An inverse for the module `{type(self)}` is not defined: {e}")
-            raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
+class SplittableMixin:
+    def split(self, submodule_name):
+        raise TypeError(f"Splitting not implemented for module type {type(self)}")
 
-        @inverse.setter
-        def inverse(self, value):
-            self._inverse_cache = (value,)
+    def deep_split(self, submodule_path):
+        raise TypeError(
+            f"Deep splitting not implemented for module type {type(self)}")
 
-        def make_inverse(self):
-            if hasattr(self, 'inverse_forward'):
-                return Inverse(self)
-            raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
-
-    return InvertibleModExt
+    def join(self, other):
+        raise TypeError(f"Joining not implemented for module type {type(self)}")
 
 
-def _extended(*superclasses):
-    return [e(*superclasses)
-            for e in [_enhanced, _splittable, _extended_interface, _potentially_invertible]]
+class InvertibleMixin:
+    @functools.cached_property
+    def inverse(self):
+        try:
+            return self.make_inverse()
+        except AttributeError as e:
+            # Turn it into a TypeError so that it doesn't get turned into a confusing
+            # AttributeError saying that this module has no `inverse` attribute
+            raise TypeError(f"An inverse for the module `{type(self)}` is not defined: {e}")
+
+    def make_inverse(self):
+        if hasattr(self, 'inverse_forward'):
+            return Inverse(self)
+        raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
 
 
 # Core Modules #####################################################################################
 
 @replaces('Module')
-class Module(*_extended(nn.Module, ABC)):
+class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     # Based on https://github.com/MagNet-DL/magnet/blob/master/magnet/nodes/nodes.py
-    pass
+    def __init__(self):
+        super().__init__()
+        self._built = False
+        self._check = None
+
+    def store_args(self, store_in_self=False):
+        """Can be called be called from the __init__ method after
+        super().__init__ to store the arguments that the constructor/initializer
+        was called with."""
+        if not hasattr(self, 'args'):
+            args = class_initializer_locals_c()
+            if store_in_self:
+                self.args = None
+                self.__dict__.update(args)
+            else:
+                self.args = NameDict(args)
+
+    def _mark_if_modified(self, out, inp_to_ver):
+        if isinstance(out, torch.Tensor):
+            return mark_modified(out, out._version != inp_to_ver.get(out, out._version))
+        elif isinstance(out, T.Sequence):
+            return type(out)(self._mark_if_modified(o, inp_to_ver) for o in out)
+        elif isinstance(out, T.Mapping):
+            return type(out)((k, self._mark_if_modified(o, inp_to_ver)) for k, o in out.items())
+
+    def _call_with_check(self, *args, **kwargs):
+        self._check_input(*args, **kwargs)  # single check after the parent is built
+        del self._check
+        inp_to_ver = {a: a._version for a in _extract_tensors(*args, **kwargs)}
+        return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
+
+    def __call__(self, *args, **kwargs):
+        try:
+            if self._built:
+                if hasattr(self, '_check'):  # checks are performed on the second input
+                    if self._check is None:
+                        self._check = hash((*args, *kwargs.values()))
+                    elif self._check != hash((*args, *kwargs.values())):
+                        return self._call_with_check(*args, **kwargs)
+                return super().__call__(*args, **kwargs)
+            else:
+                device = _try_get_device_from_args(*args, **kwargs)
+                if type(self).build != Module.build:
+                    self.build(*args, **kwargs)
+                if device is not None:
+                    self.to(device)
+                if type(self).post_build != Module.post_build:
+                    super().__call__(*args, **kwargs)
+                    self.post_build(*args, **kwargs)
+                    if device is not None:
+                        self.to(device)
+                self._built = True
+                return super().__call__(*args, **kwargs)
+        except Exception as e:
+            print(f"Error in {vmu.try_get_module_name_from_call_stack(self)}, {type(self)}")
+            raise e
+
+    def build(self, *args, **kwargs):
+        """This is run before the first evaluation"""
+        pass
+
+    def post_build(self, *args, **kwargs):
+        """This is run after the first evaluation (if overriden)."""
+        pass
+
+    def _check_input(self, *args, **kwargs):
+        """Checks whether the input is not in-place modified.
+
+        This is evaluated when the module is called a second time,
+        i.e. when the parent is built. It should not to modify the module.
+        """
+        if is_modified(args[0]):
+            module_name = vmu.try_get_module_name_from_call_stack(self)
+            raise RuntimeError(f"The input of {module_name} is in-place modified.")
+
+    def add_module(self, *args, **kwargs):
+        if len(args) == 2 and len(kwargs) == 0:
+            name, module = args
+        elif len(args) == 0 and len(kwargs) == 1:
+            name, module = next(iter(kwargs.items()))
+        else:
+            raise RuntimeError(
+                "Either 2 positional arguments or a single keyword argument is required.")
+        super().add_module(name, module)
+
+    def add_modules(self, *args, **kwargs):
+        for name, module in dict(*args, **kwargs).items():
+            super().add_module(name, module)
+
+    @property
+    def device(self):
+        param = next(self.parameters(), None)
+        return None if param is None else param[0].device
+
+    def load_state_dict(self, state_dict_or_path, strict=True):
+        """Handle a path being given instead of a file. (preferred since it
+        automatically maps to the correct device). Taken from MagNet."""
+        sd = state_dict_or_path
+        if isinstance(sd, PathLike):
+            sd = torch.load(sd, map_location=self.device)
+        return super().load_state_dict(sd, strict=strict)
 
 
 @replaces('Identity')
@@ -306,7 +265,7 @@ def _to_sequential_init_args(*args, **kwargs):
 class ModuleTable(Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
-        args = _to_sequential_init_args(*args, **kwargs)
+        args, kwargs = _to_sequential_init_args(*args, **kwargs), {}
         if len(args) == 1 and isinstance(args[0], T.Mapping):
             for key, module in args[0].items():
                 self.add_module(key, module)
@@ -321,7 +280,7 @@ class ModuleTable(Module):
             return elements.index(key)
         except ValueError as e:
             if isinstance(key, str):
-                raise ValueError(f'The Seq contains no module named "{key}", only {elements}.')
+                raise ValueError(f'The Seq contains no module named "{key}", only {elements}.\n{e}')
 
     def _get_item_by_idx(self, iterator, idx):
         """Get the idx-th item of the iterator"""
@@ -333,7 +292,7 @@ class ModuleTable(Module):
 
     def _idx_to_canonical_form(self, idx):
         try:  # convert slice with str bound to slice with int bounds
-            if isinstance(idx, slice) and isinstance(idx.start, str):
+            if isinstance(idx, slice) and (isinstance(idx.start, str) or isinstance(idx.stop, str)):
                 children_names = list(zip(*self.named_children()))[0]
                 return slice(*(children_names.index(i) if isinstance(i, str) else i
                                for i in (idx.start, idx.stop)), idx.step)
@@ -402,11 +361,9 @@ class Seq(ModuleTable, nn.Sequential):
         i = 0
         while i < len(self):
             if cp_range is not None and cp_range[0] == i:
-                def run_segment(x_, cp_range_=cp_range,
-                                s_=vmu.try_get_module_name_from_call_stack(self),
-                                modules_=modules):
+                def run_segment(x_, cp_range_=cp_range):
                     for j in range(cp_range_[0], cp_range_[1] + 1):
-                        x_ = modules_[j](x_)
+                        x_ = modules[j](x_)
                     return x_
 
                 checkpoint = vtu.StateAwareCheckpoint(modules[cp_range[0]: cp_range[1] + 1])
@@ -474,7 +431,7 @@ class Fork(ModuleTable):
         return tuple(m(input) for m in self)
 
     def make_inverse(self):
-        return Fork({k.m.inverse() for k, m in self.named_children()})
+        return Fork({k: m.inverse() for k, m in self.named_children()})
 
 
 class Parallel(ModuleTable):
@@ -498,17 +455,18 @@ class Merge(nn.Module):
         return tuple(result)
 
 
-class TupleSplit(nn.Module):
+class TupleSplit(Module):
     def __init__(self, split_indices):
         super().__init__()
+        self.split_indices = split_indices
 
     def forward(self, x):
         result = []
         last_si = 0
-        for si in self.args.split_indices:
+        for si in self.split_indices:
             result.append(x[last_si:si])
             last_si = si
-        result.append(x[self.args.split_indices[-1]:])
+        result.append(x[self.split_indices[-1]:])
         return tuple(result)
 
 
@@ -560,43 +518,47 @@ class Sum(Module):  # TODO: rename to "Add"
 class Concat(Module):
     def __init__(self, dim=1):
         super().__init__()
+        self.dim = dim
 
     def forward(self, *inputs):
         inputs = vmu.sole_tuple_to_varargs(inputs)
-        return torch.cat(inputs, self.args.dim)
+        return torch.cat(inputs, self.dim)
 
 
 class Split(Module):
     def __init__(self, split_size_or_sections: T.Union[int, T.Sequence], dim=1):
         super().__init__()
+        self.split_size_or_sections, self.dim = split_size_or_sections, self.dim
 
     def forward(self, x):
-        return x.split(self.args.split_size_or_sections, dim=self.args.dim)
+        return x.split(self.split_size_or_sections, dim=self.dim)
 
     def make_inverse(self):
-        return Concat(self.args.dim)
+        return Concat(self.dim)
 
 
 class Chunk(Module):
     def __init__(self, chunk_count: int, dim=1):
         super().__init__()
+        self.store_args(store_in_self=True)
 
     def forward(self, x):
-        return x.chunk(self.args.chunk_count, dim=self.args.dim)
+        return x.chunk(self.chunk_count, dim=self.dim)
 
     def make_inverse(self):
-        return Concat(self.args.dim)
+        return Concat(self.dim)
 
 
 class Permute(Module):
     def __init__(self, *dims):
         super().__init__()
+        self.dims = dims
 
     def forward(self, x):
-        return x.permute(*self.args.dims)
+        return x.permute(*self.dims)
 
     def make_inverse(self):
-        dims = self.args.dims
+        dims = self.dims
         inv_dims = [-1] * len(dims)
         for i, d in enumerate(dims):
             inv_dims[d] = i
@@ -606,9 +568,10 @@ class Permute(Module):
 class Transpose(Module):
     def __init__(self, dim0, dim1):
         super().__init__()
+        self.dims = (dim0, dim1)
 
     def forward(self, x):
-        return x.transpose(self.args.dim0, self.args.dim1)
+        return x.transpose(*self.dims)
 
     def make_inverse(self):
         return self
@@ -617,20 +580,22 @@ class Transpose(Module):
 class Reshape(Module):
     def __init__(self, shape):
         super().__init__()
+        self.shape = shape
 
     def forward(self, x):
-        return torch.reshape(x, (x.shape[0], *self.args.shape))
+        return torch.reshape(x, (x.shape[0], *self.shape))
 
 
 class BatchReshape(Module):
     def __init__(self, *shape_or_func: T.Union[tuple, T.Callable[[tuple], tuple]]):
+        super().__init__()
         if len(shape_or_func) == 1 and callable(shape_or_func[0]):
             shape_or_func = shape_or_func[0]
-        super().__init__()
+        self.shape_or_func = shape_or_func
 
     def build(self, x):
         self.orig_shape = x.shape[1:]
-        shape = self.args.shape_or_func
+        shape = self.shape_or_func
         self.shape = shape(*self.orig_shape) if callable(shape) else shape
 
     def forward(self, x):
@@ -695,21 +660,24 @@ class ContiguousInv(Identity):
 class Index(Module):
     def __init__(self, *args):
         super().__init__()
+        self.args = args
 
     def forward(self, x):
-        return x.__getitem__(*self.args.args)
+        return x.__getitem__(*self.args)
 
 
 class To(Module):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, kwargs=kwargs)
+        super().__init__()
+        self.args, self.kwargs = args, kwargs
 
     def forward(self, x):
-        return x.to(*self.args.args, **self.args.kwargs)
+        return x.to(*self.args, **self.kwargs)
 
 
 class Clamp(nn.Module):
     def __init__(self, min_=None, max_=None, inplace=False):
+        super().__init__()
         self.min_, self.max_, self.inplace = min_, max_, inplace
 
     def forward(self, x):
@@ -792,16 +760,20 @@ def _func_with_mark_modified(func):
     return wrapper
 
 
-for name, v in vars(F).items():
-    if not name.startswith('_') and callable(v) and 'inplace' in params(v):
-        vars()[name] = _func_with_mark_modified(v)
-        replaces(name)
-for name, v in vars(M).items():
-    if not name.startswith('_') and callable(v) and 'inplace' in params(v):
-        vars()[name] = type(name, (v,), {'forward': _forward_method_with_mark_modified(v.forward)})
-        replaces(name)
+def _wrap_torch_operations(namespace):
+    for name, v in vars(F).items():
+        if not name.startswith('_') and callable(v) and 'inplace' in vuf.params(v):
+            namespace[name] = _func_with_mark_modified(v)
+            replaces(name)
+    for name, v in vars(M).items():
+        if not name.startswith('_') and inspect.isclass(v) and issubclass(v, nn.Module) \
+                and 'inplace' in vuf.params(v):
+            namespace[name] = type(name, (v,),
+                                   {'forward': _forward_method_with_mark_modified(v.forward)})
+            replaces(name)
 
-ReLU = nn.ReLU
+
+_wrap_torch_operations(vars())
 
 
 # Wrapped modules ##################################################################################
@@ -814,7 +786,7 @@ def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.
         raise ValueError(f"Cannot infer {name} dimension from input shape.")
     name = f"{name}{dim}d"
     layer_func = nn.__getattribute__(name)
-    for k in params(layer_func).keys():
+    for k in vuf.params(layer_func).keys():
         if k not in args:
             raise ValueError(f"Missing argument for {name}: {k}.")
     module = layer_func(**args)
@@ -859,10 +831,11 @@ class Conv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
                  bias=None, in_channels=None, padding_mode='zeros'):
         if bias is None:
-            raise ValueError("Conv module bias should be assigned.")
+            raise ValueError("The bias argument should be provided for the Conv module.")
+        padding = (_get_conv_padding(padding, kernel_size, dilation)
+                   if isinstance(padding, str) else padding)
         super().__init__()
-        self.args.padding = (_get_conv_padding(padding, kernel_size, dilation)
-                             if isinstance(padding, str) else padding)
+        self.store_args()
 
     def build(self, x):
         self.orig = _dimensional_build("Conv", x, self.args)
@@ -872,9 +845,10 @@ class Conv(WrappedModule):
 class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
                  ceil_mode=False):
+        padding = (_get_conv_padding(padding, kernel_size, dilation)
+                   if isinstance(padding, str) else padding)
         super().__init__()
-        self.args.padding = (_get_conv_padding(padding, kernel_size, dilation)
-                             if isinstance(padding, str) else padding)
+        self.store_args()
 
     def build(self, x):
         self.orig = _dimensional_build("MaxPool", x, self.args)
@@ -884,9 +858,10 @@ class MaxPool(WrappedModule):
 class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
                  count_include_pad=True, divisor_override=None):
+        padding = (_get_conv_padding(padding, kernel_size, dilation=1)
+                   if isinstance(padding, str) else padding)
         super().__init__()
-        self.args.padding = (_get_conv_padding(padding, kernel_size, dilation=1)
-                             if isinstance(padding, str) else padding)
+        self.store_args()
 
     def build(self, x):
         self.orig = _dimensional_build("AvgPool", x, self.args)
@@ -897,7 +872,7 @@ class ConvTranspose(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, output_padding=1, groups=1,
                  bias=True, dilation=1, in_channels=None):
         super().__init__()
-        self.orig = None
+        self.store_args()
 
     def build(self, x):
         self.orig = _dimensional_build("ConvTranspose", x, self.args)
@@ -907,6 +882,7 @@ class ConvTranspose(WrappedModule):
 class Linear(WrappedModule):
     def __init__(self, out_features: int, bias=True, in_features=None):
         super().__init__()
+        self.store_args()
 
     def build(self, x):
         self.args.in_features = self.args.in_features or np.prod(x.shape[1:])
@@ -923,7 +899,7 @@ class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
                  num_features=None):
         super().__init__()
-        self.orig = None
+        self.store_args()
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
@@ -932,12 +908,11 @@ class BatchNorm(WrappedModule):
 class GhostBatchNorm(BatchNorm):
     # Based on https://myrtle.ai/how-to-train-your-resnet-8-bag-of-tricks/
     def __init__(self, batch_size, eps=1e-5, momentum=0.1, affine=True,
-                 track_running_stats=True,
-                 num_features=None):
+                 track_running_stats=True, num_features=None):
         super().__init__(eps=eps, momentum=momentum, affine=affine,
                          track_running_stats=track_running_stats, num_features=num_features)
-        self.batch_size = batch_size
-        self.running_mean, self.running_var, self.num_splits = [None] * 3
+        self.store_args()
+        self.running_mean = self.running_var = self.num_splits = None
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
@@ -1049,9 +1024,10 @@ class Dropout2d(_DropoutNd):
 class AdditiveGaussianNoise(StochasticModule):
     def __init__(self, std):
         super().__init__()
+        self.std = std
 
     def forward(self, x):
-        return x + torch.randn_like(x).mul_(self.args.std) \
+        return x + torch.randn_like(x).mul_(self.std) \
             if self.training or self.stochastic_eval else x
 
 
@@ -1062,11 +1038,13 @@ class Adapter(Module):
         super().__init__()
         mof = module_or_factory
         self.module = mof if isinstance(mof, nn.Module) else mof()
-        self.input_adapter = input_adapter or identity
-        self.output_adapter = output_adapter or identity
+        self.input_adapter = input_adapter or vuf.identity
+        self.output_adapter = output_adapter or vuf.identity
 
-    def forward(self, *args, **kwargs):
-        return self.output_adapter(self.module(self.input_adapter(*args, **kwargs)))
+    def forward(self, x):
+        x = self.input_adapter(x) if self.input_adapter else x
+        y = self.module(x)
+        return self.output_adapter(y) if self.output_adapter else y
 
 
 def parameter_count(module) -> Namespace:
@@ -1111,7 +1089,7 @@ def deep_split(root: nn.Module, submodule_path: T.Union[list, str]):
     return root.deep_split(submodule_path)
 
 
-def deep_join(left: nn.Module, right: nn.Module):
+def deep_join(left: Module, right: Module):
     # if not type(left) is type(right):
     #     raise ValueError("Both modules must be of the same type.")
     if not hasattr(left, 'deep_join'):
@@ -1149,7 +1127,7 @@ def with_intermediate_outputs(root: nn.Module,
 
     @functools.wraps(root)
     def wrapper(*args, **kwargs):
-        submodules = tryable(get_submodules, None)()
+        submodules = vuf.tryable(get_submodules, None)()
         if submodules is None:  # in case the module is not yet built
             root(*args, **kwargs)
             submodules = get_submodules()
@@ -1189,12 +1167,13 @@ class IntermediateOutputsModuleWrapper(Module):
         the output of `root.forward` as well as well as a list of intermediate
         outputs as defined in `submodule_paths`.
         Arguments:
-            root (Module): a module.
+            module (Module): a module.
             submodule_paths (List[str]): a list of module names relative to
             `root`.
         """
         super().__init__()
         self.module = module
+        self.submodule_paths = submodule_paths
         self.handles, self.outputs = None, None
 
     def __del__(self):
@@ -1209,12 +1188,12 @@ class IntermediateOutputsModuleWrapper(Module):
 
             return hook
 
-        submodules = [get_submodule(self.module, p) for p in self.args.submodule_paths]
+        submodules = [get_submodule(self.module, p) for p in self.submodule_paths]
         self.handles = [m.register_forward_hook(create_hook(i))
                         for i, m in enumerate(submodules)]
 
     def forward(self, *args, **kwargs):
-        self.outputs = [None] * len(self.args.submodule_paths)
+        self.outputs = [None] * len(self.submodule_paths)
         output = self.module(*args, **kwargs)
         outputs = self.outputs
         self.outputs = None
@@ -1238,16 +1217,11 @@ class _RevGrad(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, input_):
-        ctx.save_for_backward(input_)
-        output = input_
-        return output
+        return input_
 
     @staticmethod
     def backward(ctx, grad_output):  # pragma: no cover
-        grad_input = None
-        if ctx.needs_input_grad[0]:
-            grad_input = -grad_output
-        return grad_input
+        return -grad_output if ctx.needs_input_grad[0] else None
 
 
 rev_grad = _RevGrad.apply
@@ -1259,19 +1233,15 @@ class RevGrad(Module):
 
 
 class _AmpGrad(torch.autograd.Function):
-    def __init__(self, a):
-        self.a = a
+    @staticmethod
+    def forward(ctx, input_, a):
+        ctx.save_for_backward(a)
+        return input_
 
-    def forward(self, input_):
-        self.save_for_backward(input_)
-        output = input_
-        return output
-
-    def backward(self, grad_output):  # pragma: no cover
-        grad_input = None
-        if self.needs_input_grad[0]:
-            grad_input = self.a * grad_output
-        return grad_input
+    @staticmethod
+    def backward(ctx, grad_output):  # pragma: no cover
+        a, = ctx.saved_variables
+        return a * grad_output if ctx.needs_input_grad[0] else None
 
 
 amp_grad = _AmpGrad.apply

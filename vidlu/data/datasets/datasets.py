@@ -18,7 +18,6 @@ from tqdm import tqdm
 
 from .. import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
-import vidlu.utils.path as vup
 from vidlu.transforms import numpy as numpy_transforms
 
 from ._cityscapes_labels import labels as cslabels
@@ -227,7 +226,7 @@ class MNIST(Dataset):
 
         x_path = data_dir / self._files['x_test' if subset == 'test' else 'x_train']
         y_path = data_dir / self._files['y_test' if subset == 'test' else 'y_train']
-        self.x, self.y = self.load_array(x_path, x=True), self.load_array(y_path, x=False)
+        self.x, self.y = self.load_array(x_path, is_x=True), self.load_array(y_path, is_x=False)
         self.x, self.y = map(to_shared_array, [self.x, self.y])
         super().__init__(subset=subset, info=dict(class_count=10, problem='classification'))
 
@@ -567,12 +566,13 @@ class ClassificationFolderDataset(Dataset):  # TODO
     """
 
     def __init__(self, data_dir, load_func, extensions=None, is_valid_file=None, **kwargs):
+        self.root = data_dir
         classes, class_name_to_idx = self._find_classes(data_dir)
         self.path_to_class = _read_classification_dataset(data_dir, class_name_to_idx, extensions,
                                                           is_valid_file)
         if len(self.path_to_class) == 0:
-            raise (RuntimeError("Found 0 files in subfolders of: " + self.root
-                                + "\nSupported extensions are: " + ",".join(extensions)) + ".")
+            raise RuntimeError("Found 0 files in subfolders of: " + self.root
+                               + "\nSupported extensions are: " + ",".join(extensions) + ".")
         self.load = load_func
         super().__init__(**kwargs)
         self.info.classes, self.info.class_name_to_idx = classes, class_name_to_idx
@@ -980,53 +980,53 @@ class VOC2012Segmentation(Dataset):
 
 # Other
 
-class DarkZurich(Dataset):
-    subsets = ['train', 'val', 'val_ref']
-    default_dir = 'dark_zurich'
-
-    def __init__(self, data_dir, subset='train', downsampling=1):
-        _check_subsets(self.__class__, subset)
-        if downsampling < 1:
-            raise ValueError("downsampling must be greater or equal to 1.")
-
-        data_dir = Path(data_dir)
-
-        self._downsampling = downsampling
-
-        corresp_dir = data_dir / "corresp" / subset
-        gps_dir = data_dir / "gps" / subset
-        rgb_anon_dir = data_dir / "gps" / subset
-
-        img_dir = data_dir / '701_StillsRaw_full'
-        lab_dir = data_dir / 'LabeledApproved_full'
-        lines = (data_dir / f'{subset}.txt').read_text().splitlines()
-        self._img_lab_list = [(str(img_dir / f'{x}.png'), str(lab_dir / f'{x}_L.png'))
-                              for x in lines]
-        # info = dict(
-        #     problem='semantic_segmentation',
-        #     class_count=11,
-        #     class_names=list(CamVid.class_groups_colors.keys()),
-        #     class_colors=[next(iter(v.values())) for v in
-        #                   CamVid.class_groups_colors.values()])
-        #
-        # self.color_to_label = dict()
-        # for i, class_name_color in enumerate(CamVid.class_groups_colors.values()):
-        #     for _, color in class_name_color.items():
-        #         self.color_to_label[color] = i
-        # self.color_to_label[(0, 0, 0)] = -1
-        #
-        # modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        # super().__init__(subset=subset, modifiers=modifiers, info=info)
-
-    def get_example(self, idx):
-        ip, lp = self._img_lab_list[idx]
-        # df = self._downsampling
-        # return _make_record(
-        #     x_=lambda: load_image_with_downsampling(ip, df),
-        #     y_=lambda: load_segmentation_with_downsampling(lp, df, self.color_to_label))
-
-    def __len__(self):
-        return len(self._img_lab_list)
+# class DarkZurich(Dataset):
+#     subsets = ['train', 'val', 'val_ref']
+#     default_dir = 'dark_zurich'
+#
+#     def __init__(self, data_dir, subset='train', downsampling=1):
+#         _check_subsets(self.__class__, subset)
+#         if downsampling < 1:
+#             raise ValueError("downsampling must be greater or equal to 1.")
+#
+#         data_dir = Path(data_dir)
+#
+#         self._downsampling = downsampling
+#
+#         corresp_dir = data_dir / "corresp" / subset
+#         gps_dir = data_dir / "gps" / subset
+#         rgb_anon_dir = data_dir / "gps" / subset
+#
+#         img_dir = data_dir / '701_StillsRaw_full'
+#         lab_dir = data_dir / 'LabeledApproved_full'
+#         lines = (data_dir / f'{subset}.txt').read_text().splitlines()
+#         self._img_lab_list = [(str(img_dir / f'{x}.png'), str(lab_dir / f'{x}_L.png'))
+#                               for x in lines]
+#         # info = dict(
+#         #     problem='semantic_segmentation',
+#         #     class_count=11,
+#         #     class_names=list(CamVid.class_groups_colors.keys()),
+#         #     class_colors=[next(iter(v.values())) for v in
+#         #                   CamVid.class_groups_colors.values()])
+#         #
+#         # self.color_to_label = dict()
+#         # for i, class_name_color in enumerate(CamVid.class_groups_colors.values()):
+#         #     for _, color in class_name_color.items():
+#         #         self.color_to_label[color] = i
+#         # self.color_to_label[(0, 0, 0)] = -1
+#         #
+#         # modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
+#         # super().__init__(subset=subset, modifiers=modifiers, info=info)
+#
+#     def get_example(self, idx):
+#         ip, lp = self._img_lab_list[idx]
+#         # df = self._downsampling
+#         # return _make_record(
+#         #     x_=lambda: load_image_with_downsampling(ip, df),
+#         #     y_=lambda: load_segmentation_with_downsampling(lp, df, self.color_to_label))
+#
+#     def __len__(self):
+#         return len(self._img_lab_list)
 
 
 class ISUN(Dataset):

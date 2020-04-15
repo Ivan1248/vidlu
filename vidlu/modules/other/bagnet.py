@@ -74,14 +74,10 @@ class BagNet(nn.Module):
         self.root = StandardRootBlock(64, small_input)
         self.bn1 = nn.BatchNorm2d(64, momentum=0.001)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=strides[0], kernel3=kernel3[0],
-                                       prefix='layer1')
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=strides[1], kernel3=kernel3[1],
-                                       prefix='layer2')
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=strides[2], kernel3=kernel3[2],
-                                       prefix='layer3')
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=strides[3], kernel3=kernel3[3],
-                                       prefix='layer4')
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=strides[0], kernel3=kernel3[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=strides[1], kernel3=kernel3[1])
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=strides[2], kernel3=kernel3[2])
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=strides[3], kernel3=kernel3[3])
         self.avgpool = nn.AvgPool2d(1, stride=1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
         self.avg_pool = avg_pool

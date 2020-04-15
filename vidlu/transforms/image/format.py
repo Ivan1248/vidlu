@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-from torch import Tensor, nn
 from PIL import Image
 import numpy as np
 import torch

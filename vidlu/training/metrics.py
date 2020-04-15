@@ -1,3 +1,5 @@
+from abc import ABCMeta
+
 import numpy as np
 import torch
 from functools import wraps
@@ -120,7 +122,7 @@ class ClassificationMetrics(AccumulatingMetric):
         return compute_classification_metrics(self.cm.cpu().numpy(), returns=self.metrics, eps=eps)
 
 
-class _MeanMetric(AccumulatingMetric):
+class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
     def __init__(self, name, extract_func=None):
         self.name = name
         self.extract_func = extract_func or (lambda x: x[name])

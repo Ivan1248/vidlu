@@ -1,12 +1,12 @@
 from functools import partialmethod
 from .misc import default_collate
 
-import torch
+import torch.utils.data as tud
 
 
-class DataLoader(torch.utils.data.DataLoader):
+class DataLoader(tud.DataLoader):
     """DataLoader class with support for `Record`-typed examples."""
-    __init__ = partialmethod(torch.utils.data.DataLoader.__init__, collate_fn=default_collate)
+    __init__ = partialmethod(tud.DataLoader.__init__, collate_fn=default_collate)
 
 
 class BatchTuple(tuple):

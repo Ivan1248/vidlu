@@ -13,16 +13,11 @@ class _PartSplit:
         self.ratio = ratio
 
 
-def _generate_parts(part_to_ds: T.Dict[str, Dataset],
-                    part_to_split: T.Dict[str, T.Tuple[T.Tuple[str, str], float]] = None):
-    part_to_split = {k: _PartSplit(*v) for k, v in
-                     part_to_split.items()}
-    parts = set()
-    parts.update(part_to_ds.keys())
-    for k, ps in part_to_split.items():
-        parts.update(
-            p for p in [k] + list(ps.subparts) for k, ps in part_to_split.items() if
-            p not in parts)
+def _generate_parts(part_to_ds: T.Mapping[str, Dataset],
+                    part_to_split: T.Mapping[str, T.Tuple[T.Tuple[str, str], float]] = None):
+    part_to_split = {k: _PartSplit(*v) for k, v in part_to_split.items()}
+    parts = set(part_to_ds.keys())
+    parts.update(p for k, ps in part_to_split.items() for p in [k] + list(ps.subparts))
     part_to_ds = dict(part_to_ds)
 
     def generate_parts(part):
@@ -32,9 +27,9 @@ def _generate_parts(part_to_ds: T.Dict[str, Dataset],
             subparts = part_to_split[part].subparts
             if any(s not in part_to_ds for s in subparts):
                 if not all(s not in part_to_ds for s in subparts):
-                    raise ValueError("If subparts are provided, either all or none of them " +
-                                     "must be provided. E.g. trainval can be provided either " +
-                                     "without any or with both of {train, val}.")
+                    raise ValueError("If subparts are provided, either all or none of them"
+                                     + " must be provided. E.g. trainval can be provided either"
+                                     + " without any or with both of {train, val}.")
                 (s, t), ratio = subparts, part_to_split[part].ratio
                 part_to_ds[s], part_to_ds[t] = part_to_ds[part].split(ratio=ratio)
                 return True

@@ -1,8 +1,7 @@
 import os
-from dataclasses import dataclass, InitVar
+import dataclasses as dc
 from pathlib import Path
 import shutil
-from argparse import Namespace
 import warnings
 
 import torch
@@ -14,15 +13,16 @@ class FileNames:
     MODEL_STATE = 'model_state.pth'
     TRAINING_STATE = 'training_state.pth'
     PROGRESS_INFO = 'progress.info'
-    EXPERIMENT_INFO = 'experiment.info'
+    EXPERIMENT_DESC = 'experiment.info'
     SUMMARY = 'summary.p'
 
 
-@dataclass
-class Checkpoint:
-    state: dict
-    experiment_desc: dict
+@dc.dataclass
+class Checkpoint:  # TODO
+    model_state: dict
+    training_state: dict
     progress_info: dict
+    experiment_desc: dict
     summary: dict
 
     def save(self, path):
@@ -30,9 +30,13 @@ class Checkpoint:
             self._save(path / getattr(FileNames, k.upper()), v)
 
     @classmethod
-    def load(cls, path):
-        return cls(**{k: torch.load(path / getattr(FileNames, k.upper()))
+    def load(cls, path, map_location=None):
+        return cls(**{k: torch.load(path / getattr(FileNames, k.upper()), map_location=map_location)
                       for k, v in cls.__annotations__.items()})
+
+    @staticmethod
+    def _save(path, obj):
+        create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
 
 
 class CheckpointManager(object):
@@ -40,21 +44,20 @@ class CheckpointManager(object):
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
 
     Args:
-        dir_path (str):
+        checkpoints_dir (str):
             Directory path where objects will be saved
-        id (str):
-            Prefix for the filenames to which objects will be saved.
+        experiment_name (str):
+            Prefix of the file paths to which objects will be saved.
         n_saved (int, optional):
             Number of objects that should be kept on disk. Older files will be
             removed.
-        overwrite_if_exists (bool, optional):
-            If True, existing checkpoints with the same id will be deleted.
-            Otherwise, exception will be raised if there are any files starting
-            with `filename_prefix` in the directory 'dir_path'.
         resume (bool, optional):
             If True, `load_last` needs to be called in order to restore the last
-            checkpoint. Then it will be assumed that training is continued. If
-            `load_last` is not called before saved, an exception is raised.
+            checkpoint and continue. If `load_last` is not called before
+            saving/updating, an exception is raised.
+        remove_old (bool, optional):
+            If True, existing checkpoints with the same checkpoints_dir and
+            experiment_name will be deleted.
 
     Notes:
         These names are used to specify filenames for saved objects. Each
@@ -128,23 +131,27 @@ class CheckpointManager(object):
         name = self._index_to_name(self._index)
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
-        self._save(path / FileNames.MODEL_STATE, state['model'])
-        self._save(path / FileNames.TRAINING_STATE,
-                   {k: v for k, v in state.items() if k != 'model'})
-        self._save(path / FileNames.PROGRESS_INFO, Namespace(index=self._index))
-        self._save(path / FileNames.EXPERIMENT_INFO, self.experiment_desc)
-        self._save(path / FileNames.SUMMARY, summary)
+
+        Checkpoint(model_state=state['model'],
+                   training_state={k: v for k, v in state.items() if k != 'model'},
+                   progress_info=dict(index=self._index),
+                   experiment_desc=self.experiment_desc,
+                   summary=summary).save(path)
+
         self.saved.append(name)
 
         self.remove_old_checkpoints()
 
     def load_last(self, map_location=None):
         path = self.last_checkpoint_path
-        self._index = torch.load(path / FileNames.PROGRESS_INFO).index
-        self.experiment_desc = torch.load(path / FileNames.EXPERIMENT_INFO)
-        state = torch.load(path / FileNames.TRAINING_STATE, map_location=map_location)
-        state['model'] = torch.load(path / FileNames.MODEL_STATE, map_location=map_location)
-        summary = torch.load(path / FileNames.SUMMARY)
+
+        cp = Checkpoint.load(path, map_location=map_location)
+        self._index = (pi if isinstance(pi := cp.progress_info, dict) else pi.__dict__)['index']
+        self.experiment_desc = cp.experiment_desc
+        state = cp.training_state
+        state['model'] = cp.model_state
+        summary = cp.summary
+
         self._required_resuming = False
         return state, summary
 

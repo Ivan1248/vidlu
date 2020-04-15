@@ -1,7 +1,5 @@
 from functools import partial
 
-from torch import nn
-
 import vidlu.modules.elements as vme
 
 __all__ = ['norm_f', 'act_f', 'conv_f', 'convt_f']

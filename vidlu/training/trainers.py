@@ -13,7 +13,7 @@ import torch
 import vidlu.modules.utils as vmu
 from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
 from vidlu.training.lr_schedulers import ConstLR
-from vidlu.utils.func import default_args, params, Empty, ArgTree, argtree_partial
+from vidlu.utils.func import params, Empty
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import Event, Stopwatch
 import vidlu.training.configs as vtc
@@ -32,6 +32,7 @@ class State(NameDict):
     """An object that is used to pass internal and user-defined state between event handlers"""
 
     def __init__(self, **kwargs):
+        super().__init__()
         self.reset(**kwargs)
 
     def reset(self, **kwargs):
@@ -127,7 +128,8 @@ class Engine(object):
             data (Iterable): 1 or more collections of batches allowing repeated
                 iteration (e.g., list or `DataLoader`).
             max_epochs (int, optional): max epochs to run for (default: 1)
-
+            restart (bool, optional): whether to reset the training state before
+                running. Default: `True`.
         Returns:
             State: output state
         """
@@ -137,8 +139,7 @@ class Engine(object):
         self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
 
         self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
-        with Stopwatch() as t_run:
-            start_time = time.time()
+        with Stopwatch() as sw:
             self.started(self.state)
             if self.state.epoch >= max_epochs:
                 warnings.warn("All epochs are already completed.")
@@ -154,7 +155,7 @@ class Engine(object):
                     break
                 self.epoch_completed(self.state)
             self.completed(self.state)
-        hours, mins, secs = _to_hours_mins_secs(t_run.time)
+        hours, mins, secs = _to_hours_mins_secs(sw.time)
         self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")
         return self.state
 
@@ -198,30 +199,8 @@ class Missing:
                         + ' value `Missing` has not been assigned a "real" value.')
 
 
-class _MetricsMixin:
-    def add_metric(self, m):
-        self.metrics.append(m)
-
-    def _reset_metrics(self):
-        for m in self.metrics:
-            m.reset()
-
-    def _update_metrics(self, state):
-        for m in self.metrics:
-            m.update(state.output)
-
-    def get_metric_values(self, *, reset=False):
-        metric_evals = dict()
-        for m in self.metrics:
-            value = m.compute()
-            metric_evals.update(value if isinstance(value, dict) else {m.name: value.compute()})
-        if reset:
-            self._reset_metrics()
-        return metric_evals
-
-
 @dataclass
-class Evaluator(_MetricsMixin):
+class Evaluator:
     model: T.Callable = Missing
     loss_f: InitVar[T.Callable] = Missing
     prepare_batch: T.Callable = default_prepare_batch
@@ -241,6 +220,23 @@ class Evaluator(_MetricsMixin):
         self.evaluation = Engine(lambda e, b: self._run_step(self.eval_step, b))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.iteration_completed.add_handler(self._update_metrics)
+
+    def _reset_metrics(self):
+        for m in self.metrics:
+            m.reset()
+
+    def _update_metrics(self, state):
+        for m in self.metrics:
+            m.update(state.output)
+
+    def get_metric_values(self, *, reset=False):
+        metric_evals = dict()
+        for m in self.metrics:
+            value = m.compute()
+            metric_evals.update(value if isinstance(value, dict) else {m.name: value.compute()})
+        if reset:
+            self._reset_metrics()
+        return metric_evals
 
     @staticmethod
     def _broadcast(obj, n):
@@ -293,8 +289,8 @@ class Trainer(Evaluator):
     jitter: T.Callable = None  # D
     extension_fs: InitVar[T.Sequence] = ()  # D
 
-    optimizer: object = dc.field(init=False)
-    lr_scheduler: object = dc.field(init=False)
+    optimizer: T.Any = dc.field(init=False)
+    lr_scheduler: T.Any = dc.field(init=False)
     extensions: T.Sequence = dc.field(init=False)
 
     def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, extension_fs):

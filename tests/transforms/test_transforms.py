@@ -1,5 +1,3 @@
-import pytest
-
 import numpy as np
 import torch
 import torchvision.transforms.functional as F

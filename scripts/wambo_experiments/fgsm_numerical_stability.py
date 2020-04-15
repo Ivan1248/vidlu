@@ -3,19 +3,14 @@ from torch.nn.functional import cross_entropy
 from torch import autograd
 from IPython import embed
 
-from _context import vidlu, dirs
-from vidlu.experiments import TrainingExperiment
-from vidlu.factories import get_model
-from vidlu import models
-from vidlu.modules import losses
-from vidlu.utils import func
-from vidlu.utils.func import ArgTree as t
-
-from vidlu.factories import get_data, get_prepared_data_for_trainer
+# noinspection PyUnresolvedReferences
+import _context
+import dirs
+from vidlu.factories import get_model, get_prepared_data_for_trainer
 
 data = get_prepared_data_for_trainer("cifar10{train,val}", dirs.DATASETS, dirs.CACHE).test
-model = get_model("ResNetV2,backbone_f=t(depth=10, small_input=True)", "id", data,
-                  torch.device("cpu"), 2)
+model = get_model("ResNetV2,backbone_f=t(depth=10, small_input=True)", input_adapter_str="id",
+                  prep_dataset=data, device=torch.device("cpu"), verbosity=2)
 
 x, y = data[0]
 x = x.view(1, *x.shape).detach().clone().requires_grad_()

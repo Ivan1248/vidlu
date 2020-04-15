@@ -1,13 +1,11 @@
 # code in this file is adpated from rpmcruz/autoaugment
 # https://github.com/rpmcruz/autoaugment/blob/master/transformations.py
 import random
-import dataclasses as dc
 
 import PIL, PIL.ImageOps, PIL.ImageEnhance, PIL.ImageDraw
 import numpy as np
 import torch
 from PIL import Image
-import torch.nn.functional as F
 
 
 def ShearX(img, v):  # [-0.3, 0.3]

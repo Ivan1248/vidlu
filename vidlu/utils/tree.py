@@ -30,7 +30,7 @@ def flatten(tree, tree_type=None) -> list:
 
 
 def unflatten(path_to_value: T.Union[T.Iterable[tuple], T.Mapping], tree_type=dict):
-    class Leaf:  # used to encode leaves to distinguish lists from
+    class Leaf:  # used to encode leaves to distinguish lists that are values
         def __init__(self, item):
             self.item = item
 
@@ -42,7 +42,7 @@ def unflatten(path_to_value: T.Union[T.Iterable[tuple], T.Mapping], tree_type=di
             subtrees[path[0]] += [(path[1:], value)]
         else:
             subtrees[path[0]] = Leaf(value)
-    return tree_type(**dict([(k, v.item if type(v) is Leaf else unflatten(v, tree_type))
+    return tree_type(**dict([(k, v.item if isinstance(v, Leaf) else unflatten(v, tree_type))
                              for k, v in subtrees.items()]))
 
 
@@ -97,7 +97,7 @@ def to_dot(tree, label="ROOT", graph=None, tree_type=None, max_label_length=9999
     graph.add_node(pydot.Node(id(tree), label=elipsis(f"{label}"), shape="box"))
     for k, v in tree.items():
         if isinstance(v, tree_type):
-            to_dot(v, label=k, graph=graph, parent=tree, tree_type=tree_type)
+            to_dot(v, label=k, graph=graph, tree_type=tree_type)
             graph.add_edge(pydot.Edge(id(tree), id(v)))
         else:
             id_ = hash((id(tree), id(k)))

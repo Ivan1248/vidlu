@@ -9,6 +9,7 @@ import torch.nn.functional as F
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
+from vidlu.utils.collections import NameDict
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -86,10 +87,10 @@ class PerturbationModel(E.Module):
         r"""Returns an iterator over default module parameters.
 
         Args:
-            minimum_shape: If True, arrays (or scalars) of the minimum shape
+            full_size: If False, arrays (or scalars) of the minimum shape
                 necessary to compute the difference of parameters to their
                 default values are yielded. This can be useful for constraints
-                or regularization. Otherwise, parameters like those used for
+                or regularization. If True, parameters like those used for
                 initialization of the module are yielded.
             recurse (bool): if True, then yields parameters of this module
                 and all submodules. Otherwise, yields only default parameters
@@ -121,10 +122,10 @@ class PerturbationModel(E.Module):
         yielding both the name of the default parameter and the parameter.
 
         Args:
-            minimum_shape: If True, arrays (or scalars) of the minimum shape
+            full_size: If False, arrays (or scalars) of the minimum shape
                 necessary to compute the difference of parameters to their
                 default values are yielded. This can be useful for constraints
-                or regularization. Otherwise, parameters like those used for
+                or regularization. If True, parameters like those used for
                 initialization of the module are yielded.
             prefix (str): Prefix to prepend to all parameter names.
             recurse (bool): If True, then yields default parameters of this
@@ -177,7 +178,7 @@ class SimplePerturbationModel(PerturbationModel):
 
     def create_default_params(self, x):
         shape = list(x.shape)
-        for d in self.args.equivariant_dims:
+        for d in self.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
         dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
         return {k: _get_param(dummy, self.param_defaults[k]['value'])
@@ -273,8 +274,7 @@ def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='z
                                 align_corners=align_corners).squeeze_(1)
         else:
             y_p = F.grid_sample(y_p - lpm, grid, mode=label_interpolation_mode,
-                                padding_mode='zeros',
-                                align_corners=align_corners).add_(lpm)
+                                padding_mode='zeros', align_corners=align_corners).add_(lpm)
         if no_channel_dim:
             y_p.squeeze_(1)
         if y_p.dtype is not y.dtype:
@@ -289,6 +289,7 @@ class MorsicTPSWarp(PerturbationModel):
                  interpolation_mode='bilinear', label_interpolation_mode='nearest',
                  label_padding_mode=-1):
         super().__init__()
+        self.store_args()
 
     def build(self, x):
         k = dict(device=x.device, dtype=x.dtype)
@@ -310,11 +311,10 @@ class BackwardTPSWarp(PerturbationModel):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
     def __init__(self, control_grid_shape=(2, 2), control_grid_align_corners=False,
-                 align_corners=True,
-                 padding_mode='zeros',
-                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
-                 label_padding_mode=-1):
+                 align_corners=True, padding_mode='zeros', interpolation_mode='bilinear',
+                 label_interpolation_mode='nearest', label_padding_mode=-1):
         super().__init__()
+        self.store_args()
 
     def build(self, x):
         k = dict(device=x.device, dtype=x.dtype)

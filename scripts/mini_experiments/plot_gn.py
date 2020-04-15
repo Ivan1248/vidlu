@@ -17,8 +17,7 @@ x, p = np.meshgrid(x, p)
 z = p / (2 * gamma(1 / p)) * np.exp(-np.abs(x) ** p)
 
 # Plot the surface.
-surf = ax.plot_surface(x, p, z, cmap=cm.coolwarm,
-                       linewidth=0, antialiased=False)
+surf = ax.plot_surface(x, p, z, cmap=cm.coolwarm, linewidth=0, antialiased=False)
 
 # Customize the z axis.
 ax.set_zlim(-1.01, 1.01)

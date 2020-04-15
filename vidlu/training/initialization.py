@@ -1,5 +1,4 @@
 import warnings
-from itertools import chain
 
 from torch import nn
 

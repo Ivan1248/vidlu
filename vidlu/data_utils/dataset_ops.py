@@ -1,7 +1,6 @@
 from functools import partial
 
 from tqdm import tqdm, trange
-import numpy as np
 
 from vidlu.data import Dataset
 
