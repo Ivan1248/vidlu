@@ -438,12 +438,14 @@ def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
             return E.Seq(pool=E.AvgPool(stride, stride),
                          pad=E.Func(partial(F.pad, pad=pad, mode='constant')))
 
+def _check_resnet_unit_args(block_f, dim_change):
+    if dim_change not in ['pad', 'proj', 'conv3']:
+        raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
+    _check_block_args(block_f)
 
 class ResNetV1Unit(E.Seq):
     def __init__(self, block_f=PostactBlock, dim_change='proj'):
-        if dim_change not in ['pad', 'proj', 'conv3']:
-            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
-        _check_block_args(block_f)
+        _check_resnet_unit_args(block_f, dim_change)
         super().__init__()
         self.block_f, self.dim_change = block_f, dim_change
 
@@ -452,14 +454,13 @@ class ResNetV1Unit(E.Seq):
         shortcut = _get_resnetv1_shortcut(
             in_width=x.shape[1], out_width=block_args.base_width * block_args.width_factors[-1],
             stride=block_args.stride, dim_change=self.dim_change, norm_f=block_args.norm_f)
-        block_f = self.block_f
-        block = Reserved.call(block_f)[:-1]  # block without the last activation
+        block = Reserved.call(self.block_f)[:-1]  # block without the last activation
         self.add_modules(
             fork=E.Fork(
                 shortcut=shortcut,
                 block=block),
             sum=E.Sum(),
-            act=default_args(block_f).act_f())
+            act=default_args(self.block_f).act_f())
 
 
 class ResNetV1Groups(E.Seq):
@@ -525,17 +526,12 @@ def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change):
 
 class ResNetV2Unit(E.Seq):
     def __init__(self, block_f=PreactBlock, dim_change='proj'):
-        if dim_change not in ['pad', 'proj', 'conv3']:
-            raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
-        _check_block_args(block_f)
+        _check_resnet_unit_args(block_f, dim_change)
         super().__init__()
         self.block_f, self.dim_change = block_f, dim_change
 
     def build(self, x):
-        block_f = self.block_f
-        block = block_f()
-
-        dim_change = self.dim_change
+        block = self.block_f()
         in_width = x.shape[1]
         block_args = default_args(self.block_f)
         out_width = block_args.base_width * block_args.width_factors[-1]
@@ -543,7 +539,7 @@ class ResNetV2Unit(E.Seq):
         if stride == 1 and in_width == out_width:
             self.add_module(fork=E.Fork(shortcut=nn.Identity(), block=block))
         else:
-            shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, dim_change)
+            shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change)
             self.add_modules(preact=block[:'conv0'],
                              fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
         self.add_module(sum=E.Sum())
@@ -654,7 +650,7 @@ class MDenseTransition(E.Seq):
 class MDenseUnit(E.Module):
     def __init__(self, block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
         super().__init__()
-        self.block_f=block_f
+        self.block_f = block_f
         self.block_starts = E.Parallel()
         self.sum = E.Sum()
         block = block_f()
