@@ -74,12 +74,11 @@ class Engine(object):
     """
 
     def __init__(self, process_function):
-        self._event_handlers = defaultdict(list)
         self._logger = logging.getLogger(__name__ + "." + type(self).__name__)
         self._logger.addHandler(logging.NullHandler())
         self._process_function = process_function
         self.should_terminate = False
-        self.should_terminate_single_epoch = False
+        self.should_terminate_epoch = False
         self.state = State()
 
         # events
@@ -91,14 +90,14 @@ class Engine(object):
         self.iteration_completed = Event()
 
         if self._process_function is None:
-            raise ValueError("Engine must be given a processing function in order to run")
+            raise ValueError("Engine must be given a processing function in order to run.")
 
     def terminate(self):
         """Sends terminate signal to the engine, so that it terminates completely the run after the
         current iteration
         """
         self._logger.info(
-            "Terminate signaled. Engine will stop after current iteration is finished")
+            "Terminate signaled. Engine will stop after current iteration is finished.")
         self.should_terminate = True
 
     def terminate_epoch(self):
@@ -106,8 +105,8 @@ class Engine(object):
         current iteration
         """
         self._logger.info("Terminate current epoch is signaled. "
-                          "Current epoch iteration will stop after current iteration is finished")
-        self.should_terminate_single_epoch = True
+                          "Current epoch iteration will stop after current iteration is finished.")
+        self.should_terminate_epoch = True
 
     def _run_once_on_dataset(self):
         for batch in self.state.data_loader:
@@ -117,8 +116,8 @@ class Engine(object):
             self.state.output = self._process_function(self, batch)
             self.iteration_completed(self.state)
             del self.state.batch, self.state.output
-            if self.should_terminate or self.should_terminate_single_epoch:
-                self.should_terminate_single_epoch = False
+            if self.should_terminate or self.should_terminate_epoch:
+                self.should_terminate_epoch = False
                 break
 
     def run(self, data, max_epochs=1, restart=True):
@@ -138,25 +137,25 @@ class Engine(object):
 
         self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
 
-        self._logger.info("Engine run starting with max_epochs={}".format(max_epochs))
-        with Stopwatch() as sw:
+        self._logger.info(f"Engine run starting with max_epochs={max_epochs}.")
+        with Stopwatch() as sw_total:
             self.started(self.state)
             if self.state.epoch >= max_epochs:
                 warnings.warn("All epochs are already completed.")
             while self.state.epoch < max_epochs and not self.should_terminate:
                 self.state.epoch += 1
                 self.epoch_started(self.state)
-                with Stopwatch() as t_epoch:
+                with Stopwatch() as sw_epoch:
                     self._run_once_on_dataset()
-                hours, mins, secs = _to_hours_mins_secs(t_epoch.time)
+                hours, mins, secs = _to_hours_mins_secs(sw_epoch.time)
                 self._logger.info(
-                    f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}")
+                    f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}.")
                 if self.should_terminate:
                     break
                 self.epoch_completed(self.state)
             self.completed(self.state)
-        hours, mins, secs = _to_hours_mins_secs(sw.time)
-        self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}")
+        hours, mins, secs = _to_hours_mins_secs(sw_total.time)
+        self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}.")
         return self.state
 
     def state_dict(self):

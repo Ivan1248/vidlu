@@ -9,11 +9,11 @@ from torch.utils.data import DataLoader
 # noinspection PyUnresolvedReferences
 import _context
 from vidlu.data.datasets import MNIST
-from vidlu import models, factories, experiments
+from vidlu import models, factories, experiments, initialization
 from vidlu.modules import components
 from vidlu.modules.components import Tent
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
-from vidlu.training import Trainer, configs, adversarial, initialization, metrics, extensions
+from vidlu.training import Trainer, configs, adversarial, metrics, extensions
 from vidlu.utils import logger
 import vidlu.training.steps as ts
 
