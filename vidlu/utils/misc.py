@@ -7,9 +7,9 @@ from pathlib import Path
 import time
 import contextlib
 from multiprocessing.sharedctypes import RawArray
+import urllib.request
 
 from tqdm import tqdm
-import urllib.request
 import numpy as np
 
 
@@ -107,29 +107,6 @@ def download(url, output_path, md5=None):
         urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
 
 
-# Iterator functions
-
-def skip(iterator, n=None):
-    """Advances the iterator `n` steps. If n is None, the whole iterator is consumed."""
-    if n is not None or not (isinstance(n, int) and n > 0):
-        raise ValueError(f"`n` should be `None` or a positive integer, not {n}.")
-
-    if n is None:
-        for _ in iterator:
-            pass
-    else:
-        for i, _ in enumerate(iterator):
-            if i >= n:
-                break
-    return iterator
-
-
-def consume(iterator):
-    for _ in iterator:
-        pass
-    return iterator
-
-
 # Mappings
 
 
@@ -161,17 +138,6 @@ def update_existing_items(dest, src, copy=False):
         dest = dest.copy()
     dest.update({k: v for k, v in src.items() if k in dest})
     return dest
-
-
-# module importer
-
-class Meta(type):
-    def __getattr__(cls, key):
-        return __import__(key)
-
-
-class Importer:
-    __metaclass__ = Meta
 
 
 # context manager timer
@@ -241,3 +207,17 @@ def to_shared_array(x):
     x_shared = np.frombuffer(x_shared, dtype=x.dtype).reshape(x.shape)
     x_shared[:] = x
     return x_shared
+
+
+# progress bar
+
+def item_pbar(seq, transform=str):
+    tseq = tqdm(seq)
+    for x in tseq:
+        tseq.set_description(transform(x))
+        tseq.update()
+        yield x
+
+
+def key_pbar(seq):
+    return item_pbar(seq, lambda x: str(x[0]))
