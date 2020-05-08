@@ -19,11 +19,10 @@ def copy(tree, tree_type=None):
 
 def flatten(tree, tree_type=None) -> list:
     tree_type = tree_type or type(tree)
-
     out = []
     for k, v in tree.items():
         if isinstance(v, tree_type) and len(v) != 0:
-            out.extend(((k,) + p, v) for p, v in flatten(v))
+            out.extend(((k,) + p, v) for p, v in flatten(v, tree_type))
         else:
             out.append(((k,), v))
     return out
