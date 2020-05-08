@@ -5,7 +5,7 @@ class TrainerExtension:
     pass
 
 
-class AdversarialTraining(TrainerExtension):
+class _AdversarialTrainingBase(TrainerExtension):
     def __init__(self, attack_f, eval_attack_f=None):
         self.attack_f, self.eval_attack_f = attack_f, eval_attack_f or ArgTree()
         self.attack, self.eval_attack = None, None
@@ -21,6 +21,9 @@ class AdversarialTraining(TrainerExtension):
             dict(loss=trainer.loss) if params(eval_attack_f)['loss'] is Empty else {}))
 
 
-class SemiSupervisedVAT(TrainerExtension):
-    __init__ = AdversarialTraining.__init__
-    initialize = AdversarialTraining.initialize
+class AdversarialTraining(_AdversarialTrainingBase):
+    pass
+
+
+class SemiSupervisedVAT(_AdversarialTrainingBase):
+    pass  # intentionally not a subclass of AdversarialTraining because of default metrics etc.
