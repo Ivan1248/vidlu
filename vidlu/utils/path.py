@@ -97,15 +97,15 @@ def write_lines(path, lines, append=False):
         file.writelines(lines)
 
 
-def get_partition(path):
-    bestMatch = ""
+def disk_partition(path):
+    best_match = ""
     partition = None
     for part in psutil.disk_partitions():
-        if path.startswith(part.mountpoint) and len(bestMatch) < len(part.mountpoint):
-            partition, bestMatch = part, part.mountpoint
+        if path.startswith(part.mountpoint) and len(best_match) < len(part.mountpoint):
+            partition, best_match = part, part.mountpoint
     return partition
 
 
 def get_fs_type(path):
     # https://stackoverflow.com/questions/25283882/determining-the-filesystem-type-from-a-path-in-python
-    return get_partition(path).fstype
+    return disk_partition(path).fstype
