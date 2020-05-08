@@ -140,17 +140,14 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         self._built = False
         self._check = None
 
-    def store_args(self, store_in_self=False):
-        """Can be called be called from the __init__ method after
-        super().__init__ to store the arguments that the constructor/initializer
-        was called with."""
-        if not hasattr(self, 'args'):
-            args = class_initializer_locals_c()
-            if store_in_self:
-                self.args = None
-                self.__dict__.update(args)
-            else:
-                self.args = NameDict(args)
+    def store_args(self, attribute_name='args', args=None):
+        """Can be called from the __init__ method after super().__init__ to
+        store the arguments that the constructor/initializer was called with."""
+        args = args if args is not None else class_initializer_locals_c()
+        if attribute_name in [None, '']:
+            self.__dict__.update(args)
+        else:
+            setattr(self, attribute_name, NameDict(args))
 
     def _mark_if_modified(self, out, inp_to_ver):
         if isinstance(out, torch.Tensor):
@@ -197,7 +194,7 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         pass
 
     def post_build(self, *args, **kwargs):
-        """This is run after the first evaluation (if overriden)."""
+        """This is run after the first evaluation (if overridden)."""
         pass
 
     def _check_input(self, *args, **kwargs):
@@ -595,8 +592,7 @@ class BatchReshape(Module):
 
     def build(self, x):
         self.orig_shape = x.shape[1:]
-        shape = self.shape_or_func
-        self.shape = shape(*self.orig_shape) if callable(shape) else shape
+        self.shape = sof(*self.orig_shape) if callable(sof := self.shape_or_func) else sof
 
     def forward(self, x):
         return x.reshape(x.shape[0], *self.shape)
@@ -649,7 +645,7 @@ class Contiguous(Module):
         return Identity()
 
 
-class ContiguousInv(Identity):
+class InvContiguous(Identity):
     def forward(self, x):
         return x
 
@@ -1210,7 +1206,7 @@ class CheckpointingModuleWrapper(Module):
         return self.checkpoint(self.module, *args)
 
 
-# Gradiont modification
+# Gradient modification
 
 class _RevGrad(torch.autograd.Function):
     """From https://github.com/janfreyberg/pytorch-revgrad"""
