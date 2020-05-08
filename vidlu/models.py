@@ -7,7 +7,7 @@ import torch
 import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
-from vidlu.training import initialization
+from vidlu import initialization
 from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
@@ -110,14 +110,14 @@ def irevnet_backbone(init_stride=2,
                      block_f=partial(default_args(vmc.IRevNetBackbone).block_f,
                                      kernel_sizes=(3, 3, 3)),
                      base_width=None):
-    group_count = len(group_lengths)
-    return vmc.iRevNetBackboneHyb(nBlocks=group_lengths,
-                                  nStrides=[1] + [2] * (group_count - 1),
-                                  nClasses=10,
-                                  nChannels=None if base_width is None else [
-                                      base_width * 4 ** i for i in range(group_count)],
-                                  init_ds=init_stride,
-                                  in_shape=[3, 32, 32])
+    # group_count = len(group_lengths)
+    # return vmc.iRevNetBackboneHyb(nBlocks=group_lengths,
+    #                                nStrides=[1] + [2] * (group_count - 1),
+    #                                nClasses=10,
+    #                                nChannels=None if base_width is None else [
+    #                                    base_width * 4 ** i for i in range(group_count)],
+    #                                init_ds=init_stride,
+    #                                in_shape=[3, 32, 32])
 
     return vmc.IRevNetBackbone(init_stride=init_stride,
                                group_lengths=group_lengths,
@@ -204,7 +204,7 @@ WRN = WideResNet
 
 
 class DenseNet(ClassificationModel):
-    __init__ = partialmethod(DiscriminativeModel.__init__,
+    __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=densenet_backbone,
                              init=partial(initialization.kaiming_densenet, module=Reserved))
 
@@ -213,11 +213,19 @@ class IRevNet(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=irevnet_backbone,
                              init=partial(initialization.kaiming_resnet, module=Reserved))
+
     # better with this init than default
+    # TODO: check lr. schedule
+
+    def post_build(self, *args, **kwargs):
+        super().post_build()
+        for name, module in self.named_modules():
+            if hasattr(module, 'inplace'):
+                module.inplace = True  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
 
 
 class MNISTNet(ClassificationModel):
-    __init__ = partialmethod(DiscriminativeModel.__init__,
+    __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=mnistnet.MNISTNetBackbone,
                              init=partial(initialization.kaiming_mnistnet, module=Reserved))
 
@@ -258,8 +266,8 @@ class SwiftNet(SegmentationModel):
                 module.inplace = False
         for res_unit in self.backbone.backbone.bulk:
             pass
-            #res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))  # 6260MiB, 5.84/s
-            #res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))  # 6022 5.83  # 6734, 6.3
+            # res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))  # 6260MiB, 5.84/s
+            # res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))  # 6022 5.83  # 6734, 6.3
 
 
 class LadderDensenet(DiscriminativeModel):

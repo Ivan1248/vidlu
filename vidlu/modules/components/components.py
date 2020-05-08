@@ -1,6 +1,7 @@
 from functools import partial, partialmethod
 from collections.abc import Sequence
 import typing as T
+import math
 
 import torch
 from torch import nn
@@ -201,24 +202,26 @@ class AffineCoupling(E.Module):
 
 
 class ProportionSplit(E.Module):
-    def __init__(self, proportion: float, dim=1):
+    def __init__(self, proportion: float, dim=1, rounding=round):
         super().__init__()
-        self.proportion, self.dim = proportion, dim
+        self.proportion, self.dim, self.round = proportion, dim, rounding
 
     def forward(self, x):
-        return x.split(round(self.proportion * x.shape[1]), dim=self.dim)
+        return x.split(self.round(self.proportion * x.shape[1]), dim=self.dim)
 
     def make_inverse(self):
         return E.Concat(dim=self.dim)
 
 
-class PadChannels(E.Module):
+class _PadChannelsBase(E.Module):
     def __init__(self, padding):
-        if len(padding) != 2:
+        if not isinstance(padding, int) and len(padding) != 2:
             raise ValueError("`padding` should be a single `int` or a sequence of length 2.")
         super().__init__()
         self.padding = [0, padding] if isinstance(padding, int) else list(padding)
 
+
+class PadChannels(_PadChannelsBase):
     def forward(self, x):  # injective
         return F.pad(x, [0, 0, 0, 0] + self.padding)
 
@@ -226,9 +229,11 @@ class PadChannels(E.Module):
         return UnpadChannels(self.padding)
 
 
-class UnpadChannels(E.Module):
-    __init__ = PadChannels.__init__
+def pad_channels(self, x, padding):
+    return F.pad(x, [0, 0, 0, 0] + padding)
 
+
+class UnpadChannels(_PadChannelsBase):
     def forward(self, x):
         return x[:, self.padding[0]:x.shape[1] - self.padding[1], :, :]
 
@@ -248,10 +253,9 @@ class Baguette(E.Seq):
             super().__init__()
         else:
             super().__init__(
-                contiginv=E.ContiguousInv(),
+                contiginv=E.InvContiguous(),
                 resh1=E.BatchReshape(lambda c, h, w: (c, h // b, b, w // b, b)),
-                # n c h/b bh w/b bw
-                perm1=E.Permute(0, 3, 5, 1, 2, 4),  # n bh bw c h/b w/b
+                perm1=E.Permute(0, 3, 5, 1, 2, 4),  # n c h/b bh w/b bw -> n bh bw c h/b w/b
                 resh2=E.BatchReshape(lambda bh, bw, c, h_b, w_b: (bh * bw * c, h_b, w_b)),
                 contig=E.Contiguous())
 
@@ -260,6 +264,13 @@ class Baguette(E.Seq):
 
     def __str__(self):
         return repr(self)
+
+    def __getstate__(self):
+        return self.block_size
+
+    def __setstate__(self, state):
+        self.__dict__.clear()
+        self.__init__(state)
 
 
 class SqueezeExcitation(E.Module):
@@ -438,10 +449,12 @@ def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
             return E.Seq(pool=E.AvgPool(stride, stride),
                          pad=E.Func(partial(F.pad, pad=pad, mode='constant')))
 
+
 def _check_resnet_unit_args(block_f, dim_change):
     if dim_change not in ['pad', 'proj', 'conv3']:
         raise ValueError(f"Invalid value for argument dim_change: {dim_change}.")
     _check_block_args(block_f)
+
 
 class ResNetV1Unit(E.Seq):
     def __init__(self, block_f=PostactBlock, dim_change='proj'):
@@ -861,20 +874,20 @@ class AAEDiscriminator(E.Seq):
 
 # iRevNet ##########################################################################################
 
-def _get_irevnet_unit_input_padding(x, block_out_ch, stride, force_bijection):
-    half_in_ch = x[0].shape[1]
-    if not x[1].shape[1] == half_in_ch:
-        raise RuntimeError(f"Shapes of both inputs must match ({x[0].shape} != {x[1].shape})")
-    input_padding = 2 * (block_out_ch - half_in_ch * (stride ** 2))
+def _irevnet_unit_input_padding(x, block_out_ch, stride, force_bijection):
+    in_ch = x[0].shape[1] + x[1].shape[1]
+    block_in_ch = in_ch * (stride ** 2)
+    input_padding = 2 * block_out_ch - block_in_ch
     if input_padding < 0:
         raise RuntimeError(f"The number of output channels of the inner block ({block_out_ch})"
-                           f" should be at least {half_in_ch}.")
+                           f" should be at least {(block_in_ch + 1) // 2}.")
     if input_padding > 0:  # injective i-RevNet
         if stride != 1:
             raise RuntimeError(f"Stride is {stride}, but must be 1 for injective padding.")
         if force_bijection:
-            raise RuntimeError("For surjectiveness, the number of channels in the output of the"
-                               + f" inner block must be {half_in_ch}.")
+            raise RuntimeError(
+                f"For bijectivity, the number of input channels ({in_ch}) times squared stride"
+                + f" ({stride ** 2}) must equal the number of output channels ({block_out_ch})")
     return input_padding
 
 
@@ -885,17 +898,15 @@ class IRevNetUnit(E.Module):
         self.input_pad, self.baguette, self.block = [None] * 3
 
     def build(self, x):
-        a = self.args
-        stride = params(a.block_f).stride
-        block_out_ch = round(params(a.block_f).base_width * params(a.block_f).width_factors[-1])
-        input_padding = _get_irevnet_unit_input_padding(x, block_out_ch, stride, a.force_surjection)
-        self.input_pad = (E.Identity() if self.input_pad == 0
-                          else E.Seq(concat=E.Concat(1),
-                                     inj_pad=PadChannels(input_padding),
-                                     split=ProportionSplit(0.5, dim=1)))
-        self.baguette = Baguette(stride)
+        a, ba = self.args, params(self.args.block_f)
+        block_out_ch = round(ba.base_width * ba.width_factors[-1])
+        padding = _irevnet_unit_input_padding(x, block_out_ch, ba.stride, a.force_surjection)
+        self.input_pad = (E.Identity() if padding == 0
+                          else E.Seq(concat=E.Concat(1),  # TODO: make more efficient
+                                     inj_pad=PadChannels(padding),
+                                     psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
+        self.baguette = Baguette(ba.stride) if ba.stride != 1 else E.Identity()
         self.block = a.block_f()['conv0':] if a.first else a.block_f()
-        # self.register_forward_hook(lambda module, input, output: print(output[0].shape) )
 
     def forward(self, x):
         h = self.input_pad(x)
@@ -914,12 +925,12 @@ class IRevNetGroups(E.Seq):
                  unit_f=IRevNetUnit):
         super().__init__()
         for i, l in enumerate(group_lengths):
-            base_width_i = base_width * ((1 + int(i > 0)) ** 2) ** i
+            bw_i = base_width if i == 0 else base_width * 4 ** i
             for j in range(l):
-                stride = (first_stride if i == 0 else 2) if j == 0 else 1
-                u = unit_f(block_f=Reserved.partial(block_f, base_width=base_width_i,
-                                                    width_factors=width_factors, stride=stride),
-                           first=(i, j) == (0, 0))
+                u = unit_f(
+                    block_f=Reserved.partial(block_f, base_width=bw_i, width_factors=width_factors,
+                                             stride=1 if j > 0 else first_stride if i == 0 else 2),
+                    first=(i, j) == (0, 0))
                 self.add_module(f'unit{i}_{j}', u)
 
 
@@ -939,15 +950,13 @@ class IRevNetBackbone(E.Seq):
             if rem != 0:
                 raise RuntimeError(f"The number of channels after the first baguette with"
                                    f" stride {a.init_stride} is not even.")
-        _check_block_args(a.block_f)
-        self.add_module('baguette', Baguette(a.init_stride))
-        self.add_module("split", ProportionSplit(0.5, dim=1))
-        self.add_module('bulk', a.groups_f(a.group_lengths, base_width=base_width,
-                                           width_factors=a.width_factors,
-                                           block_f=a.block_f))
-        self.add_module('concat', E.Concat(dim=1))
-        norm_f = default_args(a.block_f).norm_f
-        if norm_f is not None:
+        self.add_modules(
+            baguette=Baguette(a.init_stride),
+            psplit=ProportionSplit(0.5, dim=1, rounding=math.floor),
+            bulk=a.groups_f(a.group_lengths, base_width=base_width, width_factors=a.width_factors,
+                            block_f=a.block_f),
+            concat=E.Concat(dim=1))
+        if (norm_f := default_args(a.block_f).norm_f) is not None:
             self.add_module('post_norm', norm_f())
         self.add_module('post_act', default_args(a.block_f).act_f())
 
@@ -975,15 +984,13 @@ class irevnet_block(nn.Module):
         self.psi = Baguette(stride)
         if self.pad != 0 and stride == 1:
             in_ch = out_ch * 2
-            print('')
             print('| Injective iRevNet |')
-            print('')
-        layers = []
+
         from fractions import Fraction as Frac
         self.input_pad = (E.Identity() if self.pad == 0
                           else E.Seq(concat=E.Concat(1),
                                      inj_pad=PadChannels(self.pad),
-                                     split=ProportionSplit(0.5, dim=1)))
+                                     psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
         self.bottleneck_block = PreactBlock(base_width=out_ch,
                                             width_factors=[Frac(1, 4), Frac(1, 4), 1],
                                             kernel_sizes=[3, 3, 3], stride=stride)
@@ -991,28 +998,17 @@ class irevnet_block(nn.Module):
             self.bottleneck_block = self.bottleneck_block['conv0':]
 
         # self.unit = IRevNetUnit(first=first,
-        #                        block_f=partial(PreactBlock, base_width=out_ch,
-        #                                        width_factors=[Frac(1, 4), Frac(1, 4), 1],
-        #                                        kernel_sizes=[3, 3, 3], stride=stride))
+        #                         block_f=partial(PreactBlock, base_width=out_ch,
+        #                                         width_factors=[Frac(1, 4), Frac(1, 4), 1],
+        #                                         kernel_sizes=[3, 3, 3], stride=stride))
 
     def forward(self, x):
         # return self.unit(x)
         """ bijective or injective block forward """
         if self.pad != 0 and self.stride == 1:
-            # x = self.input_pad.concat(x[0], x[1])
-            # x = self.input_pad.inj_pad(x)
-            # x = self.input_pad.split(x)
-            # for m in self.input_pad._modules.values():
-            #    x=m(x)
             x = self.input_pad(x)
-        x1 = x[0]
-        x2 = x[1]
-        Fx2 = self.bottleneck_block(x2)
-        if self.stride == 2:
-            x1 = self.psi.forward(x1)
-            x2 = self.psi.forward(x2)
-        y1 = Fx2 + x1
-        return x2, y1
+        Fx2 = self.bottleneck_block(x[1])
+        return self.psi(x[1]), Fx2 + self.psi(x[0])
 
     def inverse(self, x):
         """ bijective or injecitve block inverse """
@@ -1033,29 +1029,28 @@ class irevnet_block(nn.Module):
         return x
 
 
-class iRevNetBackboneOrig(nn.Module):
-    def __init__(self, nBlocks, nStrides, nClasses, nChannels=None, init_ds=2,
-                 dropout_rate=0., affineBN=True, in_shape=None, mult=4):
+class IRevNetBackboneHyb(nn.Module):
+    def __init__(self, init_stride=2, group_lengths=(2,) * 4, width_factors=(1,) * 2,
+                 base_width=None, block_f=default_args(IRevNetGroups).block_f,
+                 groups_f=IRevNetGroups):
         super().__init__()
-        self.ds = in_shape[2] // 2 ** (nStrides.count(2) + init_ds // 2)
-        self.init_ds = init_ds
-        self.in_ch = in_shape[0] * 2 ** self.init_ds
-        self.nBlocks = nBlocks
-        self.first = True
+        group_count = len(group_lengths)
+        nStrides = [1] + [2] * (group_count - 1)
+        nChannels = None if base_width is None else [
+            base_width * 4 ** i for i in range(group_count)]
+        in_shape = [3, 32, 32]
 
-        print('')
-        print(' == Building iRevNet %d == ' % (sum(nBlocks) * 3 + 1))
-        if not nChannels:
-            nChannels = [self.in_ch // 2, self.in_ch // 2 * 4,
-                         self.in_ch // 2 * 4 ** 2, self.in_ch // 2 * 4 ** 3]
+        self.init_stride = init_stride
 
-        self.init_psi = Baguette(self.init_ds)
-        self.stack = self.irevnet_stack(irevnet_block, nChannels, nBlocks,
-                                        nStrides, dropout_rate=dropout_rate,
-                                        affineBN=affineBN, in_ch=self.in_ch,
-                                        mult=mult)
+        print(' == Building iRevNet %d == ' % (sum(group_lengths) * 3 + 1))
+
+        self.init_psi = Baguette(init_stride)
+        self.split = ProportionSplit(0.5, dim=1, rounding=math.floor)
+        self.stack = self.irevnet_stack(irevnet_block, nChannels, group_lengths,
+                                        nStrides, dropout_rate=0,
+                                        affineBN=True, in_ch=in_shape[0] * init_stride ** 2,
+                                        mult=4)
         self.bn1 = nn.BatchNorm2d(nChannels[-1] * 2, momentum=0.9)
-        self.linear = nn.Linear(nChannels[-1] * 2, nClasses)
 
     def irevnet_stack(self, _block, nChannels, nBlocks, nStrides, dropout_rate,
                       affineBN, in_ch, mult):
@@ -1063,101 +1058,26 @@ class iRevNetBackboneOrig(nn.Module):
         block_list = nn.ModuleList()
         strides = []
         channels = []
+        first = True
         for channel, depth, stride in zip(nChannels, nBlocks, nStrides):
             strides = strides + ([stride] + [1] * (depth - 1))
             channels = channels + ([channel] * depth)
         for channel, stride in zip(channels, strides):
             block_list.append(_block(in_ch, channel, stride,
-                                     first=self.first,
+                                     first=first,
                                      dropout_rate=dropout_rate,
                                      affineBN=affineBN, mult=mult))
             in_ch = 2 * channel
-            self.first = False
+            first = False
         return block_list
 
     def forward(self, x):
         """ irevnet forward """
-        n = self.in_ch // 2
-        if self.init_ds != 0:
+        if self.init_stride != 0:
             x = self.init_psi.forward(x)
-        out = (x[:, :n, :, :], x[:, n:, :, :])
+        out = self.split(x)
         for block in self.stack:
             out = block.forward(out)
         out_bij = merge(out[0], out[1])
         out = F.relu(self.bn1(out_bij))
         return out
-        out = F.avg_pool2d(out, self.ds)
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
-        return out, out_bij
-
-    def inverse(self, out_bij):
-        """ irevnet inverse """
-        out = split(out_bij)
-        for i in range(len(self.stack)):
-            out = self.stack[-1 - i].inverse(out)
-        out = merge(out[0], out[1])
-        if self.init_ds != 0:
-            x = self.init_psi.inverse(out)
-        else:
-            x = out
-        return x
-
-
-class iRevNetBackboneHyb(nn.Module):
-    def __init__(self, nBlocks, nStrides, nClasses, nChannels=None, init_ds=2,
-                 dropout_rate=0., affineBN=True, in_shape=None, mult=4):
-        super().__init__()
-        self.ds = in_shape[2] // 2 ** (nStrides.count(2) + init_ds // 2)
-        self.init_ds = init_ds
-        self.in_ch = in_shape[0] * 2 ** self.init_ds
-        self.nBlocks = nBlocks
-        self.first = True
-
-        print('')
-        print(' == Building iRevNet %d == ' % (sum(nBlocks) * 3 + 1))
-        if not nChannels:
-            nChannels = [self.in_ch // 2, self.in_ch // 2 * 4,
-                         self.in_ch // 2 * 4 ** 2, self.in_ch // 2 * 4 ** 3]
-
-        self.init_psi = Baguette(self.init_ds)
-        self.stack = self.irevnet_stack(irevnet_block, nChannels, nBlocks,
-                                        nStrides, dropout_rate=dropout_rate,
-                                        affineBN=affineBN, in_ch=self.in_ch,
-                                        mult=mult)
-        self.bn1 = nn.BatchNorm2d(nChannels[-1] * 2, momentum=0.9)
-        self.linear = nn.Linear(nChannels[-1] * 2, nClasses)
-
-    def irevnet_stack(self, _block, nChannels, nBlocks, nStrides, dropout_rate,
-                      affineBN, in_ch, mult):
-        """ Create stack of irevnet blocks """
-        block_list = nn.ModuleList()
-        strides = []
-        channels = []
-        for channel, depth, stride in zip(nChannels, nBlocks, nStrides):
-            strides = strides + ([stride] + [1] * (depth - 1))
-            channels = channels + ([channel] * depth)
-        for channel, stride in zip(channels, strides):
-            block_list.append(_block(in_ch, channel, stride,
-                                     first=self.first,
-                                     dropout_rate=dropout_rate,
-                                     affineBN=affineBN, mult=mult))
-            in_ch = 2 * channel
-            self.first = False
-        return block_list
-
-    def forward(self, x):
-        """ irevnet forward """
-        n = self.in_ch // 2
-        if self.init_ds != 0:
-            x = self.init_psi.forward(x)
-        out = (x[:, :n, :, :], x[:, n:, :, :])
-        for block in self.stack:
-            out = block.forward(out)
-        out_bij = merge(out[0], out[1])
-        out = F.relu(self.bn1(out_bij))
-        return out
-        out = F.avg_pool2d(out, self.ds)
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
-        return out, out_bij
