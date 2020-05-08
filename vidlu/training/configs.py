@@ -14,24 +14,13 @@ import vidlu.training.extensions as te
 from vidlu.training.adversarial.configs import *
 
 
-# Extend output
-
-def classification_extend_output(output):
-    if not isinstance(output, torch.Tensor):
-        raise ValueError("The output must ba a `torch.Tensor`.")
-    logits = output
-    return logits, Record(output=logits, log_probs_=lambda: logits.log_softmax(1),
-                          probs_=lambda r: r.log_probs.exp(),
-                          hard_prediction_=lambda: logits.argmax(1))
-
-
 # Optimizer maker
 
 
-@dataclass
 class OptimizerMaker:
-    def __init__(self, optimizer_f, params, **kwargs):
+    def __init__(self, optimizer_f, params, ignore_remaining_params=False, **kwargs):
         self.optimizer_f, self.params, self.kwargs = optimizer_f, params, kwargs
+        self.ignore_remaining_params = ignore_remaining_params
 
     def __call__(self, model):
         if not isinstance(model, torch.nn.Module):
@@ -39,11 +28,10 @@ class OptimizerMaker:
         params = [{**d, 'params': tuple(get_submodule(model, d['params']).parameters())}
                   for d in self.params]
         params_lump = set(p for d in params for p in d['params'])
-        remaining_params = tuple(p for p in model.parameters() if p not in params_lump)
+        remaining_params = () if self.ignore_remaining_params \
+            else tuple(p for p in model.parameters() if p not in params_lump)
         return self.optimizer_f([{'params': remaining_params}] + params, **self.kwargs)
 
-
-# Trainer configs ##################################################################################
 
 class TrainerConfig(NameDict):
     def __init__(self, *args, **kwargs):
@@ -80,6 +68,19 @@ class TrainerConfig(NameDict):
 def to_trainer_args(*args, **kwargs):
     return TrainerConfig(*args, **kwargs).with_bound_extension_args()
 
+
+# Extend output
+
+def classification_extend_output(output):
+    if not isinstance(output, torch.Tensor):
+        raise ValueError("The output must ba a `torch.Tensor`.")
+    logits = output
+    return logits, Record(output=logits, log_probs_=lambda: logits.log_softmax(1),
+                          probs_=lambda r: r.log_probs.exp(),
+                          hard_prediction_=lambda: logits.argmax(1))
+
+
+# Trainer configs ##################################################################################
 
 supervised = TrainerConfig(
     eval_step=ts.supervised_eval_step,
@@ -178,17 +179,18 @@ small_image_classifier = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
 
 ladder_densenet = TrainerConfig(
     classification,
-    optimizer_f=OptimizerMaker(optim.SGD, [dict(params='backbone.backbone', lr=5e-4 / 5)],
+    optimizer_f=OptimizerMaker(optim.SGD, [dict(params='backbone.backbone', lr=1e-4)],
                                lr=5e-4, momentum=0.9, weight_decay=1e-4),
     lr_scheduler_f=partial(ScalableLambdaLR, lr_lambda=lambda p: (1 - p) ** 1.5),
     epoch_count=40,
     batch_size=4,
     jitter=jitter.SegRandHFlip())
 
+# https://github.com/orsic/swiftnet/blob/master/configs/rn18_single_scale.py
 swiftnet_cityscapes = TrainerConfig(
     classification,
     optimizer_f=OptimizerMaker(optim.Adam,
-                               [dict(params='backbone.backbone', lr=4e-4 / 4, weight_decay=2.5e-5)],
+                               [dict(params='backbone.backbone', lr=1e-4, weight_decay=2.5e-5)],
                                lr=4e-4, betas=(0.9, 0.99), weight_decay=1e-4),
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
