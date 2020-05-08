@@ -3,13 +3,13 @@ import builtins
 
 
 @contextlib.contextmanager
-def indent_print(*args, indent="   ", print_action=print):
+def indent_print(*args, indent="   "):
     if len(args) > 0:
         print(*args)
     orig_print = builtins.print
 
     def ind_print(*args, **kwargs):
-        print_action(indent[:-1], *args, **kwargs)
+        orig_print(indent[:-1], *args, **kwargs)
 
     builtins.print = ind_print
     yield
