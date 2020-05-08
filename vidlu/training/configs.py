@@ -161,6 +161,7 @@ wrn_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
 irevnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
     resnet_cifar,
     # overriding
+    # TODO: check lr. schedule and init
     optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=5e-4))
 
 densenet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1608.06993

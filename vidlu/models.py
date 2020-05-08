@@ -54,7 +54,6 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
     depth = blocks_per_group * group_depth + 4
     assert zagoruyko_depth == depth, \
         f"Invalid depth = {zagoruyko_depth} != {depth} = zagoruyko_depth"
-
     return vmc.ResNetV2Backbone(base_width=16,
                                 small_input=small_input,
                                 group_lengths=[blocks_per_group] * group_count,
@@ -71,9 +70,7 @@ def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3)
     depth_to_group_lengths = {
         121: ([6, 12, 24, 16], 32),
         161: ([6, 12, 36, 24], 48),
-        169: ([6, 12, 32, 32], 32),
-    }
-
+        169: ([6, 12, 32, 32], 32)}
     if depth in depth_to_group_lengths:
         db_lengths, default_growth_rate = depth_to_group_lengths[depth]
         k = k or default_growth_rate
@@ -104,26 +101,13 @@ fdensenet_backbone = partial(densenet_backbone,
                              backbone_f=vmc.FDenseNetBackbone)
 
 
-def irevnet_backbone(init_stride=2,
-                     group_lengths=(6, 16, 72, 6),
+def irevnet_backbone(init_stride=2, group_lengths=(6, 16, 72, 6),
                      width_factors=(Frac(1, 4), Frac(1, 4), 1),
                      block_f=partial(default_args(vmc.IRevNetBackbone).block_f,
                                      kernel_sizes=(3, 3, 3)),
                      base_width=None):
-    # group_count = len(group_lengths)
-    # return vmc.iRevNetBackboneHyb(nBlocks=group_lengths,
-    #                                nStrides=[1] + [2] * (group_count - 1),
-    #                                nClasses=10,
-    #                                nChannels=None if base_width is None else [
-    #                                    base_width * 4 ** i for i in range(group_count)],
-    #                                init_ds=init_stride,
-    #                                in_shape=[3, 32, 32])
-
-    return vmc.IRevNetBackbone(init_stride=init_stride,
-                               group_lengths=group_lengths,
-                               width_factors=width_factors,
-                               base_width=base_width,
-                               block_f=block_f)
+    return vmc.IRevNetBackbone(init_stride=init_stride, group_lengths=group_lengths,
+                               width_factors=width_factors, base_width=base_width, block_f=block_f)
 
 
 # Models ###########################################################################################
@@ -210,12 +194,8 @@ class DenseNet(ClassificationModel):
 
 
 class IRevNet(ClassificationModel):
-    __init__ = partialmethod(ClassificationModel.__init__,
-                             backbone_f=irevnet_backbone,
+    __init__ = partialmethod(ClassificationModel.__init__, backbone_f=irevnet_backbone,
                              init=partial(initialization.kaiming_resnet, module=Reserved))
-
-    # better with this init than default
-    # TODO: check lr. schedule
 
     def post_build(self, *args, **kwargs):
         super().post_build()
@@ -264,10 +244,9 @@ class SwiftNet(SegmentationModel):
             for lb in self.lateral_blocks:
                 module = vm.get_submodule(self.backbone.backbone, f"{lb}.act")
                 module.inplace = False
-        for res_unit in self.backbone.backbone.bulk:
-            pass
-            # res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))  # 6260MiB, 5.84/s
-            # res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))  # 6022 5.83  # 6734, 6.3
+        # for res_unit in self.backbone.backbone.bulk:
+        # res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))  # 6260MiB, 5.84/s
+        # res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))  # 6022 5.83
 
 
 class LadderDensenet(DiscriminativeModel):
