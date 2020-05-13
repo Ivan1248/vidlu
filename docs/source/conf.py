@@ -12,8 +12,8 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('../..'))
 
+sys.path.insert(0, os.path.abspath('../..'))
 
 # -- Project information -----------------------------------------------------
 
@@ -29,9 +29,9 @@ author = 'Ivan Grubišić'
 extensions = ['sphinx.ext.napoleon',  # Google-style docstrings
               'sphinx.ext.todo',
               'sphinx.ext.viewcode',
-              'sphinx.ext.autodoc'  # automodule
+              'sphinx.ext.autodoc',  # automodule
+              #'m2r'  # md to rst -- m2r unmaintained, bug
               ]
-
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

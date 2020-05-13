@@ -65,6 +65,7 @@ Welcome to Vidlu's documentation!
    :maxdepth: 4
    :caption: Contents:
 
+   README <../../README.md>
 
 Indices and tables
 ==================
@@ -72,3 +73,5 @@ Indices and tables
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`
+
+.. ./docs/make.bat html
