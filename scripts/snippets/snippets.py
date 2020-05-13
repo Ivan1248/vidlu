@@ -330,3 +330,30 @@ from vidlu.modules import with_intermediate_outputs
 for k, v in trainer.model.named_buffers():
     if 'bias' in k:
         print(v)
+
+
+# i-RevNet reconstruction
+
+from torchvision.transforms.functional import to_tensor, to_pil_image
+import torch
+from PIL import Image
+import matplotlib.pyplot as plt
+
+import vidlu.modules as vm
+
+img = Image.open('mini_experiments/image.jpg')
+x = to_tensor(img)[:, :80, :112].unsqueeze(0).to(trainer.model.device)
+images = [to_pil_image(x.cpu())]
+
+model_injective = vm.deep_split(trainer.model, 'backbone.concat')[0]
+
+h = model_injective(x)
+x_r = model_injective.inverse(h).squeeze().clamp(0, 1)
+
+images += [to_pil_image(x_r.cpu())]
+
+fig, axs = plt.subplots(1, len(images))
+for i, im in enumerate(images):
+    axs[i].imshow(im)
+plt.show()
+

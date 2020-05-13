@@ -48,19 +48,18 @@ class TCSegmentationHead(E.Seq):  # TODO: decide what to do about it
         self.shape = shape
         self.class_count = class_count
         self.norm_f, self.act_f, self.convt_f = norm_f, act_f, convt_f
-
-        self.add_module(logits=E.Conv(class_count, kernel_size=1))
+        self.add(logits=E.Conv(class_count, kernel_size=1))
 
     def build(self, x):
         for i in range(round(math.log(self.shape[0] / (x.shape[2] * 2), 2))):
-            self.add_module({f'norm{i}': self.norm_f(),
-                             f'act{i}': self.act_f(),
-                             f'conv{i}': self.convt_f(kernel_size=3,
-                                                      out_channels=x.shape[1] / 2 ** i,
-                                                      stride=2,
-                                                      padding=1)})
-        self.add_module(upsample=E.Func(partial(F.interpolate, size=self.shape, mode='bilinear',
-                                                align_corners=False)))
+            self.add({f'norm{i}': self.norm_f(),
+                      f'act{i}': self.act_f(),
+                      f'conv{i}': self.convt_f(kernel_size=3,
+                                               out_channels=x.shape[1] / 2 ** i,
+                                               stride=2,
+                                               padding=1)})
+        self.add(upsample=E.Func(partial(F.interpolate, size=self.shape, mode='bilinear',
+                                         align_corners=False)))
 
 
 class RegressionHead(E.Seq):

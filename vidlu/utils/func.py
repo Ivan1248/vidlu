@@ -4,6 +4,7 @@ from inspect import signature
 from functools import partialmethod, partial, wraps
 import itertools
 import typing
+import warnings
 
 from vidlu.utils import text
 from .collections import NameDict
@@ -351,30 +352,32 @@ def keyfilter(func, d, factory=dict):
 # Empty and Reserved - representing an unassigned variable #########################################
 
 
-Empty = inspect.Parameter.empty  # unassigned parameter that should be assigned
+# Object that can be used for marking required arguments that come after some keyword argument
+Empty = inspect.Parameter.empty
 
 
-class Missing:
-    """A sentinel object representing missing fields in dataclasses.
-    Using `Empty` causes errors in dataclasses because assigning a default value
-    in dataclasses is equal to not assigning anything.
+class Required:
+    """Object for marking fields in dataclasses as required arguments when the
+    they come after fileds with default values.
+    
+    `Empty` (`inspect.Parameter.empty`) cannot be used because it causes an 
+    error saying that a non-default argument follows a default argument. 
     """
-    pass
+
+    def __init__(self):
+        raise TypeError('`Required` constructor has been called, indicating that a parameter with'
+                        + ' default value `Required` is not assigned a "real" value.')
 
 
-def is_empty(value):
-    return value in [Empty, inspect.Parameter.empty]
-
-
-class Reserved:  # placeholder to mark parameters that shouldn't be assigned / are reserved
+class Reserved:  # marker for parameters that shouldn't be assigned / are reserved
     @staticmethod
     def partial(func, **kwargs):
         """Applies partial to func only if all supplied arguments are Reserved."""
         dargs = params(func)
         for k, v in kwargs.items():
             if dargs[k] is not Reserved:
-                raise ValueError(
-                    f"The argument {k} should be reserved in order to be assigned a value."
+                warnings.warn(
+                    f"The argument {k} is assigned even though it should he marked `Reserved`."
                     + " The reserved argument might have been overridden with partial.")
         return partial(func, **kwargs)
 

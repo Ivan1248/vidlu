@@ -13,7 +13,7 @@ import torch
 import vidlu.modules.utils as vmu
 from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
 from vidlu.training.lr_schedulers import ConstLR
-from vidlu.utils.func import params, Empty
+from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import Event, Stopwatch
 import vidlu.training.configs as vtc
@@ -192,22 +192,16 @@ def extend_output(output):
     return output, NameDict(prediction=output)
 
 
-class Missing:
-    def __init__(self):
-        raise TypeError('`Missing` constructor was called, indicating that a parameter with default'
-                        + ' value `Missing` has not been assigned a "real" value.')
-
-
 @dataclass
 class Evaluator:
-    model: T.Callable = Missing
-    loss_f: InitVar[T.Callable] = Missing
+    model: T.Callable = Required
+    loss_f: InitVar[T.Callable] = Required
     prepare_batch: T.Callable = default_prepare_batch
     data_loader_f: T.Callable = partial(DataLoader, num_workers=2)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=list)
     extend_output: T.Callable = extend_output
-    eval_step: T.Callable = Missing
+    eval_step: T.Callable = Required
 
     loss: T.Callable = dc.field(init=False)
 
@@ -282,9 +276,9 @@ class Trainer(Evaluator):
 
     eval_batch_size: int = None
     optimizer_f: InitVar[T.Callable] = None  # O
-    epoch_count: int = Missing  # O
+    epoch_count: int = Required  # O
     lr_scheduler_f: InitVar[T.Callable] = ConstLR  # O
-    train_step: T.Callable = Missing  # O
+    train_step: T.Callable = Required  # O
     jitter: T.Callable = None  # D
     extension_fs: InitVar[T.Sequence] = ()  # D
 

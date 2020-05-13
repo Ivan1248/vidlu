@@ -24,6 +24,7 @@ import vidlu.utils.func as vuf
 import vidlu.torch_utils as vtu
 
 import vidlu.modules.utils as vmu
+from vidlu.modules.deconv import FastDeconv
 
 # Some of modules and functions from torch.nn are replaced with wrappers.
 # Look for references of the `replaces` procedure to find the code doing it.
@@ -114,23 +115,115 @@ class SplittableMixin:
         raise TypeError(f"Joining not implemented for module type {type(self)}")
 
 
+def module_string(module, format='name (type)'):
+    if format == 'name (type)':
+        return f"{vmu.try_get_module_name_from_call_stack(module)} ({type(module).__name__})"
+    else:
+        raise NotImplementedError()
+
+
+def register_inverse_check_hook(module):
+    def check_inverse(module, input, output):
+        # `handle.remove()` must come before calling `module.inverse` to avoid this being called
+        # again under the `module.inverse` call, e.g. when `module.inverse` is `module` itself.
+        handle.remove()
+        rec = module.inverse(output)
+        inp_list, rec_list = (list(_extract_tensors(x)) for x in [input, rec])
+
+        if (ninp := len(inp_list)) != (nrec := len(rec_list)):
+            raise RuntimeError(
+                f"The number of inputs ({ninp}) does not match the number of reconstucted inputs"
+                + f" {nrec} for {module_string(module)}")
+        for inp, rec in zip(inp_list, rec_list):
+            if not torch.allclose(inp, rec, **module.reconstruction_tols):
+                adiff = (inp - rec).abs_()
+                rdiff = adiff / (torch.min(inp.abs(), rec.abs()) + 1e-8)
+                amax, amean, rmax, rmean = adiff.max(), adiff.mean(), rdiff.max(), rdiff.mean()
+                raise RuntimeError(
+                    f"Reconstructed inputs are not close enough to original inputs for"
+                    + f" {module_string(module)}."
+                    + f" Difference: {amax=:.2e}, {amean=:.2e}, {rmax=:.2e}, {rmean=:.2e}.")
+
+    handle = module.register_forward_hook(check_inverse)
+    return check_inverse
+
+
 class InvertibleMixin:
+    # Note: reconstruction_tols is used in inverse check.
+    # It can be overridden with a property.
+    reconstruction_tols = dict(rtol=10, atol=1e-5)
+
     @functools.cached_property
-    def inverse(self):
+    def inverse(self: nn.Module) -> nn.Module:
+        # print(vmu.try_get_module_name_from_call_stack(self))
         try:
-            return self.make_inverse()
+            inv_module = self.inverse_module()
+            # The inverse of the inverse is the original module and `property` is used so that the
+            # original module is not recognized as a child of the inverse module, which would result
+            # in an infinite recursion when the `children` method is called on the inverse.
+            inv_module.inverse = property(self._get_self)
         except AttributeError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
             # AttributeError saying that this module has no `inverse` attribute
-            raise TypeError(f"An inverse for the module `{type(self)}` is not defined: {e}")
+            raise TypeError(f"The inverse for the module `{type(self)}` is not defined: {e}")
+        return inv_module
 
-    def make_inverse(self):
+    def _get_self(self):
+        return self
+
+    def inverse_module(self) -> nn.Module:
         if hasattr(self, 'inverse_forward'):
             return Inverse(self)
         raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
 
+    def check_inverse(self: nn.Module, *inputs):
+        for m in self.modules():
+            register_inverse_check_hook(m)
+        self(*inputs)
+
+    def is_invertible(self) -> bool:
+        return hasattr(self, 'inverse_forward') or hasattr(self, 'inverse_module')
+
+
+class LogJacobianMixin:
+    # Note: reconstruction_tols is used in inverse check.
+    # It can be overridden with a property.
+    reconstruction_tols = dict(rtol=1e-2, atol=1e-2)
+
+    @functools.cached_property
+    def inverse(self: nn.Module) -> nn.Module:
+        # print(vmu.try_get_module_name_from_call_stack(self))
+        try:
+            inv_module = self.inverse_module()
+            # The inverse of the inverse is the original module and `property` is used so that the
+            # original module is not recognized as a child of the inverse module, which would result
+            # in an infinite recursion when the `children` method is called on the inverse.
+            inv_module.inverse = property(self._get_self)
+        except AttributeError as e:
+            # Turn it into a TypeError so that it doesn't get turned into a confusing
+            # AttributeError saying that this module has no `inverse` attribute
+            raise TypeError(f"The inverse for the module `{type(self)}` is not defined: {e}")
+        return inv_module
+
+    def _get_self(self):
+        return self
+
+    def inverse_module(self) -> nn.Module:
+        if hasattr(self, 'inverse_forward'):
+            return Inverse(self)
+        raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
+
+    def check_inverse(self: nn.Module, *inputs):
+        for m in self.modules():
+            register_inverse_check_hook(m)
+        self(*inputs)
+
+    def is_invertible(self) -> bool:
+        return hasattr(self, 'inverse_forward') or hasattr(self, 'inverse_module')
+
 
 # Core Modules #####################################################################################
+
 
 @replaces('Module')
 class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
@@ -138,38 +231,17 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     def __init__(self):
         super().__init__()
         self._built = False
-        self._check = None
-
-    def store_args(self, attribute_name='args', args=None):
-        """Can be called from the __init__ method after super().__init__ to
-        store the arguments that the constructor/initializer was called with."""
-        args = args if args is not None else class_initializer_locals_c()
-        if attribute_name in [None, '']:
-            self.__dict__.update(args)
-        else:
-            setattr(self, attribute_name, NameDict(args))
-
-    def _mark_if_modified(self, out, inp_to_ver):
-        if isinstance(out, torch.Tensor):
-            return mark_modified(out, out._version != inp_to_ver.get(out, out._version))
-        elif isinstance(out, T.Sequence):
-            return type(out)(self._mark_if_modified(o, inp_to_ver) for o in out)
-        elif isinstance(out, T.Mapping):
-            return type(out)((k, self._mark_if_modified(o, inp_to_ver)) for k, o in out.items())
-
-    def _call_with_check(self, *args, **kwargs):
-        self._check_input(*args, **kwargs)  # single check after the parent is built
-        del self._check
-        inp_to_ver = {a: a._version for a in _extract_tensors(*args, **kwargs)}
-        return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
+        self._check = None  # when this attreibute
 
     def __call__(self, *args, **kwargs):
+        # Modified to support in-place modification checking and shape inference
         try:
             if self._built:
                 if hasattr(self, '_check'):  # checks are performed on the second input
                     if self._check is None:
                         self._check = hash((*args, *kwargs.values()))
                     elif self._check != hash((*args, *kwargs.values())):
+                        # check on the second unique input, after post_build of the previous module
                         return self._call_with_check(*args, **kwargs)
                 return super().__call__(*args, **kwargs)
             else:
@@ -186,16 +258,25 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
                 self._built = True
                 return super().__call__(*args, **kwargs)
         except Exception as e:
-            print(f"Error in {vmu.try_get_module_name_from_call_stack(self)}, {type(self)}")
+            print(
+                f"Error in {vmu.try_get_module_name_from_call_stack(self)}, {type(self).__name__}")
             raise e
 
-    def build(self, *args, **kwargs):
-        """This is run before the first evaluation"""
-        pass
+    # In-place modification of input checking
 
-    def post_build(self, *args, **kwargs):
-        """This is run after the first evaluation (if overridden)."""
-        pass
+    def _mark_if_modified(self, out, inp_to_ver):
+        if isinstance(out, torch.Tensor):
+            return mark_modified(out, out._version != inp_to_ver.get(out, out._version))
+        elif isinstance(out, T.Sequence):
+            return type(out)(self._mark_if_modified(o, inp_to_ver) for o in out)
+        elif isinstance(out, T.Mapping):
+            return type(out)((k, self._mark_if_modified(o, inp_to_ver)) for k, o in out.items())
+
+    def _call_with_check(self, *args, **kwargs):
+        self._check_input(*args, **kwargs)  # single check after the parent is built
+        del self._check
+        inp_to_ver = {a: a._version for a in _extract_tensors(*args, **kwargs)}
+        return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
 
     def _check_input(self, *args, **kwargs):
         """Checks whether the input is not in-place modified.
@@ -207,19 +288,38 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             module_name = vmu.try_get_module_name_from_call_stack(self)
             raise RuntimeError(f"The input of {module_name} is in-place modified.")
 
-    def add_module(self, *args, **kwargs):
-        if len(args) == 2 and len(kwargs) == 0:
-            name, module = args
-        elif len(args) == 0 and len(kwargs) == 1:
-            name, module = next(iter(kwargs.items()))
-        else:
-            raise RuntimeError(
-                "Either 2 positional arguments or a single keyword argument is required.")
-        super().add_module(name, module)
+    # Initialization with shape inference
 
-    def add_modules(self, *args, **kwargs):
-        for name, module in dict(*args, **kwargs).items():
-            super().add_module(name, module)
+    def store_args(self, attribute_name='args', args=None):
+        """Can be called from the __init__ method after super().__init__ to
+        store the arguments that the constructor/initializer was called with."""
+        args = args if args is not None else class_initializer_locals_c()
+        if attribute_name in [None, '']:
+            self.__dict__.update(args)
+        else:
+            setattr(self, attribute_name, NameDict(args))
+
+    def build(self, *args, **kwargs):
+        """This is run before the first evaluation"""
+        pass
+
+    def post_build(self, *args, **kwargs):
+        """This is run after the first evaluation (if overridden)."""
+        pass
+
+    # Modified standard nn.Module methods
+
+    def add(self, *args, **kwargs):
+        """A generalization of add_module that can accept multiple modules if
+        supplied as keyword arguments."""
+        if len(args) == 2 and len(kwargs) == 0:
+            super().add_module(*args)
+        elif len(args) == 0 and len(kwargs) > 0:
+            for name, module in dict(*args, **kwargs).items():
+                super().add_module(name, module)
+        else:
+            raise RuntimeError("Either only 2 positional arguments (name, module) or no positional"
+                               + " and at least 1 keyword argument need to be supplied.")
 
     @property
     def device(self):
@@ -243,7 +343,7 @@ class Identity(Module, nn.Identity):
     def forward(self, x):
         return x
 
-    def make_inverse(self):
+    def inverse_module(self):
         return self
 
 
@@ -265,10 +365,10 @@ class ModuleTable(Module):
         args, kwargs = _to_sequential_init_args(*args, **kwargs), {}
         if len(args) == 1 and isinstance(args[0], T.Mapping):
             for key, module in args[0].items():
-                self.add_module(key, module)
+                self.add(key, module)
         else:
             for idx, module in enumerate(args):
-                self.add_module(str(idx), module)
+                self.add(str(idx), module)
 
     def index(self, key):
         """Returns index of a child module from its name or the module itself."""
@@ -371,9 +471,8 @@ class Seq(ModuleTable, nn.Sequential):
                 i += 1
         return x
 
-    def make_inverse(self):
-        result = Seq({k: m.inverse for k, m in reversed(self._modules.items())})
-        return result
+    def inverse_module(self):
+        return Seq({k: m.inverse for k, m in reversed(self._modules.items())})
 
     def deep_split(self, submodule_path):
         next_name, path_remainder = submodule_path[0], submodule_path[1:]
@@ -427,7 +526,7 @@ class Fork(ModuleTable):
     def forward(self, input):
         return tuple(m(input) for m in self)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return Fork({k: m.inverse() for k, m in self.named_children()})
 
 
@@ -515,22 +614,29 @@ class Sum(Module):  # TODO: rename to "Add"
 class Concat(Module):
     def __init__(self, dim=1):
         super().__init__()
-        self.dim = dim
+        self.dim, self.sizes = dim, None
+
+    def build(self, *inputs):
+        inputs = vmu.sole_tuple_to_varargs(inputs)
+        self.sizes = [x.shape[self.dim] for x in inputs]
 
     def forward(self, *inputs):
         inputs = vmu.sole_tuple_to_varargs(inputs)
         return torch.cat(inputs, self.dim)
 
+    def inverse_module(self):
+        return Split(self.sizes, dim=self.dim)
+
 
 class Split(Module):
-    def __init__(self, split_size_or_sections: T.Union[int, T.Sequence], dim=1):
+    def __init__(self, split_size: T.Union[int, T.Sequence], dim=1):
         super().__init__()
-        self.split_size_or_sections, self.dim = split_size_or_sections, self.dim
+        self.split_size_or_sections, self.dim = split_size, dim
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         return x.split(self.split_size_or_sections, dim=self.dim)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return Concat(self.dim)
 
 
@@ -542,7 +648,7 @@ class Chunk(Module):
     def forward(self, x):
         return x.chunk(self.chunk_count, dim=self.dim)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return Concat(self.dim)
 
 
@@ -554,7 +660,7 @@ class Permute(Module):
     def forward(self, x):
         return x.permute(*self.dims)
 
-    def make_inverse(self):
+    def inverse_module(self):
         dims = self.dims
         inv_dims = [-1] * len(dims)
         for i, d in enumerate(dims):
@@ -570,7 +676,7 @@ class Transpose(Module):
     def forward(self, x):
         return x.transpose(*self.dims)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return self
 
 
@@ -589,16 +695,23 @@ class BatchReshape(Module):
         if len(shape_or_func) == 1 and callable(shape_or_func[0]):
             shape_or_func = shape_or_func[0]
         self.shape_or_func = shape_or_func
+        self.shape_inv = dict()
 
-    def build(self, x):
-        self.orig_shape = x.shape[1:]
-        self.shape = sof(*self.orig_shape) if callable(sof := self.shape_or_func) else sof
+    def _get_out_shape(self, x):
+        in_shape = x.shape[1:]
+        out_shape = sof(*in_shape) if callable(sof := self.shape_or_func) else sof
+        if (n_in := np.prod(in_shape)) != (n_out := np.prod(out_shape)):
+            raise RuntimeError(
+                f"The output shape ({out_shape}, {n_out} elements) requires a different number of"
+                + f" elements than the input shape ({in_shape}, {n_in} elements).")
+        self.shape_inv[out_shape] = in_shape
+        return out_shape
 
     def forward(self, x):
-        return x.reshape(x.shape[0], *self.shape)
+        return x.reshape(x.shape[0], *self._get_out_shape(x))
 
     def inverse_forward(self, y):
-        return y.reshape(y.shape[0], *self.orig_shape)
+        return y.reshape(y.shape[0], *self.shape_inv[y.shape[1:]])
 
 
 def _parse_auto_reshape_arg(dims_or_factors):
@@ -633,7 +746,7 @@ class AutoReshape(Module):
         self.orig_shape = x.shape
         return x.reshape(*self.shape)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return BatchReshape(*self.orig_shape)
 
 
@@ -641,7 +754,7 @@ class Contiguous(Module):
     def forward(self, x):
         return x.contiguous()
 
-    def make_inverse(self):
+    def inverse_module(self):
         return Identity()
 
 
@@ -649,7 +762,7 @@ class InvContiguous(Identity):
     def forward(self, x):
         return x
 
-    def make_inverse(self):
+    def inverse_module(self):
         return Contiguous()
 
 
@@ -837,6 +950,25 @@ class Conv(WrappedModule):
         self.orig = _dimensional_build("Conv", x, self.args)
 
 
+class DeconvConv(WrappedModule):
+    def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
+                 bias=None, in_channels=None, padding_mode='zeros'):
+        if bias is None:
+            raise ValueError("The bias argument should be provided for the Conv module.")
+        padding = (_get_conv_padding(padding, kernel_size, dilation)
+                   if isinstance(padding, str) else padding)
+        if padding_mode != 'zeros':
+            raise NotImplemented("padding_mode other than 'zeros' not supported.")
+        del padding_mode
+        super().__init__()
+        self.store_args()
+
+    def build(self, x):
+        if self.args.in_channels is None:
+            self.args.in_channels = x.shape[1]
+        self.orig = FastDeconv(**self.args)
+
+
 @replaces(*(f'MaxPool{i}d' for i in range(1, 4)))
 class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
@@ -955,7 +1087,7 @@ class Func(_Func):
         self._func_inv = func_inv
         self.module = (module if module else func if isinstance(func, nn.Module) else None)
 
-    def make_inverse(self):
+    def inverse_module(self):
         if self._inv is None:
             raise RuntimeError("Inverse not defined.")
         inv = Func(self._inv, self._func, module=self.module)
@@ -971,7 +1103,7 @@ class Inverse(Module):
     def forward(self, *args, **kwargs):
         return self.module.inverse_forward(*args, **kwargs)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return self.module
 
 

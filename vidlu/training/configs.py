@@ -6,7 +6,7 @@ from vidlu.data import Record
 from vidlu.modules import get_submodule
 from vidlu.transforms import jitter
 from vidlu.utils.collections import NameDict
-from vidlu.utils.func import params, Missing
+from vidlu.utils.func import params, Required
 from vidlu.training.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
@@ -53,15 +53,15 @@ class TrainerConfig(NameDict):
     def with_bound_extension_args(self):
         arg_name_to_ext = dict()
         ext = []
-        for e in self.extension_fs:
-            names = tuple(params(e).keys())
-            values = [self.pop(name, Missing) for name in names]
-            args = {k: v for k, v in zip(names, values) if v is not Missing}
-            ext.append(partial(e, **args) if len(args) > 0 else e)
+        for ext_f in self.extension_fs:
+            names = tuple(params(ext_f).keys())
+            values = [self.pop(name, Required) for name in names]
+            args = {k: v for k, v in zip(names, values) if v is not Required}
+            ext.append(partial(ext_f, **args) if len(args) > 0 else ext_f)
             for name in names:
                 if name in arg_name_to_ext:
                     raise RuntimeError(f'Multiple extension factories have a parameter "{name}".')
-                arg_name_to_ext[name] = e
+                arg_name_to_ext[name] = ext_f
         return TrainerConfig(**{**self, 'extension_fs': ext})
 
 
