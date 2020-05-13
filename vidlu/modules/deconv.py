@@ -1,4 +1,4 @@
-# Taken from https://github.com/gidonro/Network-Deconvolution
+# Taken from https://github.com/yechengxi/deconvolution
 
 import math
 
