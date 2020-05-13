@@ -21,7 +21,7 @@ def isqrt_newton_schulz_autograd(A, numIters):
         T = 0.5 * (3.0 * I - Z @ Y)
         Y = Y @ T
         Z = T @ Z
-    # A_sqrt = Y*torch.sqrt(normA)
+    # A_sqrt = Y * torch.sqrt(normA)
     A_isqrt = Z / torch.sqrt(normA)
     return A_isqrt
 
