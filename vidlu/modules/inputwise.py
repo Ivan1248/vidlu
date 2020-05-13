@@ -2,6 +2,7 @@ import typing as T
 from functools import partial
 import inspect
 from vidlu.torch_utils import round_float_to_int
+import warnings
 
 import torch
 import torch.nn.functional as F
@@ -147,6 +148,10 @@ class PerturbationModel(E.Module):
             assert name == name_
             data.set_(def_value)
 
+    def ensure_output_within_bounds(self, x, bounds, computed_output=None):
+        warnings.warn(f"ensure_output_within_bounds is called"
+                      + f" but not implemented for {type(self).__name__}")
+
 
 def default_parameters(pert_model, full_size: bool, recurse=True):
     return PerturbationModel.default_parameters(pert_model, full_size, recurse=recurse)
@@ -217,6 +222,9 @@ class Additive(SimplePerturbationModel):
 
     def forward(self, x):
         return x + self.addend
+
+    def ensure_output_within_bounds(self, x, bounds, computed_output=None):
+        self.addend.add_(x).clamp_(*bounds).sub_(x)
 
 
 class Multiplicative(SimplePerturbationModel):

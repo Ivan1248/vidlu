@@ -305,7 +305,8 @@ def zero_grad(delta):
 
 
 def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
-                      initial_pert=None, clip_bounds=(0, 1), similar=None, backward_callback=None):
+                      initial_pert=None, clip_bounds=(0, 1), stop_mask=None,
+                      backward_callback=None):
     """Iteratively optimizes the loss over the input.
 
     Args:
@@ -321,7 +322,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
         minimize (bool): Whether the attack should minimize the loss.
         initial_pert (optional): Initial perturbation.
         clip_bounds (optional): Minimum and maximum input value pair.
-        similar (optional): a function that tells whether the attack is
+        stop_mask (optional): a function that tells whether the attack is
             successful example-wise based on the predictions and the true
             labels. If it is provided, optimization is stopped when `similar`
             returns `False`. Otherwise,`step_count` of iterations is performed
@@ -333,7 +334,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
     Returns:
         Perturbed inputs.
     """
-    stop_on_success = similar is not None
+    stop_on_success = stop_mask is not None
     loss_fn, rloss_fn = loss if isinstance(loss, T.Sequence) else (loss, None)
     backward_callback = backward_callback or (lambda _: None)
 
@@ -359,12 +360,12 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
 
         with torch.no_grad():
             if stop_on_success:
-                is_adv = similar(state) if minimize else ~similar(state)
+                is_adv = stop_mask(state) if minimize else ~stop_mask(state)
                 if is_adv.any():  # keep the already successful adversarial examples unchanged
                     delta_all[index[is_adv]] = delta[is_adv]
                     is_nonadv = ~is_adv
-                    x, y, index, grad, delta = (a[is_nonadv] for a in
-                                                [x, y, index, delta.grad, delta])
+                    x, y, index, grad, delta = (a[is_nonadv]
+                                                for a in [x, y, index, delta.grad, delta])
                     del is_nonadv  # free some memory
                     delta.requires_grad_()
                     delta.grad = grad
@@ -386,13 +387,13 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
     return delta
 
 
-def _reduce_loss(loss):
-    return loss.view(loss.shape[0], -1).mean(1).sum()
-
-
 def _reduce_losses(unred_loss, unred_reg_loss=None, nonadv_mask=None):
     """Used by `perturb_iterative_with_perturbation_model` to compute (masked)
-    losses."""
+    losses for early stopping of optimization."""
+
+    def _reduce_loss(loss):
+        return loss.view(loss.shape[0], -1).mean(1).sum()
+
     loss_nomask = _reduce_loss(unred_loss)
     loss = _reduce_loss(unred_loss * nonadv_mask) if nonadv_mask is not None else loss_nomask
     reg_loss = (torch.tensor(0., device=loss.device) if unred_reg_loss is None else
@@ -401,45 +402,10 @@ def _reduce_losses(unred_loss, unred_reg_loss=None, nonadv_mask=None):
     return loss, reg_loss, loss_nomask
 
 
-def _set_tensor_storage(tensor, storage, grad=None):
-    tensor.set_(storage)
-    tensor.grad = grad
-    return tensor
-
-
-def _extract_nonadv(pmodel, adv_mask, masking_mode, pm_params_all, index, y, x, prune):
+def _get_mask_and_update_index(pmodel: vmi.PerturbationModel, adv_mask: torch.Tensor,
+                               masking_mode: T.Union[str, T.Sequence, T.Set], index: torch.Tensor):
     """Used by `perturb_iterative_with_perturbation_model` to optionally prune
-    batches and mask gradients."""
-    mask_loss, mask_grad = 'loss' in masking_mode and not prune, 'grad' in masking_mode
-
-    if adv_mask.any():  # keep the already successful adversarial examples unchanged
-        mask_loss &= len(adv_mask.shape) > 1
-        is_adv = adv_mask if len(adv_mask.shape) == 1 else adv_mask.view(len(x), -1).all(dim=1)
-
-        if prune and is_adv.any():
-            # extract non-adversarial inputs and perturbations
-            isnot_adv, index_adv = ~is_adv, index[is_adv]
-            for p_all, p in zip(pm_params_all, pmodel.parameters()):
-                p_all[index_adv] = p[is_adv]
-                _set_tensor_storage(p, p[isnot_adv], grad=p.grad[isnot_adv])
-
-            for a in (x, y, index):
-                a.set_(a[isnot_adv])
-
-            if (mask_loss or mask_grad) and len(adv_mask.shape) > 1:
-                adv_mask.set_(adv_mask[isnot_adv])
-
-        if mask_grad and len(adv_mask.shape) > 1:
-            for p in pmodel.parameters():
-                p.grad[adv_mask] = 0
-    else:  # nothing adversarial, no need for masking
-        mask_loss = False
-    return adv_mask.logical_not_() if mask_loss else None
-
-
-def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
-    """Used by `perturb_iterative_with_perturbation_model` to optionally prune
-    batches and mask gradients."""
+    batches and mask gradients for early stopping of optimization."""
     mask_loss, mask_grad = 'loss' in masking_mode, 'grad' in masking_mode
 
     if adv_mask.any():  # keep the already successful adversarial examples unchanged
@@ -459,10 +425,18 @@ def _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index):
     return adv_mask.logical_not_() if mask_loss else None
 
 
+MaskingMode = T.Literal['loss', 'grad']
+
+
 def perturb_iterative_with_perturbation_model(
-        model, x, y, step_count, optim_f, loss_fn, minimize=False, pert_model=None,
-        projection=None, clip_bounds=(0, 1), similar=None, masking_mode='loss',
-        backward_callback=None, compute_model_grads=False):
+        model, x, y, step_count, optim_f, loss_fn, minimize=False,
+        pert_model: vmi.PerturbationModel = None,
+        projection: T.Callable[[vmi.PerturbationModel, torch.Tensor], None] = lambda _: None,
+        clip_bounds=(0, 1),
+        stop_mask: T.Callable[[AttackState], bool] = None,
+        masking_mode: T.Union[MaskingMode, T.Container[MaskingMode]] = 'loss',
+        backward_callback: T.Callable[[AttackState], None] = None,
+        compute_model_grads=False):
     """Iteratively optimizes the loss over the input.
     Compared to `perturb_iterative`, uses an optimizer instead of an update
     function and stopping on success (when `similar` is provided) does not
@@ -487,7 +461,7 @@ def perturb_iterative_with_perturbation_model(
         compute_model_grads: It `True`, gradients with respect to model
             parameters are computed, otherwise not. Default: `False`.
         clip_bounds (optional): Minimum and maximum input value pair.
-        similar (optional): A function that tells whether the attack is
+        stop_mask (optional): A function that tells whether the attack is
             successful example-wise based on the predictions and the true
             labels. If it is provided, optimization is stopped when `similar`
             returns `False`. Otherwise,`step_count` of iterations is performed
@@ -505,7 +479,7 @@ def perturb_iterative_with_perturbation_model(
     Returns:
         The perturbation model.
     """
-    stop_on_success = similar is not None
+    stop_on_success = stop_mask is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
 
@@ -515,7 +489,6 @@ def perturb_iterative_with_perturbation_model(
 
     if step_count > 0:
         optim = optim_f(pmodel.parameters())  # optimizers with running stats are not supported
-    projection = projection or (lambda _: None)
 
     if stop_on_success:
         with torch.no_grad():
@@ -523,6 +496,7 @@ def perturb_iterative_with_perturbation_model(
     else:
         masking_mode = ''
     nonadv_mask = None
+    x_all = x
 
     for i in range(step_count):
         x_adv, y_ = pmodel(x, y)
@@ -546,21 +520,19 @@ def perturb_iterative_with_perturbation_model(
             optim.zero_grad()
             ((loss if minimize else -loss) + reg_loss).backward()  # minimized
 
-        state = AttackState(
-            x=x, y=y, output=output, x_adv=x_adv, y_adv=y_, loss=unred_loss,
-            loss_sum=loss_no_mask.item(), reg_loss_sum=reg_loss.item(), grad=None, step=i,
-            pert_model=pmodel)
+        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, y_adv=y_, loss=unred_loss,
+                            loss_sum=loss_no_mask.item(), reg_loss_sum=reg_loss.item(), grad=None,
+                            step=i, pert_model=pmodel)
         backward_callback(state)
         del output, loss, reg_loss, loss_no_mask  # free some memory
 
         with torch.no_grad():
             if stop_on_success:
-                nonadv_mask = _get_mask_and_update_index(
-                    pmodel, similar(state) if minimize else ~similar(state), masking_mode, index)
+                adv_mask = stop_mask(state) if minimize else ~stop_mask(state)
+                nonadv_mask = _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index)
             del state  # free some memory
-
             optim.step()
-            projection(pmodel)
+            projection(pmodel, x_all)
 
         if stop_on_success:
             x, y, x_adv = storage
@@ -569,6 +541,39 @@ def perturb_iterative_with_perturbation_model(
 
     pmodel.eval()
     return pmodel
+
+
+# Not used because of this problem:
+# https://discuss.pytorch.org/t/tensor-set-seems-not-to-correctly-update-metadata-if-the-shape-changes/67361
+def _extract_nonadv(pmodel, adv_mask, masking_mode, pm_params_all, index, y, x, prune):
+    """Used by `perturb_iterative_with_perturbation_model` to optionally prune
+    batches and mask gradients."""
+    mask_loss, mask_grad = 'loss' in masking_mode and not prune, 'grad' in masking_mode
+
+    if adv_mask.any():  # keep the already successful adversarial examples unchanged
+        mask_loss &= len(adv_mask.shape) > 1
+        is_adv = adv_mask if len(adv_mask.shape) == 1 else adv_mask.view(len(x), -1).all(dim=1)
+
+        if prune and is_adv.any():
+            # extract non-adversarial inputs and perturbations
+            isnot_adv, index_adv = ~is_adv, index[is_adv]
+            for p_all, p in zip(pm_params_all, pmodel.parameters()):
+                p_all[index_adv] = p[is_adv]
+                p.set_(p[isnot_adv])
+                p.grad = p.grad[isnot_adv]
+
+            for a in (x, y, index):
+                a.set_(a[isnot_adv])
+
+            if (mask_loss or mask_grad) and len(adv_mask.shape) > 1:
+                adv_mask.set_(adv_mask[isnot_adv])
+
+        if mask_grad and len(adv_mask.shape) > 1:
+            for p in pmodel.parameters():
+                p.grad[adv_mask] = 0
+    else:  # nothing adversarial, no need for masking
+        mask_loss = False
+    return adv_mask.logical_not_() if mask_loss else None
 
 
 # Attacks ##########################################################################################
@@ -635,7 +640,7 @@ class PGDAttackOld(Attack, EarlyStoppingMixin):
         delta = perturb_iterative(
             model, x, y, step_count=self.step_count, update=update, loss=self.loss,
             minimize=self.minimize, initial_pert=initial_pert, clip_bounds=self.clip_bounds,
-            similar=self.similar if self.stop_on_success else None,
+            stop_mask=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback)
 
         return self._clip(x + delta)
@@ -646,7 +651,7 @@ class PerturbationModelAttack(Attack, EarlyStoppingMixin):
     pert_model_f: vmi.PerturbationModel = partial(vmi.Additive, ())
     optim_f: T.Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
     initializer: T.Callable[[vmi.PerturbationModel], None] = None
-    projection: T.Union[float, T.Callable[[vmi.PerturbationModel], None]] = 0.1
+    projection: T.Union[float, T.Callable[[vmi.PerturbationModel, torch.Tensor], None]] = 0.1
     step_size: T.Union[float, T.Mapping[str, float]] = 0.05
     step_count: int = 40
 
@@ -655,15 +660,16 @@ class PerturbationModelAttack(Attack, EarlyStoppingMixin):
         if not callable(self.projection):
             eps = self.projection
 
-            def projection(pmodel):
+            def projection(pmodel: vmi.PerturbationModel, x):
                 params = pmodel.named_parameters()
                 default_vals = vmi.named_default_parameters(pmodel, full_size=False)
                 for (name, p), (name_, d) in zip(params, default_vals):
                     assert name == name_, f"{name}, {name_}"  # Do not remove!
                     p.clamp_(min=d - eps, max=d + eps)
+                if self.clip_bounds is not None:
+                    pmodel.ensure_output_within_bounds(x, self.clip_bounds)
 
             self.projection = projection
-        raise RuntimeError("Fix clipping")
 
     def _get_perturbation(self, model, x, y=None, pert_model=None, initialize_pert_model=True,
                           backward_callback=None):
@@ -684,7 +690,8 @@ class PerturbationModelAttack(Attack, EarlyStoppingMixin):
         return perturb_iterative_with_perturbation_model(
             model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
             minimize=self.minimize, pert_model=pert_model, projection=self.projection,
-            clip_bounds=self.clip_bounds, similar=self.similar if self.stop_on_success else None,
+            clip_bounds=self.clip_bounds,
+            stop_mask=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback, compute_model_grads=self.compute_model_grads)
 
 
@@ -712,8 +719,9 @@ class PGDAttack(Attack, EarlyStoppingMixin):
     optim_f = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
 
     @torch.no_grad()
-    def _project_params(self, pmodel):
+    def _project_params(self, pmodel: vmi.PerturbationModel, x):
         pmodel.addend.set_(ops.batch.project_to_p_ball(pmodel.addend, r=self.eps, p=self.p))
+        pmodel.ensure_output_within_bounds(x, self.clip_bounds)
 
     @torch.no_grad()
     def _initializer(self, pmodel):
@@ -858,189 +866,188 @@ class VATAttack(Attack):
 #             best_delta.renorm_(p=2, dim=0, maxnorm=self.max_norm)
 #
 #         return x + best_delta
-
-
-# CW ###############################################################################################
-# TODO
-
-'''
-CARLINI_L2DIST_UPPER = 1e10
-CARLINI_COEFF_UPPER = 1e10
-INVALID_LABEL = -1
-REPEAT_STEP = 10
-ONE_MINUS_EPS = 0.999999
-UPPER_CHECK = 1e9
-PREV_LOSS_INIT = 1e6
-TARGET_MULT = 10000.0
-NUM_CHECKS = 10
-
-
-def get_carlini_loss(targeted, confidence_threshold):
-    def carlini_loss(logits, y, l2distsq, c):
-        y_onehot = ops.one_hot(y, logits.shape[-1])
-        real = (y_onehot * logits).sum(dim=-1)
-
-        other = ((1.0 - y_onehot) * logits - (y_onehot * TARGET_MULT)).max(1)[0]
-        # - (y_onehot * TARGET_MULT) is for the true label not to be selected
-
-        if targeted:
-            loss1 = (other - real + confidence_threshold).relu_()
-        else:
-            loss1 = (real - other + confidence_threshold).relu_()
-        loss2 = l2distsq.sum()
-        loss1 = torch.sum(c * loss1)
-        loss = loss1 + loss2
-        return loss
-
-    return carlini_loss
-
-
-class CarliniWagnerL2Attack(Attack):
-    def __init__(self, loss=None, clip_bounds=None, similar=None,
-                 get_prediction=_to_hard_target, distance_fn=ops.batch.l2_distace_sqr,
-                 num_classes=None, confidence=0,
-                 learning_rate=0.01, binary_search_steps=9, max_iter=10000, abort_early=True,
-                 initial_const=1e-3):
-        """The Carlini and Wagner L2 Attack, https://arxiv.org/abs/1608.04644
-
-        Args:
-            num_classes: number of clasess.
-            confidence: confidence of the adversarial examples.
-            learning_rate: the learning rate for the attack algorithm
-            binary_search_steps: number of binary search times to find the optimum
-            max_iter: the maximum number of iterations
-            abort_early: if set to true, abort early if getting stuck in local min
-            initial_const: initial value of the constant c
-        """
-        if loss is not None:
-            raise NotImplementedError("The CW attack currently does not support a different loss"
-                                      " function other than the default. Setting loss manually"
-                                      " is not effective.")
-        loss = loss or get_carlini_loss()
-        super().__init__(loss, clip_bounds, similar, get_prediction)
-
-        self.distance_fn = distance_fn
-        self.learning_rate = learning_rate
-        self.max_iter = max_iter
-        self.binary_search_steps = binary_search_steps
-        self.abort_early = abort_early
-        self.confidence = confidence
-        self.initial_const = initial_const
-        self.num_classes = num_classes
-        # The last iteration (if we run many steps) repeat the search once.
-        self.repeat = binary_search_steps >= REPEAT_STEP
-
-    def _loss(self, output, y_onehot, l2distsq, loss_coef):
-        return get_carlini_loss(self.targeted, self.confidence)(output, y_onehot, l2distsq,
-                                                                loss_coef)
-
-    def _is_successful(self, output, label, is_logits):
-        # determine success, see if confidence-adjusted logits give the right
-        # label
-
-        if is_logits:
-            output = output.detach().clone()
-            if self.targeted:
-                output[torch.arange(len(label)), label] -= self.confidence
-            else:
-                output[torch.arange(len(label)), label] += self.confidence
-            pred = torch.argmax(output, dim=1)
-        else:
-            pred = output
-            if pred == INVALID_LABEL:
-                return pred.new_zeros(pred.shape).byte()
-
-        return self.similar(pred, label)
-
-    def _forward_and_update_delta(self, model, optimizer, x_atanh, delta, y_onehot, loss_coeffs):
-        optimizer.zero_grad()
-
-        adv = ops.scaled_tanh(delta + x_atanh, *self.clip_bounds)
-        l2distsq = self.distance_fn(adv, ops.scaled_tanh(x_atanh, *self.clip_bounds))
-        output = model(adv)
-
-        loss = self._loss(output, y_onehot, l2distsq, loss_coeffs)
-        loss.backward()
-        optimizer.step()
-
-        return loss.item(), l2distsq.detach(), output.detach(), adv.detach()
-
-    def _arctanh_clip(self, x):
-        result = ops.clamp((x - self.clip_min) / (self.clip_max - self.clip_min), min=self.clip_min,
-                           max=self.clip_max) * 2 - 1
-        return ops.atanh(result * ONE_MINUS_EPS)
-
-    def _update_if_smaller_dist_succeed(self, adv_img, labs, output, l2distsq, batch_size,
-                                        cur_l2distsqs, cur_labels, final_l2distsqs, final_labels,
-                                        final_advs):
-        target_label = labs
-        output_logits = output
-        _, output_label = torch.max(output_logits, 1)
-
-        mask = (l2distsq < cur_l2distsqs) & self._is_successful(output_logits, target_label, True)
-
-        cur_l2distsqs[mask] = l2distsq[mask]  # redundant
-        cur_labels[mask] = output_label[mask]
-
-        mask = (l2distsq < final_l2distsqs) & self._is_successful(output_logits, target_label, True)
-        final_l2distsqs[mask] = l2distsq[mask]
-        final_labels[mask] = output_label[mask]
-        final_advs[mask] = adv_img[mask]
-
-    def _update_loss_coeffs(self, labs, cur_labels, batch_size, loss_coeffs, coeff_upper_bound,
-                            coeff_lower_bound):
-        # TODO: remove for loop, not significant, since only called during each
-        # binary search step
-        for ii in range(batch_size):
-            cur_labels[ii] = int(cur_labels[ii])
-            if self._is_successful(cur_labels[ii], labs[ii], False):
-                coeff_upper_bound[ii] = min(coeff_upper_bound[ii], loss_coeffs[ii])
-
-                if coeff_upper_bound[ii] < UPPER_CHECK:
-                    loss_coeffs[ii] = (coeff_lower_bound[ii] + coeff_upper_bound[ii]) / 2
-            else:
-                coeff_lower_bound[ii] = max(coeff_lower_bound[ii], loss_coeffs[ii])
-                if coeff_upper_bound[ii] < UPPER_CHECK:
-                    loss_coeffs[ii] = (coeff_lower_bound[ii] + coeff_upper_bound[ii]) / 2
-                else:
-                    loss_coeffs[ii] *= 10
-
-    def _perturb(self, model, x, y):
-        batch_size = len(x)
-        coeff_lower_bound = x.new_zeros(batch_size)
-        coeff_upper_bound = torch.full_like(coeff_lower_bound, CARLINI_COEFF_UPPER)
-        loss_coeffs = torch.full_like(y, self.initial_const, dtype=torch.float)
-        final_advs = x
-        x_atanh = self._arctanh_clip(x)
-        y_onehot = ops.one_hot(y, self.num_classes).float()
-
-        final_l2distsqs = torch.full((batch_size,), CARLINI_L2DIST_UPPER, device=x.device)
-        final_labels = torch.full((batch_size,), INVALID_LABEL, dtype=torch.int, device=x.device)
-
-        # Start binary search
-        for outer_step in range(self.binary_search_steps):
-            delta = nn.Parameter(torch.zeros_like(x))
-            optimizer = optim.Adam([delta], lr=self.learning_rate)
-            cur_l2distsqs = torch.full_like(final_l2distsqs, CARLINI_L2DIST_UPPER)
-            cur_labels = torch.full_like(final_labels, INVALID_LABEL)
-            prevloss = PREV_LOSS_INIT
-
-            if (self.repeat and outer_step == (self.binary_search_steps - 1)):
-                loss_coeffs = coeff_upper_bound
-            for ii in range(self.max_iter):
-                loss, l2distsq, output, adv_img = self._forward_and_update_delta(
-                    model, optimizer, x_atanh, delta, y_onehot, loss_coeffs)
-                if self.abort_early and ii % (self.max_iter // NUM_CHECKS or 1) == 0:
-                    if loss > prevloss * ONE_MINUS_EPS:
-                        break
-                    prevloss = loss
-
-                self._update_if_smaller_dist_succeed(adv_img, y, output, l2distsq, batch_size,
-                                                     cur_l2distsqs, cur_labels, final_l2distsqs,
-                                                     final_labels, final_advs)
-
-            self._update_loss_coeffs(y, cur_labels, batch_size, loss_coeffs, coeff_upper_bound,
-                                     coeff_lower_bound)
-
-        return final_advs
-'''
+#
+#
+# # CW ###############################################################################################
+# # TODO
+#
+#
+# CARLINI_L2DIST_UPPER = 1e10
+# CARLINI_COEFF_UPPER = 1e10
+# INVALID_LABEL = -1
+# REPEAT_STEP = 10
+# ONE_MINUS_EPS = 0.999999
+# UPPER_CHECK = 1e9
+# PREV_LOSS_INIT = 1e6
+# TARGET_MULT = 10000.0
+# NUM_CHECKS = 10
+#
+#
+# def get_carlini_loss(targeted, confidence_threshold):
+#     def carlini_loss(logits, y, l2distsq, c):
+#         y_onehot = ops.one_hot(y, logits.shape[-1])
+#         real = (y_onehot * logits).sum(dim=-1)
+#
+#         other = ((1.0 - y_onehot) * logits - (y_onehot * TARGET_MULT)).max(1)[0]
+#         # - (y_onehot * TARGET_MULT) is for the true label not to be selected
+#
+#         if targeted:
+#             loss1 = (other - real + confidence_threshold).relu_()
+#         else:
+#             loss1 = (real - other + confidence_threshold).relu_()
+#         loss2 = l2distsq.sum()
+#         loss1 = torch.sum(c * loss1)
+#         loss = loss1 + loss2
+#         return loss
+#
+#     return carlini_loss
+#
+#
+# class CarliniWagnerL2Attack(Attack):
+#     def __init__(self, loss=None, clip_bounds=None, similar=None,
+#                  get_prediction=_to_hard_target, distance_fn=ops.batch.l2_distace_sqr,
+#                  num_classes=None, confidence=0,
+#                  learning_rate=0.01, binary_search_steps=9, max_iter=10000, abort_early=True,
+#                  initial_const=1e-3):
+#         """The Carlini and Wagner L2 Attack, https://arxiv.org/abs/1608.04644
+#
+#         Args:
+#             num_classes: number of clasess.
+#             confidence: confidence of the adversarial examples.
+#             learning_rate: the learning rate for the attack algorithm
+#             binary_search_steps: number of binary search times to find the optimum
+#             max_iter: the maximum number of iterations
+#             abort_early: if set to true, abort early if getting stuck in local min
+#             initial_const: initial value of the constant c
+#         """
+#         if loss is not None:
+#             raise NotImplementedError("The CW attack currently does not support a different loss"
+#                                       " function other than the default. Setting loss manually"
+#                                       " is not effective.")
+#         loss = loss or get_carlini_loss()
+#         super().__init__(loss, clip_bounds, similar, get_prediction)
+#
+#         self.distance_fn = distance_fn
+#         self.learning_rate = learning_rate
+#         self.max_iter = max_iter
+#         self.binary_search_steps = binary_search_steps
+#         self.abort_early = abort_early
+#         self.confidence = confidence
+#         self.initial_const = initial_const
+#         self.num_classes = num_classes
+#         # The last iteration (if we run many steps) repeat the search once.
+#         self.repeat = binary_search_steps >= REPEAT_STEP
+#
+#     def _loss(self, output, y_onehot, l2distsq, loss_coef):
+#         return get_carlini_loss(self.targeted, self.confidence)(output, y_onehot, l2distsq,
+#                                                                 loss_coef)
+#
+#     def _is_successful(self, output, label, is_logits):
+#         # determine success, see if confidence-adjusted logits give the right
+#         # label
+#
+#         if is_logits:
+#             output = output.detach().clone()
+#             if self.targeted:
+#                 output[torch.arange(len(label)), label] -= self.confidence
+#             else:
+#                 output[torch.arange(len(label)), label] += self.confidence
+#             pred = torch.argmax(output, dim=1)
+#         else:
+#             pred = output
+#             if pred == INVALID_LABEL:
+#                 return pred.new_zeros(pred.shape).byte()
+#
+#         return self.similar(pred, label)
+#
+#     def _forward_and_update_delta(self, model, optimizer, x_atanh, delta, y_onehot, loss_coeffs):
+#         optimizer.zero_grad()
+#
+#         adv = ops.scaled_tanh(delta + x_atanh, *self.clip_bounds)
+#         l2distsq = self.distance_fn(adv, ops.scaled_tanh(x_atanh, *self.clip_bounds))
+#         output = model(adv)
+#
+#         loss = self._loss(output, y_onehot, l2distsq, loss_coeffs)
+#         loss.backward()
+#         optimizer.step()
+#
+#         return loss.item(), l2distsq.detach(), output.detach(), adv.detach()
+#
+#     def _arctanh_clip(self, x):
+#         result = ops.clamp((x - self.clip_min) / (self.clip_max - self.clip_min), min=self.clip_min,
+#                            max=self.clip_max) * 2 - 1
+#         return ops.atanh(result * ONE_MINUS_EPS)
+#
+#     def _update_if_smaller_dist_succeed(self, adv_img, labs, output, l2distsq, batch_size,
+#                                         cur_l2distsqs, cur_labels, final_l2distsqs, final_labels,
+#                                         final_advs):
+#         target_label = labs
+#         output_logits = output
+#         _, output_label = torch.max(output_logits, 1)
+#
+#         mask = (l2distsq < cur_l2distsqs) & self._is_successful(output_logits, target_label, True)
+#
+#         cur_l2distsqs[mask] = l2distsq[mask]  # redundant
+#         cur_labels[mask] = output_label[mask]
+#
+#         mask = (l2distsq < final_l2distsqs) & self._is_successful(output_logits, target_label, True)
+#         final_l2distsqs[mask] = l2distsq[mask]
+#         final_labels[mask] = output_label[mask]
+#         final_advs[mask] = adv_img[mask]
+#
+#     def _update_loss_coeffs(self, labs, cur_labels, batch_size, loss_coeffs, coeff_upper_bound,
+#                             coeff_lower_bound):
+#         # TODO: remove for loop, not significant, since only called during each
+#         # binary search step
+#         for ii in range(batch_size):
+#             cur_labels[ii] = int(cur_labels[ii])
+#             if self._is_successful(cur_labels[ii], labs[ii], False):
+#                 coeff_upper_bound[ii] = min(coeff_upper_bound[ii], loss_coeffs[ii])
+#
+#                 if coeff_upper_bound[ii] < UPPER_CHECK:
+#                     loss_coeffs[ii] = (coeff_lower_bound[ii] + coeff_upper_bound[ii]) / 2
+#             else:
+#                 coeff_lower_bound[ii] = max(coeff_lower_bound[ii], loss_coeffs[ii])
+#                 if coeff_upper_bound[ii] < UPPER_CHECK:
+#                     loss_coeffs[ii] = (coeff_lower_bound[ii] + coeff_upper_bound[ii]) / 2
+#                 else:
+#                     loss_coeffs[ii] *= 10
+#
+#     def _perturb(self, model, x, y):
+#         batch_size = len(x)
+#         coeff_lower_bound = x.new_zeros(batch_size)
+#         coeff_upper_bound = torch.full_like(coeff_lower_bound, CARLINI_COEFF_UPPER)
+#         loss_coeffs = torch.full_like(y, self.initial_const, dtype=torch.float)
+#         final_advs = x
+#         x_atanh = self._arctanh_clip(x)
+#         y_onehot = ops.one_hot(y, self.num_classes).float()
+#
+#         final_l2distsqs = torch.full((batch_size,), CARLINI_L2DIST_UPPER, device=x.device)
+#         final_labels = torch.full((batch_size,), INVALID_LABEL, dtype=torch.int, device=x.device)
+#
+#         # Start binary search
+#         for outer_step in range(self.binary_search_steps):
+#             delta = nn.Parameter(torch.zeros_like(x))
+#             optimizer = optim.Adam([delta], lr=self.learning_rate)
+#             cur_l2distsqs = torch.full_like(final_l2distsqs, CARLINI_L2DIST_UPPER)
+#             cur_labels = torch.full_like(final_labels, INVALID_LABEL)
+#             prevloss = PREV_LOSS_INIT
+#
+#             if (self.repeat and outer_step == (self.binary_search_steps - 1)):
+#                 loss_coeffs = coeff_upper_bound
+#             for ii in range(self.max_iter):
+#                 loss, l2distsq, output, adv_img = self._forward_and_update_delta(
+#                     model, optimizer, x_atanh, delta, y_onehot, loss_coeffs)
+#                 if self.abort_early and ii % (self.max_iter // NUM_CHECKS or 1) == 0:
+#                     if loss > prevloss * ONE_MINUS_EPS:
+#                         break
+#                     prevloss = loss
+#
+#                 self._update_if_smaller_dist_succeed(adv_img, y, output, l2distsq, batch_size,
+#                                                      cur_l2distsqs, cur_labels, final_l2distsqs,
+#                                                      final_labels, final_advs)
+#
+#             self._update_loss_coeffs(y, cur_labels, batch_size, loss_coeffs, coeff_upper_bound,
+#                                      coeff_lower_bound)
+#
+#         return final_advs
