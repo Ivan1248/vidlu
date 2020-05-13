@@ -13,6 +13,7 @@ from vidlu.training import Trainer
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
 import vidlu.utils.func as vuf
+from vidlu.utils.func import Reserved
 from vidlu.data_utils import dataset_ops
 
 # eval
@@ -220,7 +221,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     argtree_arg = (
         unsafe_eval(f"t({argtree_arg[0]})",
                     dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
-                         partial=partial))
+                         partial=partial, Reserved=Reserved))
         if len(argtree_arg) == 1 else vuf.ArgTree())
     argtree.update(argtree_arg)
 
@@ -339,8 +340,7 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
 
     config = unsafe_eval(f"tc.TrainerConfig({trainer_str})",
                          dict(t=t, math=math, optim=optim, lr_scheduler=lr_scheduler, losses=losses,
-                              ta=ta,
-                              tc=tc, ts=ts, attacks=attacks, jitter=jitter))
+                              ta=ta, tc=tc, ts=ts, attacks=attacks, jitter=jitter, partial=partial))
 
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     trainer_f = partial(Trainer, **tc.to_trainer_args(default_config, config))

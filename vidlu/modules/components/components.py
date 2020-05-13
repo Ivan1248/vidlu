@@ -79,22 +79,25 @@ class StandardRootBlock(E.Seq):
         act_f: Activation module factory.
     """
 
-    def __init__(self, out_channels: int, small_input, norm_f=D.norm_f, act_f=E.ReLU):
+    def __init__(self, out_channels: int, small_input, conv_f=E.Conv, norm_f=D.norm_f,
+                 act_f=E.ReLU):
         if small_input:  # CIFAR
-            super().__init__(conv=E.Conv(out_channels, 3, padding='half', bias=False))
+            super().__init__(conv=conv_f(out_channels, 3, padding='half', bias=False))
         else:
-            super().__init__(conv=E.Conv(out_channels, 7, stride=2, padding='half', bias=False),
-                             norm=norm_f(),
-                             act=act_f(),
-                             pool=E.MaxPool(3, stride=2, padding='half'))
+            super().__init__(conv=conv_f(out_channels, 7, stride=2, padding='half', bias=False))
+            if norm_f is not None:
+                self.add(norm=norm_f())
+            self.add(act=act_f(),
+                     pool=E.MaxPool(3, stride=2, padding='half'))
 
 
-# blocks ###########################################################################################
+# Blocks ###########################################################################################
+
 
 def _add_norm_act(seq, suffix, norm_f, act_f):
     if norm_f:
-        seq.add_module(f'norm{suffix}', norm_f())
-    seq.add_module(f'act{suffix}', act_f())
+        seq.add(f'norm{suffix}', norm_f())
+    seq.add(f'act{suffix}', act_f())
 
 
 def _resolve_block_args(base_width, width_factors, stride, dilation):
@@ -144,9 +147,9 @@ class PreactBlock(E.Seq):
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
-                self.add_module(f'noise{i}', noise_f())
-            self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
-                                                      stride=s, dilation=d))
+                self.add(f'noise{i}', noise_f())
+            self.add(f'conv{i}',
+                     Reserved.call(conv_f, kernel_size=k, out_channels=w, stride=s, dilation=d))
 
 
 class PostactBlock(E.Seq):
@@ -179,41 +182,67 @@ class PostactBlock(E.Seq):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(base_width, width_factors, stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
-            self.add_module(f'conv{i}', Reserved.call(conv_f, kernel_size=k, out_channels=w,
-                                                      stride=s, dilation=d))
+            self.add(f'conv{i}',
+                     Reserved.call(conv_f, kernel_size=k, out_channels=w, stride=s, dilation=d))
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
-                self.add_module(f'noise{i}', noise_f())
+                self.add(f'noise{i}', noise_f())
 
 
-# Injective ########################################################################################
+def _check_block_args(block_f):
+    args = params(block_f)
+    if 'kernel_sizes' in args and args['kernel_sizes'] is Empty:
+        raise ValueError("Argument kernel_sizes missing in block_f.")
+
+
+# Bijective or injective ###########################################################################
 
 
 class AffineCoupling(E.Module):
-    def __init__(self, scale_f, translate_f):
+    # http://arxiv.org/abs/1605.08803 (Real NVP)
+    def __init__(self, scale_f, translation_f):
         super().__init__()
-        self.scale, self.translate = scale_f(), translate_f()
+        self.scale, self.translation = scale_f(), translation_f()
 
     def forward(self, x1, x2):
-        return x1, x1 * self.scale(x1).exp() + self.translate(x1)
+        return x1, x2 * self.scale(x1).exp() + self.translation(x1)
 
     def inverse_forward(self, y1, y2):
-        return y1, (y2 - self.translate(y1)) * (-self.scale(y1)).exp()
+        return y1, (y2 - self.translation(y1)) * (-self.scale(y1)).exp()
+
+
+class AdditiveCoupling(E.Module):
+    # http://arxiv.org/abs/1410.8516 (NICE)
+    def __init__(self, translation_f):
+        super().__init__()
+        self.translation = translation_f()
+
+    def forward(self, x1, x2):
+        return x1, x2 + self.translation(x1)
+
+    def inverse_forward(self, y1, y2):
+        return y1, y2 - self.translation(y1)
 
 
 class ProportionSplit(E.Module):
+    reconstruction_tols = dict(rtol=0, atol=0)
+
     def __init__(self, proportion: float, dim=1, rounding=round):
         super().__init__()
         self.proportion, self.dim, self.round = proportion, dim, rounding
 
     def forward(self, x):
-        return x.split(self.round(self.proportion * x.shape[1]), dim=self.dim)
+        m = x.shape[self.dim]
+        n = self.round(self.proportion * m)
+        return x.split([n, m - n], dim=self.dim)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return E.Concat(dim=self.dim)
 
 
 class _PadChannelsBase(E.Module):
+    reconstruction_tols = dict(rtol=0, atol=0)
+
     def __init__(self, padding):
         if not isinstance(padding, int) and len(padding) != 2:
             raise ValueError("`padding` should be a single `int` or a sequence of length 2.")
@@ -221,23 +250,23 @@ class _PadChannelsBase(E.Module):
         self.padding = [0, padding] if isinstance(padding, int) else list(padding)
 
 
+def pad_channels(x, padding):
+    return F.pad(x, [0, 0, 0, 0] + padding)
+
+
 class PadChannels(_PadChannelsBase):
     def forward(self, x):  # injective
-        return F.pad(x, [0, 0, 0, 0] + self.padding)
+        return pad_channels(x, self.padding)
 
-    def make_inverse(self):
+    def inverse_module(self):
         return UnpadChannels(self.padding)
-
-
-def pad_channels(self, x, padding):
-    return F.pad(x, [0, 0, 0, 0] + padding)
 
 
 class UnpadChannels(_PadChannelsBase):
     def forward(self, x):
         return x[:, self.padding[0]:x.shape[1] - self.padding[1], :, :]
 
-    def make_inverse(self):
+    def inverse_module(self):
         return PadChannels(self.padding)
 
 
@@ -246,6 +275,7 @@ class Baguette(E.Seq):
 
     From
     https://github.com/jhjacobsen/pytorch-i-revnet/issues/18#issue-486527382"""
+    reconstruction_tols = dict(rtol=0, atol=0)
 
     def __init__(self, block_size):
         self.block_size = b = block_size
@@ -253,11 +283,9 @@ class Baguette(E.Seq):
             super().__init__()
         else:
             super().__init__(
-                contiginv=E.InvContiguous(),
                 resh1=E.BatchReshape(lambda c, h, w: (c, h // b, b, w // b, b)),
                 perm1=E.Permute(0, 3, 5, 1, 2, 4),  # n c h/b bh w/b bw -> n bh bw c h/b w/b
-                resh2=E.BatchReshape(lambda bh, bw, c, h_b, w_b: (bh * bw * c, h_b, w_b)),
-                contig=E.Contiguous())
+                resh2=E.BatchReshape(lambda bh, bw, c, h_b, w_b: (bh * bw * c, h_b, w_b)))
 
     def __repr__(self):
         return f"{type(self).__name__}({self.block_size})"
@@ -272,6 +300,8 @@ class Baguette(E.Seq):
         self.__dict__.clear()
         self.__init__(state)
 
+
+# Attention ########################################################################################
 
 class SqueezeExcitation(E.Module):
     def __init__(self, channel, reduction=16, squeeze_f=nn.AdaptiveAvgPool2d, act_f=E.ReLU):
@@ -435,19 +465,21 @@ class KresoLadderNet(E.Module):
 
 # ResNetV1 #########################################################################################
 
-def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, norm_f):
+def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, norm_f):
     if stride == 1 and in_width == out_width:
         return nn.Identity()
-    else:
-        if dim_change in ('proj', 'conv3'):
-            k = 3 if dim_change == 'conv3' else 1
-            return E.Seq(
-                conv=E.Conv(out_width, kernel_size=k, stride=stride, padding='half', bias=False),
-                norm=norm_f())
-        else:
-            pad = [0] * 5 + [out_width - in_width]
-            return E.Seq(pool=E.AvgPool(stride, stride),
-                         pad=E.Func(partial(F.pad, pad=pad, mode='constant')))
+    if dim_change in ('proj', 'conv3'):
+        shortcut = E.Seq(
+            conv=conv_f(out_channels=out_width, kernel_size=3 if dim_change == 'conv3' else 1,
+                        stride=stride,
+                        padding='half', dilation=1, bias=False))
+        if norm_f is not None:
+            shortcut.add(norm=norm_f())
+        return shortcut
+    elif dim_change == 'pad':
+        pad = [0] * 5 + [out_width - in_width]
+        return E.Seq(pool=E.AvgPool(stride, stride),
+                     pad=E.Func(partial(F.pad, pad=pad, mode='constant')))
 
 
 def _check_resnet_unit_args(block_f, dim_change):
@@ -466,14 +498,12 @@ class ResNetV1Unit(E.Seq):
         block_args = default_args(self.block_f)
         shortcut = _get_resnetv1_shortcut(
             in_width=x.shape[1], out_width=block_args.base_width * block_args.width_factors[-1],
-            stride=block_args.stride, dim_change=self.dim_change, norm_f=block_args.norm_f)
+            stride=block_args.stride, dim_change=self.dim_change, conv_f=block_args.conv_f,
+            norm_f=block_args.norm_f)
         block = Reserved.call(self.block_f)[:-1]  # block without the last activation
-        self.add_modules(
-            fork=E.Fork(
-                shortcut=shortcut,
-                block=block),
-            sum=E.Sum(),
-            act=default_args(self.block_f).act_f())
+        self.add(fork=E.Fork(shortcut=shortcut, block=block),
+                 sum=E.Sum(),
+                 act=default_args(self.block_f).act_f())
 
 
 class ResNetV1Groups(E.Seq):
@@ -489,7 +519,7 @@ class ResNetV1Groups(E.Seq):
                                                     width_factors=width_factors,
                                                     stride=1 + int(i > 0 and j == 0)),
                            dim_change=dim_change)
-                self.add_module(f'unit{i}_{j}', u)
+                self.add(f'unit{i}_{j}', u)
 
 
 class ResNetV1Backbone(E.Seq):
@@ -520,21 +550,15 @@ class ResNetV1Backbone(E.Seq):
 
 # ResNetV2 #########################################################################################
 
-def _check_block_args(block_f):
-    args = params(block_f)
-    if 'kernel_sizes' in args and args['kernel_sizes'] is Empty:
-        raise ValueError("Argument kernel_sizes missing in block_f.")
-
-
-def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change):
+def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change, conv_f):
     if stride == 1 and in_width == out_width:
         return nn.Identity()
     else:
         if dim_change in ('proj', 'conv3'):
             k = 3 if dim_change == 'conv3' else 1
-            return E.Conv(out_width, kernel_size=k, stride=stride, padding='half', bias=False)
+            return conv_f(out_width, kernel_size=k, stride=stride, padding='half', bias=False)
         else:
-            return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, None)
+            return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, None)
 
 
 class ResNetV2Unit(E.Seq):
@@ -550,12 +574,13 @@ class ResNetV2Unit(E.Seq):
         out_width = block_args.base_width * block_args.width_factors[-1]
         stride = block_args.stride
         if stride == 1 and in_width == out_width:
-            self.add_module(fork=E.Fork(shortcut=nn.Identity(), block=block))
+            self.add(fork=E.Fork(shortcut=nn.Identity(), block=block))
         else:
-            shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change)
-            self.add_modules(preact=block[:'conv0'],
-                             fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
-        self.add_module(sum=E.Sum())
+            shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change,
+                                              block_args.conv_f)
+            self.add(preact=block[:'conv0'],
+                     fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
+        self.add(sum=E.Sum())
 
 
 class ResNetV2Groups(ResNetV1Groups):
@@ -567,8 +592,8 @@ class ResNetV2Groups(ResNetV1Groups):
                          unit_f=ResNetV2Unit)
         norm_f = default_args(block_f).norm_f
         if norm_f is not None:
-            self.add_module('post_norm', norm_f())
-        self.add_module('post_act', default_args(block_f).act_f())
+            self.add('post_norm', norm_f())
+        self.add('post_act', default_args(block_f).act_f())
 
 
 class ResNetV2Backbone(ResNetV1Backbone):
@@ -587,16 +612,15 @@ class DenseTransition(E.Seq):
                  conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
                  pool_f=partial(E.AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
-        self.add_modules(norm=norm_f(),
-                         act=act_f())
+        self.add(norm=norm_f(),
+                 act=act_f())
         if noise_f is not None:
-            self.add_module(noise=noise_f())
+            self.add(noise=noise_f())
         self.args = NameDict(compression=compression, conv_f=conv_f, pool_f=pool_f)
 
     def build(self, x):
-        self.add_modules(
-            conv=self.args.conv_f(out_channels=round(x.shape[1] * self.args.compression)),
-            pool=Reserved.call(self.args.pool_f, stride=2))
+        self.add(conv=self.args.conv_f(out_channels=round(x.shape[1] * self.args.compression)),
+                 pool=Reserved.call(self.args.pool_f, stride=2))
 
 
 class DenseUnit(E.Seq):
@@ -618,13 +642,13 @@ class DenseSequence(E.Seq):
         super().__init__()
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         for i, length in enumerate(db_lengths):
-            self.add_module(f'db{i}',
-                            DenseBlock(length,
-                                       block_f=Reserved.partial(block_f, base_width=growth_rate)))
+            self.add(f'db{i}',
+                     DenseBlock(length,
+                                block_f=Reserved.partial(block_f, base_width=growth_rate)))
             if i != len(db_lengths) - 1:
-                self.add_module(f'transition{i}', DenseTransition(compression, **norm_act_args))
-        self.add_modules(norm=default_args(block_f).norm_f(),
-                         act=default_args(block_f).act_f())
+                self.add(f'transition{i}', DenseTransition(compression, **norm_act_args))
+        self.add(norm=default_args(block_f).norm_f(),
+                 act=default_args(block_f).act_f())
 
 
 class DenseNetBackbone(E.Seq):
@@ -650,14 +674,14 @@ class MDenseTransition(E.Seq):
         out_channels = round(sum(y.shape[1] for y in x) * a.compression)
         starts = E.Parallel([E.Seq() for _ in range(len(x))])
         for s in starts:
-            s.add_modules(norm=a.norm_f(),
-                          act=a.act_f())
+            s.add(norm=a.norm_f(),
+                  act=a.act_f())
             if a.noise_f is not None:
-                s.add_module(noise=a.noise_f())
-            s.add_module(conv=a.conv_f(out_channels=out_channels))
-        self.add_modules(starts=starts,
-                         sum=E.Sum(),
-                         pool=Reserved.call(a.pool_f, stride=2))
+                s.add(noise=a.noise_f())
+            s.add(conv=a.conv_f(out_channels=out_channels))
+        self.add(starts=starts,
+                 sum=E.Sum(),
+                 pool=Reserved.call(a.pool_f, stride=2))
 
 
 class MDenseUnit(E.Module):
@@ -691,14 +715,14 @@ class MDenseSequence(E.Seq):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         for i, len_ in enumerate(db_lengths):
             if i > 0:
-                self.add_module(f'transition{i - 1}',
-                                MDenseTransition(compression, **norm_act_args))
-            self.add_module(f'db{i}',
-                            MDenseBlock(len_,
-                                        block_f=Reserved.partial(block_f, base_width=growth_rate)))
-        self.add_module('concat', E.Concat())
-        self.add_modules(norm=default_args(block_f).norm_f(),
-                         act=default_args(block_f).act_f())
+                self.add(f'transition{i - 1}',
+                         MDenseTransition(compression, **norm_act_args))
+            self.add(f'db{i}',
+                     MDenseBlock(len_,
+                                 block_f=Reserved.partial(block_f, base_width=growth_rate)))
+        self.add('concat', E.Concat())
+        self.add(norm=default_args(block_f).norm_f(),
+                 act=default_args(block_f).act_f())
 
 
 class MDenseNetBackbone(E.Seq):
@@ -755,14 +779,14 @@ class FDenseSequence(E.Seq):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         for i, len_ in enumerate(db_lengths):
             if i > 0:
-                self.add_module(f'transition{i - 1}',
-                                FDenseTransition(compression, **norm_act_args))
-            self.add_module(f'db{i}',
-                            FDenseBlock(len_,
-                                        block_f=Reserved.partial(block_f, base_width=growth_rate)))
-        self.add_module('concat', E.Concat())
-        self.add_modules(norm=default_args(block_f).norm_f(),
-                         act=default_args(block_f).act_f())
+                self.add(f'transition{i - 1}',
+                         FDenseTransition(compression, **norm_act_args))
+            self.add(f'db{i}',
+                     FDenseBlock(len_,
+                                 block_f=Reserved.partial(block_f, base_width=growth_rate)))
+        self.add('concat', E.Concat())
+        self.add(norm=default_args(block_f).norm_f(),
+                 act=default_args(block_f).act_f())
 
 
 class FDenseNetBackbone(E.Seq):
@@ -783,7 +807,7 @@ class VGGBackbone(E.Seq):
                  pool_f=partial(E.MaxPool, ceil_mode=True)):
         super().__init__()
         for i, d in enumerate(block_depths):
-            self.add_modules(
+            self.add(
                 (f'block{i}', Reserved.call(block_f, kernel_sizes=[3] * d, base_width=base_width,
                                             width_factors=[2 ** i] * d)),
                 (f'pool{i}', pool_f(kernel_size=2, stride=2)))
@@ -794,11 +818,11 @@ class VGGClassifier(E.Seq):
         super().__init__()
         widths = [fc_dim] * 2 + [class_count]
         for i, w in enumerate(widths):
-            self.add_modules((f'linear{i}', E.Linear(w)),
-                             (f'act_fc{i}', act_f()))
+            self.add((f'linear{i}', E.Linear(w)),
+                     (f'act_fc{i}', act_f()))
             if noise_f:
-                self.add_module(f'noise_fc{i}', noise_f())
-        self.add_module('probs', nn.Softmax(dim=1))
+                self.add(f'noise_fc{i}', noise_f())
+        self.add('probs', nn.Softmax(dim=1))
 
 
 # FCN ##############################################################################################
@@ -808,13 +832,13 @@ class FCNEncoder(E.Seq):
                  pool_f=partial(E.MaxPool, ceil_mode=True), fc_dim=4096, noise_f=nn.Dropout2d):
         # TODO: do something with pool_f
         super().__init__()
-        self.add_module('vgg_backbone', VGGBackbone(block_f=block_f))
+        self.add('vgg_backbone', VGGBackbone(block_f=block_f))
         conv_f = default_args(block_f).conv_f
         act_f = default_args(block_f).act_f
         for i in range(2):
-            self.add_modules((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)),
-                             (f'act_fc{i}', act_f()),
-                             (f'noise_fc{i}', noise_f()))
+            self.add((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)),
+                     (f'act_fc{i}', act_f()),
+                     (f'noise_fc{i}', noise_f()))
 
 
 # Autoencoder ######################################################################################
@@ -824,12 +848,12 @@ class SimpleEncoder(E.Seq):
                  norm_f=D.norm_f, act_f=E.ReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module(f'conv{i}',
-                            conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
+            self.add(f'conv{i}',
+                     conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
             if norm_f is not None:
-                self.add_module(f'norm{i}', norm_f())
-            self.add_module(f'act{i}', act_f())
-        self.add_module('linear_z', E.Linear(z_width))
+                self.add(f'norm{i}', norm_f())
+            self.add(f'act{i}', act_f())
+        self.add('linear_z', E.Linear(z_width))
 
 
 # Adversarial autoencoder ##########################################################################
@@ -840,25 +864,25 @@ class AAEEncoder(E.Seq):
                  norm_f=D.norm_f, act_f=nn.LeakyReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module(f'conv{i}',
-                            conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
+            self.add(f'conv{i}',
+                     conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
             if i > 0:
-                self.add_module(f'norm{i}', norm_f())
-            self.add_module(f'act{i}', act_f())
-        self.add_module('linear_z', E.Linear(z_dim))
+                self.add(f'norm{i}', norm_f())
+            self.add(f'act{i}', act_f())
+        self.add('linear_z', E.Linear(z_dim))
 
 
 class AAEDecoder(E.Seq):
     def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
                  norm_f=D.norm_f, act_f=E.ReLU, convt_f=D.convt_f):
         super().__init__()
-        self.add_module('linear_h', E.Linear(h_dim))
+        self.add('linear_h', E.Linear(h_dim))
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add_module({f'norm{i}': norm_f(),
-                             f'act{i}': act_f(),
-                             f'conv{i}': convt_f(kernel_size=k, out_channels=w, stride=2,
-                                                 padding=1)})
-        self.add_module('tanh', nn.Tanh())
+            self.add({f'norm{i}': norm_f(),
+                      f'act{i}': act_f(),
+                      f'conv{i}': convt_f(kernel_size=k, out_channels=w, stride=2,
+                                          padding=1)})
+        self.add('tanh', nn.Tanh())
 
 
 class AAEDiscriminator(E.Seq):
@@ -866,56 +890,64 @@ class AAEDiscriminator(E.Seq):
         super().__init__()
         for i in range(2):
             # batch normalization?
-            self.add_module(f'linear{i}', E.Linear(h_dim))
-            self.add_module(f'act{i}', act_f())
-        self.add_module('logits', E.Linear(2))
-        self.add_module('probs', nn.Softmax(dim=1))
+            self.add(f'linear{i}', E.Linear(h_dim))
+            self.add(f'act{i}', act_f())
+        self.add('logits', E.Linear(2))
+        self.add('probs', nn.Softmax(dim=1))
 
 
 # iRevNet ##########################################################################################
 
-def _irevnet_unit_input_padding(x, block_out_ch, stride, force_bijection):
-    in_ch = x[0].shape[1] + x[1].shape[1]
-    block_in_ch = in_ch * (stride ** 2)
-    input_padding = 2 * block_out_ch - block_in_ch
-    if input_padding < 0:
-        raise RuntimeError(f"The number of output channels of the inner block ({block_out_ch})"
-                           f" should be at least {(block_in_ch + 1) // 2}.")
-    if input_padding > 0:  # injective i-RevNet
-        if stride != 1:
-            raise RuntimeError(f"Stride is {stride}, but must be 1 for injective padding.")
-        if force_bijection:
-            raise RuntimeError(
-                f"For bijectivity, the number of input channels ({in_ch}) times squared stride"
-                + f" ({stride ** 2}) must equal the number of output channels ({block_out_ch})")
-    return input_padding
 
-
-class IRevNetUnit(E.Module):
-    def __init__(self, first=False, block_f=PreactBlock, force_surjection=False):
+class iRevNetUnitTransform(E.Module):
+    def __init__(self, first=False, block_f=PreactBlock):
         super().__init__()
         self.store_args()
-        self.input_pad, self.baguette, self.block = [None] * 3
+        self.baguette = self.block = None
 
     def build(self, x):
         a, ba = self.args, params(self.args.block_f)
-        block_out_ch = round(ba.base_width * ba.width_factors[-1])
-        padding = _irevnet_unit_input_padding(x, block_out_ch, ba.stride, a.force_surjection)
-        self.input_pad = (E.Identity() if padding == 0
-                          else E.Seq(concat=E.Concat(1),  # TODO: make more efficient
-                                     inj_pad=PadChannels(padding),
-                                     psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
         self.baguette = Baguette(ba.stride) if ba.stride != 1 else E.Identity()
         self.block = a.block_f()['conv0':] if a.first else a.block_f()
 
     def forward(self, x):
-        h = self.input_pad(x)
-        return self.baguette(h[1]), self.block(h[1]) + self.baguette(h[0])
+        return self.baguette(x[1]), self.block(x[1]) + self.baguette(x[0])
 
     def inverse_forward(self, y):
         h1 = self.baguette.inverse(y[0])
-        h0 = self.baguette.inverse(y[1] - self.block(h1))
-        return self.input_pad.inverse([h0, h1])
+        return self.baguette.inverse(y[1] - self.block(h1)), h1
+
+
+class IRevNetUnit(E.Seq):
+    def __init__(self, first=False, block_f=PreactBlock, force_surjection=False):
+        super().__init__()
+        self.store_args()
+
+    def build(self, x):
+        a, ba = self.args, params(self.args.block_f)
+        block_out_ch = round(ba.base_width * ba.width_factors[-1])
+        if 0 < (padding := self._input_padding(x, block_out_ch, ba.stride, a.force_surjection)):
+            self.add(input_pad=E.Seq(concat=E.Concat(1),  # TODO: make more efficient
+                                     inj_pad=PadChannels(padding),
+                                     psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
+        self.add(transform=iRevNetUnitTransform(first=a.first, block_f=a.block_f))
+
+    @staticmethod
+    def _input_padding(x, block_out_ch, stride, force_surjection):
+        in_ch = x[0].shape[1] + x[1].shape[1]
+        block_in_ch = in_ch * (stride ** 2)
+        input_padding = 2 * block_out_ch - block_in_ch
+        if input_padding < 0:
+            raise RuntimeError(f"The number of output channels of the inner block ({block_out_ch})"
+                               f" should be at least {(block_in_ch + 1) // 2}.")
+        if input_padding > 0:  # injective i-RevNet
+            if stride != 1:
+                raise RuntimeError(f"Stride is {stride}, but must be 1 for injective padding.")
+            if force_surjection:
+                raise RuntimeError(
+                    f"For bijectivity, the input channel count ({in_ch}) times stride^2"
+                    + f" ({stride ** 2}) must equal the number of output channels ({block_out_ch})")
+        return input_padding
 
 
 class IRevNetGroups(E.Seq):
@@ -927,11 +959,11 @@ class IRevNetGroups(E.Seq):
         for i, l in enumerate(group_lengths):
             bw_i = base_width if i == 0 else base_width * 4 ** i
             for j in range(l):
-                u = unit_f(
-                    block_f=Reserved.partial(block_f, base_width=bw_i, width_factors=width_factors,
-                                             stride=1 if j > 0 else first_stride if i == 0 else 2),
-                    first=(i, j) == (0, 0))
-                self.add_module(f'unit{i}_{j}', u)
+                stride = 1 if j > 0 else first_stride if i == 0 else 2
+                u = unit_f(first=(i, j) == (0, 0),
+                           block_f=Reserved.partial(block_f, base_width=bw_i,
+                                                    width_factors=width_factors, stride=stride))
+                self.add(f'unit{i}_{j}', u)
 
 
 class IRevNetBackbone(E.Seq):
@@ -950,12 +982,12 @@ class IRevNetBackbone(E.Seq):
             if rem != 0:
                 raise RuntimeError(f"The number of channels after the first baguette with"
                                    f" stride {a.init_stride} is not even.")
-        self.add_modules(
+        self.add(
             baguette=Baguette(a.init_stride),
             psplit=ProportionSplit(0.5, dim=1, rounding=math.floor),
             bulk=a.groups_f(a.group_lengths, base_width=base_width, width_factors=a.width_factors,
                             block_f=a.block_f),
             concat=E.Concat(dim=1))
         if (norm_f := default_args(a.block_f).norm_f) is not None:
-            self.add_module('post_norm', norm_f())
-        self.add_module('post_act', default_args(a.block_f).act_f())
+            self.add('post_norm', norm_f())
+        self.add('post_act', default_args(a.block_f).act_f())
