@@ -23,11 +23,12 @@ python run.py train "cityscapes(downsampling=2){train,val}" id "DenseNet,backbon
 ## ResNet
 python run.py train "camvid(downsampling=2){train,val}" id "ResNetV1,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,jitter=jitter.SegRandomCropHFlip((360,480)),optimizer_maker=None" -r
 
-
 ## Swiftnet
 python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
 python run.py train "cityscapes(downsampling=2){train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
 python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid"
+# network deconvolution
+python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False,block_f=t(norm_f=None,conv_f=partial(vm.DeconvConv,bias=True,padding='half')))" "tc.swiftnet_cityscapes"
 
 ## SwiftNet pretrained on Cityscapes
 python run.py train "cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
