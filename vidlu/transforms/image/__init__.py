@@ -6,7 +6,7 @@ from .misc import *
 
 # Elementwise ######################################################################################
 
-@vuf.make_multiinput
+@vuf.vectorize
 def mul(x, factor):
     return x * factor
 
@@ -14,7 +14,7 @@ def mul(x, factor):
 Mul = vuf.func_to_class(mul)
 
 
-@vuf.make_multiinput
+@vuf.vectorize
 def div(x, divisor):
     return x / divisor
 

@@ -7,12 +7,12 @@ import torch.nn.functional as nnF
 import numpy as np
 
 from vidlu.utils import num
-from vidlu.utils.func import make_multiinput
+from vidlu.utils.func import vectorize
 from vidlu.torch_utils import is_int_tensor, round_float_to_int
 from vidlu.modules.utils import func_to_module_class
 
 
-@make_multiinput
+@vectorize
 def resize(x, shape=None, scale_factor=None, mode='nearest', align_corners=None):
     additional_dims = (None,) * (4 - len(x.shape))  # must be tuple, empty list doesn't work
     return nnF.interpolate(x[additional_dims], size=shape, scale_factor=scale_factor, mode=mode,
@@ -33,7 +33,7 @@ def resize_segmentation(x, shape=None, scale_factor=None, align_corners=None):
 ResizeSegmentation = func_to_module_class(resize_segmentation)
 
 
-@make_multiinput
+@vectorize
 def pad(x, padding, mode='constant', value=0):
     if isinstance(padding, int):
         padding = (padding,) * 4
@@ -44,7 +44,7 @@ def pad(x, padding, mode='constant', value=0):
 Pad = func_to_module_class(pad)
 
 
-@make_multiinput
+@vectorize
 def pad_to_shape(x, shape, mode='constant', value=0):
     if value == 'mean':
         value = x.mean((1, 2))
@@ -71,7 +71,7 @@ def pad_to_shape(x, shape, mode='constant', value=0):
 PadToShape = func_to_module_class(pad_to_shape)
 
 
-@make_multiinput
+@vectorize
 def crop(x, location: tuple, shape: tuple):
     """Crops an image.
 
@@ -97,7 +97,7 @@ def paste_crop(x, crop, location):
     return y
 
 
-@make_multiinput
+@vectorize
 def hflip(x: Tensor) -> Tensor:
     return x.flip(-1)  # CHW
 

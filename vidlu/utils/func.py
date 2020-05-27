@@ -1,10 +1,11 @@
 import inspect
-from collections.abc import Mapping
+from collections.abc import MutableMapping
 from inspect import signature
-from functools import partialmethod, partial, wraps
+from functools import partialmethod, partial, wraps, update_wrapper
 import itertools
 import typing
 import warnings
+import typing as T
 
 from vidlu.utils import text
 from .collections import NameDict
@@ -53,8 +54,8 @@ def do(proc, x):
 class frozen_partial(partial):
     """
     Like partial, but doesn't allow changing already chosen keyword arguments.
-    Strangely, works as desired, even though `partial.__new__` looks like it
-    should copy the `keywords` attribute in case partial(hard_partial(f, x=2), x=3
+    Even though `partial.__new__` looks like it should copy the `keywords`
+    attribute, this somehow works too: `partial(frozen_partial(f, x=2), x=3)`
     """
 
     def __call__(self, *args, **kwargs):
@@ -81,56 +82,6 @@ def tryable(func, default_value, error_type=Exception):
 
 def _dummy(*a, **k):
     pass
-
-
-class _FuncTree(partial, Mapping):
-    # noinspection PyArgumentList
-    def __new__(cls, *args, **kwargs):
-        func, *args = args
-        if func in [None, Empty]:
-            p = partial.__new__(cls, _dummy, *args, **kwargs)
-            p.__setattr__(('func', func))
-            p.func = func
-        return partial.__new__(cls, func, *args, **kwargs)
-
-    def __getattr__(self, key):
-        return self.keywords[key]
-
-    def __eq__(self, other):
-        if not isinstance(other, _FuncTree):
-            return NotImplemented
-        return vars(self) == vars(other)
-
-    def __contains__(self, key):
-        return key in self.keywords if isinstance(key, str) else 0 <= key < len(self.args)
-
-    def __getitem__(self, key):
-        return self.keywords[key] if isinstance(key, str) else self.args[key]
-
-    def __iter__(self):
-        return iter(self.keywords)
-
-    def __len__(self):
-        return len(self.keywords)
-
-    def keys(self):
-        return self.keywords.keys()
-
-    def values(self):
-        return self.keywords.values()
-
-    def items(self):
-        return self.keywords.items()
-
-
-def functree(func, *args, **kwargs):
-    kwargs = {k: functree(v) if callable(v) else v
-              for k, v in itertools.chain(default_args(func).items(), kwargs.items())}
-    return _FuncTree(func, *args, **kwargs)
-
-
-def functree_shallow(func, *args, **kwargs):
-    return _FuncTree(func, *args, **{**default_args(func), **kwargs})
 
 
 def call_with_args_from_dict(func, dict_):
@@ -187,6 +138,10 @@ def find_params_deep(func, predicate):
             yield [k], v
 
 
+def find_empty_params_deep(func):
+    return find_params_deep(func, predicate=lambda k, v: v is Empty)
+
+
 def find_default_arg(func, arg_name_or_path, recursive=True, return_tree=False):
     path = [arg_name_or_path] if isinstance(arg_name_or_path, str) else arg_name_or_path
     found = dict()
@@ -211,13 +166,6 @@ def find_default_arg(func, arg_name_or_path, recursive=True, return_tree=False):
     return found.items() if return_tree else tree.flatten(found)
 
 
-def dot_default_args(func):
-    for k, v in default_args(func).items():
-        assert not hasattr(func, k)
-        setattr(func, k, v)
-    return func
-
-
 def inherit_missing_args(parent_function):
     parent_default_args = default_args(parent_function)
 
@@ -229,18 +177,120 @@ def inherit_missing_args(parent_function):
     return decorator
 
 
+# FuncTree #########################################################################################
+
+class _NoFunc:
+    def __call__(self, *args, **kwargs):
+        pass
+
+
+nofunc = _NoFunc()
+
+
+class FuncTree(partial, MutableMapping):
+    def __new__(cls, *func, **kwargs):
+        if len(func) > 1:
+            raise ValueError("At most 1 positional argument (a callable) is acceptable.")
+        return partial.__new__(cls, nofunc if len(func) == 0 else func[0], **kwargs)
+
+    def __getattr__(self, key):
+        return self.keywords[key] if key in self.keywords else super().__getattr__(key)
+
+    def __delitem__(self, key):
+        del self.keywords[key]
+
+    def __setitem__(self, key, val):
+        self.keywords[key] = val
+
+    def __eq__(self, other):
+        if not isinstance(other, FuncTree):
+            return NotImplemented
+        return vars(self) == vars(other)
+
+    def __contains__(self, key):
+        return key in self.keywords
+
+    def __getitem__(self, key):
+        return self.keywords[key]
+
+    def __iter__(self):
+        return iter(self.keywords)
+
+    def __len__(self):
+        return len(self.keywords)
+
+    def keys(self):
+        return self.keywords.keys()
+
+    def values(self):
+        return self.keywords.values()
+
+    def items(self):
+        return self.keywords.items()
+
+    def update(self, other, **kwargs):
+        if isinstance(other, FuncTree) and other.func is not nofunc:
+            self.func = other.func
+        self.keywords.update(other, **kwargs)
+
+    def update_deep(self, *args, **kwargs):
+        if len(args) > 1:
+            raise TypeError(f"update expected at most 1 positional argument, got {len(args)}.")
+        args = args[0] if len(args) > 0 else {}
+        for k, v in {**args, **kwargs}.items():
+            if k not in self:
+                self[k] = v
+            if isinstance(self[k], FuncTree) and isinstance(v, FuncTree):
+                self[k].update_deep(v)
+                if v.func is not nofunc:
+                    self.func = v.func
+            elif callable(self[k]) and isinstance(v, FuncTree):
+                self[k] = FuncTree(self[k])
+                self[k].update_deep(v)
+            else:
+                self[k] = v
+
+    def copy(self):
+        return FuncTree(self.func, {k: v.copy() if isinstance(v, FuncTree) else v
+                                    for k, v in self.items()})
+
+    def pop(self, key):
+        self.keywords.pop(key)
+
+    def popitem(self):
+        self.keywords.popitem()
+
+    def setdefault(self, key, val=None):
+        self.keywords.setdefault(key, val)
+
+
+def functree(func, **kwargs):
+    kwargs = {k: functree(v) if callable(v) else v
+              for k, v in itertools.chain(default_args(func).items(), kwargs.items())}
+    return FuncTree(func, **kwargs)
+
+
+def functree_shallow(func, **kwargs):
+    return FuncTree(func, **{**default_args(func), **kwargs})
+
+
 # ArgTree, argtree_partial #########################################################################
 
-
 class ArgTree(NameDict):
+    FUNC = ''
+
     def __init__(self, *args, **kwargs):
+        if len(args) > 0 and callable(args[0]):
+            if ArgTree.FUNC not in kwargs:
+                kwargs[ArgTree.FUNC] = args[0]
+            args = args[1:]
         super().__init__(*args, **kwargs)
 
-    def update(self, *other, **kwargs):
-        if len(other) > 1:
-            raise TypeError(f"update expected at most 1 positional argument, got {len(other)}.")
-        other = other[0] if len(other) > 0 else {}
-        for k, v in {**other, **kwargs}.items():
+    def update(self, *args, **kwargs):
+        if len(args) > 1:
+            raise TypeError(f"update expected at most 1 positional argument, got {len(args)}.")
+        args = args[0] if len(args) > 0 else {}
+        for k, v in {**args, **kwargs}.items():
             if k not in self:
                 self[k] = v
             if isinstance(self[k], ArgTree) and isinstance(v, ArgTree):
@@ -271,55 +321,45 @@ class EscapedArgTree:
         self.argtree = argtree
 
 
-def argtree_partial(func, *args, **kwargs):
-    if len(args) + int(len(kwargs) > 0) != 1:
-        raise ValueError("The arguments should be either a single positional argument"
-                         + " or 1 or more keyword arguments.")
-    # TODO: do not mutate arguments
-    tree = args[0] if len(args) == 1 else kwargs
-    for k, v in list(tree.items()):
-        if isinstance(v, FrozenArgTree):
-            tree[k] = argtree_frozen_partial(default_args(func)[k], v)
-        if isinstance(v, ArgTree):
-            tree[k] = argtree_partial(default_args(func)[k], v)
-        elif isinstance(v, EscapedArgTree):
-            tree[k] = v.argtree
-    if isinstance(tree, FrozenArgTree):
-        return frozen_partial(func, **tree)
-    return partial(func, **tree)
+def _process_argtree_partial_args(*args, **kwargs):
+    if len(args) > 0 and callable(args[0]):
+        func, *args = args
+    else:
+        func = nofunc
+    if len(args) > 1:
+        raise RuntimeError("Too many positional arguments. There should be"
+                           + " at most 2 if the first one is a callable.")
+    tree = args[0] if len(args) == 1 and len(kwargs) == 0 else dict(*args, **kwargs)
+    if func is nofunc and (func := tree.pop(ArgTree.FUNC, nofunc)) is nofunc:
+        raise ValueError("A function should be supplied either as args[0] or"
+                         + f" args[0][{repr(ArgTree.FUNC)}] or args[1][{repr(ArgTree.FUNC)}]")
+    return func, tree
+
+
+def _argtree_partial(args, kwargs, partial_f=partial):
+    func, tree = _process_argtree_partial_args(*args, **kwargs)
+    kwargs = {
+        k: _argtree_partial((default_args(func)[k],), v, partial_f=partial_f)
+        if isinstance(v, ArgTree)
+        else v.argtree if isinstance(v, EscapedArgTree)
+        else v
+        for k, v in tree.items()}
+    return partial_f(func, **kwargs)
+
+
+def argtree_partial(*args, **kwargs):
+    return _argtree_partial(args, kwargs, partial_f=partial)
 
 
 def argtree_frozen_partial(func, *args, **kwargs):
-    if len(args) + int(len(kwargs) > 0) > 1:
-        raise ValueError("The arguments should be either a single positional argument"
-                         + " or 0 or more keyword arguments.")
-    tree = args[0] if len(args) == 1 else kwargs
-    for k, v in list(tree.items()):
-        if isinstance(v, ArgTree):
-            tree[k] = argtree_frozen_partial(default_args(func)[k], v)
-        elif isinstance(v, EscapedArgTree):
-            tree[k] = v.argtree
-    return frozen_partial(func, **tree)
+    return _argtree_partial(args, kwargs, partial_f=frozen_partial)
 
 
-def argtree_partialmethod(func, *args, **kwargs):
-    if len(args) + int(len(kwargs) > 0) != 1:
-        raise ValueError("The arguments should be either a single positional argument "
-                         + " or 1 or more keyword arguments.")
-    tree = args[0] if len(args) == 1 else kwargs
-    for k, v in list(tree.items()):
-        if isinstance(v, ArgTree):
-            tree[k] = argtree_partial(default_args(func)[k], v)
-        elif isinstance(v, EscapedArgTree):
-            tree[k] = v.argtree
-    return partialmethod(func, **tree)
-
-
-def find_params_tree(func, predicate):
+def find_params_argtree(func, predicate):
     tree = dict()
     for k, v in params(func).items():
         if callable(v):
-            subtree = find_params_tree(v, predicate)
+            subtree = find_params_argtree(v, predicate)
             if len(subtree) > 0:
                 tree[k] = subtree
         elif predicate(k, v):
@@ -327,12 +367,8 @@ def find_params_tree(func, predicate):
     return ArgTree(tree)
 
 
-def find_empty_params_tree(func):
-    return find_params_tree(func, predicate=lambda k, v: v is Empty)
-
-
-def find_empty_params_deep(func):
-    return find_params_deep(func, predicate=lambda k, v: v is Empty)
+def find_empty_params_argtree(func):
+    return find_params_argtree(func, predicate=lambda k, v: v is Empty)
 
 
 # Dict map, filter #################################################################################
@@ -387,22 +423,14 @@ class Reserved:  # marker for parameters that shouldn't be assigned / are reserv
         return Reserved.partial(func, **kwargs)()
 
 
-def make_multiinput(func):
+# Other ############################################################################################
+
+def vectorize(func):
     @wraps(func)
     def wrapper(x, *a, **k):
         if isinstance(x, tuple):
             return tuple(func(x_, *a, **k) for x_ in x)
         return func(x, *a, **k)
-
-    return wrapper
-
-
-def multiinput_method(func):
-    @wraps(func)
-    def wrapper(self, x, *a, **k):
-        if isinstance(x, tuple):
-            return tuple(func(self, x_, *a, **k) for x_ in x)
-        return func(self, x, *a, **k)
 
     return wrapper
 
@@ -483,3 +511,11 @@ def type_checked(func):
         return func(*args, **kwargs)
 
     return wrapper
+
+
+def assign_available_args(func, args_dict, assignment_cond=None):
+    if assignment_cond is None:
+        assignment_cond = lambda k, v, default: True
+    kwargs = {k: args_dict[k] for k, default in params(func)
+              if k in args_dict and assignment_cond(k, args_dict[k], default)}
+    return partial(func, **kwargs)
