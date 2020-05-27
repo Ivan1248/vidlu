@@ -7,8 +7,17 @@ import torch.nn.functional as F
 from vidlu.utils.func import class_to_func
 from vidlu.torch_utils import batchnorm_stats_tracking_off, save_grads
 
+# Information-theoretic ############################################################################
 
-# Cross entropy ####################################################################################
+"""
+Losses that have "loss_with_logits" in the name accept 2 arguments:
+    1. logits of the approximating distribution
+    2. probabilities of the target distribution
+
+Losses that have "with_logits" in the name accept 2 arguments:
+    1. logits of the approximating distribution
+    2. logits of the target distribution
+"""
 
 
 class NLLLossWithLogits(nn.CrossEntropyLoss):
@@ -30,16 +39,33 @@ class KLDivLossWithLogits(nn.KLDivLoss):
         return super().__call__(torch.log_softmax(logits, 1), target_probs).sum(1)
 
 
-kl_div_loss_with_logits = class_to_func(KLDivLossWithLogits)
-
-
-def entropy(logits):
-    log_probs = logits.log_softmax(1)
-    return -(log_probs.exp() * log_probs).sum(1)
+# kl_div_loss_with_logits = class_to_func(KLDivLossWithLogits)
+def kl_div_loss_with_logits(logits, target_probs):
+    return F.kl_div(torch.log_softmax(logits, 1), target_probs, reduction='none').sum(1)
 
 
 def cross_entropy_loss_with_logits(logits, target_probs):
+    # another way: F.kl_div(torch.log_softmax(logits, 1) + torch.log(target_probs), target_probs,
+    #                       reduction='none').sum(1)
     return -(target_probs * logits.log_softmax(1)).sum(1)
+
+def rev_cross_entropy_with_logits(target_logits, logits):
+    return cross_entropy_loss_with_logits(logits, target_logits.softmax(1))
+
+
+def symmetric_cross_entropy_with_logits(p_logits, q_logits):
+    return 0.5 * (cross_entropy_loss_with_logits(p_logits, q_logits.softmax(1))
+                  + cross_entropy_loss_with_logits(q_logits, p_logits.softmax(1)))
+
+
+def js_div_with_logits(p_logits, q_logits):
+    return 0.5 * (kl_div_loss_with_logits(p_logits, q_logits.softmax(1))
+                  + kl_div_loss_with_logits(q_logits, p_logits.softmax(1)))
+
+
+def entropy_with_logits(logits):
+    log_probs = logits.log_softmax(1)
+    return -(log_probs.exp() * log_probs).sum(1)
 
 
 def reduce_loss(x, batch_reduction: T.Literal['sum', 'mean', None] = None,
