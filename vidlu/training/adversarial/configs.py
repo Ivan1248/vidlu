@@ -43,13 +43,13 @@ warp_attack = partial(attacks.PerturbationModelAttack,
 
 entmin_attack = partial(madry_cifar10_attack,
                         minimize=False,
-                        loss=lambda logits, _: losses.entropy(logits))
+                        loss=lambda logits, _: losses.entropy_with_logits(logits))
 
 virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
-                                     to_virtual_target='hard')
+                                     to_virtual_target='argmax')
 
 vat_pgd_cifar10_attack = partial(madry_cifar10_attack,
-                                 to_virtual_target='soft',
+                                 to_virtual_target='probs',
                                  loss=losses.kl_div_loss_with_logits)
 
 mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
@@ -63,7 +63,7 @@ mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
 morsic_tps_warp_attack = partial(attacks.PerturbationModelAttack,
                                  # pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2),
                                  #                      label_padding_mode='zeros'),
-                                 pert_model_f=partial(perturbation.AlgTohchabTorbiwasc),
+                                 pert_model_f=partial(perturbation.OrsicPhotometricAndTPS),
                                  # pert_model_init=lambda pmodel: pmodel.theta.uniform_(-.1, .1),
                                  pert_model_init=lambda pmodel: vmi.reset_parameters(pmodel),
                                  step_size=0.01,
@@ -123,9 +123,8 @@ randaugment = partial(
     attacks.PerturbationModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(
-        lambda *a, **k: vmi.PerturbationModelWrapper(BatchRandAugment(3, 4), forward_arg_count=1)),
-    step_size=0,
-)
+        lambda *a, **k: vmi.PertModel(BatchRandAugment(3, 4), forward_arg_count=1)),
+    step_size=0)
 
 tps_warp_attack_weaker = partial(
     attacks.PerturbationModelAttack,

@@ -9,7 +9,7 @@ class TestLosses:
     def test_entropy(self):
         logits = torch.randn(2, 3, 4, 5)
         probs = logits.softmax(1)
-        ent1 = vml.entropy(logits)
+        ent1 = vml.entropy_with_logits(logits)
         ent2 = vml.cross_entropy_loss_with_logits(logits, probs)
         assert torch.all(ent1.sub(ent2).abs() < 1e-6)
 

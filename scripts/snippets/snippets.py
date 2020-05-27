@@ -122,7 +122,7 @@ def segreggrad(x, delta, y, t):
 
 def ent(y, t, attack=trainer.attack):
     from vidlu.modules import losses
-    loss = losses.entropy(y) #.mean()
+    loss = losses.entropy_with_logits(y) #.mean()
     print(y.mean())
     return loss
 
