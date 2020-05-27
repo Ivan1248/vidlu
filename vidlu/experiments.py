@@ -38,13 +38,13 @@ class TrainingExperimentFactoryArgs:
 
 
 def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
-    @trainer.training.epoch_started.add_handler
+    @trainer.training.epoch_started.handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
                    + f" ({es.batch_count} batches,"
                    + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
 
-    @trainer.training.epoch_completed.add_handler
+    @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
         if es.epoch % max(1, len(data.test) // len(data.train)) == 0 \
                 or es.epoch == es.max_epochs - 1:
@@ -66,7 +66,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
     # noinspection PyUnresolvedReferences
-    @trainer.evaluation.iteration_completed.add_handler
+    @trainer.evaluation.iteration_completed.handler
     def interact(state):
         from IPython import embed
         from vidlu.utils.presentation import visualization
@@ -81,7 +81,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
             except Exception as ex:
                 print(f'Cannot execute "{optional_input}"\n{ex}.')
 
-    @trainer.training.iteration_completed.add_handler
+    @trainer.training.iteration_completed.handler
     def on_iteration_completed(es):
         if es.iteration % es.batch_count % (max(1, es.batch_count // 5)) == 0:
             remaining = es.batch_count - es.iteration % es.batch_count

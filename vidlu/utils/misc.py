@@ -8,6 +8,7 @@ import time
 import contextlib
 from multiprocessing.sharedctypes import RawArray
 import urllib.request
+import weakref
 
 from tqdm import tqdm
 import numpy as np
@@ -23,22 +24,71 @@ def slice_len(s, sequence_length):
 
 # Event ############################################################################################
 
+class RemovableHandle(object):
+    """An object that can be used to remove a handler from an event.
+
+    It can be removed by calling the `remove` method or by using it as a
+    context manager.
+    """
+
+    def __init__(self, event, handler):
+        self.event = weakref.ref(event)
+        self.handler = weakref.ref(handler)
+
+    def remove(self):
+        if None not in (event := self.event(), handler := self.handler()):
+            event.remove_handler(handler)
+
+    def __call__(self, *args, **kwargs):
+        self.handler(*args, **kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, tb):
+        self.remove()
+
+
 class Event:
+    """Event implementation.
+
+    Example:
+        >>> ev = Event()
+        >>> rh = ev.add_handler(print)
+        >>> ev("Hello!")
+        Hello!
+        >>> rh.remove()
+        >>> ev("Hello!")
+        >>> with ev.add_handler(print) as rh:
+        >>>    ev("african")
+        african
+        >>> ev("swallow")
+    """
+
     def __init__(self):
         self.handlers = []
 
-    def add_handler(self, handler):
+    def add_handler(self, handler: callable):
+        """Adds an event handler (callback) and returns a removable handle.
+
+        Args:
+            handler (callable): a function with a corresponding signature.
+
+        Returns:
+            RemovableHandle: an object that can be used to remove the handler.
+        """
         self.handlers.append(handler)
-        return handler  # for usage as decorator
+        return RemovableHandle(self, handler)  # can be used as context manager or decorator
 
-    def remove_handler(self, handler):
+    def handler(self, handler: callable):
+        """A method that adds an event handler (callback) and returns it. It
+        should only be used as a decorator. `add_handler` should be used
+        otherwise."""
+        self.handlers.append(handler)
+        return handler
+
+    def remove_handler(self, handler: callable):
         self.handlers.remove(handler)
-
-    @contextlib.contextmanager
-    def temporary_handler(self, handler):
-        self.add_handler(handler)
-        yield handler
-        self.remove_handler(handler)
 
     def __call__(self, *args, **kwargs):
         for handler in self.handlers:
