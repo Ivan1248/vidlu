@@ -203,6 +203,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     import vidlu.modules as vm
     import vidlu.modules.components as vmc
     import torchvision.models as tvmodels
+    from fractions import Fraction as Frac
 
     if prep_dataset is None and (problem is None or init_input is None):
         raise ValueError(
@@ -221,7 +222,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     argtree_arg = (
         unsafe_eval(f"t({argtree_arg[0]})",
                     dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
-                         partial=partial, Reserved=Reserved))
+                         partial=partial, Reserved=Reserved, Frac=Frac))
         if len(argtree_arg) == 1 else vuf.ArgTree())
     argtree.update(argtree_arg)
 
