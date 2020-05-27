@@ -236,8 +236,8 @@ class Evaluator:
         if isinstance(obj, T.Sequence):
             if len(obj) != n:
                 raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
-                                   f"not `n` = {n}. Check whether batch_size and evaL_batch_size"
-                                   f"are correctly set.")
+                                   f"not `n` = {n}. Check whether `batch_size` and"
+                                   f" `evaL_batch_size` are correctly set.")
             return obj
         return [obj] * n
 
@@ -257,7 +257,7 @@ class Evaluator:
         with Stopwatch() as t:
             output = step(self, batch)
         output['freq'] = len(batch) / t.time
-        if isinstance(output, T.Mapping) and torch.cuda.is_available():
+        if isinstance(output, T.MutableMapping) and torch.cuda.is_available():
             output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
         return output
 
