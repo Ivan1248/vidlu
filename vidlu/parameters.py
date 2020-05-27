@@ -6,8 +6,8 @@ import torch
 from vidlu.utils import text
 
 
-def translate_dict_keys(dict_, input_output_format_pairs):
-    translator = text.FormatTranslatorCascade(input_output_format_pairs)
+def translate_dict_keys(dict_, input_output_format_pairs, context=None):
+    translator = text.FormatTranslatorCascade(input_output_format_pairs, context=context)
     return {translator(k): v for k, v in dict_.items()}
 
 

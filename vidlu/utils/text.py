@@ -105,10 +105,11 @@ class _ScannerExprVisitor(_ScannerWriterVisitorBase):
 
 
 class _WriterExprVisitor(_ScannerWriterVisitorBase):
-    def __init__(self, vars_, **kwargs):
+    def __init__(self, vars_, context=None, **kwargs):
         super().__init__(**kwargs)
         self.vars = vars_
         self.vars_str = ', '.join(f"{k}='{v}'" for k, v in vars_.items())
+        self.context = context or dict()
 
     def visit_dict_translation(self, node, children):
         if self.debug:
@@ -132,7 +133,7 @@ class _WriterExprVisitor(_ScannerWriterVisitorBase):
         if self.debug:
             print(f"py_translator: {node}")
         try:
-            return eval(f"str((lambda {self.vars_str}: {node.value[1:-1]})())")
+            return eval(f"str((lambda {self.vars_str}: {node.value[1:-1]})())", None, self.context)
         except NameError as e:
             raise NameError(f'{e}. Cannot evaluate "{node.value[1:-1]}".'
                             + f' Available variables: {self.vars_str}.')
@@ -194,24 +195,26 @@ def scan(format, x):
 
 
 class FormatWriter:
-    def __init__(self, format, debug=False):
+    def __init__(self, format, debug=False, context=None):
         self.debug = debug
         try:
             format_parser = arpeggio.ParserPython(writer_expr)
         except arpeggio.NoMatch as ex:
             raise NoMatchError("Invalid format.", inner_exception=ex)
         self.format_parse_tree = format_parser.parse(format)
+        self.context = context
 
     def __call__(self, **vars_):
         parts = visit_parse_tree(self.format_parse_tree,
-                                 _WriterExprVisitor(vars_, debug=self.debug))
+                                 _WriterExprVisitor(vars_, debug=self.debug, context=self.context))
         return ''.join(parts)
 
 
 class FormatTranslator:
-    def __init__(self, input_format, output_format, full_match=True, error_on_no_match=False):
+    def __init__(self, input_format, output_format, full_match=True, error_on_no_match=False,
+                 context=None):
         self.scanner = FormatScanner(input_format, full_match=full_match)
-        self.writer = FormatWriter(output_format)
+        self.writer = FormatWriter(output_format, context=context)
         self.error_on_no_match = error_on_no_match
 
     def __call__(self, x, **additional_vars):
@@ -225,10 +228,11 @@ class FormatTranslator:
 
 
 class FormatTranslatorCascade:
-    def __init__(self, input_output_format_pairs, error_on_no_match=True):
+    def __init__(self, input_output_format_pairs, error_on_no_match=True, context=None):
         self.input_output_format_pairs = tuple(input_output_format_pairs)
         self.translators = [
-            FormatTranslator(inp, out, full_match=True, error_on_no_match=error_on_no_match)
+            FormatTranslator(inp, out, full_match=True, error_on_no_match=error_on_no_match,
+                             context=context)
             for inp, out in input_output_format_pairs]
         self.error_on_no_match = error_on_no_match
 
