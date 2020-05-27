@@ -112,6 +112,12 @@ semisupervised_vat = TrainerConfig(
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False))
 
+semisupervised_vat_2way = TrainerConfig(
+    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
+                                             block_grad_for_clean=False))
+
 semisupervised_vat_l = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
