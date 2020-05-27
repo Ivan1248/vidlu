@@ -1,13 +1,14 @@
-from collections.abc import Mapping
+from collections.abc import MutableMapping
 
 
-class NameDict(Mapping):
+class NameDict(MutableMapping):
+
     def __init__(self, *args, **kwargs):
+        super().__init__()
         if len(args) > 1:
             raise TypeError(
                 f"{type(self).__name__} expected at most 1 positional argument, got {len(args)}.")
-        for k, v in dict(*args, **kwargs).items():
-            setattr(self, k, v)
+        self.update(*args, **kwargs)
 
     def __repr__(self):
         arg_strings = [f'{name}={value}' for name, value in self._get_kwargs()]
@@ -25,10 +26,10 @@ class NameDict(Mapping):
         return getattr(self, name)
 
     def __setitem__(self, name, value):
-        if not name.isidentifier():
-            raise KeyError('A NameDict can only have keys that are valid identifiers.'
-                           f' {name} is not.')
         setattr(self, name, value)
+
+    def __delitem__(self, name):
+        del self.__dict__[name]
 
     def __getattr__(self, item):
         return self.__dict__[item]
@@ -64,7 +65,8 @@ class NameDict(Mapping):
         return self.__dict__
 
     def update(self, *args, **kwargs):
-        self.__dict__.update(*args, **kwargs)
+        for k, v in dict(*args, **kwargs).items():
+            setattr(self, k, v)
 
 
 class SingleWriteDict(dict):
