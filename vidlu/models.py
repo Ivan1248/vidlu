@@ -217,13 +217,14 @@ class SwiftNet(SegmentationModel):
                  ladder_width=128, head_f=vmc.heads.SegmentationHead, input_adapter=None,
                  init=partial(initialization.kaiming_resnet, module=Reserved),
                  lateral_blocks=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [0] * 3)),
-                 lateral_name: T.Literal['sum', 'act'] = 'act'):
-        if lateral_name not in ('sum', 'act'):
+                 lateral_subitem: T.Literal['sum', 'act', ''] = ''):
+        if lateral_subitem not in ('sum', 'act', ''):
             raise ValueError("lateral_name should be either 'sum' or 'act'.")
         super().__init__(
             backbone_f=partial(vmc.KresoLadderNet,
                                backbone_f=backbone_f,
-                               laterals=[f"{lb}.{lateral_name}" for lb in lateral_blocks],
+                               laterals=[f"{lb}.{lateral_subitem}" if lateral_subitem else lb
+                                         for lb in lateral_blocks],
                                ladder_width=ladder_width,
                                context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
                                                  out_size=128, grid_sizes=(8, 4, 2)),
@@ -233,7 +234,7 @@ class SwiftNet(SegmentationModel):
             init=init,
             input_adapter=input_adapter)
         self.lateral_blocks = lateral_blocks
-        self.lateral_name = lateral_name
+        self.lateral_name = lateral_subitem
 
     def post_build(self, *args, **kwargs):
         super().post_build()
