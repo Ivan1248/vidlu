@@ -1,6 +1,9 @@
 import argparse
 from time import time
 import random
+from datetime import datetime
+import fcntl
+import sys
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -17,6 +20,19 @@ from vidlu.utils.indent_print import indent_print
 import dirs
 
 
+def log_run(status):
+    if (d := len('start') - len(status)) > 0:
+        status += ' ' * d
+    try:
+        with (dirs.EXPERIMENTS / 'runs.txt').open('a') as runs_file:
+            prefix = f"[{status} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
+            fcntl.flock(runs_file, fcntl.LOCK_EX)
+            runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")
+            fcntl.flock(runs_file, fcntl.LOCK_UN)
+    finally:
+        pass
+
+
 def train(args):
     seed = int(time()) % 100 if args.seed is None else args.seed  # 53
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
@@ -30,6 +46,7 @@ def train(args):
     if not args.no_init_test:
         print('Evaluating initially...')
         e.trainer.eval(e.data.test)
+    log_run('cont.' if args.resume else 'start')
 
     print(('Continuing' if args.resume else 'Starting') + ' training...')
     training_datasets = {k: v for k, v in e.data.items() if k.startswith("train")}
@@ -38,6 +55,7 @@ def train(args):
     print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
     for name, ds in training_datasets.items():
         e.trainer.eval(ds)
+    log_run('done')
 
     print(f"RNG seed: {seed}")
 

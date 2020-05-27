@@ -13,7 +13,10 @@ def _find(path_end):
 
 
 DATASETS = [Path('/tmp/'), _find('data/datasets')]
-CACHE = _find('data/cache')
-
-SAVED_STATES = _find('data/states')
+EXPERIMENTS = _find('data/experiments')
+CACHE = EXPERIMENTS / 'cache'
+SAVED_STATES = EXPERIMENTS / 'states'
 PRETRAINED = _find('data/pretrained_parameters')
+
+CACHE.mkdir(exist_ok=True)
+SAVED_STATES.mkdir(exist_ok=True)
