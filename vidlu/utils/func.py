@@ -1,11 +1,13 @@
 import inspect
 from collections.abc import MutableMapping
 from inspect import signature
-from functools import partialmethod, partial, wraps, update_wrapper
+from functools import partialmethod, wraps, update_wrapper
+import functools
 import itertools
 import typing
 import warnings
 import typing as T
+import sys
 
 from vidlu.utils import text
 from .collections import NameDict
@@ -14,6 +16,42 @@ from vidlu.utils import tree, misc
 
 def identity(x):
     return x
+
+
+class partial(functools.partial):
+    """
+    Like partial, but doesn't allow changing already chosen keyword arguments.
+    Even though `partial.__new__` looks like it should copy the `keywords`
+    attribute, this somehow works too: `partial(frozen_partial(f, x=2), x=3)`
+    """
+
+    def __call__(self, *args, **kwargs):
+        try:
+            func = self.func
+            sig = inspect.signature(func)
+            sigparams = list(sig.parameters.items())
+            if len(sigparams) > 0 and sigparams[-1][1].kind is not inspect.Parameter.KEYWORD_ONLY:
+                params_ = params(func)
+                if any((k_ := k) not in params_ for k in {**self.keywords, **kwargs}.items()):
+                    raise RuntimeError(f"{k_} matches no formal parameter of  {func.__name__}"
+                                       + f" with signature {sig}.")
+        except ValueError:
+            pass
+        return functools.partial.__call__(self, *args, **kwargs)
+
+
+class frozen_partial(partial):
+    """
+    Like partial, but doesn't allow changing already chosen keyword arguments.
+    Even though `partial.__new__` looks like it should copy the `keywords`
+    attribute, this somehow works too: `partial(frozen_partial(f, x=2), x=3)`
+    """
+
+    def __call__(self, *args, **kwargs):
+        for k in kwargs.keys():
+            if k in self.keywords:
+                raise RuntimeError(f"Parameter {k} is frozen and can't be overridden.")
+        return partial.__call__(self, *args, **kwargs)
 
 
 # Wrappers #########################################################################################
@@ -46,29 +84,6 @@ def pipe(x, *funcs):
     return x
 
 
-def do(proc, x):
-    proc(x)
-    return x
-
-
-class frozen_partial(partial):
-    """
-    Like partial, but doesn't allow changing already chosen keyword arguments.
-    Even though `partial.__new__` looks like it should copy the `keywords`
-    attribute, this somehow works too: `partial(frozen_partial(f, x=2), x=3)`
-    """
-
-    def __call__(self, *args, **kwargs):
-        for k in kwargs.keys():
-            if k in self.keywords:
-                raise RuntimeError(f"Parameter {k} is frozen and can't be overridden.")
-        return partial.__call__(self, *args, **kwargs)
-
-
-def freeze_nonempty_args(func):
-    return frozen_partial(func, **{k: v for k, v in default_args(func) if v is not Empty})
-
-
 def tryable(func, default_value, error_type=Exception):
     def try_(*args, **kwargs):
         # noinspection PyBroadException
@@ -80,20 +95,17 @@ def tryable(func, default_value, error_type=Exception):
     return try_
 
 
-def _dummy(*a, **k):
-    pass
+def pick_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
+    return {k: args_dict[k] for k, default in params(func)
+            if k in args_dict and assignment_cond(k, args_dict[k], default)}
 
 
-def call_with_args_from_dict(func, dict_):
-    par = params(func)
-    return func(**misc.update_existing_items(
-        {k: v for k, v in par.items() if v is not Empty or k in dict_}, dict_))
+def assign_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
+    return partial(func, **pick_args_from_dict(func, args_dict, assignment_cond))
 
 
-def partial_with_args_from_dict(func, dict_):
-    par = params(func)
-    return partial(func, **misc.update_existing_items(
-        {k: v for k, v in par.items() if v is not Empty or k in dict_}, dict_))
+def call_with_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
+    return func(**pick_args_from_dict(func, args_dict, assignment_cond))
 
 
 # parameters/arguments #############################################################################
@@ -120,15 +132,6 @@ def params(func) -> NameDict:
         return NameDict()
 
 
-def params_deep(func):
-    for k, v in params(func).items():
-        if callable(v):
-            for k_, v_ in params_deep(v):
-                yield [k] + k_, v_
-        else:
-            yield [k], v
-
-
 def find_params_deep(func, predicate):
     for k, v in params(func).items():
         if callable(v):
@@ -136,10 +139,6 @@ def find_params_deep(func, predicate):
                 yield [k] + k_, v_
         elif predicate(k, v):
             yield [k], v
-
-
-def find_empty_params_deep(func):
-    return find_params_deep(func, predicate=lambda k, v: v is Empty)
 
 
 def find_default_arg(func, arg_name_or_path, recursive=True, return_tree=False):
@@ -179,15 +178,14 @@ def inherit_missing_args(parent_function):
 
 # FuncTree #########################################################################################
 
-class _NoFunc:
-    def __call__(self, *args, **kwargs):
-        pass
-
-
-nofunc = _NoFunc()
+def nofunc(*a, **k):  # value marking that there is no function in a FuncTree node
+    raise RuntimeError("nofunc called. Probably a node in a FuncTree has no function.")
+    pass
 
 
 class FuncTree(partial, MutableMapping):
+    nofunc = nofunc
+
     def __new__(cls, *func, **kwargs):
         if len(func) > 1:
             raise ValueError("At most 1 positional argument (a callable) is acceptable.")
@@ -229,24 +227,28 @@ class FuncTree(partial, MutableMapping):
         return self.keywords.items()
 
     def update(self, other, **kwargs):
-        if isinstance(other, FuncTree) and other.func is not nofunc:
-            self.func = other.func
+        if isinstance(other, FuncTree) and other.func not in [nofunc, self.func]:
+            raise RuntimeError("")
         self.keywords.update(other, **kwargs)
 
     def update_deep(self, *args, **kwargs):
         if len(args) > 1:
             raise TypeError(f"update expected at most 1 positional argument, got {len(args)}.")
-        args = args[0] if len(args) > 0 else {}
-        for k, v in {**args, **kwargs}.items():
-            if k not in self:
-                self[k] = v
-            if isinstance(self[k], FuncTree) and isinstance(v, FuncTree):
-                self[k].update_deep(v)
-                if v.func is not nofunc:
-                    self.func = v.func
-            elif callable(self[k]) and isinstance(v, FuncTree):
-                self[k] = FuncTree(self[k])
-                self[k].update_deep(v)
+        if len(args) == 1:
+            self.func = args[0]
+        for k, v in kwargs.items():
+            if isinstance(v, FuncTree):
+                if k not in self:
+                    self[k] = v.copy()
+                elif callable(self[k]):
+                    self[k] = FuncTree(self[k])
+                    self[k].update_deep(v)
+                elif isinstance(self[k], FuncTree):
+                    self[k].update_deep(v)
+                else:
+                    self[k] = v.copy()
+            elif isinstance(v, EscapedFuncTree):
+                self[k] = v()
             else:
                 self[k] = v
 
@@ -264,14 +266,37 @@ class FuncTree(partial, MutableMapping):
         self.keywords.setdefault(key, val)
 
 
-def functree(func, **kwargs):
-    kwargs = {k: functree(v) if callable(v) else v
-              for k, v in itertools.chain(default_args(func).items(), kwargs.items())}
+class _EscapedItem:
+    __slots__ = ('item',)
+
+    def __init__(self, item):
+        self.item = item
+
+    def __call__(self):
+        return self.item
+
+
+class EscapedFuncTree(_EscapedItem):
+    pass
+
+
+def functree(func, kwargs=None, light=False, depth=sys.maxsize):
+    if depth < 0:
+        raise RuntimeError("Tree depth must be at least 0.")
+    kwargs = kwargs or dict()
+    if light:
+        kwargs_iter = kwargs.items()
+    else:
+        try:
+            kwargs_iter = itertools.chain(default_args(func).items(), kwargs.items())
+        except ValueError:
+            kwargs_iter = kwargs.items()
+    if depth == 0:
+        kwargs = {k: v for k, v in kwargs_iter}
+    else:
+        kwargs = {k: functree(v, light=light, depth=depth - 1) if callable(v) else v
+                  for k, v in kwargs_iter}
     return FuncTree(func, **kwargs)
-
-
-def functree_shallow(func, **kwargs):
-    return FuncTree(func, **{**default_args(func), **kwargs})
 
 
 # ArgTree, argtree_partial #########################################################################
@@ -304,21 +329,15 @@ class ArgTree(NameDict):
         return ArgTree({k: v.copy() if isinstance(v, ArgTree) else v for k, v in self.items()})
 
     @staticmethod
-    def from_func(func):
+    def from_func(func, depth=sys.maxsize):
         return ArgTree(
-            {k: ArgTree.from_func(v) if callable(v) and v not in (Empty, Reserved) else v
+            {k: ArgTree.from_func(v, depth - 1) \
+                if callable(v) and not issubclass(v, Empty) and depth > 0 else v
              for k, v in params(func).items()})
 
 
-class FrozenArgTree(ArgTree):
-    """An argtree whose arguments cannot be overridden."""
-
-
-class EscapedArgTree:
-    __slots__ = ('argtree',)
-
-    def __init__(self, argtree):
-        self.argtree = argtree
+class EscapedArgTree(_EscapedItem):
+    pass
 
 
 def _process_argtree_partial_args(*args, **kwargs):
@@ -351,10 +370,6 @@ def argtree_partial(*args, **kwargs):
     return _argtree_partial(args, kwargs, partial_f=partial)
 
 
-def argtree_frozen_partial(func, *args, **kwargs):
-    return _argtree_partial(args, kwargs, partial_f=frozen_partial)
-
-
 def find_params_argtree(func, predicate):
     tree = dict()
     for k, v in params(func).items():
@@ -365,10 +380,6 @@ def find_params_argtree(func, predicate):
         elif predicate(k, v):
             tree[k] = v
     return ArgTree(tree)
-
-
-def find_empty_params_argtree(func):
-    return find_params_argtree(func, predicate=lambda k, v: v is Empty)
 
 
 # Dict map, filter #################################################################################
@@ -392,7 +403,7 @@ def keyfilter(func, d, factory=dict):
 Empty = inspect.Parameter.empty
 
 
-class Required:
+class Required(Empty):
     """Object for marking fields in dataclasses as required arguments when the
     they come after fileds with default values.
     
@@ -405,7 +416,7 @@ class Required:
                         + ' default value `Required` is not assigned a "real" value.')
 
 
-class Reserved:  # marker for parameters that shouldn't be assigned / are reserved
+class Reserved(Empty):  # marker for parameters that shouldn't be assigned / are reserved
     @staticmethod
     def partial(func, **kwargs):
         """Applies partial to func only if all supplied arguments are Reserved."""
@@ -423,7 +434,7 @@ class Reserved:  # marker for parameters that shouldn't be assigned / are reserv
         return Reserved.partial(func, **kwargs)()
 
 
-# Other ############################################################################################
+# Decorators #######################################################################################
 
 def vectorize(func):
     @wraps(func)
@@ -433,6 +444,33 @@ def vectorize(func):
         return func(x, *a, **k)
 
     return wrapper
+
+
+def type_checked(func):
+    """A decorator that checks whether annotated parameters have valid types."""
+    sig = inspect.signature(func)
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        ba = sig.bind(*args, **kwargs)
+        ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
+        fail = False
+        for name, type_ in func.__annotations__.items():
+            type_origin = typing.get_origin(type_)
+            if type_origin is not None:
+                if type_origin is typing.Literal:
+                    if ba[name] not in typing.get_args(type_):
+                        fail = True
+            if fail or not isinstance(ba[name], type_):
+                val_str = str(ba[name])
+                val_str = val_str if len(val_str) < 80 else val_str[:77] + '...'
+                raise TypeError(f"The argument {name}={val_str} is not of type {type_}.")
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+# Other ############################################################################################
 
 
 def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__call__', name=None):
@@ -488,34 +526,3 @@ def {name}({', '.join(pnames)}):
         raise NotImplementedError("Not implemented for decorated __init__.")
     func.__module__ = class_.__module__
     return func
-
-
-def type_checked(func):
-    sig = inspect.signature(func)
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        ba = sig.bind(*args, **kwargs)
-        ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
-        fail = False
-        for name, type_ in func.__annotations__.items():
-            type_origin = typing.get_origin(type_)
-            if type_origin is not None:
-                if type_origin is typing.Literal:
-                    if ba[name] not in typing.get_args(type_):
-                        fail = True
-            if fail or not isinstance(ba[name], type_):
-                val_str = str(ba[name])
-                val_str = val_str if len(val_str) < 80 else val_str[:77] + '...'
-                raise TypeError(f"The argument {name}={val_str} is not of type {type_}.")
-        return func(*args, **kwargs)
-
-    return wrapper
-
-
-def assign_available_args(func, args_dict, assignment_cond=None):
-    if assignment_cond is None:
-        assignment_cond = lambda k, v, default: True
-    kwargs = {k: args_dict[k] for k, default in params(func)
-              if k in args_dict and assignment_cond(k, args_dict[k], default)}
-    return partial(func, **kwargs)
