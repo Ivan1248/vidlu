@@ -38,7 +38,7 @@ def kaiming_swiftnet(module, nonlinearity='relu'):
 
 def kaiming_densenet(module, nonlinearity='relu'):
     # based on initialization from torchvision/models/densenet.py
-    for name, m in module.modules():
+    for name, m in module.named_modules():
         if 'Conv' in type(m).__name__ and hasattr(m, 'weight'):
             nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity=nonlinearity)
             if getattr(m, 'bias', None) is not None:
