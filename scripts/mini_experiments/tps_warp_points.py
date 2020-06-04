@@ -22,7 +22,7 @@ def flow2rgb(flow):
 
 img = Image.open('image.jpg')
 images = [img]
-timages=[]
+timages = []
 x = to_tensor(img).unsqueeze(0)
 
 with torch.no_grad():
@@ -41,13 +41,23 @@ mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k
 base_grid = torch.stack(list(reversed(mg)), dim=-1)
 base_grid = base_grid.expand(N, H, W, 2)
 # embed()
-x_warped = vmf.gaussian_forward_warp_josa(x, (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new([W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)
+
+x_warped = vmf.gaussian_forward_warp_josa(x, (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new(
+    [W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)
 flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
 timages += [x_warped]
 
 gridbw = vmf.backward_tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 x_warped = F.grid_sample(x, gridbw).squeeze_(1)
 timages += [x_warped]
+
+# unrelated - Gaussian
+from vidlu.modules.components import GaussianFilter2D
+
+gridrand = torch.randn_like(base_grid) * 6
+gridrand = GaussianFilter2D(sigma=20, padding_mode='reflect')(gridrand.permute(0, 3, 1, 2)).permute(
+    0, 2, 3, 1)
+timages += [F.grid_sample(x, base_grid + gridrand).squeeze_(1)]
 
 for x in timages:
     r = 1

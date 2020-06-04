@@ -20,7 +20,7 @@ class GaussianFilter2D(E.Module):
     def __init__(self, sigma=2, ksize=None, padding_mode='reflect'):
         # TODO: exploit separability of the kernel if it is large
         if ksize is None:
-            ksize = 3 * sigma
+            ksize = 5 * sigma
             ksize += int(ksize % 2 == 0)
         elif ksize % 2 == 0:
             ValueError("`ksize` is required to be odd.")
@@ -28,19 +28,19 @@ class GaussianFilter2D(E.Module):
         self.padding = [ksize // 2] * 4
         self.padding_mode = padding_mode
 
-        g = torch.arange(ksize, dtype=torch.float).expand(ksize, ksize)
-        g = torch.stack([g, g.t()], dim=-1)
-        center = (ksize - 1) / 2
-        var = sigma ** 2
-        kernel = torch.exp(-g.sub_(center).pow_(2).sum(dim=-1).div_(2 * var))
-        self.kernel = kernel.div_(torch.sum(kernel))  # normalize
-        self.kernel.requires_grad_(False)
+        with torch.no_grad():
+            g = torch.arange(ksize, dtype=torch.float).sub_((ksize - 1) / 2)
+            kernel = torch.exp(-g.pow_(2).div_(2 * sigma ** 2))
+            self.register_buffer('kernel', kernel.div_(torch.sum(kernel)))  # normalize
+            self.kernel.requires_grad_(False)
 
     def forward(self, x):
-        kernel = self.kernel.expand(x.shape[1], 1, *self.kernel.shape)
-        conv = partial(F.conv2d, weight=kernel, groups=x.shape[1])
-        return (conv(F.pad(x, self.padding, mode=self.padding_mode)) if self.padding_mode != 'zeros'
-                else conv(x, padding=self.padding))
+        ker1 = self.kernel.expand(x.shape[1], 1, 1, *self.kernel.shape)
+        ker2 = ker1.view(x.shape[1], 1, *self.kernel.shape, 1)
+        x = F.pad(x, self.padding, mode=self.padding_mode)
+        for ker in [ker1, ker2]:
+            x = F.conv2d(x, weight=ker, groups=x.shape[1], padding=0)
+        return x
 
 
 # Activations ######################################################################################
