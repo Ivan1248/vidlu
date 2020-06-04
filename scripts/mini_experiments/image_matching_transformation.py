@@ -23,7 +23,7 @@ images = [vti.hwc_to_chw(x).float().div(255).unsqueeze(0) for x in images]
 if torch.cuda.is_available():
     images = [x.cuda() for x in images]
 
-attack = vtaa.PerturbationModelAttack(
+attack = vtaa.PertModelAttack(
     pert_model_f=partial(vtap.ChannelGammaHsv, forward_arg_count=1),
     loss=lambda a, b: -(a - b).abs(),
     step_count=40,

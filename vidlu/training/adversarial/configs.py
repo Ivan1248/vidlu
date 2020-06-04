@@ -17,7 +17,7 @@ madry_cifar10_attack = partial(attacks.PGDAttack,
                                step_count=10,  # TODO: change
                                clip_bounds=(0, 1))
 
-channelwise_pgd_attack = partial(attacks.PerturbationModelAttack,
+channelwise_pgd_attack = partial(attacks.PertModelAttack,
                                  pert_model_f=partial(vmi.Additive, ()),
                                  pert_model_init=None,
                                  step_size=2 / 255,
@@ -25,7 +25,7 @@ channelwise_pgd_attack = partial(attacks.PerturbationModelAttack,
                                  clip_bounds=(0, 1),
                                  projection=0.1)
 
-pmodel_attack_1 = partial(attacks.PerturbationModelAttack,
+pmodel_attack_1 = partial(attacks.PertModelAttack,
                           pert_model_f=partial(vmi.AlterGamma, (2, 3)),
                           pert_model_init=None,
                           step_size=2 / 255,
@@ -33,7 +33,7 @@ pmodel_attack_1 = partial(attacks.PerturbationModelAttack,
                           clip_bounds=(0, 1),
                           projection=0.1)
 
-warp_attack = partial(attacks.PerturbationModelAttack,
+warp_attack = partial(attacks.PertModelAttack,
                       pert_model_f=vmi.Warp,
                       pert_model_init=None,
                       step_size=0.25,
@@ -60,7 +60,7 @@ mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
                                     clip_bounds=(0, 1),
                                     stop_on_success=True)
 
-morsic_tps_warp_attack = partial(attacks.PerturbationModelAttack,
+morsic_tps_warp_attack = partial(attacks.PertModelAttack,
                                  # pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2),
                                  #                      label_padding_mode='zeros'),
                                  pert_model_f=partial(perturbation.OrsicPhotometricAndTPS),
@@ -95,13 +95,13 @@ def get_channel_gamma_hsv_attack_params(log_gamma_bounds=(-0.4, 0.4), hsv_addend
 
 
 channel_gamma_hsv_attack = partial(
-    attacks.PerturbationModelAttack,
+    attacks.PertModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=perturbation.ChannelGammaHsv,
     **get_channel_gamma_hsv_attack_params())
 
 tps_warp_attack = partial(
-    attacks.PerturbationModelAttack,
+    attacks.PertModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
@@ -120,14 +120,14 @@ class BatchRandAugment:
 
 
 randaugment = partial(
-    attacks.PerturbationModelAttack,
+    attacks.PertModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(
         lambda *a, **k: vmi.PertModel(BatchRandAugment(3, 4), forward_arg_count=1)),
     step_size=0)
 
 tps_warp_attack_weaker = partial(
-    attacks.PerturbationModelAttack,
+    attacks.PertModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width

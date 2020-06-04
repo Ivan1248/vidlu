@@ -42,7 +42,7 @@ def _complete_shape(shape_tail, input_shape):
         b if a is None else a for a, b in zip(shape_tail, input_shape[-len(shape_tail):]))
 
 
-class PerturbationModelBase(E.Module):
+class PertModelBase(E.Module):
     param_defaults = dict()
 
     def __init__(self, forward_arg_count=None):
@@ -139,7 +139,7 @@ class PerturbationModelBase(E.Module):
         getpd = ((lambda m: m.create_default_params(m.dummy_x).items()) if full_size
                  else (lambda m: ((k, v['value']) for k, v in m.param_defaults.items())))
         return self._named_members_repeatable(
-            lambda m: getpd(m) if isinstance(m, PerturbationModelBase) else iter(()),
+            lambda m: getpd(m) if isinstance(m, PertModelBase) else iter(()),
             prefix=prefix, recurse=recurse)
 
     def reset_parameters(self):
@@ -154,18 +154,18 @@ class PerturbationModelBase(E.Module):
 
 
 def default_parameters(pert_model, full_size: bool, recurse=True):
-    return PerturbationModelBase.default_parameters(pert_model, full_size, recurse=recurse)
+    return PertModelBase.default_parameters(pert_model, full_size, recurse=recurse)
 
 
 def named_default_parameters(pert_model, full_size: bool, recurse=True):
-    return PerturbationModelBase.named_default_parameters(pert_model, full_size, recurse=recurse)
+    return PertModelBase.named_default_parameters(pert_model, full_size, recurse=recurse)
 
 
 def reset_parameters(pert_model):
-    PerturbationModelBase.reset_parameters(pert_model)
+    PertModelBase.reset_parameters(pert_model)
 
 
-class PertModel(PerturbationModelBase):
+class PertModel(PertModelBase):
     def __init__(self, module, forward_arg_count=None):
         super().__init__(forward_arg_count=forward_arg_count)
         self.module = module
@@ -174,7 +174,7 @@ class PertModel(PerturbationModelBase):
         return self.module(*args, **kwargs)
 
 
-class SimplePerturbationModel(PerturbationModelBase):
+class SimplePertModel(PertModelBase):
     param_defaults = dict()
 
     def __init__(self, equivariant_dims: T.Sequence):
@@ -190,8 +190,8 @@ class SimplePerturbationModel(PerturbationModelBase):
                 for k, v in self.param_defaults.items()}
 
 
-class SliceSimplePerturbationModel(PerturbationModelBase):
-    "Can modify only a slice, e.g. a channel."
+class SliceSimplePertModel(PertModelBase):
+    """Can modify only a slice, e.g. a channel."""
     param_defaults = dict()
 
     def __init__(self, equivariant_dims: T.Sequence, slice=None):  # slice=np.s_[...] can be used
@@ -210,7 +210,7 @@ class SliceSimplePerturbationModel(PerturbationModelBase):
                 for k, v in self.param_defaults.items()}
 
 
-class AlterGamma(SimplePerturbationModel):
+class AlterGamma(SimplePertModel):
     param_defaults = dict(gamma=dict(value=1., bounds=[0, 500]))
     eps = 1e-8
 
@@ -218,7 +218,7 @@ class AlterGamma(SimplePerturbationModel):
         return x.mul_(1 - 2 * self.eps).add_(self.eps).pow(self.gamma)
 
 
-class AlterLogGamma(SimplePerturbationModel):
+class AlterLogGamma(SimplePertModel):
     # Gradients are more stable than for AlterGamma
     param_defaults = dict(log_gamma=dict(value=0., bounds=[-6, 6]))
 
@@ -226,14 +226,14 @@ class AlterLogGamma(SimplePerturbationModel):
         return x.pow(self.log_gamma.exp())
 
 
-class AlterContrast(SimplePerturbationModel):
+class AlterContrast(SimplePertModel):
     param_defaults = dict(contrast=dict(value=1., bounds=[0, 500]))
 
     def forward(self, x):
         return (x - 0.5).mul_(self.contrast).add_(0.5)
 
 
-class Additive(SliceSimplePerturbationModel):
+class Additive(SliceSimplePertModel):
     param_defaults = dict(addend=dict(value=0., bounds=[-1, 1]))
 
     def forward(self, x):
@@ -247,7 +247,7 @@ class Additive(SliceSimplePerturbationModel):
         self.addend.add_(x).clamp_(*bounds).sub_(x)
 
 
-class Multiplicative(SliceSimplePerturbationModel):
+class Multiplicative(SliceSimplePertModel):
     param_defaults = dict(factor=dict(value=1., bounds=[0, 500]))
 
     def forward(self, x):
@@ -258,7 +258,7 @@ class Multiplicative(SliceSimplePerturbationModel):
         return y
 
 
-class Whiten(SimplePerturbationModel):
+class Whiten(SimplePertModel):
     """Interpolates pixel values between the original ones and 1."""
     param_defaults = dict(weight=dict(value=0., bounds=[0, 1]))
 
@@ -266,7 +266,7 @@ class Whiten(SimplePerturbationModel):
         return (1 - x).mul_(self.weight).add_(x)
 
 
-class Warp(PerturbationModelBase):
+class Warp(PertModelBase):
     param_defaults = dict(flow=dict(value=0., bounds=[0, 1]))
 
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
@@ -314,7 +314,7 @@ def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='z
     return x_p, y_p
 
 
-class MorsicTPSWarp(PerturbationModelBase):  
+class MorsicTPSWarp(PertModelBase):
     # directly uses theta, skipping control points.
     # Use BackwardTPSWarp instead.
     param_defaults = dict(theta=dict(value=0., bounds=[-0.5, 0.5]))
@@ -341,7 +341,7 @@ class MorsicTPSWarp(PerturbationModelBase):
                                          'label_interpolation_mode', 'label_padding_mode']})
 
 
-class BackwardTPSWarp(PerturbationModelBase):
+class BackwardTPSWarp(PertModelBase):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
     def __init__(self, control_grid_shape=(2, 2), control_grid_align_corners=False,

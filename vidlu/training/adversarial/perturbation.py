@@ -13,7 +13,7 @@ import vidlu.ops as vo
 
 # Perturbation models
 
-class Alglibiwasc(vm.Seq, vmi.PerturbationModelBase):
+class Alglibiwasc(vm.Seq, vmi.PertModelBase):
     def __init__(self):
         super().__init__(vm.Seq(
             gamma=vmi.AlterLogGamma((2, 3)),

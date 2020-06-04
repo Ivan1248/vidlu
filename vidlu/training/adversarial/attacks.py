@@ -402,7 +402,7 @@ def _reduce_losses(unred_loss, unred_reg_loss=None, nonadv_mask=None):
     return loss, reg_loss, loss_nomask
 
 
-def _get_mask_and_update_index(pmodel: vmi.PerturbationModel, adv_mask: torch.Tensor,
+def _get_mask_and_update_index(pmodel: vmi.PertModelBase, adv_mask: torch.Tensor,
                                masking_mode: T.Union[str, T.Sequence, T.Set], index: torch.Tensor):
     """Used by `perturb_iterative_with_perturbation_model` to optionally prune
     batches and mask gradients for early stopping of optimization."""
@@ -430,9 +430,9 @@ MaskingMode = T.Literal['loss', 'grad']
 
 def perturb_iterative_with_perturbation_model(
         model, x, y, step_count, optim_f, loss_fn, minimize=False,
-        pert_model: vmi.PerturbationModel = None,
-        projection: T.Callable[[vmi.PerturbationModel, torch.Tensor], None] = lambda _: None,
-        clip_bounds=(0, 1),
+        pert_model: vmi.PertModelBase = None,
+        projection: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = lambda _: None,
+        bounds=(0, 1),
         stop_mask: T.Callable[[AttackState], bool] = None,
         masking_mode: T.Union[MaskingMode, T.Container[MaskingMode]] = 'loss',
         backward_callback: T.Callable[[AttackState], None] = None,
@@ -647,11 +647,11 @@ class PGDAttackOld(Attack, EarlyStoppingMixin):
 
 
 @dataclass
-class PerturbationModelAttack(Attack, EarlyStoppingMixin):
-    pert_model_f: vmi.PerturbationModel = partial(vmi.Additive, ())
+class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
+    pert_model_f: vmi.PertModelBase = partial(vmi.Additive, ())
     optim_f: T.Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
-    initializer: T.Callable[[vmi.PerturbationModel], None] = None
-    projection: T.Union[float, T.Callable[[vmi.PerturbationModel, torch.Tensor], None]] = 0.1
+    initializer: T.Callable[[vmi.PertModelBase], None] = None
+    projection: T.Union[float, T.Callable[[vmi.PertModelBase, torch.Tensor], None]] = 0.1
     step_size: T.Union[float, T.Mapping[str, float]] = 0.05
     step_count: int = 40
 
@@ -660,7 +660,7 @@ class PerturbationModelAttack(Attack, EarlyStoppingMixin):
         if not callable(self.projection):
             eps = self.projection
 
-            def projection(pmodel: vmi.PerturbationModel, x):
+            def projection(pmodel: vmi.PertModelBase, x):
                 params = pmodel.named_parameters()
                 default_vals = vmi.named_default_parameters(pmodel, full_size=False)
                 for (name, p), (name_, d) in zip(params, default_vals):
@@ -696,9 +696,7 @@ class PerturbationModelAttack(Attack, EarlyStoppingMixin):
 
 
 @dataclass
-class VirtualPerturbationModelAttack(PerturbationModelAttack):
-    to_virtual_target: T.Callable = _to_soft_target
-    loss: T.Callable = dc.field(default_factory=KLDivLossWithLogits)
+class VirtualPertModelAttack(PertModelAttack):
 
 
 @dataclass
@@ -719,7 +717,7 @@ class PGDAttack(Attack, EarlyStoppingMixin):
     optim_f = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
 
     @torch.no_grad()
-    def _project_params(self, pmodel: vmi.PerturbationModel, x):
+    def _project_params(self, pmodel: vmi.PertModelBase, x):
         pmodel.addend.set_(ops.batch.project_to_p_ball(pmodel.addend, r=self.eps, p=self.p))
         pmodel.ensure_output_within_bounds(x, self.clip_bounds)
 
@@ -732,8 +730,8 @@ class PGDAttack(Attack, EarlyStoppingMixin):
             pmodel.addend.zero_()
 
     def _get_perturbation(self, model, x, y=None, initial_pert=None, backward_callback=None):
-        fields = (f.name for f in dc.fields(PerturbationModelAttack) if f.init)
-        base_attack = PerturbationModelAttack(
+        fields = (f.name for f in dc.fields(PertModelAttack) if f.init)
+        base_attack = PertModelAttack(
             **{k: getattr(self, k) for k in fields if hasattr(self, k)},
             pert_model_f=partial(vmi.Additive, ()), initializer=self._initializer,
             projection=self._project_params)
