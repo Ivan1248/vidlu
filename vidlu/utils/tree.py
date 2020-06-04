@@ -17,21 +17,23 @@ def copy(tree, tree_type=None):
                         for k, v in tree.items()})
 
 
-def deep_get(tree, path, default=None):
-    k, *path = path
-    return default if k not in tree else \
-        tree[k] if len(path) == 0 else deep_get(tree[k], path, default)
-
-
-def deep_set(tree, path, val, tree_f=None):
-    tree_f = tree_f or type(tree)
-    k, *path = path
-    if len(path) == 0:
-        tree[k] = val
-    else:
+def deep_get(tree, path, default=None, error=False):
+    for i, k in enumerate(path):
         if k not in tree:
-            tree[k] = tree_f()
-        deep_set(tree[k], path, val, tree_f)
+            if error:
+                raise KeyError(path[:k + 1])
+            return default
+        tree = tree[k]
+    return tree
+
+
+def deep_set(tree, path, val, tree_type=None):
+    tree_type = tree_type or type(tree)
+    for k in path[:-1]:
+        if k not in tree:
+            tree[k] = tree_type()
+        tree = tree[k]
+    tree[path[-1]] = val
 
 
 def flatten(tree, tree_type=None) -> list:
