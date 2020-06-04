@@ -79,16 +79,21 @@ class StandardRootBlock(E.Seq):
         act_f: Activation module factory.
     """
 
-    def __init__(self, out_channels: int, small_input, conv_f=E.Conv, norm_f=D.norm_f,
-                 act_f=E.ReLU):
+    def __init__(self, out_channels: int, small_input,
+                 conv_f=partial(E.Conv, kernel_size=Reserved, stride=Reserved, padding='half',
+                                bias=Reserved),
+                 norm_f=D.norm_f, act_f=E.ReLU, pool_f=E.MaxPool):
+        conv_args = dict(out_channels=out_channels, dilation=1)
         if small_input:  # CIFAR
-            super().__init__(conv=conv_f(out_channels, 3, padding='half', bias=False))
+            super().__init__(
+                conv=Reserved.call(conv_f, **conv_args, kernel_size=3, stride=1, bias=True))
         else:
-            super().__init__(conv=conv_f(out_channels, 7, stride=2, padding='half', bias=False))
+            super().__init__(conv=Reserved.call(conv_f, **conv_args, kernel_size=7, stride=2,
+                                                bias=norm_f is None))
             if norm_f is not None:
                 self.add(norm=norm_f())
             self.add(act=act_f(),
-                     pool=E.MaxPool(3, stride=2, padding='half'))
+                     pool=pool_f(3, stride=2, padding='half'))
 
 
 # Blocks ###########################################################################################
@@ -149,7 +154,7 @@ class PreactBlock(E.Seq):
             if i in noise_locations:
                 self.add(f'noise{i}', noise_f())
             self.add(f'conv{i}',
-                     Reserved.call(conv_f, kernel_size=k, out_channels=w, stride=s, dilation=d))
+                     Reserved.call(conv_f, out_channels=w, kernel_size=k, stride=s, dilation=d))
 
 
 class PostactBlock(E.Seq):
@@ -183,7 +188,7 @@ class PostactBlock(E.Seq):
         widths, stride, dilation = _resolve_block_args(base_width, width_factors, stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             self.add(f'conv{i}',
-                     Reserved.call(conv_f, kernel_size=k, out_channels=w, stride=s, dilation=d))
+                     Reserved.call(conv_f, out_channels=w, kernel_size=k, stride=s, dilation=d))
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
                 self.add(f'noise{i}', noise_f())
@@ -539,9 +544,9 @@ class ResNetV1Backbone(E.Seq):
                  width_factors=(1,) * 2, block_f=default_args(ResNetV1Groups).block_f,
                  dim_change=default_args(ResNetV1Groups).dim_change, groups_f=ResNetV1Groups):
         _check_block_args(block_f)
-        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
+        block_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f', 'conv_f']}
         super().__init__(
-            root=StandardRootBlock(base_width, small_input, **norm_act_args),
+            root=StandardRootBlock(base_width, small_input, **block_args),
             bulk=groups_f(group_lengths, base_width=base_width,
                           width_factors=width_factors,
                           block_f=block_f, dim_change=dim_change))
@@ -555,7 +560,8 @@ def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change, conv_f):
     else:
         if dim_change in ('proj', 'conv3'):
             k = 3 if dim_change == 'conv3' else 1
-            return conv_f(out_width, kernel_size=k, stride=stride, padding='half', bias=False)
+            return conv_f(out_channels=out_width, kernel_size=k, stride=stride, padding='half',
+                          dilation=1, bias=False)
         else:
             return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, None)
 
@@ -847,8 +853,7 @@ class SimpleEncoder(E.Seq):
                  norm_f=D.norm_f, act_f=E.ReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add(f'conv{i}',
-                     conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
+            self.add(f'conv{i}', conv_f(out_channels=w, kernel_size=k, stride=2, bias=i == 0))
             if norm_f is not None:
                 self.add(f'norm{i}', norm_f())
             self.add(f'act{i}', act_f())
@@ -863,8 +868,7 @@ class AAEEncoder(E.Seq):
                  norm_f=D.norm_f, act_f=nn.LeakyReLU, conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add(f'conv{i}',
-                     conv_f(kernel_size=k, out_channels=w, stride=2, bias=i == 0))
+            self.add(f'conv{i}', conv_f(out_channels=w, kernel_size=k, stride=2, bias=i == 0))
             if i > 0:
                 self.add(f'norm{i}', norm_f())
             self.add(f'act{i}', act_f())
@@ -879,8 +883,7 @@ class AAEDecoder(E.Seq):
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add({f'norm{i}': norm_f(),
                       f'act{i}': act_f(),
-                      f'conv{i}': convt_f(kernel_size=k, out_channels=w, stride=2,
-                                          padding=1)})
+                      f'conv{i}': convt_f(out_channels=w, kernel_size=k, stride=2, padding=1)})
         self.add('tanh', nn.Tanh())
 
 
