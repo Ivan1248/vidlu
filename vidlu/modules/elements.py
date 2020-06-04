@@ -10,6 +10,8 @@ from fractions import Fraction
 import re
 import warnings
 import inspect
+import copy
+import weakref
 
 import numpy as np
 import torch
@@ -148,41 +150,62 @@ def register_inverse_check_hook(module):
     return check_inverse
 
 
+class InverseError(RuntimeError):
+    pass
+
+
 class InvertibleMixin:
     # Note: reconstruction_tols is used in inverse check.
     # It can be overridden with a property.
     reconstruction_tols = dict(rtol=10, atol=1e-5)
 
+    def _del_inverse_cache(self):
+        del self.inverse
+
     @functools.cached_property
     def inverse(self: nn.Module) -> nn.Module:
-        # print(vmu.try_get_module_name_from_call_stack(self))
         try:
-            inv_module = self.inverse_module()
+            module = self.inverse_module()
             # The inverse of the inverse is the original module and `property` is used so that the
             # original module is not recognized as a child of the inverse module, which would result
             # in an infinite recursion when the `children` method is called on the inverse.
-            inv_module.inverse = property(self._get_self)
-        except AttributeError as e:
+            module.inverse = property(weakref.ref(self, module._del_inverse_cache))
+            return module
+        except TypeError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
             # AttributeError saying that this module has no `inverse` attribute
             raise TypeError(f"The inverse for the module `{type(self)}` is not defined: {e}")
-        return inv_module
-
-    def _get_self(self):
-        return self
 
     def inverse_module(self) -> nn.Module:
-        if hasattr(self, 'inverse_forward'):
+        if type(self).inverse_forward is not InvertibleMixin.inverse_forward:
             return Inverse(self)
-        raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
+        raise TypeError(f"`inverse_forward` is not defined for `{type(self)}`."
+                        + " Either `inverse_forward` or `inverse_module` should be overloaded.")
+
+    def inverse_forward(*args, **kwargs):
+        # overload either this or inverse_module
+        raise NotImplementedError()
+
+    @functools.cached_property
+    def flow(self) -> nn.Module:
+        return self.flow_module()
+
+    def flow_module(self) -> nn.Module:
+        if type(self).flow_forward is not InvertibleMixin.flow_forward:
+            module = copy.copy(self)
+            module.forward = self.flow_forward
+            return module
+        raise TypeError(f"`flow_forward` is not defined for `{type(self)}`."
+                        + " Either `flow_forward` or `flow_module` should be overloaded.")
+
+    def flow_forward(self, *args, **kwargs):
+        # overload either this or flow_module
+        raise NotImplementedError()
 
     def check_inverse(self: nn.Module, *inputs):
         for m in self.modules():
             register_inverse_check_hook(m)
         self(*inputs)
-
-    def is_invertible(self) -> bool:
-        return hasattr(self, 'inverse_forward') or hasattr(self, 'inverse_module')
 
 
 class LogJacobianMixin:
@@ -1103,8 +1126,23 @@ class Inverse(Module):
     def forward(self, *args, **kwargs):
         return self.module.inverse_forward(*args, **kwargs)
 
+    def flow_module(self):
+        return self.module.flow.inverse
+
     def inverse_module(self):
         return self.module
+
+
+class Flow(Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self, *args, **kwargs):
+        return self.module.flow_forward(*args, **kwargs)
+
+    def inverse_module(self):  # TODO
+        return self.module.inverse.flow
 
 
 # Stochastic #######################################################################################
