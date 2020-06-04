@@ -1266,15 +1266,15 @@ def deep_join(left: Module, right: Module):
     return left.deep_join(right)
 
 
-def with_intermediate_outputs(root: nn.Module,
+def with_intermediate_outputs(module: nn.Module,
                               submodule_paths: list,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn'):
-    """Creates a function extending `root.forward` so that a pair
-    containing the output of `root.forward` as well as well as a list of
-    intermediate outputs as defined in `submodule_paths`.
+    """Creates a function wrapping `module` that returns a pair containing the
+    output of `module.forward` as well as a list of intermediate outputs as
+    defined by `submodule_paths`.
 
     Arguments:
-        root (Module): a module.
+        module (Module): a module.
         submodule_paths (List[str]): a list of names (relative to `root`)
             of modules the outputs of which you want to get.
         inplace_modified_action: What to do if it is detected that an
@@ -1292,13 +1292,12 @@ def with_intermediate_outputs(root: nn.Module,
         submodule_paths = [submodule_paths]
 
     def get_submodules():
-        return [get_submodule(root, p) for p in submodule_paths]
+        return [get_submodule(module, p) for p in submodule_paths]
 
-    @functools.wraps(root)
+    @functools.wraps(module)
     def wrapper(*args, **kwargs):
-        submodules = vuf.tryable(get_submodules, None)()
-        if submodules is None:  # in case the module is not yet built
-            root(*args, **kwargs)
+        if (submodules := vuf.tryable(get_submodules, None)()) is None:
+            module(*args, **kwargs)  # in case the module is not yet built
             submodules = get_submodules()
 
         outputs = [None] * len(submodule_paths)
@@ -1310,7 +1309,7 @@ def with_intermediate_outputs(root: nn.Module,
             return hook
 
         handles = [m.register_forward_hook(create_hook(i)) for i, m in enumerate(submodules)]
-        output = root(*args, **kwargs)
+        output = module(*args, **kwargs)
         for h in handles:
             h.remove()
 
@@ -1330,43 +1329,27 @@ def with_intermediate_outputs(root: nn.Module,
 
 
 class IntermediateOutputsModuleWrapper(Module):
-    def __init__(self, module, submodule_paths):
-        """
-        Creates a function extending `root.forward` so that a pair containing
-        the output of `root.forward` as well as well as a list of intermediate
-        outputs as defined in `submodule_paths`.
+    def __init__(self, module, submodule_paths,
+                 inplace_modified_action: T.Literal['warn', 'error', None] = 'warn'):
+        """A wrapper module that returns a pair containing the output of
+        `module.__call__` as well as a list of intermediate outputs as defined
+        by `submodule_paths`.
+
         Arguments:
             module (Module): a module.
-            submodule_paths (List[str]): a list of module names relative to
-            `root`.
+            submodule_paths (List[str]): a list of names (relative to `root`)
+                of modules the outputs of which you want to get.
+            inplace_modified_action: What to do if it is detected that an
+                intermediate output is in-place modified by a subsequent
+                operation.
         """
         super().__init__()
         self.module = module
         self.submodule_paths = submodule_paths
-        self.handles, self.outputs = None, None
-
-    def __del__(self):
-        if self.handles is not None:
-            for h in self.handles:
-                h.remove()
-
-    def post_build(self, *args, **kwargs):
-        def create_hook(idx):
-            def hook(module, input, output):
-                self.outputs[idx] = output
-
-            return hook
-
-        submodules = [get_submodule(self.module, p) for p in self.submodule_paths]
-        self.handles = [m.register_forward_hook(create_hook(i))
-                        for i, m in enumerate(submodules)]
 
     def forward(self, *args, **kwargs):
-        self.outputs = [None] * len(self.submodule_paths)
-        output = self.module(*args, **kwargs)
-        outputs = self.outputs
-        self.outputs = None
-        return output, tuple(outputs)
+        module_wio = with_intermediate_outputs(self.module, self.submodule_paths)
+        return module_wio(*args, **kwargs)
 
 
 class CheckpointingModuleWrapper(Module):
