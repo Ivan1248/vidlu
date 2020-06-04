@@ -471,8 +471,7 @@ def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, norm
     if dim_change in ('proj', 'conv3'):
         shortcut = E.Seq(
             conv=conv_f(out_channels=out_width, kernel_size=3 if dim_change == 'conv3' else 1,
-                        stride=stride,
-                        padding='half', dilation=1, bias=False))
+                        stride=stride, padding='half', dilation=1, bias=False))
         if norm_f is not None:
             shortcut.add(norm=norm_f())
         return shortcut
@@ -899,7 +898,7 @@ class AAEDiscriminator(E.Seq):
 # iRevNet ##########################################################################################
 
 
-class iRevNetUnitTransform(E.Module):
+class RevNetUnitTransform(E.Module):
     def __init__(self, first=False, block_f=PreactBlock):
         super().__init__()
         self.store_args()
@@ -930,7 +929,7 @@ class IRevNetUnit(E.Seq):
             self.add(input_pad=E.Seq(concat=E.Concat(1),  # TODO: make more efficient
                                      inj_pad=PadChannels(padding),
                                      psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
-        self.add(transform=iRevNetUnitTransform(first=a.first, block_f=a.block_f))
+        self.add(transform=RevNetUnitTransform(first=a.first, block_f=a.block_f))
 
     @staticmethod
     def _input_padding(x, block_out_ch, stride, force_surjection):
@@ -969,7 +968,7 @@ class IRevNetGroups(E.Seq):
 class IRevNetBackbone(E.Seq):
     def __init__(self, init_stride=2, group_lengths=(2,) * 4, width_factors=(1,) * 2,
                  base_width=None, block_f=default_args(IRevNetGroups).block_f,
-                 groups_f=IRevNetGroups):
+                 groups_f=IRevNetGroups, no_final_postact=False):
         _check_block_args(block_f)
         super().__init__()
         self.store_args()
@@ -978,7 +977,7 @@ class IRevNetBackbone(E.Seq):
         a = self.args
         base_width = a.base_width
         if base_width is None:
-            base_width, rem = divmod(x.shape[0] * a.init_stride ** 2, 2)
+            base_width, rem = divmod(x.shape[1] * a.init_stride ** 2, 2)
             if rem != 0:
                 raise RuntimeError(f"The number of channels after the first baguette with"
                                    f" stride {a.init_stride} is not even.")
@@ -988,6 +987,7 @@ class IRevNetBackbone(E.Seq):
             bulk=a.groups_f(a.group_lengths, base_width=base_width, width_factors=a.width_factors,
                             block_f=a.block_f),
             concat=E.Concat(dim=1))
-        if (norm_f := default_args(a.block_f).norm_f) is not None:
-            self.add('post_norm', norm_f())
-        self.add('post_act', default_args(a.block_f).act_f())
+        if not self.args.no_final_postact:
+            if (norm_f := default_args(a.block_f).norm_f) is not None:
+                self.add('post_norm', norm_f())
+            self.add('post_act', default_args(a.block_f).act_f())
