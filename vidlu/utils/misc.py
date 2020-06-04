@@ -224,7 +224,7 @@ class Stopwatch:
         self.stop()
 
     def __str__(self):
-        return f"BlockTimer(time={self.time})"
+        return f"Stopwatch(time={self.time})"
 
     @property
     def time(self):
