@@ -43,15 +43,15 @@ warp_attack = partial(attacks.PerturbationModelAttack,
 
 entmin_attack = partial(madry_cifar10_attack,
                         minimize=False,
-                        loss=lambda logits, _: losses.entropy_with_logits(logits))
+                        loss=lambda logits, _: losses.entropy_l(logits))
 
 virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
                                      to_virtual_target='argmax')
 
 vat_pgd_cifar10_attack = partial(madry_cifar10_attack,
                                  to_virtual_target='probs',
-                                 loss=losses.kl_div_loss_with_logits)
-
+                                 loss=losses.kl_div_l)
+0
 mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
                                     eps=0.3,
                                     step_size=0.1,

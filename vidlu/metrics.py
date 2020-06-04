@@ -30,47 +30,73 @@ def _get_iter_output(iter_output, name):
     return iter_output
 
 
-@torch.no_grad()
-def multiclass_confusion_matrix(true, pred, class_count):
-    """ Computes a multiclass confusion matrix.
+def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False):
+    """ Computes a multi-class confusion matrix.
 
     Args:
         true (Tensor): a vector of integers representing true classes.
-        pred (Tensor): a vector of integers representing predicte classes.
-        class_count (int):
+        pred (Tensor): a vector of integers representing predicted classes.
+        class_count (int): number of classes.
+        dtype (optional): confusion matrix data type.
 
     Returns:
         A confusion matrix with shape (class_count, class_count).
     """
-    pred = one_hot(pred, class_count, dtype=torch.int64)
-    cm = torch.zeros([class_count] * 2, requires_grad=False,
-                     dtype=torch.int64, device='cpu')  # TODO: why CPU
-    for c in range(class_count):
-        cm[c, :] = pred[true == c, :].sum(0)
-    return cm
+    return soft_multiclass_confusion_matrix(true, one_hot(pred, class_count, dtype=torch.float64),
+                                            batch=batch) \
+        .to(dtype or torch.int64)
 
 
-@torch.no_grad()
-def soft_multiclass_confusion_matrix(true, pred, class_count):
-    """ Computes a soft multiclass confusion matrix from probabilities.
+def soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
+    """ Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
         true (Tensor): a vector of integers representing true classes.
         pred (Tensor): an array consisting of vectors representing predicted class
             probabilities.
-        class_count (int):
+        dtype (optional): confusion matrix data type.
 
     Returns:
         A soft confusion matrix with shape (class_count, class_count)
     """
-    cm = torch.zeros([class_count] * 2, requires_grad=False, dtype=torch.float64, device='cpu')
-    for c in range(class_count):
-        cm[c, :] = pred[true == c, :].sum(0)
-    return cm
+    dtype = dtype or pred.dtype
+    class_count = pred.shape[-1]
+    non_ignored = true != -1
+    if batch:
+        assert torch.all(non_ignored)
+    return soft_gt_multiclass_confusion_matrix(one_hot(true[non_ignored], class_count, dtype=dtype),
+                                               pred[non_ignored].to(dtype), batch=batch)
+
+    # 3 - 4 times faster than
+    # cm = torch.empty(list(true.shape[:int(batch)]) + [class_count] * 2,
+    #                  dtype=dtype or torch.float64, device=true.device)
+    # if batch:
+    #     for c in range(class_count):
+    #         cm[:, c, :] = pred[:, true == c, :].sum(int(batch))
+    # else:
+    #     for c in range(class_count):
+    #         cm[c, :] = pred[true == c, :].sum(int(batch))
+    # return cm
 
 
-@torch.no_grad()
-def compute_classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
+def soft_gt_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
+    """ Computes a soft multi-class confusion matrix from probabilities.
+
+    Args:
+        true (Tensor): a vector of integers representing true classes.
+        pred (Tensor): an array consisting of vectors representing predicted class
+            probabilities.
+        dtype (optional): confusion matrix data type.
+
+    Returns:
+        A soft confusion matrix with shape (class_count, class_count)
+    """
+    if dtype is not None:
+        true, pred = true.to(dtype), pred.to(dtype)
+    return torch.einsum("bni,bnj->bij" if batch else "ni,nj->ij", true, pred)
+
+
+def classification_metrics_np(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
     """ Computes macro-averaged classification evaluation metrics based on the
         accumulated confusion matrix and clears the confusion matrix.
 
@@ -95,20 +121,60 @@ def compute_classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'),
     P, R, F1, IoU = map(np.nan_to_num, [P, R, F1, IoU])  # 0 where tp=0
     mP, mR, mF1, mIoU = map(np.mean, [P, R, F1, IoU])
     A = tp.sum() / pos.sum()
-    locs = locals()
-    return dict((x, locs[x]) for x in returns)
+    locals_ = locals()
+    if isinstance(returns, str):
+        return locals_[returns]
+    return {k: locals_[k] for k in returns}
+
+
+def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), eps=1e-8):
+    """Computes macro-averaged classification evaluation metrics based on the
+    accumulated confusion matrix and clears the confusion matrix.
+
+    Supports batches (when `cm` is a batch of matrices).
+
+    Args:
+        cm (np.array): a confusion matrix.
+        returns (Sequence): a list of metrics that should be returned.
+        eps (float): a number to add to the denominator to avoid division by 0.
+
+    Returns:
+        A dictionary with computed classification evaluation metrics.
+    """
+    is_batch = int(cm.dim() == 3)
+    tp = cm.diagonal(dim1=is_batch, dim2=is_batch + 1)
+    actual_pos = cm.sum(dim=is_batch + 1)
+    pos = cm.sum(dim=is_batch)
+    fp = pos - tp
+
+    tp = tp.float()
+    P = tp / pos
+    R = tp / actual_pos
+    F1 = 2 * P * R / (P + R)
+    IoU = tp / (actual_pos + fp)
+    for x in [P, R, F1, IoU]:  # 0 where tp=0
+        x[torch.isnan(x)] = 0
+
+    mP, mR, mF1, mIoU = map(torch.mean, [P, R, F1, IoU])
+    A = tp.sum(dim=is_batch) / pos.sum(dim=is_batch)
+    locals_ = locals()
+    if isinstance(returns, str):
+        return locals_[returns]
+    return {k: locals_[k] for k in returns}
 
 
 class ClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count, target_name="target",
                  hard_prediction_name="other_outputs.hard_prediction",
-                 metrics=('A', 'mP', 'mR', 'mIoU')):
+                 metrics=('A', 'mP', 'mR', 'mIoU'), device=None):
         self.class_count = class_count
-        self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False)
+        self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False,
+                              device=device)
         self.target_name = target_name
         self.hard_prediction_name = hard_prediction_name
         self.metrics = metrics
 
+    @torch.no_grad()
     def reset(self):
         self.cm.fill_(0)
 
@@ -116,10 +182,15 @@ class ClassificationMetrics(AccumulatingMetric):
     def update(self, iter_output):
         true = _get_iter_output(iter_output, self.target_name).flatten()
         pred = _get_iter_output(iter_output, self.hard_prediction_name).flatten()
-        self.cm += multiclass_confusion_matrix(true, pred, self.class_count)
+        cm = multiclass_confusion_matrix(true, pred, self.class_count)
+        if self.cm.device != cm.device:
+            self.cm = self.cm.to(cm.device)
+        self.cm += cm
 
+    @torch.no_grad()
     def compute(self, eps=1e-8):
-        return compute_classification_metrics(self.cm.cpu().numpy(), returns=self.metrics, eps=eps)
+        return {k: v.item() if v.dim() == 0 else v.cpu().numpy().copy() for k, v in
+                classification_metrics(self.cm, returns=self.metrics, eps=eps).items()}
 
 
 class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
@@ -161,10 +232,12 @@ class _ExtremumMetric(AccumulatingMetric):
     def reset(self):
         self._ext = None
 
+    @torch.no_grad()
     def update(self, iter_output):
         val = self.extract_func(iter_output)
         self._ext = self.extremum_func(self._ext or val, val)
 
+    @torch.no_grad()
     def compute(self):
         return {self.name: self._ext}
 
@@ -195,11 +268,13 @@ class _MultiMetric(AccumulatingMetric):
         for m in self.metrics:
             m.update(iter_output)
 
+    @torch.no_grad()
     def compute(self):
         result = dict()
         for m in self.metrics or ():
             result.update(m.compute())
         return result
+
 
 class AverageMultiMetric(_MultiMetric):
     def __init__(self, name_filter):
@@ -214,6 +289,7 @@ class HarmonicMeanMultiMetric(_MultiMetric):
 class MaxMultiMetric(_MultiMetric):
     def __init__(self, name_filter):
         super().__init__(name_filter=name_filter, metric_f=MaxMetric)
+
 
 class MinMultiMetric(_MultiMetric):
     def __init__(self, name_filter):
@@ -230,6 +306,7 @@ class SoftClassificationMetrics(AccumulatingMetric):
         self.probs_name = probs_name
         self.metrics = metrics
 
+    @torch.no_grad()
     def reset(self):
         self.cm.fill_(0)
 

@@ -195,7 +195,7 @@ def extend_output(output):
 @dataclass
 class Evaluator:
     model: T.Callable = Required
-    loss_f: InitVar[T.Callable] = Required
+    loss: T.Callable = Required
     prepare_batch: T.Callable = default_prepare_batch
     data_loader_f: T.Callable = partial(DataLoader, num_workers=2)
     batch_size: int = 1
@@ -203,25 +203,25 @@ class Evaluator:
     extend_output: T.Callable = extend_output
     eval_step: T.Callable = Required
 
-    loss: T.Callable = dc.field(init=False)
-
-    def __post_init__(self, loss_f):
+    def __post_init__(self):
         self.prepare_batch = partial(self.prepare_batch, device=vmu.get_device(self.model),
                                      non_blocking=False)
-        self.loss = loss_f()
 
         self.evaluation = Engine(lambda e, b: self._run_step(self.eval_step, b))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.iteration_completed.add_handler(self._update_metrics)
 
+    @torch.no_grad()
     def _reset_metrics(self):
         for m in self.metrics:
             m.reset()
 
+    @torch.no_grad()
     def _update_metrics(self, state):
         for m in self.metrics:
             m.update(state.output)
 
+    @torch.no_grad()
     def get_metric_values(self, *, reset=False):
         metric_evals = dict()
         for m in self.metrics:
@@ -286,8 +286,8 @@ class Trainer(Evaluator):
     lr_scheduler: T.Any = dc.field(init=False)
     extensions: T.Sequence = dc.field(init=False)
 
-    def __post_init__(self, loss_f, optimizer_f, lr_scheduler_f, extension_fs):
-        super().__post_init__(loss_f)
+    def __post_init__(self, optimizer_f, lr_scheduler_f, extension_fs):
+        super().__post_init__()
 
         self.optimizer = optimizer_f(
             self.model if isinstance(optimizer_f, vtc.OptimizerMaker) else self.model.parameters())

@@ -364,8 +364,6 @@ def get_pretrained_params(model, params_name, params_dir):
 
 
 def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
-    from vidlu.training import metrics
-
     if problem is None:
         if dataset is None:
             raise ValueError("get_metrics: either the dataset argument"

@@ -4,6 +4,7 @@ from functools import partial
 from dataclasses import dataclass
 from pathlib import Path
 import typing as T
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -53,8 +54,13 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
 
     def report_metrics(es, is_validation=False):
         def eval_str(metrics):
-            return ', '.join([f"{k}=" + (f"{v:.4f}" if isinstance(v, float) else str(v))
-                              for k, v in metrics.items()])
+            def fmt(v):
+                return (f"{v:.4f}".lstrip('0') if isinstance(v, float) else
+                        (f"\n{v}" if v.ndim > 1 else v) if isinstance(v, np.ndarray) else
+                        str(v))
+
+            with np.printoptions(precision=2, linewidth=100, floatmode='maxprec_equal'):
+                return ', '.join([f"{k}={fmt(v)}" for k, v in metrics.items()])
 
         metrics = trainer.get_metric_values(reset=True)
         with indent_print():

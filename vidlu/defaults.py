@@ -67,29 +67,29 @@ def get_trainer_args(trainer_extension_fs, dataset):
     problem = get_problem_from_dataset(dataset)
     args = dict()
     if isinstance(problem, (Classification, SemanticSegmentation)):
-        args.update(loss_f=partial(losses.NLLLossWithLogits, ignore_index=-1))
+        args.update(loss=losses.NLLLossWithLogits(ignore_index=-1))
     return args
 
 
 # Metrics ##########################################################################################
 
 def get_metrics(trainer, problem):
-    import vidlu.training.metrics as tm
+    from vidlu import metrics
 
-    ret = [partial(tm.MaxMultiMetric, name_filter=lambda k: k.startswith('mem')),
-           partial(tm.HarmonicMeanMultiMetric, name_filter=lambda k: k.startswith('freq'))]
+    ret = [partial(metrics.MaxMultiMetric, name_filter=lambda k: k.startswith('mem')),
+           partial(metrics.HarmonicMeanMultiMetric, name_filter=lambda k: k.startswith('freq'))]
 
     if isinstance(problem, (Classification, SemanticSegmentation)):
-        clf_metric_names = ('A', 'mIoU') if isinstance(problem, SemanticSegmentation) else ('A',)
+        clf_metric_names = ('A', 'mIoU', 'IoU') if isinstance(problem, SemanticSegmentation) else ('A',)
         hard_prediction_name = "other_outputs.hard_prediction"
-        ret.append(partial(tm.AverageMultiMetric, name_filter=lambda k: k.startswith('loss')))
+        ret.append(partial(metrics.AverageMultiMetric, name_filter=lambda k: k.startswith('loss')))
         if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
-            ret.append(partial(tm.with_suffix(tm.ClassificationMetrics, 'adv'),
+            ret.append(partial(metrics.with_suffix(metrics.ClassificationMetrics, 'adv'),
                                hard_prediction_name="other_outputs_adv.hard_prediction",
                                class_count=problem.class_count, metrics=clf_metric_names))
         elif any(isinstance(e, t.SemiSupervisedVAT) for e in trainer.extensions):
             hard_prediction_name = "other_outputs_l.hard_prediction"
-        ret.append(partial(tm.ClassificationMetrics, hard_prediction_name=hard_prediction_name,
+        ret.append(partial(metrics.ClassificationMetrics, hard_prediction_name=hard_prediction_name,
                            class_count=problem.class_count, metrics=clf_metric_names))
     elif isinstance(problem, DepthRegression):
         raise NotImplementedError()

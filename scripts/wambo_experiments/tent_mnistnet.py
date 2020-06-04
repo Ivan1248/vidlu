@@ -9,11 +9,11 @@ from torch.utils.data import DataLoader
 # noinspection PyUnresolvedReferences
 import _context
 from vidlu.data.datasets import MNIST
-from vidlu import models, factories, experiments, initialization
+from vidlu import models, factories, experiments, initialization, metrics
 from vidlu.modules import components
 from vidlu.modules.components import Tent
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
-from vidlu.training import Trainer, configs, adversarial, metrics, extensions
+from vidlu.training import Trainer, configs, adversarial, extensions
 from vidlu.utils import logger
 import vidlu.training.steps as ts
 
@@ -58,7 +58,7 @@ def create_optimizer(trainer):
 trainer = Trainer(
     model=model,
     extend_output=configs.classification_extend_output,
-    loss_f=nn.CrossEntropyLoss,
+    loss=nn.CrossEntropyLoss(),
     train_step=ts.AdversarialTrainStep(),
     # no attack is used during training (the training is not adversarial)
     eval_step=ts.AdversarialEvalStep(),

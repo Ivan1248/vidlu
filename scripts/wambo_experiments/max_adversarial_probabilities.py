@@ -1,14 +1,12 @@
 # noinspection PyUnresolvedReferences
 import _context
-import set_cuda_order_pci
 
 import torch
 from pathlib import Path
 
 from tqdm import tqdm, trange
 
-from vidlu import gpu_utils
-from vidlu.training import metrics
+from vidlu import gpu_utils, metrics
 from vidlu.training.adversarial import attacks
 import vidlu.factories as vf
 import dirs

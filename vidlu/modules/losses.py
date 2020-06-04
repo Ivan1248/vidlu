@@ -6,6 +6,34 @@ import torch.nn.functional as F
 
 from vidlu.utils.func import class_to_func
 from vidlu.torch_utils import batchnorm_stats_tracking_off, save_grads
+from vidlu.ops import one_hot
+
+from vidlu import metrics
+
+
+# Loss adapter #####################################################################################
+
+def logits_to_probs(x):
+    return x.softmax(1)
+
+
+def to_labels(x):
+    return x.max(1)[1]
+
+
+def labels_to_probs(x, c, dtype):
+    return one_hot(x, c=c, dtype=dtype)
+
+
+class LossAdapter:
+    def __init__(self, loss,
+                 pred: T.Literal[logits_to_probs, to_labels],
+                 target: T.Literal[to_labels, labels_to_probs]):
+        self.loss, self.pred, self.target = loss, pred, target
+
+    def __call__(self, pred, target):
+        return self.loss(self.pred(pred), self.target(target))
+
 
 # Information-theoretic ############################################################################
 
@@ -31,39 +59,47 @@ class NLLLossWithLogits(nn.CrossEntropyLoss):
 nll_loss_with_logits = class_to_func(NLLLossWithLogits)
 
 
-class KLDivLossWithLogits(nn.KLDivLoss):
-    def __init__(self):
-        super().__init__(reduction='none')
-
-    def __call__(self, logits, target_probs):
-        return super().__call__(torch.log_softmax(logits, 1), target_probs).sum(1)
+def kl_div_l(logits, target):
+    if target.dim() == logits.dim() - 1:
+        return nll_loss_with_logits(logits, target)
+    return F.kl_div(torch.log_softmax(logits, 1), target, reduction='none').sum(1)
 
 
-# kl_div_loss_with_logits = class_to_func(KLDivLossWithLogits)
-def kl_div_loss_with_logits(logits, target_probs):
-    return F.kl_div(torch.log_softmax(logits, 1), target_probs, reduction='none').sum(1)
+def crossentropy_l(logits, target):
+    if target.dim() == logits.dim() - 1:
+        return nll_loss_with_logits(logits, target)
+    return -(target * logits.log_softmax(1)).sum(1)
 
 
-def cross_entropy_loss_with_logits(logits, target_probs):
-    # another way: F.kl_div(torch.log_softmax(logits, 1) + torch.log(target_probs), target_probs,
-    #                       reduction='none').sum(1)
-    return -(target_probs * logits.log_softmax(1)).sum(1)
-
-def rev_cross_entropy_with_logits(target_logits, logits):
-    return cross_entropy_loss_with_logits(logits, target_logits.softmax(1))
+def crossentropy_ll(logits, target_logits):
+    return crossentropy_l(logits, target_logits.softmax(1))
 
 
-def symmetric_cross_entropy_with_logits(p_logits, q_logits):
-    return 0.5 * (cross_entropy_loss_with_logits(p_logits, q_logits.softmax(1))
-                  + cross_entropy_loss_with_logits(q_logits, p_logits.softmax(1)))
+def clipped_rev_crossentropy_ll(logits, target_logits, A):
+    # https://arxiv.org/abs/1908.06112
+    # similar to reverse cross-entropy with smoothed
+    return -(logits.softmax() * target_logits.log_softmax(1).clamp(-A).sum(1))
 
 
-def js_div_with_logits(p_logits, q_logits):
-    return 0.5 * (kl_div_loss_with_logits(p_logits, q_logits.softmax(1))
-                  + kl_div_loss_with_logits(q_logits, p_logits.softmax(1)))
+def rev_crossentropy_ll(target_logits, logits):
+    return crossentropy_l(logits, target_logits.softmax(1))
 
 
-def entropy_with_logits(logits):
+def rev_kl_div_ll(target_logits, logits):
+    return kl_div_l(logits, target_logits.softmax(1))
+
+
+def symmetric_crossentropy_ll(p_logits, q_logits):
+    return 0.5 * (crossentropy_l(p_logits, q_logits.softmax(1))
+                  + crossentropy_l(q_logits, p_logits.softmax(1)))
+
+
+def js_div_ll(p_logits, q_logits):
+    return 0.5 * (kl_div_l(p_logits, q_logits.softmax(1))
+                  + kl_div_l(q_logits, p_logits.softmax(1)))
+
+
+def entropy_l(logits):
     log_probs = logits.log_softmax(1)
     return -(log_probs.exp() * log_probs).sum(1)
 
@@ -77,6 +113,27 @@ def reduce_loss(x, batch_reduction: T.Literal['sum', 'mean', None] = None,
     if batch_reduction is not None:
         x = getattr(torch, batch_reduction)(x, 0)
     return x
+
+
+# mIoU ############################################################################################
+
+def neg_soft_mIoU_ll(logits, target_logits, batch=True, weights=None):  # TODO
+    return neg_soft_mIoU_l(logits, target_logits.softmax(1), batch=batch, weights=weights)
+
+
+def neg_soft_mIoU_l(logits, target, batch=False, weights=None):  # TODO
+    labels = target.dim() == logits.dim() - 1
+    pred = logits.softmax(1).transpose(1, -1)
+    pred = pred.reshape((pred.shape[0], -1, pred.shape[-1]) if batch else (-1, pred.shape[-1]))
+    if labels:  # target contains labels, not probabilities
+        target = target.view(pred.shape[:-1])
+        cm = metrics.soft_multiclass_confusion_matrix(target, pred)
+    else:
+        target = target.transpose(1, -1).view(pred.shape)
+        cm = metrics.soft_gt_multiclass_confusion_matrix(target, pred)
+    if weights is not None:
+        return -torch.einsum("...i,k->...i", metrics.classification_metrics(cm, 'IoU'), weights)
+    return -metrics.classification_metrics(cm, 'mIoU')
 
 
 # Adversarial training #############################################################################
