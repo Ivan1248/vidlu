@@ -486,8 +486,11 @@ class Seq(ModuleTable, nn.Sequential):
                         x_ = modules[j](x_)
                     return x_
 
-                checkpoint = vtu.StateAwareCheckpoint(modules[cp_range[0]: cp_range[1] + 1])
-                x = checkpoint(run_segment, x) if torch.is_grad_enabled() else run_segment(x)
+                if torch.is_grad_enabled():
+                    checkpoint = vtu.StateAwareCheckpoint(modules[cp_range[0]: cp_range[1] + 1])
+                    x = checkpoint(run_segment, x)
+                else:
+                    x = run_segment(x)
                 i, cp_range = cp_range[1] + 1, next(cp_iter, None)
             else:
                 x = modules[i](x)
