@@ -23,13 +23,6 @@ def get_a_model():
 
 
 class TestTrainers:
-    def test_evaluator_no_args(self):
-        """ This should fail when AttributeCheckingMeta tests whether all
-        attributes have valid values, i.e. are not equal to `Required`.
-        """
-        with pytest.raises(TypeError):  # missing overwrite=True
-            Evaluator(model=nn.Linear(5, 3))
-
     def test_evaluator_all_args(self):
         """ This should not fail because all attributes are assigned values.
         """
