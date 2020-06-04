@@ -14,7 +14,6 @@ import vidlu.modules.losses as vml
 
 # Training/evaluation steps ########################################################################
 
-
 # Supervised
 
 def do_optimization_step(optimizer, loss):
@@ -211,6 +210,25 @@ class AdversarialTrainStep:
     virtual: bool = False
 
     def __call__(self, trainer, batch):
+        """
+        When clean_proportion = 0, the step reduces to
+        >>> x, y = trainer.prepare_batch(batch)
+        >>>
+        >>> trainer.model.eval()
+        >>> crc = CleanResultCallback(trainer.extend_output)
+        >>> x_adv = trainer.attack.perturb(trainer.model, x, None if self.virtual else y,
+        >>>                                backward_callback=crc)
+        >>> trainer.model.train()
+        >>>
+        >>> output, other_outputs = trainer.extend_output(trainer.model(x_adv))
+        >>> loss_adv = trainer.loss(output, y).mean()
+        >>> do_optimization_step(trainer.optimizer, loss=loss_adv)
+        >>>
+        >>> return NameDict(x=x, output=crc.result.output, target=y,
+        >>>                 other_outputs=crc.result.other_outputs, loss=crc.result.loss_mean,
+        >>>                 x_adv=x_adv, target_adv=y, output_adv=output,
+        >>>                 other_outputs_adv=other_outputs, loss_adv=loss_adv.item())
+        """
         x, y = trainer.prepare_batch(batch)
         cln_count = round(self.clean_proportion * len(x))
         cln_proportion = cln_count / len(x)
@@ -219,7 +237,7 @@ class AdversarialTrainStep:
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
         crc = CleanResultCallback(trainer.extend_output)
-        x_adv = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y[cln_count:],
+        x_adv = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y_a,
                                        backward_callback=crc)
         trainer.model.train()
 
@@ -360,6 +378,7 @@ class VATTrainStep:
     alpha: float = 1
     attack_eval_model: bool = False
     entropy_loss_coef: float = 0
+    block_grad_for_clean: bool = True
 
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
@@ -368,104 +387,56 @@ class VATTrainStep:
         x, y = trainer.prepare_batch(batch)
         output, other_outputs = trainer.extend_output(trainer.model(x))
         loss = trainer.loss(output, y).mean()
-        with torch.no_grad():
-            target = attack.to_virtual_target(output)
+        with torch.no_grad() if self.block_grad_for_clean else ctx_suppress():
+            target = attack.output_to_target(output)
+            if self.block_grad_for_clean:
+                target = target.detach()
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
                 x_adv = attack.perturb(trainer.model, x, target)
                 output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
                 loss_adv = attack.loss(output_adv, target).mean()
                 loss = loss + self.alpha * loss_adv
+                loss_ent = vml.entropy_l(output_adv).mean()
                 if self.entropy_loss_coef:
-                    loss_ent = vml.entropy(output_adv).mean()
                     loss += self.entropy_loss_coef * loss_ent
-                do_optimization_step(trainer.optimizer, loss=loss + self.alpha * loss_adv)
+                do_optimization_step(trainer.optimizer, loss=loss)
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
                         x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
+                        loss_adv=loss_adv.item(), loss_ent=loss_ent.item())
+
+
+@dataclass
+class UDATrainStep:  # TODO
+    alpha: float = 1
+    entropy_loss_coef: float = 0
+    track_bn_stats_of_perturbed: bool = False
+    block_grad_for_clean: bool = True
+
+    def __call__(self, trainer, batch):
+        model = trainer.model
+        model.train()
+
+        x, y = trainer.prepare_batch(batch)
+        output, other_outputs = trainer.extend_output(trainer.model(x))
+        loss = trainer.loss(output, y).mean()
+        with batchnorm_stats_tracking_off(model) if self.track_bn_stats_of_perturbed \
+                else ctx_suppress():
+            with torch.no_grad():
+                x_p, y_p = trainer.pert_model(x, y)
+            output_p, other_outputs_p = trainer.extend_output(model(x_p))
+            loss_adv = trainer.loss(output_p, y_p).mean()
+            loss = loss + self.alpha * loss_adv
+            if self.entropy_loss_coef:
+                loss_ent = vml.entropy_l(output_p).mean()
+                loss += self.entropy_loss_coef * loss_ent
+            do_optimization_step(trainer.optimizer, loss=loss)
+
+        return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
+                        x_adv=x_p, output_adv=output_p, other_outputs_adv=other_outputs_p,
                         loss_adv=loss_adv.item(),
                         loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
-
-
-# crash_after('2020-03-04', message="remove VAT")
-# from torch import nn
-#
-#
-# def update_batch_stats(model, flag):
-#     for m in model.modules():
-#         if isinstance(m, nn.BatchNorm2d):
-#             m.update_batch_stats = flag
-#
-#
-# class VAT(nn.Module):
-#     def __init__(self, eps=1.0, xi=1e-6, n_iteration=1):
-#         super().__init__()
-#         self.eps = eps
-#         self.xi = xi
-#         self.n_iteration = n_iteration
-#
-#     def kld(self, q_logit, p_logit):
-#         q = q_logit.softmax(1)
-#         qlogp = (q * self.__logsoftmax(p_logit)).sum(1)
-#         qlogq = (q * self.__logsoftmax(q_logit)).sum(1)
-#         return qlogq - qlogp
-#
-#     def normalize(self, v):
-#         v = v / (1e-12 + self.__reduce_max(v.abs(), range(1, len(v.shape))))
-#         v = v / (1e-6 + v.pow(2).sum((1, 2, 3), keepdim=True)).sqrt()
-#         return v
-#
-#     def forward(self, x, y, model, mask):
-#         update_batch_stats(model, False)
-#         d = torch.randn_like(x)
-#         d = self.normalize(d)
-#         for _ in range(self.n_iteration):
-#             d.requires_grad = True
-#             x_hat = x + self.xi * d
-#             y_hat = model(x_hat)
-#             kld = self.kld(y.detach(), y_hat).mean()
-#             d = torch.autograd.grad(kld, d)[0]
-#             d = self.normalize(d).detach()
-#         x_hat = x + self.eps * d
-#         y_hat = model(x_hat)
-#         # NOTE:
-#         # Original implimentation of VAT defines KL(P(y|x)||P(x|x+r_adv)) as loss function
-#         # However, Avital Oliver's implimentation use KL(P(y|x+r_adv)||P(y|x)) as loss function of VAT
-#         # see issue https://github.com/brain-research/realistic-ssl-evaluation/issues/27
-#         loss = (self.kld(y.detach(), y_hat) * mask).mean()
-#         update_batch_stats(model, True)
-#         return loss
-#
-#     def __reduce_max(self, v, idx_list):
-#         for i in idx_list:
-#             v = v.max(i, keepdim=True)[0]
-#         return v
-#
-#     def __logsoftmax(self, x):
-#         xdev = x - x.max(1, keepdim=True)[0]
-#         lsm = xdev - xdev.exp().sum(1, keepdim=True).log()
-#         return lsm
-#
-#
-# @dataclass
-# class VATTrainStep:
-#     alpha: float = 1
-#     attack_eval_model: bool = False
-#
-#     def __call__(self, trainer, batch):
-#         model, attack = trainer.model, trainer.attack
-#         assert attack.eps == 10.
-#         model.train()
-#
-#         x, y = trainer.prepare_batch(batch)
-#         output, other_outputs = trainer.extend_output(trainer.model(x))
-#         loss = trainer.loss(output, y).mean()
-#         loss_adv = VAT(eps=10.0)(x, y, model)
-#         do_optimization_step(trainer.optimizer, loss=loss + self.alpha * loss_adv)
-#
-#         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-#                         x_adv=x, output_adv=output, other_outputs_adv=other_outputs,
-#                         loss_adv=loss_adv.item())
 
 
 @torch.no_grad()
@@ -509,7 +480,8 @@ class SemisupervisedVATEvalStep:
 
         with torch.no_grad():
             output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-            loss_adv = attack.loss(output_adv, attack.to_virtual_target(output_uns)).mean()
+            loss_adv = attack.loss(output_adv, attack.output_to_target(output_uns)).mean()
+            loss_ent_adv = vml.entropy_l(output_adv).mean()
 
             output_l = output[:len(x_l)]
             loss_l = trainer.loss(output_l, y_l).mean()
@@ -518,7 +490,7 @@ class SemisupervisedVATEvalStep:
         return NameDict(x=x_all, output=output, other_outputs=other_outputs, output_l=output_l,
                         other_outputs_l=other_outputs_l, loss_l=loss_l.item(), x_adv=x_adv,
                         loss_adv=loss_adv.item(), x_l=x_l, target=y_l, output_adv=output_adv,
-                        other_outputs_adv=other_outputs_adv)
+                        other_outputs_adv=other_outputs_adv, loss_ent_adv=loss_ent_adv.item())
 
 
 @dataclass
@@ -527,6 +499,7 @@ class SemisupervisedVATTrainStep:
     attack_eval_model: bool = False
     consistency_loss_on_labeled: bool = False
     entropy_loss_coef: float = 0
+    block_grad_for_clean: bool = True
 
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
@@ -544,30 +517,32 @@ class SemisupervisedVATTrainStep:
                 x_adv = attack.perturb(model, x_c, probs_uns.detach())
                 # NOTE: putting this outside of batchnorm_stats_tracking_off harms learning:
                 output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-            with torch.no_grad():
-                target_uns = attack.to_virtual_target(output_uns)
+            with torch.no_grad() if self.block_grad_for_clean else ctx_suppress():
+                target_uns = attack.output_to_target(output_uns)
+                if self.block_grad_for_clean:  # just in case
+                    target_uns = target_uns.detach()
             loss_adv = attack.loss(output_adv, target_uns).mean()
 
         output_l = output[:len(x_l)]
         loss_l = trainer.loss(output_l, y_l).mean()
 
         loss = loss_l + self.alpha * loss_adv
+        loss_ent = vml.entropy_l(output_adv).mean()
         if self.entropy_loss_coef:
-            loss_ent = vml.entropy(output_adv).mean()
             loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
         do_optimization_step(trainer.optimizer, loss=loss)
-
         other_outputs_l = type(other_outputs)({k: v[:len(x_l)] for k, v in other_outputs.items()})
         return NameDict(x=x_all, output=output, other_outputs=other_outputs, output_l=output_l,
                         other_outputs_l=other_outputs_l, loss_l=loss_l.item(),
                         loss_adv=loss_adv.item(), x_l=x_l, target=y_l, x_adv=x_adv,
                         output_adv=output_adv, other_outputs_adv=other_outputs_adv,
-                        loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
+                        loss_ent=loss_ent.item())
 
 
 @dataclass
 class AdversarialEvalStep:
     virtual: bool = False
+    entropy_loss_coef: float = 0
 
     def __call__(self, trainer, batch):
         trainer.model.eval()
@@ -582,7 +557,7 @@ class AdversarialEvalStep:
         x_adv = attack.perturb(trainer.model, x, None if self.virtual else y)
         with torch.no_grad():
             output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
-            loss_adv = (attack.loss(output_adv, attack.to_virtual_target(output)) if self.virtual
+            loss_adv = (attack.loss(output_adv, attack.output_to_target(output)) if self.virtual
                         else trainer.loss(output_adv, y)).mean()
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
