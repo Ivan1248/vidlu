@@ -183,16 +183,30 @@ def nofunc(*a, **k):  # value marking that there is no function in a FuncTree no
     pass
 
 
+def _extract_func_and_kwargs_for_functree(*funcs, **kwargs):
+    func = nofunc
+    kw = dict()
+    for f in funcs:
+        if isinstance(f, FuncTree):
+            kw.update(f.keywords)
+            f = f.func
+        if f is not nofunc:
+            func = f
+    kw.update(kwargs)
+    return func, kw
+
+
 class FuncTree(partial, MutableMapping):
     nofunc = nofunc
 
-    def __new__(cls, *func, **kwargs):
-        if len(func) > 1:
-            raise ValueError("At most 1 positional argument (a callable) is acceptable.")
-        return partial.__new__(cls, nofunc if len(func) == 0 else func[0], **kwargs)
+    def __new__(cls, *args, **kwargs):
+        func, kw = _extract_func_and_kwargs_for_functree(*args, **kwargs)
+        obj = partial.__new__(cls, func, **kw)
+        obj._func = obj.func
+        return obj
 
     def __getattr__(self, key):
-        return self.keywords[key] if key in self.keywords else super().__getattr__(key)
+        return self.keywords[key] if key in self.keywords else partial.__getattribute__(self, key)
 
     def __delitem__(self, key):
         del self.keywords[key]
@@ -226,17 +240,11 @@ class FuncTree(partial, MutableMapping):
     def items(self):
         return self.keywords.items()
 
-    def update(self, other, **kwargs):
-        if isinstance(other, FuncTree) and other.func not in [nofunc, self.func]:
-            raise RuntimeError("")
-        self.keywords.update(other, **kwargs)
-
-    def update_deep(self, *args, **kwargs):
-        if len(args) > 1:
-            raise TypeError(f"update expected at most 1 positional argument, got {len(args)}.")
-        if len(args) == 1:
-            self.func = args[0]
-        for k, v in kwargs.items():
+    def update(self, *args, **kwargs):
+        func, kw = _extract_func_and_kwargs_for_functree(*args, **kwargs)
+        if func is not nofunc:
+            self.func = func  # error (read_only attribute)
+        for k, v in {**kw, **kwargs}.items():
             if isinstance(v, FuncTree):
                 if k not in self:
                     self[k] = v.copy()
@@ -256,14 +264,29 @@ class FuncTree(partial, MutableMapping):
         return FuncTree(self.func, {k: v.copy() if isinstance(v, FuncTree) else v
                                     for k, v in self.items()})
 
-    def pop(self, key):
-        self.keywords.pop(key)
-
-    def popitem(self):
-        self.keywords.popitem()
-
-    def setdefault(self, key, val=None):
-        self.keywords.setdefault(key, val)
+    @staticmethod
+    def from_func(func, kwargs=None, light=False, depth=sys.maxsize):
+        if depth < 0:
+            raise RuntimeError("Tree depth must be at least 0.")
+        kwargs = kwargs or dict()
+        try:
+            dargs = default_args(func)
+        except ValueError:
+            dargs = dict()
+        if light:
+            kwargs_iter = kwargs.items()
+        else:
+            try:
+                kwargs_iter = itertools.chain(dargs.items(), kwargs.items())
+            except ValueError:
+                kwargs_iter = kwargs.items()
+        if depth == 0:
+            kwargs = {k: v for k, v in kwargs_iter}
+        else:
+            kwargs = {k: (FuncTree.from_func(v, light=light, depth=depth - 1) if callable(v) else
+                          v)
+                      for k, v in kwargs_iter}
+        return FuncTree(func, **kwargs)
 
 
 class _EscapedItem:
@@ -278,25 +301,6 @@ class _EscapedItem:
 
 class EscapedFuncTree(_EscapedItem):
     pass
-
-
-def functree(func, kwargs=None, light=False, depth=sys.maxsize):
-    if depth < 0:
-        raise RuntimeError("Tree depth must be at least 0.")
-    kwargs = kwargs or dict()
-    if light:
-        kwargs_iter = kwargs.items()
-    else:
-        try:
-            kwargs_iter = itertools.chain(default_args(func).items(), kwargs.items())
-        except ValueError:
-            kwargs_iter = kwargs.items()
-    if depth == 0:
-        kwargs = {k: v for k, v in kwargs_iter}
-    else:
-        kwargs = {k: functree(v, light=light, depth=depth - 1) if callable(v) else v
-                  for k, v in kwargs_iter}
-    return FuncTree(func, **kwargs)
 
 
 # ArgTree, argtree_partial #########################################################################
