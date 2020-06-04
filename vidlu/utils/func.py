@@ -1,13 +1,14 @@
 import inspect
 from collections.abc import MutableMapping
 from inspect import signature
-from functools import partialmethod, wraps, update_wrapper
+from functools import wraps
 import functools
 import itertools
 import typing
 import warnings
 import typing as T
 import sys
+from reprlib import recursive_repr
 
 from vidlu.utils import text
 from .collections import NameDict
@@ -17,6 +18,8 @@ from vidlu.utils import tree, misc
 def identity(x):
     return x
 
+
+# Partial ##########################################################################################
 
 class partial(functools.partial):
     """
@@ -32,8 +35,8 @@ class partial(functools.partial):
             sigparams = list(sig.parameters.items())
             if len(sigparams) > 0 and sigparams[-1][1].kind is not inspect.Parameter.KEYWORD_ONLY:
                 params_ = params(func)
-                if any((k_ := k) not in params_ for k in {**self.keywords, **kwargs}.items()):
-                    raise RuntimeError(f"{k_} matches no formal parameter of  {func.__name__}"
+                if any((k_ := k) not in params_ for k in {**self.keywords, **kwargs}.keys()):
+                    raise RuntimeError(f"{k_} matches no formal parameter of {func.__name__}"
                                        + f" with signature {sig}.")
         except ValueError:
             pass
@@ -52,6 +55,48 @@ class frozen_partial(partial):
             if k in self.keywords:
                 raise RuntimeError(f"Parameter {k} is frozen and can't be overridden.")
         return partial.__call__(self, *args, **kwargs)
+
+
+# Empty, Reserved and Required - representing an unassigned variable ###############################
+
+
+# Object that can be used for marking required arguments that come after some keyword argument
+Empty = inspect.Parameter.empty
+
+
+class Required(Empty):
+    """Object for marking fields in dataclasses as required arguments when the
+    they come after fields with default values.
+
+    `Empty` (`inspect.Parameter.empty`) cannot be used because it causes an
+    error saying that a non-default argument follows a default argument.
+    """
+
+    def __init__(self):
+        raise TypeError('`Required` constructor has been called, indicating that a parameter with'
+                        + ' default value `Required` is not assigned a "real" value.')
+
+
+class Reserved(Empty):  # marker for parameters that shouldn't be assigned / are reserved
+    @staticmethod
+    def partial(func, **kwargs):
+        """Applies partial to func only if all supplied arguments are Reserved."""
+        dargs = params(func)
+        for k, v in kwargs.items():
+            if dargs[k] is not Reserved:
+                warnings.warn(
+                    f"The argument {k} is assigned even though it should be marked `Reserved`."
+                    + " The reserved argument might have been overridden with partial.")
+        return partial(func, **kwargs)
+
+    @staticmethod
+    def call(func, **kwargs):
+        """Calls func only if all supplied arguments are Reserved."""
+        return Reserved.partial(func, **kwargs)()
+
+
+def is_empty(arg):
+    return isinstance(arg, type) and issubclass(arg, Empty)
 
 
 # Wrappers #########################################################################################
@@ -96,7 +141,7 @@ def tryable(func, default_value, error_type=Exception):
 
 
 def pick_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
-    return {k: args_dict[k] for k, default in params(func)
+    return {k: args_dict[k] for k, default in params(func).items()
             if k in args_dict and assignment_cond(k, args_dict[k], default)}
 
 
@@ -336,7 +381,7 @@ class ArgTree(NameDict):
     def from_func(func, depth=sys.maxsize):
         return ArgTree(
             {k: ArgTree.from_func(v, depth - 1) \
-                if callable(v) and not issubclass(v, Empty) and depth > 0 else v
+                if callable(v) and not is_empty(v) and depth > 0 else v
              for k, v in params(func).items()})
 
 
@@ -398,44 +443,6 @@ def keymap(func, d, factory=dict):
 
 def keyfilter(func, d, factory=dict):
     return factory(**{k: v for k, v in d.items() if func(k)})
-
-
-# Empty and Reserved - representing an unassigned variable #########################################
-
-
-# Object that can be used for marking required arguments that come after some keyword argument
-Empty = inspect.Parameter.empty
-
-
-class Required(Empty):
-    """Object for marking fields in dataclasses as required arguments when the
-    they come after fileds with default values.
-    
-    `Empty` (`inspect.Parameter.empty`) cannot be used because it causes an 
-    error saying that a non-default argument follows a default argument. 
-    """
-
-    def __init__(self):
-        raise TypeError('`Required` constructor has been called, indicating that a parameter with'
-                        + ' default value `Required` is not assigned a "real" value.')
-
-
-class Reserved(Empty):  # marker for parameters that shouldn't be assigned / are reserved
-    @staticmethod
-    def partial(func, **kwargs):
-        """Applies partial to func only if all supplied arguments are Reserved."""
-        dargs = params(func)
-        for k, v in kwargs.items():
-            if dargs[k] is not Reserved:
-                warnings.warn(
-                    f"The argument {k} is assigned even though it should he marked `Reserved`."
-                    + " The reserved argument might have been overridden with partial.")
-        return partial(func, **kwargs)
-
-    @staticmethod
-    def call(func, **kwargs):
-        """Calls func only if all supplied arguments are Reserved."""
-        return Reserved.partial(func, **kwargs)()
 
 
 # Decorators #######################################################################################

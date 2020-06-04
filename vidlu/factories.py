@@ -6,7 +6,7 @@ from argparse import Namespace
 
 import torch
 
-from vidlu import defaults, models, parameters
+from vidlu import defaults, models, parameters, metrics
 from vidlu.data_utils import CachingDatasetFactory
 from vidlu.data import DataLoader
 from vidlu.training import Trainer
@@ -30,7 +30,7 @@ def _print_all_args_message(func):
 
 
 def _print_missing_args_message(func):
-    empty_args = list(vuf.find_empty_params_deep(func))
+    empty_args = list(vuf.find_params_deep(func, lambda k, v: vuf.is_empty(v)))
     if len(empty_args) != 0:
         print("Unassigned arguments:")
         for ea in empty_args:
