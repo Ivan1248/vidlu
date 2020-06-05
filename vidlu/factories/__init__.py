@@ -6,7 +6,8 @@ from argparse import Namespace
 
 import torch
 
-from vidlu import defaults, models, parameters, metrics
+from vidlu import models, metrics
+from vidlu.models import param_transl
 from vidlu.data_utils import CachingDatasetFactory
 from vidlu.data import DataLoader
 from vidlu.training import Trainer
@@ -15,6 +16,9 @@ from vidlu.utils.collections import NameDict
 import vidlu.utils.func as vuf
 from vidlu.utils.func import Reserved
 from vidlu.data_utils import dataset_ops
+
+from . import defaults
+
 
 # eval
 
@@ -176,7 +180,7 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
         A torch module.
     """
     import vidlu.modules as M
-    from vidlu.problem import Supervised
+    from vidlu.factories.problem import Supervised
     from vidlu.transforms import image as imt
     if isinstance(problem, Supervised):
         if input_adapter_str.startswith("standardize"):
@@ -312,10 +316,10 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
         path = Path(p.file)
         if not path.is_absolute():
             path = Path(params_dir) / p.file
-        state_dict = parameters.get_translated_parameters(p.translator, path, subdict=p.src_dict)
+        state_dict = param_transl.get_translated_parameters(p.translator, path, subdict=p.src_dict)
     else:
-        state_dict = parameters.get_translated_parameters(p.translator, state_dict,
-                                                          subdict=p.src_dict)
+        state_dict = param_transl.get_translated_parameters(p.translator, state_dict,
+                                                            subdict=p.src_dict)
     if len(p.src_module) > 0:  # or len(p.dest_module) > 0:
         # start = f'{p.dest_module}.' if len(p.dest_module) > 0 else ''
         # state_dict = {start + k[len(p.src_module) + 1:]: v for k, v in state_dict.items()

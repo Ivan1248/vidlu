@@ -38,11 +38,11 @@ class LossAdapter:
 # Information-theoretic ############################################################################
 
 """
-Losses that have "loss_with_logits" in the name accept 2 arguments:
+Losses that have the "_l" suffix in the name accept 2 arguments:
     1. logits of the approximating distribution
-    2. probabilities of the target distribution
+    2. probabilities or integer target labels 
 
-Losses that have "with_logits" in the name accept 2 arguments:
+Losses that have the "ll" suffix in the name accept 2 arguments:
     1. logits of the approximating distribution
     2. logits of the target distribution
 """
@@ -56,18 +56,18 @@ class NLLLossWithLogits(nn.CrossEntropyLoss):
         return super().__call__(logits, targets)
 
 
-nll_loss_with_logits = class_to_func(NLLLossWithLogits)
+nll_loss_l = class_to_func(NLLLossWithLogits)
 
 
 def kl_div_l(logits, target):
     if target.dim() == logits.dim() - 1:
-        return nll_loss_with_logits(logits, target)
+        return nll_loss_l(logits, target)
     return F.kl_div(torch.log_softmax(logits, 1), target, reduction='none').sum(1)
 
 
 def crossentropy_l(logits, target):
     if target.dim() == logits.dim() - 1:
-        return nll_loss_with_logits(logits, target)
+        return nll_loss_l(logits, target)
     return -(target * logits.log_softmax(1)).sum(1)
 
 

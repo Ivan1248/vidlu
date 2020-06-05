@@ -1,12 +1,12 @@
 from torchvision.transforms.functional import to_tensor, to_pil_image
-import torch
 from PIL import Image
 import matplotlib.pyplot as plt
 
+# noinspection PyUnresolvedReferences
 import _context
-from vidlu import factories, problem
+from vidlu import factories
+from vidlu.factories import problem
 import vidlu.modules as vm
-import vidlu.modules.functional as vmf
 
 img = Image.open('image.jpg')
 images = [img]

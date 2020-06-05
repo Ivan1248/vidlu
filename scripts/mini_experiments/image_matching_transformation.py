@@ -7,14 +7,12 @@ import torch
 # noinspection PyUnresolvedReferences
 import _context
 import dirs
-import vidlu.modules.inputwise as vmi
 import vidlu.training.adversarial.attacks as vtaa
 import vidlu.training.adversarial.perturbation as vtap
 import vidlu.transforms.image as vti
 import vidlu.modules as vm
-import vidlu.models as models
 import vidlu.factories as vf
-from vidlu import problem
+from vidlu.factories import problem
 
 images = [Image.open(x) for x in reversed(['dz_dan.png', 'dz_noc.png'])]
 

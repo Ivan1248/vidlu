@@ -18,6 +18,6 @@ class TestLosses:
         logits = torch.randn(2, C, 4, 5)
         labels = torch.randint(C, (2, 4, 5))
         labels_oh = vo.one_hot(labels, C).permute(0, 3, 1, 2)
-        nll = vml.nll_loss_with_logits(logits, labels)
+        nll = vml.nll_loss_l(logits, labels)
         ce = vml.crossentropy_l(logits, labels_oh)
         assert torch.all(ce - nll < 1e-6)

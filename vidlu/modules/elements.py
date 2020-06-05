@@ -184,7 +184,7 @@ class InvertibleMixin:
 
     def inverse_forward(*args, **kwargs):
         # overload either this or inverse_module
-        raise NotImplementedError()
+        raise InverseError()
 
     @functools.cached_property
     def flow(self) -> nn.Module:
@@ -200,7 +200,7 @@ class InvertibleMixin:
 
     def flow_forward(self, *args, **kwargs):
         # overload either this or flow_module
-        raise NotImplementedError()
+        raise InverseError()
 
     def check_inverse(self: nn.Module, *inputs):
         for m in self.modules():

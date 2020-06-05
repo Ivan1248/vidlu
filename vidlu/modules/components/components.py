@@ -275,6 +275,14 @@ class UnpadChannels(_PadChannelsBase):
         return PadChannels(self.padding)
 
 
+class Fold(E.Module):
+    def __init__(self, block_size):
+        self.block_size = b = block_size
+
+    def forward(self, x):
+        return F.fold()
+
+
 class Baguette(E.Seq):
     """Rearranges a NCHW array into a N(C*b*b)(H/b)(W/b) array.
 
@@ -291,6 +299,13 @@ class Baguette(E.Seq):
                 resh1=E.BatchReshape(lambda c, h, w: (c, h // b, b, w // b, b)),
                 perm1=E.Permute(0, 3, 5, 1, 2, 4),  # n c h/b bh w/b bw -> n bh bw c h/b w/b
                 resh2=E.BatchReshape(lambda bh, bw, c, h_b, w_b: (bh * bw * c, h_b, w_b)))
+            # TODO: try alternatives: unfold, nn.PixelShuffle, or the code below
+            # https://discuss.pytorch.org/t/is-there-any-layer-like-tensorflows-space-to-depth-function/3487/14
+            # https://stackoverflow.com/questions/58857720/is-there-an-equivalent-pytorch-function-for-tf-nn-space-to-depth
+            # super().__init__(
+            #    resh1=E.BatchReshape(lambda c, h, w: (b, b, c / b ** 2, h, w)),
+            #    perm1=E.Permute(0, 3, 4, 1, 5, 2),  # n b_1 b_2 c/b**2 h w -> n c/b**2 h b_1 w b_2
+            #    resh2=E.BatchReshape(lambda c_b2, h, b_1, w, b_2: (c_b2, h * b_1, w * b_2)))
 
     def __repr__(self):
         return f"{type(self).__name__}({self.block_size})"
@@ -304,6 +319,66 @@ class Baguette(E.Seq):
     def __setstate__(self, state):
         self.__dict__.clear()
         self.__init__(state)
+
+
+class SpaceToDepth(E.Seq):  # TODO: compere with Baguette
+    """Rearranges a NCHW array into a N(C*b*b)(H/b)(W/b) array.
+
+    From
+    """
+    reconstruction_tols = dict(rtol=0, atol=0)
+
+    def __init__(self, block_size):
+        self.block_size = b = block_size
+        if b == 1:
+            super().__init__()
+        else:
+            super().__init__(
+                resh1=E.BatchReshape(lambda c, h, w: (b, b, c // b ** 2, h, w)),
+                perm1=E.Permute(0, 3, 4, 1, 5, 2),  # n b_1 b_2 c/b**2 h w -> n c/b**2 h b_1 w b_2
+                resh2=E.BatchReshape(lambda c_b2, h, b_1, w, b_2: (c_b2, h * b_1, w * b_2)))
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self.block_size})"
+
+    def __str__(self):
+        return repr(self)
+
+    def __getstate__(self):
+        return self.block_size
+
+    def __setstate__(self, state):
+        self.__dict__.clear()
+        self.__init__(state)
+
+
+class Invertible1x1Conv(E.Conv):
+    def __init__(self, num_channels):
+        self.num_channels = num_channels
+        nn.Conv2d.__init__(self, num_channels, num_channels, 1, bias=False)
+
+    def reset_parameters(self):
+        # initialization done with rotation matrix
+        w_init = np.linalg.qr(np.random.randn(self.num_channels, self.num_channels))[0]
+        w_init = torch.from_numpy(w_init.astype('float32'))
+        w_init = w_init.unsqueeze(-1).unsqueeze(-1)
+        self.weight.data.copy_(w_init)
+
+    def forward_(self, x, objective):
+        dlogdet = torch.det(self.weight.squeeze()).abs().log() * x.size(-2) * x.size(-1)
+        objective += dlogdet
+        output = F.conv2d(x, self.weight, self.bias, self.stride, self.padding, \
+                          self.dilation, self.groups)
+
+        return output, objective
+
+    def reverse_(self, x, objective):
+        dlogdet = torch.det(self.weight.squeeze()).abs().log() * x.size(-2) * x.size(-1)
+        objective -= dlogdet
+        weight_inv = torch.inverse(self.weight.squeeze()).unsqueeze(-1).unsqueeze(-1)
+        output = F.conv2d(x, weight_inv, self.bias, self.stride, self.padding, \
+                          self.dilation, self.groups)
+        return output, objective
 
 
 # Attention ########################################################################################
@@ -994,3 +1069,23 @@ class IRevNetBackbone(E.Seq):
             if (norm_f := default_args(a.block_f).norm_f) is not None:
                 self.add('post_norm', norm_f())
             self.add('post_act', default_args(a.block_f).act_f())
+
+
+class IRevNetNuisanceSplit(E.Seq):
+    def __init__(self, module, final_submodule='backbone.concat'):
+        assert module.args.no_final_postact
+        super().__init__(
+            module=E.IntermediateOutputsModuleWrapper(module, final_submodule, 'error'),
+
+        )
+
+
+class InvertibleNuisanceSplitter(E.Module):
+    def __init__(self, module, final_submodule, split, unsplit):
+        self.module = module
+        self.final_submodule = final_submodule
+        self.split, self.unsplit = split, unsplit
+
+    def forward(self, *args, **kwargs):
+        module_inj = E.with_intermediate_outputs(self.module, self.final_submodule)
+        self.module(*args, **kwargs)

@@ -59,8 +59,11 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
                         (f"\n{v}" if v.ndim > 1 else v) if isinstance(v, np.ndarray) else
                         str(v))
 
-            with np.printoptions(precision=2, linewidth=100, floatmode='maxprec_equal'):
-                return ', '.join([f"{k}={fmt(v)}" for k, v in metrics.items()])
+            with np.printoptions(precision=2, threshold=20 if is_validation else 4, linewidth=120,
+                                 floatmode='maxprec_equal', suppress=True):
+                return ', '.join([f"{fmt(v)}MiB" if k == 'mem' else
+                                  f"{fmt(v)}/s" if k == 'freq' else
+                                  f"{k}={fmt(v)}" for k, v in metrics.items()])
 
         metrics = trainer.get_metric_values(reset=True)
         with indent_print():

@@ -719,7 +719,7 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
 @dataclass
 class VirtualPertModelAttack(PertModelAttack):
     output_to_target: T.Callable = logits_to_probs
-    loss: T.Callable = vml.nll_loss_with_logits
+    loss: T.Callable = vml.nll_loss_l
 
 
 @dataclass

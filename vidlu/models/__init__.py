@@ -7,9 +7,10 @@ import torch
 import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
-from vidlu import initialization
 from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (Reserved, Empty, default_args)
+
+from . import initialization
 
 
 # Backbones ########################################################################################

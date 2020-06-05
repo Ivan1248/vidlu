@@ -3,7 +3,9 @@ import platform
 import torch
 import torchvision
 
-from vidlu import factories, problem, parameters
+from vidlu import factories
+from vidlu.models import param_transl
+from vidlu.factories import problem
 from vidlu.utils import text
 import vidlu.modules as vm
 
@@ -19,7 +21,7 @@ def compare_with_torchvision(mymodelname, tvmodelname):
 
     translator_name = text.scan(r"{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a']
 
-    params = parameters.translate(translator_name, tsd)
+    params = param_transl.translate(translator_name, tsd)
     vidlu_model.load_state_dict(params)
 
     if platform.system() == 'Windows':

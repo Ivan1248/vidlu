@@ -3,8 +3,8 @@ import warnings
 from functools import partial
 
 from vidlu.models import DiscriminativeModel, Autoencoder, MNISTNet
-from vidlu.problem import (Classification, SemanticSegmentation, DepthRegression,
-                           get_problem_type)
+from vidlu.factories.problem import (Classification, SemanticSegmentation, DepthRegression,
+                                     get_problem_type)
 import vidlu.training as t
 from vidlu.utils.func import ArgTree, params
 

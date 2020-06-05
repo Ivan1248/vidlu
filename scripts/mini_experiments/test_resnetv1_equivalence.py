@@ -7,7 +7,8 @@ import torch
 import _context
 import dirs
 
-from vidlu import factories, problem, data, modules
+from vidlu import factories, data, modules
+from vidlu.factories import problem
 
 # data = data.datasets.HBlobs(example_shape=(32, 32, 3))
 
