@@ -1,9 +1,10 @@
+import sys
+import warnings
 import argparse
 from time import time
 import random
 from datetime import datetime
 import fcntl
-import sys
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -16,7 +17,7 @@ from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
-
+from vidlu.training.checkpoint_manager import FileNames as cpman_filenames
 import dirs
 
 
@@ -29,8 +30,8 @@ def log_run(status):
             fcntl.flock(runs_file, fcntl.LOCK_EX)
             runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")
             fcntl.flock(runs_file, fcntl.LOCK_UN)
-    finally:
-        pass
+    except Exception as e:
+        warnings.warn(str(e))
 
 
 def train(args):
@@ -61,7 +62,9 @@ def train(args):
 
     e.cpman.remove_old_checkpoints()
 
-    print(f'Trained model saved in {e.cpman.experiment_dir}')
+    print(f'Trained model saved in\n{e.cpman.experiment_dir}')
+    print(f'Trained model parameters saved in'
+          + f'\n{e.cpman.last_checkpoint_path / cpman_filenames.MODEL_STATE}')
 
 
 def path(args):
