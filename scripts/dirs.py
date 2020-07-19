@@ -12,7 +12,8 @@ def _find(path_end):
         return None
 
 
-DATASETS = [Path('/tmp/'), _find('data/datasets')]
+DATASETS = [Path('/tmp/'), _find('data/datasets'), _find('datasets')]
+DATASETS = [p for p in DATASETS if p]
 EXPERIMENTS = _find('data/experiments')
 CACHE = EXPERIMENTS / 'cache'
 SAVED_STATES = EXPERIMENTS / 'states'
