@@ -9,7 +9,6 @@ pillow-simd
 pydot
 pytest
 scikit-image
-scikit-learn
 scipy
 seaborn
 torch>=1.4.0
