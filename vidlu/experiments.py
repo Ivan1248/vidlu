@@ -43,7 +43,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
                    + f" ({es.batch_count} batches,"
-                   + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_lr())})")
+                   + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
 
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
@@ -62,7 +62,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
             with np.printoptions(precision=2, threshold=20 if is_validation else 4, linewidth=120,
                                  floatmode='maxprec_equal', suppress=True):
                 return ', '.join([f"{fmt(v)}MiB" if k == 'mem' else
-                                  f"{fmt(v)}/s" if k == 'freq' else
+                                  f"{fmt(v)[:-2]}/s" if k == 'freq' else
                                   f"{k}={fmt(v)}" for k, v in metrics.items()])
 
         metrics = trainer.get_metric_values(reset=True)
