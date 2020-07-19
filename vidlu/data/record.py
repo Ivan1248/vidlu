@@ -21,9 +21,9 @@ class Record(Sequence):  # Sized, Iterable len, iter
     An immutable sequence (supports numeric indexes) that behaves as a mapping
     as well (supports string keys) and supports the dot operator for accessing
     elements.
-    A field of a record can be lazily evaluated. Such a field is
-    represented with a function. The output of the function is cached when it is
-    needed for the first time.
+    A field of a record can be lazily evaluated. Such a field is represented
+    with a function. The output of the function is cached when accessed for
+    the first time.
     Example:
         >>> r = Record(a=2, b=53)
         Record(a=2, b=53)
@@ -56,8 +56,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
             dict_ = dict(d._dict if isinstance(d, Record) else d, **kwargs)
         else:
             dict_ = kwargs
-        dict_ = dict([(k[:-1], _LazyField(v)) if k.endswith('_') else (k, v)
-                      for k, v in dict_.items()])
+        dict_ = dict((k[:-1], _LazyField(v)) if k.endswith('_') else (k, v)
+                     for k, v in dict_.items())
         if not all(type(k) is str for k in dict_.keys()):
             raise ValueError("Record keys must be strings.")
         self._dict = dict_
@@ -89,8 +89,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
         return len(self._dict)
 
     def __eq__(self, other):
-        eqs = (a == b for a, b in zip(self.items(), other.items()))
-        return all(e if isinstance(e, bool) else all(e) for e in eqs)
+        return all(a == b for a, b in zip(self.items(), other.items()))
 
     def __getstate__(self):
         return {k: v for k, v in self.items()}
