@@ -19,11 +19,13 @@ from torch import nn
 import torch.nn.functional as F
 import torch.nn.modules as M
 import torch.utils.checkpoint as cp
+import einops
 
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
 import vidlu.utils.func as vuf
 import vidlu.torch_utils as vtu
+from vidlu.utils import tree
 
 import vidlu.modules.utils as vmu
 from vidlu.modules.deconv import FastDeconv
@@ -776,6 +778,18 @@ class AutoReshape(Module):
         return BatchReshape(*self.orig_shape)
 
 
+class Rearrange(Module):  # TODO: einops.layers.torch import Rearrange
+    def __init__(self, expr: str):
+        super().__init__()
+        self.expr = expr
+
+    def forward(self, x):
+        return einops.rearrange(self.expr, x)
+
+    def inverse_module(self):
+        return Rearrange("->".join(reversed(self.expr.split("->"))))
+
+
 class Contiguous(Module):
     def forward(self, x):
         return x.contiguous()
@@ -1099,7 +1113,7 @@ class GhostBatchNorm(BatchNorm):
 
 
 class _Func(Module):
-    def __init__(self, func, func_inv=None):
+    def __init__(self, func):
         super().__init__()
         self._func = func
 
@@ -1110,15 +1124,13 @@ class _Func(Module):
 class Func(_Func):
     def __init__(self, func, func_inv=None, module=None):
         super().__init__(func)
-        self._func_inv = func_inv
+        self._inv = func_inv
         self.module = (module if module else func if isinstance(func, nn.Module) else None)
 
     def inverse_module(self):
         if self._inv is None:
             raise RuntimeError("Inverse not defined.")
-        inv = Func(self._inv, self._func, module=self.module)
-        inv.inverse = self
-        return inv
+        return Func(self._inv, self._func, module=self.module)
 
 
 class Inverse(Module):
@@ -1259,15 +1271,12 @@ def deep_split(root: nn.Module, submodule_path: T.Union[list, str]):
 
 
 def deep_join(left: Module, right: Module):
-    # if not type(left) is type(right):
-    #     raise ValueError("Both modules must be of the same type.")
     if not hasattr(left, 'deep_join'):
         raise NotImplementedError(f"Joining not implemented for module type {type(left)}")
     return left.deep_join(right)
 
 
-def with_intermediate_outputs(module: nn.Module,
-                              submodule_paths: list,
+def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn'):
     """Creates a function wrapping `module` that returns a pair containing the
     output of `module.forward` as well as a list of intermediate outputs as
@@ -1324,6 +1333,42 @@ def with_intermediate_outputs(module: nn.Module,
                         raise RuntimeError(message)
 
         return output, tuple(outputs)
+
+    return wrapper
+
+
+def with_intermediate_outputs_tree(
+        module: nn.Module, submodule_paths=None,
+        inplace_modified_action: T.Literal['warn', 'error', None] = 'warn'):
+    """Creates a function wrapping `module` that returns a pair containing the
+    output of `module.forward` as well as a tree of intermediate outputs as
+    defined by `submodule_paths`.
+
+    Arguments:
+        module (Module): a module.
+        submodule_paths (optional, List[str]): a list of names (relative to
+            `root`) of modules the outputs of which you want to get. When the
+             value is `None` (default), outputs of all submodules are stored.
+        inplace_modified_action: What to do if it is detected that an
+            intermediate output is in-place modified by a subsequent
+            operation.
+
+    Example:
+        >>> module(x)
+        tensor(...)
+        >>> module_wiot = with_intermediate_outputs(module)
+        >>> module_wiot(x)
+        tensor(...), {'block1': {'conv': tensor(...), ...}, ...}
+    """
+    if submodule_paths is None:
+        submodule_paths = [name for name, _ in module.named_modules()]
+    module_wio = with_intermediate_outputs(module, submodule_paths, inplace_modified_action)
+
+    @functools.wraps(module)
+    def wrapper(*args, **kwargs):
+        output, interm_outputs = module_wio(*args, **kwargs)
+        path_to_value = zip([p.split('.') for p in submodule_paths], interm_outputs)
+        return output, tree.unflatten(path_to_value)
 
     return wrapper
 
