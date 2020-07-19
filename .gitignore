@@ -191,3 +191,4 @@ venv.bak/
 
 # other
 vidlu/libs
+*.ini
