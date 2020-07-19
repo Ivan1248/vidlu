@@ -97,7 +97,6 @@ trainer.attack.step_size = 1 / 255
 trainer.attack.step_count = 200
 trainer.attack.rand_init = False
 
-from vidlu.modules.losses import NLLLossWithLogits
 from vidlu.modules.components import GaussianFilter2D
 
 low_pass = GaussianFilter2D(5)
@@ -113,7 +112,6 @@ def reggrad(x, delta, y, t):
 
 
 def segreggrad(x, delta, y, t):
-    from torch.nn.functional import pad
     mask = ((t[:, :-1, :-1] == t[:, 1:, :-1]) | (t[:, :-1, :-1] == t[:, :-1, 1:])
             ).view(1, -1, t.shape[1] - 1, t.shape[2] - 1)
     return 1e12 * ((delta[:, :, :-1, :-1] - delta[:, :, 1:, :-1]).pow_(2)
@@ -127,7 +125,6 @@ def ent(y, t, attack=trainer.attack):
     return loss
 
 def logit_sum(y, t, attack=trainer.attack):
-    from vidlu.modules import losses
     loss = y.mean(1)
     print(y.mean())
     return -loss
@@ -296,7 +293,7 @@ for m in trainer.model.modules():
 state = torch.load(
     '/home/igrubisic/data/states/cifar10{trainval,test}/ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=mc.Tent))/AdversarialTrainer,++{++configs.wrn_cifar_tent,++configs.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True)/_/91/state.pth')
 trainer.model.load_state_dict(state['model'])
-from vidlu.training.configs import *
+from vidlu.configs.training import *
 
 trainer.eval_attack = madry_cifar10_attack(trainer.model, step_count=50, eps=40 / 255)
 
@@ -324,8 +321,6 @@ from vidlu.modules import with_intermediate_outputs
 for i in range(4):
     print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
                0] > 0.5).float().mean())
-
-from vidlu.modules import with_intermediate_outputs
 
 for k, v in trainer.model.named_buffers():
     if 'bias' in k:
