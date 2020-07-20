@@ -1,5 +1,12 @@
+"""Utilities for manipulating dictionary-like trees. 
+
+Tree nodes are not assumed to have any data but sub-trees, that are of the same
+type, or leaves, that are of any type.
+"""
+
 from collections import defaultdict
 import typing as T
+import itertools
 
 
 # Dictionary-like trees ############################################################################
@@ -17,10 +24,41 @@ def copy(tree, tree_type=None):
                         for k, v in tree.items()})
 
 
-def deep_get(tree, path, default=None, error=False):
+def key_to_index(mapping, key):
+    for i, (k, v) in enumerate(mapping.items()):
+        if k == key:
+            return i
+    raise KeyError(key)
+
+
+def index_to_key(mapping, index):
+    return tuple(mapping.keys())[index]
+
+class _GetError:
+    pass
+
+
+def index_get(tree, index, default=_GetError):
+    if default is not _GetError:
+        try:
+            return tuple(tree.values())[index]
+        except IndexError:
+            return default
+    return tuple(tree.values())[index]
+
+
+def path_to_index_path(tree, path):
+    index_path = []
+    for k in path:
+        index_path.append(key_to_index(tree, k))
+        tree = tree[k]
+    return tuple(index_path)
+
+
+def deep_get(tree, path, default=_GetError):
     for i, k in enumerate(path):
         if k not in tree:
-            if error:
+            if default is _GetError:
                 raise KeyError(path[:k + 1])
             return default
         tree = tree[k]
@@ -34,6 +72,16 @@ def deep_set(tree, path, val, tree_type=None):
             tree[k] = tree_type()
         tree = tree[k]
     tree[path[-1]] = val
+
+
+def deep_index_get(tree, path, default=_GetError):
+    for i, index in enumerate(path):
+        if len(tree) <= index:
+            if default is _GetError:
+                raise IndexError(path[:index + 1])
+            return default
+        tree = index_get(tree, index)
+    return tree
 
 
 def flatten(tree, tree_type=None) -> list:
@@ -64,24 +112,21 @@ def unflatten(path_to_value: T.Union[T.Iterable[tuple], T.Mapping], tree_type=di
                              for k, v in subtrees.items()]))
 
 
-def number_of_leaves(tree, tree_type=None):
+def leaf_count(tree, tree_type=None):
     tree_type = tree_type or type(tree)
-    return sum(
-        number_of_leaves(v, tree_type) if isinstance(v, tree_type) else 1 for k, v in tree.items())
+    return sum(leaf_count(v, tree_type) if isinstance(v, tree_type) else 1 for k, v in tree.items())
 
 
-def print_tree(tree, tree_type=None, depth=0, indent="  "):
+def print_tree(tree, tree_type=None, depth=0, indent="  ", print_proc=None):
+    print_proc = print_proc or print
     tree_type = tree_type or type(tree)
     for k, v in tree.items():
         if isinstance(v, type(tree)):
             line = f"{indent * depth}{k}: "
-            print(line)
-            if not indent:
-                print_tree(v, tree_type, depth, " " * len(line))
-            else:
-                print_tree(v, tree_type, depth + 1, indent)
+            print_proc(line)
+            print_tree(v, tree_type, depth + 1, indent, print_proc)
         else:
-            print(f"{indent * depth}{k}={repr(v)}")
+            print_proc(f"{indent * depth}{k}={repr(v)}")
 
 
 def convert(tree, out_tree_type, in_tree_type=None, convert_empty_trees=True,
