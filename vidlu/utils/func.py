@@ -22,10 +22,7 @@ def identity(x):
 # Partial ##########################################################################################
 
 class partial(functools.partial):
-    """
-    Like partial, but doesn't allow changing already chosen keyword arguments.
-    Even though `partial.__new__` looks like it should copy the `keywords`
-    attribute, this somehow works too: `partial(frozen_partial(f, x=2), x=3)`
+    """ partial with a more informative error message
     """
 
     def __call__(self, *args, **kwargs):
