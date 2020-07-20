@@ -52,11 +52,16 @@ class NLLLossWithLogits(nn.CrossEntropyLoss):
     def __init__(self, weight=None, ignore_index=-1):
         super().__init__(weight=weight, ignore_index=ignore_index, reduction='none')
 
-    def __call__(self, logits, targets):
-        return super().__call__(logits, targets)
+    def __call__(self, logits, target):
+        return super().__call__(logits, target)
 
 
 nll_loss_l = class_to_func(NLLLossWithLogits)
+
+
+def nll_loss(probs, target):
+    return -torch.log(torch.einsum("nc...,nc...->n...", probs,
+                                   F.one_hot(target, probs.shape[1]).transpose(-1, 1)))
 
 
 def kl_div_l(logits, target):
