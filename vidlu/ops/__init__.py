@@ -1,2 +1,2 @@
 from ._single import *
-from . import batch, random
+from . import batch, random, class_mapping
