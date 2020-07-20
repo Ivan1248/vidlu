@@ -152,12 +152,13 @@ class Attack:
         """
         if y is None:
             y = self._get_target(model, x, output)
-        if (pert := self._get_perturbation(model, x, y=y, **kwargs)) is not NotImplemented:
+        pert = self._get_perturbation(model, x, y=y, **kwargs)
+        if pert is not NotImplemented:
             return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
-        elif (x_adv := self._perturb(model, x, y=y, **kwargs)) is not NotImplemented:
+        x_adv = self._perturb(model, x, y=y, **kwargs)
+        if x_adv is not NotImplemented:
             return _pert_to_pert_model(x_adv, x)
-        else:
-            raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
+        raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
 
     def perturb(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial example.
@@ -404,7 +405,8 @@ def _init_pert_model(pert_model, x, projection):
     pmodel = pert_model or vmi.Additive(())
     with torch.no_grad():
         pmodel(x)  # initialize perturbation model (parameter shapes have to be inferred from x)
-        projection(pmodel, x)
+        warnings.warn("attacks.py 408 uncomment projection")
+        #projection(pmodel, x)
     pmodel.train()
     return pmodel
 
@@ -508,7 +510,7 @@ def perturb_iterative_with_perturbation_model(
     backward_callback = backward_callback or (lambda _: None)
 
     # Initialize the perturbation model.
-    pmodel, check_handle = _init_pert_model(pert_model, x, projection)
+    pmodel = _init_pert_model(pert_model, x, projection)
     # Initialize the optimizer. Optimizers with running stats are not supported.
     optim = optim_f(pmodel.parameters()) if step_count > 0 else None
     # Support for early stopping (example-wise and location-wise)
@@ -558,7 +560,6 @@ def perturb_iterative_with_perturbation_model(
             if len(index) == 0:
                 break
 
-    check_handle.remove()
     pmodel.eval()
     return pmodel
 
@@ -670,7 +671,7 @@ class PGDAttackOld(OptimizingAttack, EarlyStoppingMixin):
 class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
     pert_model_f: vmi.PertModelBase = partial(vmi.Additive, ())
     optim_f: T.Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
-    initializer: T.Callable[[vmi.PertModelBase], None] = None
+    initializer: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = None
     projection: T.Union[float, T.Callable[[vmi.PertModelBase, torch.Tensor], None]] = 0.1
     step_size: T.Union[float, T.Mapping[str, float]] = 0.05
     step_count: int = 40
@@ -699,7 +700,7 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
                 pert_model = self.pert_model_f()
                 pert_model(x)
             if initialize_pert_model and self.initializer is not None:
-                self.initializer(pert_model)
+                self.initializer(pert_model, x)
 
         if isinstance(self.step_size, T.Mapping):
             optim_f = lambda p: self.optim_f(
@@ -711,8 +712,7 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
         return perturb_iterative_with_perturbation_model(
             model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
             minimize=self.minimize, pert_model=pert_model, projection=self.projection,
-            bounds=self.clip_bounds,
-            stop_mask=self.similar if self.stop_on_success else None,
+            bounds=self.clip_bounds, stop_mask=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback, compute_model_grads=self.compute_model_grads)
 
 

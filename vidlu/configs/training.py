@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 from torch import optim
 
 from vidlu.data import Record
@@ -11,7 +9,7 @@ from vidlu.training.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, 
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
 
-from vidlu.training.adversarial.configs import *
+from vidlu.configs.robustness import *
 
 
 # Optimizer maker

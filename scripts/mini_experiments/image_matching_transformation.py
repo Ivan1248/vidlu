@@ -7,8 +7,8 @@ import torch
 # noinspection PyUnresolvedReferences
 import _context
 import dirs
-import vidlu.training.adversarial.attacks as vtaa
-import vidlu.training.adversarial.perturbation as vtap
+import vidlu.training.robustness.attacks as vtaa
+import vidlu.training.robustness.perturbation as vtap
 import vidlu.transforms.image as vti
 import vidlu.modules as vm
 import vidlu.factories as vf

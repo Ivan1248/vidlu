@@ -14,7 +14,8 @@ from vidlu.models import initialization
 from vidlu.modules import components
 from vidlu.modules.components import Tent
 from vidlu.modules.other.mnistnet import MNISTNetBackbone
-from vidlu.training import Trainer, configs, adversarial, extensions
+from vidlu.training import Trainer, robustness, extensions
+import vidlu.configs.training as vct
 from vidlu.utils import logger
 import vidlu.training.steps as ts
 
@@ -58,7 +59,7 @@ def create_optimizer(trainer):
 
 trainer = Trainer(
     model=model,
-    extend_output=configs.classification_extend_output,
+    extend_output=vct.classification_extend_output,
     loss=nn.CrossEntropyLoss(),
     train_step=ts.AdversarialTrainStep(),
     # no attack is used during training (the training is not adversarial)
@@ -67,8 +68,8 @@ trainer = Trainer(
     batch_size=100,
     optimizer_f=create_optimizer,
     extension_fs=(lambda: extensions.AdversarialTraining(
-        attack_f=adversarial.attacks.DummyAttack,
-        eval_attack_f=partial(adversarial.attacks.PGDAttack, eps=0.3, step_size=0.1, step_count=20,
+        attack_f=robustness.attacks.DummyAttack,
+        eval_attack_f=partial(robustness.attacks.PGDAttack, eps=0.3, step_size=0.1, step_count=20,
                               stop_on_success=True),
     ),))
 

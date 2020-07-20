@@ -7,7 +7,7 @@ from pathlib import Path
 from tqdm import tqdm, trange
 
 from vidlu import gpu_utils, metrics
-from vidlu.training.adversarial import attacks
+from vidlu.training.robustness import attacks
 import vidlu.factories as vf
 import dirs
 

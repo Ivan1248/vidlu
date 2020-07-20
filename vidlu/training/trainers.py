@@ -3,8 +3,6 @@ from functools import partial
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
 import logging
-import time
-from collections import defaultdict
 import warnings
 
 from tqdm import tqdm
@@ -16,7 +14,7 @@ from vidlu.training.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import Event, Stopwatch
-import vidlu.training.configs as vtc
+import vidlu.configs.training as vct
 
 
 # Engine based on Ignite Engine ####################################################################
@@ -290,7 +288,7 @@ class Trainer(Evaluator):
         super().__post_init__()
 
         self.optimizer = optimizer_f(
-            self.model if isinstance(optimizer_f, vtc.OptimizerMaker) else self.model.parameters())
+            self.model if isinstance(optimizer_f, vct.OptimizerMaker) else self.model.parameters())
 
         if 'epoch_count' in params(lr_scheduler_f):
             if params(lr_scheduler_f).epoch_count is not Empty:

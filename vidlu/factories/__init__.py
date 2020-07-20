@@ -336,10 +336,10 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     from torch import optim
     from torch.optim import lr_scheduler
     from vidlu.modules import losses
-    import vidlu.training.adversarial as ta
-    import vidlu.training.configs as tc
+    import vidlu.training.robustness as ta
+    import vidlu.configs.training as tc
     import vidlu.training.steps as ts
-    from vidlu.training.adversarial import attacks
+    from vidlu.training.robustness import attacks
     from vidlu.transforms import jitter
     t = vuf.ArgTree
 

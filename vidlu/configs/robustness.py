@@ -5,9 +5,9 @@ import torch
 import vidlu.optim as vo
 import vidlu.modules.inputwise as vmi
 from vidlu.modules import losses
-from vidlu.training.adversarial import attacks
+from vidlu.training.robustness import attacks
 
-from vidlu.training.adversarial import perturbation
+from vidlu.training.robustness import perturbation
 
 # Adversarial attacks
 
