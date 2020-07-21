@@ -22,7 +22,6 @@ from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
 
 from ._cityscapes_labels import labels as cslabels
-from . import _viper_mapping
 
 # Constants
 
