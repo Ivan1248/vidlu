@@ -245,9 +245,8 @@ class DummyAttack(OptimizingAttack):
     def _perturb(self, model, x, y=None, backward_callback=None):
         output, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         if backward_callback is not None:
-            backward_callback(
-                AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s.item(), grad=grad,
-                            loss=None, reg_loss_sum=0))
+            backward_callback(AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s.item(),
+                                          grad=grad, loss=None, reg_loss_sum=0))
         return x
 
 
@@ -316,9 +315,8 @@ def zero_grad(delta):
         delta.grad.zero_()
 
 
-def perturb_iterative(model, x, y, step_count, update, loss, minimize=False,
-                      initial_pert=None, clip_bounds=(0, 1), stop_mask=None,
-                      backward_callback=None):
+def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, initial_pert=None,
+                      clip_bounds=(0, 1), stop_mask=None, backward_callback=None):
     """Iteratively optimizes the loss over the input.
 
     Args:
@@ -406,7 +404,7 @@ def _init_pert_model(pert_model, x, projection):
     with torch.no_grad():
         pmodel(x)  # initialize perturbation model (parameter shapes have to be inferred from x)
         warnings.warn("attacks.py 408 uncomment projection")
-        #projection(pmodel, x)
+        # projection(pmodel, x)
     pmodel.train()
     return pmodel
 
@@ -432,21 +430,18 @@ def _get_mask_and_update_index(pmodel: vmi.PertModelBase, adv_mask: torch.Tensor
     batches and mask gradients for early stopping of optimization."""
     mask_loss, mask_grad = 'loss' in masking_mode, 'grad' in masking_mode
 
-    if adv_mask.any():  # keep the already successful adversarial examples unchanged
+    if any_adv := adv_mask.any():  # keep the already successful adversarial examples unchanged
         if len(adv_mask.shape) == 1:
-            isnot_adv = adv_mask.logical_not_()
-            mask_loss = False
-        else:
-            isnot_adv = adv_mask.view(len(adv_mask), -1).all(dim=1).logical_not_()
+            isnot_adv, mask_loss = adv_mask.logical_not_(), False
+        else:  # dense prediction
+            isnot_adv = adv_mask.view(len(adv_mask), -1).all(dim=1).logical_not_()  # per input
             if mask_loss or mask_grad:
                 adv_mask.set_(adv_mask[isnot_adv])
                 if mask_grad:
                     for p in pmodel.parameters():
                         p.grad[index][adv_mask] = 0
         index.set_(index[isnot_adv])
-    else:
-        mask_loss = None
-    return adv_mask.logical_not_() if mask_loss else None
+    return adv_mask.logical_not_() if mask_loss and any_adv else None
 
 
 MaskingMode = T.Literal['loss', 'grad']
@@ -459,12 +454,12 @@ def perturb_iterative_with_perturbation_model(
         bounds=(0, 1),
         stop_mask: T.Callable[[AttackState], bool] = None,
         masking_mode: T.Union[MaskingMode, T.Container[MaskingMode]] = None,
-        backward_callback: T.Callable[[AttackState], None] = None,
-        compute_model_grads=False):
-    """Iteratively optimizes the loss over the input.
-    Compared to `perturb_iterative`, uses an optimizer instead of an update
-    function and stopping on success (when `similar` is provided) does not
-    speed up optimization unless the optimization succeeds on all inputs.
+        backward_callback: T.Callable[[AttackState], None] = None, compute_model_grads=False):
+    """Iteratively optimizes the loss over some input perturbation model.
+
+    Compared to `perturb_iterative`, it uses a perturbation model insteead of an
+    additive perturbaton and an optimizer instead of an update function, and
+    stopping on success (when `stop_mask` is provided) does not slice the input.
 
     Args:
         model: Forward pass function.
@@ -480,23 +475,23 @@ def perturb_iterative_with_perturbation_model(
         pert_model: A function returning a perturbation model that has "batch
             parameters" of type `vidlu.BatchParameter`. If `None`, an
             elementwise perturbation model is created.
-        projection: a procedure to be applied over the perturbation model to
-            constrain its parameters so that the perturbed input is within some
-            neighbourhood and that it is valid (e.g. within `bounds`).
+        projection: A procedure for constraining perturbation model parameters
+            so that the perturbed input is within some neighbourhood and that it
+            is valid (e.g. within `bounds`).
         compute_model_grads: It `True`, gradients with respect to model
             parameters are computed, otherwise not. Default: `False`.
         bounds (optional): Minimum and maximum input value pair. Used only for
             checking whether `projection` clips bounds.
         stop_mask (optional): A function that tells whether the attack is
             successful example-wise based on the predictions and the true
-            labels. If it is provided, optimization is stopped when `similar`
-            returns `False`. Otherwise,`step_count` of iterations is performed
-            on every example. Besides the batch size, the shape of the output
-            can also be the shape of the loss function output (if `masking_mode`
-            is `'loss'`) or the input shape (if `masking_mode` is `'grad'`).
-        masking_mode (Literal['loss', 'grad']): If `similar` is provided and
+            labels. Optimization is stopped in places where it returns `False`.
+            Otherwise,`step_count` of iterations is performed on every example.
+            Besides the batch size, the shape of the output can also be the
+            shape of the loss function output (if `masking_mode` is `'loss'`) or
+            the input shape (if `masking_mode` is `'grad'`).
+        masking_mode (Literal['loss', 'grad']): If `stop_mask` is provided and
             returns multiple values per input, `masking_mode` determines whether
-            loss or the gradient is to be masked for early stopping of the
+            the loss or the gradient is to be masked for early stopping of the
             optimization.
         backward_callback: A callback function called after the gradient has
             been computed. It can be used for e.g. updating model parameters
@@ -508,13 +503,9 @@ def perturb_iterative_with_perturbation_model(
     stop_on_success = stop_mask is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
-
-    # Initialize the perturbation model.
-    pmodel = _init_pert_model(pert_model, x, projection)
-    # Initialize the optimizer. Optimizers with running stats are not supported.
-    optim = optim_f(pmodel.parameters()) if step_count > 0 else None
-    # Support for early stopping (example-wise and location-wise)
-    if stop_on_success:
+    pmodel = _init_pert_model(pert_model, x, projection)  # init. the perturbation model
+    optim = optim_f(pmodel.parameters()) if step_count > 0 else None  # init. stateless optimizer
+    if stop_on_success:  # support for early stopping (example-wise and location-wise)
         with torch.no_grad():
             index = torch.arange(len(x))
         masking_mode = masking_mode or 'loss'
@@ -549,8 +540,9 @@ def perturb_iterative_with_perturbation_model(
 
         with torch.no_grad():
             if stop_on_success:
-                adv_mask = stop_mask(state) if minimize else ~stop_mask(state)
-                nonadv_mask = _get_mask_and_update_index(pmodel, adv_mask, masking_mode, index)
+                nonadv_mask = _get_mask_and_update_index(
+                    pmodel, adv_mask=stop_mask(state) if minimize else ~stop_mask(state),
+                    masking_mode=masking_mode, index=index)
             del state  # free some memory
             optim.step()
             projection(pmodel, x_all)
