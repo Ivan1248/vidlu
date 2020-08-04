@@ -319,7 +319,7 @@ class Baguette(E.Seq):
     def __setstate__(self, state):
         self.__dict__.clear()
         self.__init__(state)
-
+    # TODO: IMPROVING GLOW https://arogozhnikov.github.io/einops/pytorch-examples.html
 
 class SpaceToDepth(E.Seq):  # TODO: compere with Baguette
     """Rearranges a NCHW array into a N(C*b*b)(H/b)(W/b) array.
