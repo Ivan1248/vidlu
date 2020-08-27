@@ -1,6 +1,8 @@
 import typing as T
 from functools import partial
 import inspect
+from typing import Any
+
 from vidlu.torch_utils import round_float_to_int
 import warnings
 
@@ -11,6 +13,7 @@ import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
 from vidlu.utils.collections import NameDict
+import copy
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -280,34 +283,47 @@ class Warp(PertModelBase):
         return vmf.warp(x, self.flow, **self.args)
 
 
-def _grid_sample(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
-                 align_corners=True, label_interpolation_mode='nearest',
-                 label_padding_mode=-1):
-    pm, lpm = ['zeros' if x == 0 else x for x in [padding_mode, label_padding_mode]]
-
+def _grid_sample_p(x, grid, mode, padding_mode, align_corners):
+    pm = 'zeros' if padding_mode == 0 else padding_mode
     if isinstance(pm, str):
-        x_p = F.grid_sample(x, grid, mode=interpolation_mode, padding_mode=pm,
-                            align_corners=align_corners).squeeze_(1)
+        return F.grid_sample(x, grid, mode=mode, padding_mode=pm,
+                             align_corners=align_corners).squeeze_(1)
     else:
-        x_p = F.grid_sample(x - pm, grid, mode=interpolation_mode, padding_mode='zeros',
-                            align_corners=align_corners).add_(pm)
+        return F.grid_sample(x - pm, grid, mode=mode, padding_mode='zeros',
+                             align_corners=align_corners).squeeze_(1).add_(pm)
 
+
+def _forward_warp(x, grid, mode, padding_mode, align_corners):
+    pv = 0 if padding_mode in (0, 0., "zeros") else padding_mode
+    warnings.warn("align_corners and mode not used in _forward_warp")
+    H, W = grid.shape[-3:-1]
+    base_grid = vmf.uniform_grid_2d((H, W), low=-1., high=1.)
+    offsets = grid - base_grid
+    result = vmf.gaussian_forward_warp_josa(
+        x if pv == 0 else x - pv,
+        offsets.permute(0, 3, 1, 2) * offsets.new([W / 2, H / 2]).view(1, 2, 1, 1),
+        sigma=0.5)
+    return result if pv == 0 else result.add_(pv)
+
+
+def _warp(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
+          align_corners=True, label_interpolation_mode='nearest',
+          label_padding_mode=-1, forward=False):
+    pm, lpm = ['zeros' if m == 0 else m for m in [padding_mode, label_padding_mode]]
+    _warp_func = _forward_warp if forward else _grid_sample_p
+
+    x_p = _warp_func(x, grid, mode=interpolation_mode, padding_mode=pm,
+                     align_corners=align_corners)
     if y is None:
         return x_p
-    elif y.dim() < 3:
+    if y.dim() < 3:
         y_p = y
     else:
-        y_p = (y.to(grid.dtype) if 'float' not in f'{y.dtype}' else y)
-        no_channel_dim = y.dim() == 3
-        if no_channel_dim:
-            y_p = y_p[:, None, ...]
-        if isinstance(lpm, str):
-            y_p = F.grid_sample(y_p, grid, mode=label_interpolation_mode, padding_mode=lpm,
-                                align_corners=align_corners).squeeze_(1)
-        else:
-            y_p = F.grid_sample(y_p - lpm, grid, mode=label_interpolation_mode,
-                                padding_mode='zeros', align_corners=align_corners).add_(lpm)
-        if no_channel_dim:
+        y_p = (y if 'float' in f'{y.dtype}' else y.to(grid.dtype))
+        single_channel = y.dim() == 3
+        y_p = _warp_func(y_p[:, None, ...] if single_channel else y_p, grid,
+                         mode=label_interpolation_mode, padding_mode=lpm, align_corners=align_corners)
+        if single_channel:
             y_p.squeeze_(1)
         if y_p.dtype is not y.dtype:
             y_p = round_float_to_int(y_p, y.dtype)
@@ -335,18 +351,18 @@ class MorsicTPSWarp(PertModelBase):
 
     def forward(self, x, y=None):
         grid = vmf.tps_grid(self.theta, self.c_dst, x.shape)
-        return _grid_sample(x, y=y, grid=grid,
-                            **{k: self.args[k]
-                               for k in ['interpolation_mode', 'padding_mode',
-                                         'label_interpolation_mode', 'label_padding_mode']})
+        return _warp(x, y=y, grid=grid,
+                     **{k: self.args[k]
+                        for k in ['interpolation_mode', 'padding_mode',
+                                  'label_interpolation_mode', 'label_padding_mode']})
 
 
-class BackwardTPSWarp(PertModelBase):
+class TPSWarp(PertModelBase):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
-    def __init__(self, control_grid_shape=(2, 2), control_grid_align_corners=False,
+    def __init__(self, *, forward, control_grid_shape=(2, 2), control_grid_align_corners=False,
                  align_corners=True, padding_mode='zeros', interpolation_mode='bilinear',
-                 label_interpolation_mode='nearest', label_padding_mode=-1):
+                 label_interpolation_mode='nearest', label_padding_mode=-1, swap_src_dst=False):
         super().__init__()
         self.store_args()
 
@@ -365,8 +381,23 @@ class BackwardTPSWarp(PertModelBase):
 
     def forward(self, x, y=None):
         c_src = self.c_src.unsqueeze(0).expand_as(self.offsets)
-        grid = vmf.backward_tps_grid_from_points(c_src, c_src + self.offsets, size=x.shape)
-        return _grid_sample(x, y=y, grid=grid,
-                            **{k: self.args[k]
-                               for k in ['interpolation_mode', 'padding_mode',
-                                         'label_interpolation_mode', 'label_padding_mode']})
+        c_dst = c_src + self.offsets
+        if self.args.swap_src_dst:
+            c_src, c_dst = c_dst, c_src
+        grid = (vmf.tps_grid_from_points if self.args.forward else
+                vmf.backward_tps_grid_from_points)(c_src, c_dst, size=x.shape)
+        return _warp(x, y=y, grid=grid,
+                     **{k: self.args[k]
+                        for k in ['interpolation_mode', 'padding_mode',
+                                  'label_interpolation_mode', 'label_padding_mode',
+                                  'forward']})
+
+    @torch.no_grad()
+    def inverse_module(self):
+        inv = copy.copy(self)
+        inv.args = type(self.args)({**self.args, "forward": not self.args.forward,
+                                    "swap_src_dst": not self.args.swap_src_dst})
+        return inv
+
+
+BackwardTPSWarp = partial(TPSWarp, forward=False)

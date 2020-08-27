@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 import cv2
 import numpy as np
+import einops as eo
 
 # noinspection PyUnresolvedReferences
 import _context
@@ -28,12 +29,10 @@ x = to_tensor(img).unsqueeze(0)
 with torch.no_grad():
     c_src = vmf.uniform_grid_2d((2, 2)).view(-1, 2).unsqueeze(0)
     offsets = c_src * 0
-    offsets[..., 0, 0] = 0.5
-    offsets[..., 0, 1] = 0.3
+    offsets[..., 0, 0] = np.random.uniform(0, 0.9)
+    offsets[..., 0, 1] = np.random.uniform(0, 0.9)
 
 forward = False
-
-gridfw = vmf.tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 
 N, C, H, W = x.shape
 k = dict(device=x.device, dtype=x.dtype)
@@ -42,14 +41,40 @@ base_grid = torch.stack(list(reversed(mg)), dim=-1)
 base_grid = base_grid.expand(N, H, W, 2)
 # embed()
 
+gridfw = vmf.tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 x_warped = vmf.gaussian_forward_warp_josa(x, (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new(
-    [W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)
-flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
+    [W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.3)
+# flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
 timages += [x_warped]
+timages += [F.grid_sample(x_warped, gridfw).squeeze_(1)]
+
+
+def invert_offset_grid(grid_fw, grid_bw):
+    grid_nchw = eo.rearrange(grid_fw, "n h w c -> n c h w")
+    zero_offset_grid = vmf.zero_offset_grid_for(grid_nchw)
+    grid_warped = eo.rearrange(F.grid_sample(grid_nchw, grid_bw), "n c h w -> n h w c")
+    return zero_offset_grid - (grid_warped - zero_offset_grid)
+
 
 gridbw = vmf.backward_tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 x_warped = F.grid_sample(x, gridbw).squeeze_(1)
+#timages += [x_warped]
+#timages += [
+#    vmf.gaussian_forward_warp_josa(x_warped.clone(), (gridbw - base_grid).permute(0, 3, 1, 2) * gridbw.new(
+#        [W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)]
+# timages += [F.grid_sample(x_warped, invert_offset_grid(gridfw, gridbw)).squeeze_(1)]
+
+# perturbation module
+
+from vidlu.modules.inputwise import TPSWarp
+
+warp = TPSWarp(forward=True, control_grid_shape=(2, 2), control_grid_align_corners=True)
+x_warped = warp(x)
+with torch.no_grad():
+    warp.offsets.add_(offsets)
+x_warped = warp(x)
 timages += [x_warped]
+timages += [warp.inverse(x_warped)]
 
 # unrelated - Gaussian
 from vidlu.modules.components import GaussianFilter2D
@@ -57,7 +82,7 @@ from vidlu.modules.components import GaussianFilter2D
 gridrand = torch.randn_like(base_grid) * 6
 gridrand = GaussianFilter2D(sigma=20, padding_mode='reflect')(gridrand.permute(0, 3, 1, 2)).permute(
     0, 2, 3, 1)
-timages += [F.grid_sample(x, base_grid + gridrand).squeeze_(1)]
+# timages += [F.grid_sample(x, base_grid + gridrand).squeeze_(1)]
 
 for x in timages:
     r = 1
