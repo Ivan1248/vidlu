@@ -2,18 +2,19 @@ import typing as T
 from functools import partial
 import inspect
 from typing import Any
-
-from vidlu.torch_utils import round_float_to_int
+import copy
 import warnings
 
 import torch
 import torch.nn.functional as F
 
+from vidlu.libs.softmax_splatting import softsplat  # https://github.com/sniklaus/softmax-splatting
+
+from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
 from vidlu.utils.collections import NameDict
-import copy
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -297,12 +298,10 @@ def _forward_warp(x, grid, mode, padding_mode, align_corners):
     pv = 0 if padding_mode in (0, 0., "zeros") else padding_mode
     warnings.warn("align_corners and mode not used in _forward_warp")
     H, W = grid.shape[-3:-1]
-    base_grid = vmf.uniform_grid_2d((H, W), low=-1., high=1.)
+    base_grid = vmf.uniform_grid_2d((H, W), low=-1., high=1., device=grid.device, dtype=grid.dtype)
     offsets = grid - base_grid
-    result = vmf.gaussian_forward_warp_josa(
-        x if pv == 0 else x - pv,
-        offsets.permute(0, 3, 1, 2) * offsets.new([W / 2, H / 2]).view(1, 2, 1, 1),
-        sigma=0.5)
+    flow = offsets.permute(0, 3, 1, 2).mul_(offsets.new([W / 2, H / 2]).view(1, 2, 1, 1))
+    result = softsplat.FunctionSoftsplat(x if pv == 0 else x - pv, flow.contiguous(), tenMetric=None, strType="average")
     return result if pv == 0 else result.add_(pv)
 
 
@@ -312,8 +311,8 @@ def _warp(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
     pm, lpm = ['zeros' if m == 0 else m for m in [padding_mode, label_padding_mode]]
     _warp_func = _forward_warp if forward else _grid_sample_p
 
-    x_p = _warp_func(x, grid, mode=interpolation_mode, padding_mode=pm,
-                     align_corners=align_corners)
+    x_p = None if x is None else _warp_func(x, grid, mode=interpolation_mode, padding_mode=pm,
+                                            align_corners=align_corners)
     if y is None:
         return x_p
     if y.dim() < 3:

@@ -24,10 +24,10 @@ def flow2rgb(flow):
 img = Image.open('image.jpg')
 images = [img]
 timages = []
-x = to_tensor(img).unsqueeze(0)
+x = to_tensor(img).unsqueeze(0).cuda()
 
 with torch.no_grad():
-    c_src = vmf.uniform_grid_2d((2, 2)).view(-1, 2).unsqueeze(0)
+    c_src = vmf.uniform_grid_2d((2, 2)).view(-1, 2).unsqueeze(0).to(x.device)
     offsets = c_src * 0
     offsets[..., 0, 0] = np.random.uniform(0, 0.9)
     offsets[..., 0, 1] = np.random.uniform(0, 0.9)
@@ -38,12 +38,16 @@ N, C, H, W = x.shape
 k = dict(device=x.device, dtype=x.dtype)
 mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)])
 base_grid = torch.stack(list(reversed(mg)), dim=-1)
-base_grid = base_grid.expand(N, H, W, 2)
+base_grid = base_grid.expand(N, H, W, 2).to(x.device)
 # embed()
 
 gridfw = vmf.tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
-x_warped = vmf.gaussian_forward_warp_josa(x, (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new(
-    [W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.3)
+flow = (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new(
+    [W / 2, H / 2]).view(1, 2, 1, 1)
+x_warped = vmf.gaussian_forward_warp_josa(x, flow, sigma=0.3)
+#from vidlu.libs.softmax_splatting import softsplat
+#x_warped = softsplat.FunctionSoftsplat(x, flow.contiguous(), tenMetric=None, strType="average")
+
 # flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
 timages += [x_warped]
 timages += [F.grid_sample(x_warped, gridfw).squeeze_(1)]
@@ -58,8 +62,8 @@ def invert_offset_grid(grid_fw, grid_bw):
 
 gridbw = vmf.backward_tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 x_warped = F.grid_sample(x, gridbw).squeeze_(1)
-#timages += [x_warped]
-#timages += [
+# timages += [x_warped]
+# timages += [
 #    vmf.gaussian_forward_warp_josa(x_warped.clone(), (gridbw - base_grid).permute(0, 3, 1, 2) * gridbw.new(
 #        [W / 2, H / 2]).view(1, 2, 1, 1), sigma=0.5)]
 # timages += [F.grid_sample(x_warped, invert_offset_grid(gridfw, gridbw)).squeeze_(1)]
@@ -89,7 +93,7 @@ for x in timages:
     for c in vmf.grid_2d_points_to_indices(c_src + offsets, x.shape[-2:])[0]:
         x[..., c[0] - r: c[0] + r, c[1] - r:c[1] + r] = 1.
 
-images += [to_pil_image(x.squeeze()) for x in timages]
+images += [to_pil_image(x.squeeze().cpu()) for x in timages]
 
 fig, axs = plt.subplots(len(images))
 for i, im in enumerate(images):
