@@ -38,8 +38,8 @@ A deep learning library for research with emphasis on computer vision, based on 
     -   [ ] VAE
     -   [ ] flow generative models
 -   training
-    -   [x] inductive bias (mostly) disentangled from the model
-    -   [x] customizable training (inductive bias) configurations
+    -   [x] training disentangled from the model
+    -   [x] customizable configurations
     -   [x] logging, checkpoints, resuming interrupted training
     -   [x] pretrained parameter loading: ResNet, DenseNet
     -   [x] supervised training
