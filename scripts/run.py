@@ -133,7 +133,7 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
     parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.",
                         action='store_true')
-    parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=1)
+    parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=2)
     parser.set_defaults(func=func)
 
 
