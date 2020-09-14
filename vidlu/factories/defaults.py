@@ -15,22 +15,14 @@ def get_problem_from_dataset(dataset):
     if 'problem' not in dataset.info:
         raise ValueError("Unknown problem.")
     problem_type = get_problem_type(dataset.info.problem)
-
-    def get_attribute(k):
-        if k in dataset.info:
-            return dataset.info[k]
-        elif k == 'y_shape':
-            return tuple(dataset[0].y.shape)
-        else:
-            raise KeyError()
-
-    args = {k: get_attribute(k) for k in params(problem_type)}
+    args = {k: tuple(dataset[0].y.shape) if k == "y_shape" else dataset.info[k]
+            for k in params(problem_type)}
     return problem_type(**args)
 
 
 # Model ############################################################################################
 
-def get_model_argtree(model_class, problem):
+def get_model_argtree_for_problem(model_class, problem):
     from vidlu.modules import components
 
     if inspect.isclass(model_class):
@@ -41,11 +33,11 @@ def get_model_argtree(model_class, problem):
                                                   class_count=problem.class_count))
                 return ArgTree(head_f=partial(components.ClassificationHead,
                                               class_count=problem.class_count))
-            elif type(problem) is SemanticSegmentation and not isinstance(
-                    params(model_class).head_f, components.SegmentationHead):
-                return ArgTree(head_f=partial(components.SegmentationHead,
-                                              class_count=problem.class_count,
-                                              shape=problem.y_shape))
+            elif type(problem) is SemanticSegmentation:
+                if not isinstance(params(model_class).head_f, components.SegmentationHead):
+                    return ArgTree(head_f=partial(components.SegmentationHead,
+                                                  class_count=problem.class_count,
+                                                  shape=problem.y_shape))
             elif type(problem) is DepthRegression:
                 return ArgTree(head_f=partial(components.RegressionHead, shape=problem.y_shape))
             else:
@@ -56,7 +48,8 @@ def get_model_argtree(model_class, problem):
         if isinstance(problem, Classification):
             return ArgTree(num_classes=problem.class_count)
     else:
-        raise ValueError(f"get_model_argtree: Unknown model type {model_class}")
+        return None
+        warnings.warn(f"get_model_argtree: Unknown model type {model_class}")
 
 
 # Trainer/Evaluator ################################################################################

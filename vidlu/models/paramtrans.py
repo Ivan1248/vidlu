@@ -54,7 +54,7 @@ def translate_resnet(state_dict):
 
 
 def translate_densenet(state_dict):
-    state_dict = translate_dict_keys(
+    return translate_dict_keys(
         state_dict,
         {  # backbone
             r"features.{a:conv|norm}0.{e:(.*)}":
@@ -70,11 +70,10 @@ def translate_densenet(state_dict):
             r"classifier.{e:(.*)}":
                 r"head.logits.orig.{e}"
         }.items())
-    return state_dict
 
 
 def translate_swiftnet(state_dict):
-    warnings.warn(f"'backbone.img_mean' ({state_dict['backbone.img_mean']}) and 'backbone.img_std' "
+    warnings.warn(f"Unused arrays: 'backbone.img_mean' ({state_dict['backbone.img_mean']}) and 'backbone.img_std' "
                   + f"({state_dict['backbone.img_std']}) removed from state_dict.")
     del state_dict['backbone.img_std']
     del state_dict['backbone.img_mean']

@@ -10,8 +10,6 @@ from tqdm import tqdm
 from vidlu.data import DatasetFactory
 from vidlu.utils import path
 
-from . import dataset_ops
-
 
 # Standardization ##################################################################################
 

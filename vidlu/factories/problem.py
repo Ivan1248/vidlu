@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-
+import typing as T
 
 class Problem(Enum):
     CLASSIFICATION = 'classification'
@@ -26,12 +26,12 @@ class Classification(Supervised):
 
 @dataclass
 class SemanticSegmentation(Classification):
-    y_shape: tuple
+    y_shape: T.Tuple[int, int]
 
 
 @dataclass
 class DepthRegression(Supervised):
-    y_shape: tuple
+    y_shape: T.Tuple[int, int]
 
 
 _name_to_class = dict(classification=Classification, semantic_segmentation=SemanticSegmentation)

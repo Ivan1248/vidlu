@@ -2,7 +2,7 @@ import argparse
 
 # noinspection PyUnresolvedReferences
 import _context
-from vidlu.data_utils import CachingDatasetFactory
+from vidlu.data.extra import CachingDatasetFactory
 
 import dirs
 
