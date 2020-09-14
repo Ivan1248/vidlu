@@ -158,7 +158,7 @@ class TorchTracemalloc():
 
     def start(self):
         self.begin = torch.cuda.memory_allocated(1)
-        # torch.cuda.reset_max_memory_allocated()  # reset the peak gauge to zero
+        # torch.cuda.reset_peak_memory_stats()  # reset the peak gauge to zero
         return self
 
     def get_traced_memory(self, *exc):
