@@ -42,12 +42,12 @@ def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False
     Returns:
         A confusion matrix with shape (class_count, class_count).
     """
-    return soft_multiclass_confusion_matrix(true, one_hot(pred, class_count, dtype=torch.float64),
-                                            batch=batch) \
+    return soft_pred_multiclass_confusion_matrix(true, one_hot(pred, class_count, dtype=torch.float64),
+                                                 batch=batch) \
         .to(dtype or torch.int64)
 
 
-def soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
+def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     """ Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
@@ -64,8 +64,8 @@ def soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     non_ignored = true != -1
     if batch:
         assert torch.all(non_ignored)
-    return soft_gt_multiclass_confusion_matrix(one_hot(true[non_ignored], class_count, dtype=dtype),
-                                               pred[non_ignored].to(dtype), batch=batch)
+    return all_soft_multiclass_confusion_matrix(one_hot(true[non_ignored], class_count, dtype=dtype),
+                                                pred[non_ignored].to(dtype), batch=batch)
 
     # 3 - 4 times faster than
     # cm = torch.empty(list(true.shape[:int(batch)]) + [class_count] * 2,
@@ -79,11 +79,12 @@ def soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     # return cm
 
 
-def soft_gt_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
+def all_soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     """ Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
-        true (Tensor): a vector of integers representing true classes.
+        true (Tensor): an array consisting of vectors representing true class
+            probabilities.
         pred (Tensor): an array consisting of vectors representing predicted class
             probabilities.
         dtype (optional): confusion matrix data type.
@@ -129,7 +130,7 @@ def classification_metrics_np(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=
 
 def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), eps=1e-8):
     """Computes macro-averaged classification evaluation metrics based on the
-    accumulated confusion matrix and clears the confusion matrix.
+    accumulated confusion matrix.
 
     Supports batches (when `cm` is a batch of matrices).
 
@@ -161,6 +162,17 @@ def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), e
     if isinstance(returns, str):
         return locals_[returns]
     return {k: locals_[k] for k in returns}
+
+def mIoU(cm, eps=1e-8):
+    is_batch = int(cm.dim() == 3)
+    tp = cm.diagonal(dim1=is_batch, dim2=is_batch + 1)
+    actual_pos = cm.sum(dim=is_batch + 1)
+    pos = cm.sum(dim=is_batch)
+    fp = pos - tp
+    tp = tp.float()
+    IoU = tp / (actual_pos + fp)
+    IoU[torch.isnan(IoU)] = 0
+    return IoU.mean()
 
 
 class ClassificationMetrics(AccumulatingMetric):
@@ -315,7 +327,7 @@ class SoftClassificationMetrics(AccumulatingMetric):
         true = _get_iter_output(iter_output, self.target_name).flatten()
         pred = _get_iter_output(iter_output, self.probs_name).permute(0, 2, 3, 1)
         pred = pred.flatten().view(-1, pred.shape[-1])
-        self.cm += soft_multiclass_confusion_matrix(true, pred, self.class_count)
+        self.cm += soft_pred_multiclass_confusion_matrix(true, pred, self.class_count)
 
     compute = ClassificationMetrics.compute
 
