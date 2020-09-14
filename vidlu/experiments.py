@@ -140,28 +140,38 @@ class TrainingExperiment:
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
         _check_dirs(dirs)
         a = training_args
-        with indent_print("Selecting device..."):
+
+        with indent_print("Setting device..."):
             if a.device is None:
                 a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-                # a.device = torch.device(
-                #    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+            elif a.device == "auto":
+                from vidlu import gpu_utils
+                a.device = torch.device(
+                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
             print(f"device: {a.device}")
+
         with indent_print('Initializing data...'):
+            print(a.data)
             with Stopwatch() as t:
                 data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
             print(f"Data initialized in {t.time:.2f} s.")
+
         with indent_print('Initializing model...'):
+            print(a.model)
             with Stopwatch() as t:
                 model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
                                             prep_dataset=next(iter(data.values())), device=a.device,
                                             verbosity=a.verbosity)
             print(f"Model initialized in {t.time:.2f} s.")
+
         with indent_print('Initializing trainer and evaluation...'):
+            print(a.trainer)
             trainer = factories.get_trainer(a.trainer, model=model,
                                             dataset=next(iter(data.values())),
                                             verbosity=a.verbosity)
             for m in factories.get_metrics(a.metrics, trainer, dataset=next(iter(data.values()))):
                 trainer.metrics.append(m())
+
         logger = Logger()
         logger.log("Resume command:\n"
                    + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
@@ -174,12 +184,14 @@ class TrainingExperiment:
                 obj.load_state_dict(state)
             logger.print_all()
         elif a.params is not None:
-            parameters, dest = factories.get_translated_parameters(params_str=a.params,
-                                                                   params_dir=dirs.PRETRAINED)
-            module = vm.get_submodule(model, dest)
-            try:
-                module.load_state_dict(parameters, strict=True)
-            except RuntimeError as ex:
-                warnings.warn(str(ex))
-                module.load_state_dict(parameters, strict=False)
+            with indent_print("Loading parameters..."):
+                print(a.params)
+                parameters, dest = factories.get_translated_parameters(params_str=a.params,
+                                                                       params_dir=dirs.PRETRAINED)
+                module = vm.get_submodule(model, dest)
+                try:
+                    module.load_state_dict(parameters, strict=True)
+                except RuntimeError as ex:
+                    warnings.warn(str(ex))
+                    module.load_state_dict(parameters, strict=False)
         return TrainingExperiment(model, trainer, data, logger, cpman)
