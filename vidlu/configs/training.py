@@ -64,18 +64,20 @@ class TrainerConfig(NameDict):
         super().__init__(**all_kwargs, extension_fs=ext)
 
     def with_bound_extension_args(self):
+        result = TrainerConfig(**self)
         arg_name_to_ext = dict()
         ext = []
-        for ext_f in self.extension_fs:
+        for ext_f in result.extension_fs:
             names = tuple(params(ext_f).keys())
-            values = [self.get(name, Required) for name in names]
+            values = [result.pop(name, Required) for name in names]
             args = {k: v for k, v in zip(names, values) if v is not Required}
             ext.append(partial(ext_f, **args) if len(args) > 0 else ext_f)
             for name in names:
                 if name in arg_name_to_ext:
                     raise RuntimeError(f'Multiple extension factories have a parameter "{name}".')
                 arg_name_to_ext[name] = ext_f
-        return TrainerConfig(**{**self, 'extension_fs': ext})
+        result.extension_fs = ext
+        return result
 
 
 def to_trainer_args(*args, **kwargs):
