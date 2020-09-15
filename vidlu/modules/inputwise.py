@@ -8,8 +8,6 @@ import warnings
 import torch
 import torch.nn.functional as F
 
-from vidlu.libs.softmax_splatting import softsplat  # https://github.com/sniklaus/softmax-splatting
-
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
@@ -295,6 +293,7 @@ def _grid_sample_p(x, grid, mode, padding_mode, align_corners):
 
 
 def _forward_warp(x, grid, mode, padding_mode, align_corners):
+    from vidlu.libs.softmax_splatting import softsplat  # https://github.com/sniklaus/softmax-splatting
     pv = 0 if padding_mode in (0, 0., "zeros") else padding_mode
     warnings.warn("align_corners and mode not used in _forward_warp")
     H, W = grid.shape[-3:-1]
