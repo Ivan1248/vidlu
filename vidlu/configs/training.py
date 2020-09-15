@@ -16,6 +16,21 @@ from vidlu.configs.robustness import *
 
 
 class OptimizerMaker:
+    """A type for storing all optimizer information without depending on a
+    model instance by storing module names instead of parameters.
+
+    Calling an object of this type with a model creates an optimizer instance.
+
+    Args:
+        optimizer_f: PyTorch optimizer factory (or constructor).
+        params (List[Mapping]): A list of dictionaries in the same format as
+            for PyTorch optimizers except for module names instead of
+            parameters.
+        ignore_remaining_params: Specifies whether unlisted parameters should be
+            ignored instead of being optimized.
+        **kwargs: Keyword arguments for the optimizer.
+    """
+
     def __init__(self, optimizer_f, params, ignore_remaining_params=False, **kwargs):
         self.optimizer_f, self.params, self.kwargs = optimizer_f, params, kwargs
         self.ignore_remaining_params = ignore_remaining_params
@@ -143,7 +158,7 @@ resnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     batch_size=128,
     jitter=jitter.CifarPadRandCropHFlip())
 
-resnet_cifar_cosine = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
+resnet_cifar_cosine = TrainerConfig(
     resnet_cifar,
     # overriding:
     lr_scheduler_f=partial(CosineLR, eta_min=1e-4))
@@ -202,6 +217,14 @@ swiftnet_cityscapes = TrainerConfig(
     batch_size=14,
     eval_batch_size=6,
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0))
+
+swiftnet_mo_cityscapes = TrainerConfig(
+    swiftnet_cityscapes,
+    optimizer_f=OptimizerMaker(
+        optim.Adam,
+        [dict(params=p, lr=1e-4, weight_decay=2.5e-5)
+         for p in ['conv1', 'bn1', 'relu', 'maxpool', 'layer1', 'layer2', 'layer3', 'layer4']],
+        lr=4e-4, betas=(0.9, 0.99), weight_decay=1e-4))
 
 swiftnet_camvid = TrainerConfig(
     swiftnet_cityscapes,
