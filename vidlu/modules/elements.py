@@ -1291,7 +1291,8 @@ def deep_join(left: Module, right: Module):
 
 
 def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
-                              inplace_modified_action: T.Literal['warn', 'error', None] = 'warn'):
+                              inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
+                              return_dict=False):
     """Creates a function wrapping `module` that returns a pair containing the
     output of `module.forward` as well as a list of intermediate outputs as
     defined by `submodule_paths`.
@@ -1319,7 +1320,9 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
 
     @functools.wraps(module)
     def wrapper(*args, **kwargs):
-        if (submodules := vuf.tryable(get_submodules, None)()) is None:
+        try:
+            submodules = get_submodules()
+        except AttributeError as ex:
             module(*args, **kwargs)  # in case the module is not yet built
             submodules = get_submodules()
 
@@ -1337,7 +1340,7 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
             h.remove()
 
         if inplace_modified_action:
-            for o, smp in zip(outputs, submodule_paths):
+            for smp, o in zip(submodule_paths, outputs):
                 if is_modified(o):
                     message = f"The (intermediate) output of {smp} is" \
                               + f" in-place modified by a subsequent operation."
@@ -1346,7 +1349,8 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
                     else:
                         raise RuntimeError(message)
 
-        return output, tuple(outputs)
+        outputs = dict(zip(submodule_paths, outputs)) if return_dict else tuple(outputs)
+        return output, outputs
 
     return wrapper
 
@@ -1374,17 +1378,11 @@ def with_intermediate_outputs_tree(
         >>> module_wiot(x)
         tensor(...), {'block1': {'conv': tensor(...), ...}, ...}
     """
-    if submodule_paths is None:
-        submodule_paths = [name for name, _ in module.named_modules()]
-    module_wio = with_intermediate_outputs(module, submodule_paths, inplace_modified_action)
-
-    @functools.wraps(module)
-    def wrapper(*args, **kwargs):
-        output, interm_outputs = module_wio(*args, **kwargs)
-        path_to_value = zip([p.split('.') for p in submodule_paths], interm_outputs)
-        return output, tree.unflatten(path_to_value)
-
-    return wrapper
+    output, outputs = with_intermediate_outputs(
+        module, submodule_paths=submodule_paths,
+        inplace_modified_action=inplace_modified_action, return_dict=True)
+    path_to_value = ((k.split('.'), v) for k, v in outputs.items())
+    return output, tree.unflatten(path_to_value)
 
 
 class IntermediateOutputsModuleWrapper(Module):
