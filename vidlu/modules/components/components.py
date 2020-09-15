@@ -105,7 +105,9 @@ def _add_norm_act(seq, suffix, norm_f, act_f):
     seq.add(f'act{suffix}', act_f())
 
 
-def _resolve_block_args(base_width, width_factors, stride, dilation):
+def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation):
+    if not len(kernel_sizes) == len(width_factors):
+        raise ValueError(f"{len(kernel_sizes)=} does not match {len(width_factors)=}.")
     widths = [base_width * wf for wf in width_factors]
     round_widths = list(map(round, widths))  # fractions to ints
     if widths != round_widths:
@@ -148,7 +150,7 @@ class PreactBlock(E.Seq):
                                 stride=Reserved, dilation=Reserved),
                  noise_f=None):
         super().__init__()
-        widths, stride, dilation = _resolve_block_args(base_width, width_factors, stride, dilation)
+        widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
@@ -185,7 +187,7 @@ class PostactBlock(E.Seq):
                                 stride=Reserved, dilation=Reserved),
                  noise_f=None):
         super().__init__()
-        widths, stride, dilation = _resolve_block_args(base_width, width_factors, stride, dilation)
+        widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             self.add(f'conv{i}',
                      Reserved.call(conv_f, out_channels=w, kernel_size=k, stride=s, dilation=d))
@@ -321,6 +323,7 @@ class Baguette(E.Seq):
         self.__init__(state)
     # TODO: IMPROVING GLOW https://arogozhnikov.github.io/einops/pytorch-examples.html
 
+
 class SpaceToDepth(E.Seq):  # TODO: compere with Baguette
     """Rearranges a NCHW array into a N(C*b*b)(H/b)(W/b) array.
 
@@ -452,7 +455,8 @@ class DenseSPP(E.Module):
 
     def forward(self, x):
         target_size = x.size()[2:4]
-        ar = target_size[1] / target_size[0]
+        if not self.square_grid:
+            ar = target_size[1] / target_size[0]
 
         x = self.input_block(x)
         levels = [x]
@@ -586,16 +590,15 @@ class ResNetV1Unit(E.Seq):
 
 
 class ResNetV1Groups(E.Seq):
-    def __init__(self, group_lengths, base_width, width_factors,
+    def __init__(self, group_lengths, base_width,
                  block_f=partial(default_args(ResNetV1Unit).block_f, base_width=Reserved,
-                                 width_factors=Reserved, stride=Reserved),
+                                 width_factors=(2, 2), stride=Reserved),
                  dim_change=default_args(ResNetV1Unit).dim_change, unit_f=ResNetV1Unit):
         super().__init__()
         _check_block_args(block_f)
         for i, l in enumerate(group_lengths):
             for j in range(l):
                 u = unit_f(block_f=Reserved.partial(block_f, base_width=base_width * 2 ** i,
-                                                    width_factors=width_factors,
                                                     stride=1 + int(i > 0 and j == 0)),
                            dim_change=dim_change)
                 self.add(f'unit{i}_{j}', u)
@@ -616,14 +619,13 @@ class ResNetV1Backbone(E.Seq):
     """
 
     def __init__(self, base_width=64, small_input=True, group_lengths=(2,) * 4,
-                 width_factors=(1,) * 2, block_f=default_args(ResNetV1Groups).block_f,
+                 block_f=default_args(ResNetV1Groups).block_f,
                  dim_change=default_args(ResNetV1Groups).dim_change, groups_f=ResNetV1Groups):
         _check_block_args(block_f)
         block_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f', 'conv_f']}
         super().__init__(
             root=StandardRootBlock(base_width, small_input, **block_args),
             bulk=groups_f(group_lengths, base_width=base_width,
-                          width_factors=width_factors,
                           block_f=block_f, dim_change=dim_change))
 
 
@@ -634,9 +636,8 @@ def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change, conv_f):
         return nn.Identity()
     else:
         if dim_change in ('proj', 'conv3'):
-            k = 3 if dim_change == 'conv3' else 1
-            return conv_f(out_channels=out_width, kernel_size=k, stride=stride, padding='half',
-                          dilation=1, bias=False)
+            return conv_f(out_channels=out_width, kernel_size=3 if dim_change == 'conv3' else 1,
+                          stride=stride, padding='half', dilation=1, bias=False)
         else:
             return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, None)
 
@@ -664,11 +665,11 @@ class ResNetV2Unit(E.Seq):
 
 
 class ResNetV2Groups(ResNetV1Groups):
-    def __init__(self, group_lengths, base_width, width_factors,
+    def __init__(self, group_lengths, base_width,
                  block_f=partial(default_args(ResNetV2Unit).block_f, base_width=Reserved,
-                                 width_factors=Reserved, stride=Reserved),
+                                 stride=Reserved),
                  dim_change=default_args(ResNetV2Unit).dim_change):
-        super().__init__(group_lengths, base_width, width_factors, block_f, dim_change,
+        super().__init__(group_lengths, base_width, block_f, dim_change,
                          unit_f=ResNetV2Unit)
         norm_f = default_args(block_f).norm_f
         if norm_f is not None:
@@ -1028,9 +1029,9 @@ class IRevNetUnit(E.Seq):
 
 
 class IRevNetGroups(E.Seq):
-    def __init__(self, group_lengths, base_width, width_factors, first_stride=1,
+    def __init__(self, group_lengths, base_width, first_stride=1,
                  block_f=partial(default_args(IRevNetUnit).block_f, base_width=Reserved,
-                                 width_factors=Reserved, stride=Reserved),
+                                 width_factors=(1,) * 2, stride=Reserved),
                  unit_f=IRevNetUnit):
         super().__init__()
         for i, l in enumerate(group_lengths):
@@ -1038,13 +1039,12 @@ class IRevNetGroups(E.Seq):
             for j in range(l):
                 stride = 1 if j > 0 else first_stride if i == 0 else 2
                 u = unit_f(first=(i, j) == (0, 0),
-                           block_f=Reserved.partial(block_f, base_width=bw_i,
-                                                    width_factors=width_factors, stride=stride))
+                           block_f=Reserved.partial(block_f, base_width=bw_i, stride=stride))
                 self.add(f'unit{i}_{j}', u)
 
 
 class IRevNetBackbone(E.Seq):
-    def __init__(self, init_stride=2, group_lengths=(2,) * 4, width_factors=(1,) * 2,
+    def __init__(self, init_stride=2, group_lengths=(2,) * 4,
                  base_width=None, block_f=default_args(IRevNetGroups).block_f,
                  groups_f=IRevNetGroups, no_final_postact=False):
         _check_block_args(block_f)
@@ -1062,8 +1062,7 @@ class IRevNetBackbone(E.Seq):
         self.add(
             baguette=Baguette(a.init_stride),
             psplit=ProportionSplit(0.5, dim=1, rounding=math.floor),
-            bulk=a.groups_f(a.group_lengths, base_width=base_width, width_factors=a.width_factors,
-                            block_f=a.block_f),
+            bulk=a.groups_f(a.group_lengths, base_width=base_width, block_f=a.block_f),
             concat=E.Concat(dim=1))
         if not self.args.no_final_postact:
             if (norm_f := default_args(a.block_f).norm_f) is not None:
