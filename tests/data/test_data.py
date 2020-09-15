@@ -170,7 +170,7 @@ class TestDataset:
                 def apply(ds):
                     nonlocal call_counts
                     call_counts[func] += 1
-                    return func(x for x in ds)
+                    return func(ds)
 
                 return apply
 
