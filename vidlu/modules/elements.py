@@ -2,7 +2,7 @@ from abc import ABC
 from argparse import Namespace
 import collections
 import functools
-from functools import reduce
+from functools import reduce, partial
 import typing as T
 import itertools
 from os import PathLike
@@ -149,7 +149,7 @@ def register_inverse_check_hook(module):
                     + f" Difference: {amax=:.2e}, {amean=:.2e}, {rmax=:.2e}, {rmean=:.2e}.")
 
     handle = module.register_forward_hook(check_inverse)
-    return check_inverse
+    return handle
 
 
 class InverseError(RuntimeError):
@@ -168,10 +168,10 @@ class InvertibleMixin:
     def inverse(self: nn.Module) -> nn.Module:
         try:
             module = self.inverse_module()
-            # The inverse of the inverse is the original module and `property` is used so that the
-            # original module is not recognized as a child of the inverse module, which would result
-            # in an infinite recursion when the `children` method is called on the inverse.
-            module.inverse = property(weakref.ref(self, module._del_inverse_cache))
+            # The inverse of the inverse is the original module. `property` is used so that the
+            # original module is not recognized as a child of the inverse module as this would
+            # result in an infinite recursion when the `children` method is called on the inverse.
+            module.inverse = property(weakref.ref(self, lambda s: module._del_inverse_cache))
             return module
         except TypeError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
@@ -210,7 +210,7 @@ class InvertibleMixin:
         self(*inputs)
 
 
-class LogJacobianMixin:
+class LogJacobianMixin:  # TODO
     # Note: reconstruction_tols is used in inverse check.
     # It can be overridden with a property.
     reconstruction_tols = dict(rtol=1e-2, atol=1e-2)
@@ -249,6 +249,10 @@ class LogJacobianMixin:
 
 # Core Modules #####################################################################################
 
+def is_built(module, including_submodules=False):
+    return all(not hasattr(m, "is_built") or m.is_built(False)
+               for m in itertools.chain([module], module.modules() if including_submodules else []))
+
 
 @replaces('Module')
 class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
@@ -258,14 +262,21 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         self._built = False
         self._check = None  # when this attreibute
 
+    def is_built(self, including_submodules=False):
+        if not self._built:
+            return False
+        if including_submodules:
+            return all(not hasattr(m, "is_built") or m.is_built(False) for m in self.modules())
+
     def __call__(self, *args, **kwargs):
         # Modified to support in-place modification checking and shape inference
         try:
             if self._built:
                 if hasattr(self, '_check'):  # checks are performed on the second input
+                    check_hash = hash(tuple(_extract_tensors(*args, **kwargs)))
                     if self._check is None:
-                        self._check = hash((*args, *kwargs.values()))
-                    elif self._check != hash((*args, *kwargs.values())):
+                        self._check = check_hash
+                    elif self._check != check_hash:
                         # check on the second unique input, after post_build of the previous module
                         return self._call_with_check(*args, **kwargs)
                 return super().__call__(*args, **kwargs)
@@ -963,7 +974,7 @@ def _get_conv_padding(padding_type, kernel_size, dilation):
 
 
 class WrappedModule(Module):
-    def __init__(self, orig=None):
+    def __init__(self, orig):
         super().__init__()
         self.orig = orig
 
@@ -971,7 +982,7 @@ class WrappedModule(Module):
         return self.orig(x)
 
     def __repr__(self):
-        return "A" + repr(self.orig)
+        return "W" + repr(self.orig)
 
 
 # TODO: Make separate Conv*ds
@@ -983,7 +994,7 @@ class Conv(WrappedModule):
             raise ValueError("The bias argument should be provided for the Conv module.")
         padding = (_get_conv_padding(padding, kernel_size, dilation)
                    if isinstance(padding, str) else padding)
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1000,7 +1011,7 @@ class DeconvConv(WrappedModule):
         if padding_mode != 'zeros':
             raise NotImplemented("padding_mode other than 'zeros' not supported.")
         del padding_mode
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1015,7 +1026,7 @@ class MaxPool(WrappedModule):
                  ceil_mode=False):
         padding = (_get_conv_padding(padding, kernel_size, dilation)
                    if isinstance(padding, str) else padding)
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1028,7 +1039,7 @@ class AvgPool(WrappedModule):
                  count_include_pad=True, divisor_override=None):
         padding = (_get_conv_padding(padding, kernel_size, dilation=1)
                    if isinstance(padding, str) else padding)
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1039,7 +1050,7 @@ class AvgPool(WrappedModule):
 class ConvTranspose(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, output_padding=1, groups=1,
                  bias=True, dilation=1, in_channels=None):
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1049,7 +1060,7 @@ class ConvTranspose(WrappedModule):
 @replaces('Linear')
 class Linear(WrappedModule):
     def __init__(self, out_features: int, bias=True, in_features=None):
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1066,7 +1077,7 @@ class Linear(WrappedModule):
 class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
                  num_features=None):
-        super().__init__()
+        super().__init__(orig=None)
         self.store_args()
 
     def build(self, x):
@@ -1250,12 +1261,15 @@ def get_submodule(root_module, path: T.Union[str, T.Sequence]) -> T.Union[Module
             `root_module`.
     """
     if isinstance(path, str):
-        path = path.split('.') if path != '' else []
+        path = [] if path == '' else path.split('.')
     for name in path:
         if not hasattr(root_module, name):
+            built_message = ("is not fully initialized (built) and"
+                             if isinstance(root_module, Module) and not root_module.is_built() else "")
             raise AttributeError(
-                f"The '{type(root_module).__name__}' instance has no submodule '{name}'. It has"
-                + f"  children: {', '.join(list(k for k, v in root_module.named_children()))}.")
+                f"The '{type(root_module).__name__}' instance {built_message}"
+                + f" has no submodule '{name}'. It has"
+                + f" children: {', '.join(list(k for k, v in root_module.named_children()))}.")
         root_module = getattr(root_module, name)
     return root_module
 
