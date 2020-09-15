@@ -1,8 +1,5 @@
 from torch import nn
 
-from vidlu.libs.swiftnet.models import semseg
-from vidlu.libs.swiftnet.models.resnet.resnet_single_scale import resnet18
-
 from vidlu.models import SegmentationModel
 
 
@@ -10,6 +7,8 @@ class MoSwiftnetRN18(nn.Module):
     def __init__(self):
         super().__init__()
         from data.cityscapes import Cityscapes
+        from vidlu.libs.swiftnet.models import semseg
+        from vidlu.libs.swiftnet.models.resnet.resnet_single_scale import resnet18
 
         scale = 1
         mean = [73.15, 82.90, 72.3]
@@ -23,5 +22,3 @@ class MoSwiftnetRN18(nn.Module):
     def forward(self, *args, **kwargs):
         logits, _ = self.wrapped(*args, **kwargs)[0]
         return logits
-
-
