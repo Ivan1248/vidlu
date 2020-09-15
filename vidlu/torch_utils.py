@@ -57,14 +57,10 @@ def save_tensor_attribute(objects, attrib_name):
     return save_attribute(objects, attrib_name, lambda x: x.detach().clone())
 
 
-def _module_or_params_to_params(module_or_params):
-    if isinstance(module_or_params, torch.nn.Module):
-        return module_or_params.parameters()
-    return module_or_params
-
-
 def switch_requires_grad(module_or_params, value):
-    return switch_attribute(_module_or_params_to_params(module_or_params), 'requires_grad', value)
+    params = module_or_params.parameters() if isinstance(module_or_params, torch.nn.Module) \
+        else module_or_params
+    return switch_attribute(params, 'requires_grad', value)
 
 
 def switch_training(module, value):
@@ -129,22 +125,7 @@ def concatenate_tensors_trees(*args, tree_type=None):
     return tree_type(zip(keys, values))
 
 
-# Cuda memory management
-
-def reset_cuda():
-    torch.cuda.empty_cache()
-    torch.cuda.ipc_collect()
-
-
-# Profiling
-
-def profile(func, on_cuda=True, device=None):
-    with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
-        output = func()
-    if on_cuda:
-        torch.cuda.synchronize(device=device)
-    return output, prof.key_averages().table('cuda_time_total')
-
+# Autograd checkpointing
 
 def is_modified(tensor: torch.Tensor):
     return tensor._version > 0
@@ -180,3 +161,20 @@ class StateAwareCheckpoint:
             for cmf in self.context_managers_fs:
                 stack.enter_context(cmf(self.module))
             return checkpoint_fix(func, *args, **kwargs)
+
+
+# Cuda memory management
+
+def reset_cuda():
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
+
+# Profiling
+
+def profile(func, on_cuda=True, device=None):
+    with torch.autograd.profiler.profile(use_cuda=on_cuda) as prof:
+        output = func()
+    if on_cuda:
+        torch.cuda.synchronize(device=device)
+    return output, prof.key_averages().table('cuda_time_total')

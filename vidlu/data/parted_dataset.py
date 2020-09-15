@@ -1,5 +1,8 @@
 import typing as T
+from typing import Iterator
+
 from vidlu.utils.func import valmap
+from collections import Mapping
 
 from .dataset import Dataset
 
@@ -23,8 +26,8 @@ def _generate_parts(part_to_ds: T.Mapping[str, Dataset],
     def generate_parts(part):
         if part not in part_to_split:
             return False
+        subparts = part_to_split[part].subparts
         if part in part_to_ds:
-            subparts = part_to_split[part].subparts
             if any(s not in part_to_ds for s in subparts):
                 if not all(s not in part_to_ds for s in subparts):
                     raise ValueError("If subparts are provided, either all or none of them"
@@ -33,8 +36,8 @@ def _generate_parts(part_to_ds: T.Mapping[str, Dataset],
                 (s, t), ratio = subparts, part_to_split[part].ratio
                 part_to_ds[s], part_to_ds[t] = part_to_ds[part].split(ratio=ratio)
                 return True
-        elif all(s in part_to_ds for s in part_to_split[part].subparts):
-            s, t = (part_to_ds[s] for s in part_to_split[part].subparts)
+        elif all(s in part_to_ds for s in subparts):
+            s, t = (part_to_ds[s] for s in subparts)
             part_to_ds[part] = s + t
             return True
         return False
@@ -44,7 +47,7 @@ def _generate_parts(part_to_ds: T.Mapping[str, Dataset],
     return part_to_ds
 
 
-class PartedDataset:
+class PartedDataset(Mapping):
     def __init__(self, part_to_ds, part_to_split=None):
         part_to_split = part_to_split or {}
         non_top_level_parts = set(s for subsets, ratio in part_to_split.values() for s in subsets)
@@ -59,6 +62,12 @@ class PartedDataset:
 
     def __getattr__(self, item):
         return self[item]
+
+    def __len__(self) -> int:
+        return len(self.part_to_ds)
+
+    def __iter__(self):
+        yield from self.keys()
 
     def with_transform(self, transform):
         return PartedDataset(valmap(transform, self.part_to_ds))

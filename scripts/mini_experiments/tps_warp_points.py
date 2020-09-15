@@ -45,8 +45,8 @@ gridfw = vmf.tps_grid_from_points(c_src, c_src + offsets, size=x.shape)
 flow = (gridfw - base_grid).permute(0, 3, 1, 2) * gridfw.new(
     [W / 2, H / 2]).view(1, 2, 1, 1)
 x_warped = vmf.gaussian_forward_warp_josa(x, flow, sigma=0.3)
-#from vidlu.libs.softmax_splatting import softsplat
-#x_warped = softsplat.FunctionSoftsplat(x, flow.contiguous(), tenMetric=None, strType="average")
+# from vidlu.libs.softmax_splatting import softsplat
+# x_warped = softsplat.FunctionSoftsplat(x, flow.contiguous(), tenMetric=None, strType="average")
 
 # flow_img = to_tensor(flow2rgb((gridfw - base_grid)[0].numpy()))
 timages += [x_warped]
@@ -55,7 +55,8 @@ timages += [F.grid_sample(x_warped, gridfw).squeeze_(1)]
 
 def invert_offset_grid(grid_fw, grid_bw):
     grid_nchw = eo.rearrange(grid_fw, "n h w c -> n c h w")
-    zero_offset_grid = vmf.zero_offset_grid_for(grid_nchw)
+    zero_offset_grid = vmf.uniform_grid_2d(grid_nchw.shape[-2:], low=-1, high=1, device=x.device) \
+        .unsqueeze_(0)
     grid_warped = eo.rearrange(F.grid_sample(grid_nchw, grid_bw), "n c h w -> n h w c")
     return zero_offset_grid - (grid_warped - zero_offset_grid)
 

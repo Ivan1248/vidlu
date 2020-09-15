@@ -2,25 +2,6 @@ import torch
 from torch.nn import functional as F
 
 
-def dimensional_function(f_list, *args, **kwargs):
-    return f_list[len(args[0].size()) - 3](*args, **kwargs)
-
-
-def adaptive_avg_pool(x, output_size):
-    return dimensional_function(
-        [F.adaptive_avg_pool1d, F.adaptive_avg_pool2d, F.adaptive_avg_pool3d], x, output_size)
-
-
-def avg_pool(x, kernel_size, stride=None, padding=0, ceil_mode=False, count_include_pad=True):
-    return dimensional_function(
-        [F.avg_pool1d, F.avg_pool2d, F.avg_pool3d], x, kernel_size=kernel_size, stride=stride,
-        padding=padding, ceil_mode=ceil_mode, count_include_pad=count_include_pad)
-
-
-def global_avg_pool(x):
-    return adaptive_avg_pool(x, 1).squeeze()
-
-
 class _Swish(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x):
@@ -241,8 +222,7 @@ def tps_grid_from_points(c_src, c_dst, size, reduced=False):
 
 def backward_tps_grid_from_points(c_src, c_dst, size, reduced=False):
     """Creates "backward" TPS grid for grid_sample."""
-    theta = tps_params_from_points(c_dst, c_src, reduced=reduced)
-    return tps_grid(theta, c_dst, size=size)
+    return tps_grid_from_points(c_dst, c_src, size, reduced=reduced)
 
 
 def gaussian_forward_warp_josa(features, flow, sigma=1., normalize=True):

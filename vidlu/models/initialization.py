@@ -33,7 +33,7 @@ def kaiming_resnet(module, nonlinearity='relu', zero_init_residual=False):
 
 
 def kaiming_swiftnet(module, nonlinearity='relu'):
-    kaiming_resnet(module, nonlinearity=nonlinearity, zero_init_residual=False)
+    return kaiming_resnet(module, nonlinearity=nonlinearity, zero_init_residual=False)
 
 
 def kaiming_densenet(module, nonlinearity='relu'):

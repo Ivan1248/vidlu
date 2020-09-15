@@ -132,12 +132,12 @@ def neg_soft_mIoU_l(logits, target, batch=False, weights=None):  # TODO
     pred = pred.reshape((pred.shape[0], -1, pred.shape[-1]) if batch else (-1, pred.shape[-1]))
     if labels:  # target contains labels, not probabilities
         target = target.view(pred.shape[:-1])
-        cm = metrics.soft_multiclass_confusion_matrix(target, pred)
+        cm = metrics.soft_pred_multiclass_confusion_matrix(target, pred)
     else:
         target = target.transpose(1, -1).view(pred.shape)
-        cm = metrics.soft_gt_multiclass_confusion_matrix(target, pred)
+        cm = metrics.all_soft_multiclass_confusion_matrix(target, pred)
     if weights is not None:
-        return -torch.einsum("...i,k->...i", metrics.classification_metrics(cm, 'IoU'), weights)
+        return -torch.einsum("...ki,i->...", metrics.classification_metrics(cm, 'IoU'), weights)
     return -metrics.classification_metrics(cm, 'mIoU')
 
 

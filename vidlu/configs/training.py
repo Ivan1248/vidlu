@@ -53,7 +53,7 @@ class TrainerConfig(NameDict):
         ext = []
         for ext_f in self.extension_fs:
             names = tuple(params(ext_f).keys())
-            values = [self.pop(name, Required) for name in names]
+            values = [self.get(name, Required) for name in names]
             args = {k: v for k, v in zip(names, values) if v is not Required}
             ext.append(partial(ext_f, **args) if len(args) > 0 else ext_f)
             for name in names:

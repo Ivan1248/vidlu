@@ -72,7 +72,7 @@ class Engine(object):
     """
 
     def __init__(self, process_function):
-        self._logger = logging.getLogger(__name__ + "." + type(self).__name__)
+        self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
         self._process_function = process_function
         self.should_terminate = False
@@ -251,7 +251,7 @@ class Evaluator:
 
     def _run_step(self, step, batch):
         if torch.cuda.is_available():
-            torch.cuda.reset_max_memory_allocated()
+            torch.cuda.reset_peak_memory_stats()
         with Stopwatch() as t:
             output = step(self, batch)
         output['freq'] = len(batch) / t.time
