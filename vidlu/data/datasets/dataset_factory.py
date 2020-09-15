@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import dataclasses as dc
 import warnings
+import itertools
 
 from . import datasets
 from .datasets import Dataset
@@ -18,28 +19,27 @@ class _DatasetInfo:
     kwargs: dict = dc.field(default_factory=dict)  # arguments to always be given to cls
 
 
-_ds_to_info = {k.lower(): _DatasetInfo(v, path=getattr(v, 'default_dir', None))
-               for k, v in vars(datasets).items()
-               if inspect.isclass(v) and issubclass(v, Dataset) and v is not Dataset}
-
-_default_parts = ['all', 'trainval', 'train', 'val', 'test']
-_default_splits = {
-    'all': (('trainval', 'test'), 0.8),
-    'trainval': (('train', 'val'), 0.8),
-}
-
-
 class DatasetFactory:
-    def __init__(self, datasets_dir_or_dirs):
+    def __init__(self, datasets_dir_or_dirs, datasets_modules=(datasets,),
+                 default_parts=('all', 'trainval', 'train', 'val', 'test'),
+                 default_splits="default"):
         if isinstance(datasets_dir_or_dirs, os.PathLike):
             datasets_dir_or_dirs = [datasets_dir_or_dirs]
         self.datasets_dirs = list(map(Path, datasets_dir_or_dirs))
+        if default_splits == "default":
+            default_splits = {'all': (('trainval', 'test'), 0.8),
+                              'trainval': (('train', 'val'), 0.8)}
+        self.default_parts, self.default_splits = default_parts, default_splits
+        self.ds_to_info = {
+            k.lower(): _DatasetInfo(v, path=getattr(v, 'default_dir', None))
+            for k, v in itertools.chain(*(vars(dm).items() for dm in datasets_modules))
+            if inspect.isclass(v) and issubclass(v, Dataset) and v is not Dataset}
 
     def __call__(self, name: str, **kwargs):
         name = name.lower()
-        if name not in _ds_to_info:
+        if name not in self.ds_to_info:
             raise KeyError(f'No dataset has the name "{name}".')
-        ds_info = _ds_to_info[name]
+        ds_info = self.ds_to_info[name]
         subsets = ds_info.cls.subsets
         try:
             path_args = [vup.find_in_directories(self.datasets_dirs, ds_info.path)] \
@@ -53,5 +53,5 @@ class DatasetFactory:
             load = lambda s: ds_info.cls(*path_args, **{**ds_info.kwargs, **kwargs})
         else:
             load = lambda s: ds_info.cls(*path_args, s, **{**ds_info.kwargs, **kwargs})
-        splits = getattr(ds_info.cls, 'splits', _default_splits)
+        splits = getattr(ds_info.cls, 'splits', self.default_splits)
         return PartedDataset({s: load(s) for s in subsets}, splits)
