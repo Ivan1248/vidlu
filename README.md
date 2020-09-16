@@ -10,54 +10,54 @@ A deep learning library for research with emphasis on computer vision, based on 
 
 ## Things (to be) done
 
--   data
-    -   [x] easy data processing (transformations, splitting, joining)
-    -   [x] data caching in RAM and HDD
-    -   [x] lazy data loading and processing (e.g. if segmentation labels are not requested, they are not loaded)
-    -   [x] many datasets (data loaders)
--   modules
-    -   [x] modules that infer their input dimension automatically (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet)) -- requires an initial run for initialization
-    -   [x] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names
-    -   [x] high generality/customizability of components and models (deep arguments) (not completely satisfactory)
-    -   [x] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)
+-   data  
+    -   [x] easy data processing (transformations, splitting, joining)  
+    -   [x] data caching in RAM and HDD  
+    -   [x] lazy data loading and processing (e.g. if segmentation labels are not requested, they are not loaded)  
+    -   [x] many datasets (data loaders)  
+-   modules  
+    -   [x] modules that infer their input dimension automatically (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet)) -- requires an initial run for initialization  
+    -   [x] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names  
+    -   [x] high generality/customizability of components and models (deep arguments) (not completely satisfactory)  
+    -   [x] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)  
     -   [x] extraction of intermediate outputs without changing the module (`vidlu.modules.with_intermediate_outputs`, using `register_forward_hook`)    
-    -   [x] For many elementary modules which can be invertible, the `inverse` property returns its inverse module. The inverse is defined either via a `make_inverse` or `inverse_forward`. A `Seq` which consists of only invertible modules (like `Identity`, `Permute`, `FactorReshape`, ...) is automatically invertible.
-    -   [x] perturbation models with parameters with batch dimension
--   models (convolutional) with training algorithms
-    -   classification
-        -   [x] ResNet, WRN, DenseNet
-        -   [x] iRevNet
-        -   [ ] RevNet, VGG
-        -   [x] other: BagNet
-    -   semantic segmentation
-        -   [x] basic segmentation head and loss
-        -   [x] SwiftNet
-        -   [ ] Ladder DenseNet
-    -   [ ] stochastic model parts
-    -   [ ] variational inference
-    -   [ ] VAE
-    -   [ ] flow generative models
--   training
-    -   [x] training disentangled from the model
-    -   [x] customizable configurations
-    -   [x] logging, checkpoints, resuming interrupted training
-    -   [x] pretrained parameter loading: ResNet, DenseNet
-    -   [x] supervised training
-    -   [x] adversarial training
-    -   [x] semi-supervised training (VAT)
-    -   [ ] GAN training
-    -   [ ] natural gradient variational inference
--   adversarial attacks
-    -   [x] single step gradient
-    -   [x] PGD/BIM
-    -   [x] PGD: stop on success
-    -   [x] PGD: support for "adversarial training for free"
-    -   [x] VAT attack
-    -   [x] perturbation models
-    -   [x] support for optimizers
-    -   [ ] CW
-    -   [ ] DDN (arXiv:1811.09600)
-    -   [ ] Frank-Wolfe constrained optimization
+    -   [x] For many elementary modules which can be invertible, the `inverse` property returns its inverse module. The inverse is defined either via a `make_inverse` or `inverse_forward`. A `Seq` which consists of only invertible modules (like `Identity`, `Permute`, `FactorReshape`, ...) is automatically invertible.  
+    -   [x] perturbation models with parameters with batch dimension  
+-   models (convolutional) with training algorithms  
+    -   classification  
+        -   [x] ResNet, WRN, DenseNet  
+        -   [x] iRevNet  
+        -   [ ] RevNet, VGG  
+        -   [x] other: BagNet  
+    -   semantic segmentation  
+        -   [x] basic segmentation head and loss  
+        -   [x] SwiftNet  
+        -   [ ] Ladder DenseNet  
+    -   [ ] stochastic model parts  
+    -   [ ] variational inference  
+    -   [ ] VAE  
+    -   [ ] flow generative models  
+-   training  
+    -   [x] training disentangled from the model  
+    -   [x] customizable configurations  
+    -   [x] logging, checkpoints, resuming interrupted training  
+    -   [x] pretrained parameter loading: ResNet, DenseNet  
+    -   [x] supervised training  
+    -   [x] adversarial training  
+    -   [x] semi-supervised training (VAT)  
+    -   [ ] GAN training  
+    -   [ ] natural gradient variational inference  
+-   adversarial attacks  
+    -   [x] single step gradient  
+    -   [x] PGD/BIM  
+    -   [x] PGD: stop on success  
+    -   [x] PGD: support for "adversarial training for free"  
+    -   [x] VAT attack  
+    -   [x] perturbation models  
+    -   [x] support for optimizers  
+    -   [ ] CW  
+    -   [ ] DDN (arXiv:1811.09600)  
+    -   [ ] Frank-Wolfe constrained optimization  
 
 <!--
 In many places in the code some parameter names end with "_f". 
