@@ -788,22 +788,25 @@ class MDenseBlock(E.Seq):
                          **{f'unit{i}': MDenseUnit(block_f) for i in range(length)})
 
 
+def mf_dense_sequence_init(module, db_f, transition_f, growth_rate, db_lengths, compression,
+                           block_f):
+    norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
+    for i, len_ in enumerate(db_lengths):
+        if i > 0:
+            module.add(f'transition{i - 1}', transition_f(compression, **norm_act_args))
+        module.add(f'db{i}', db_f(len_, block_f=Reserved.partial(block_f, base_width=growth_rate)))
+    module.add('concat', E.Concat())
+    module.add(norm=default_args(block_f).norm_f(),
+               act=default_args(block_f).act_f())
+
+
 class MDenseSequence(E.Seq):
     def __init__(self, growth_rate, db_lengths,
                  compression=default_args(MDenseTransition).compression,
                  block_f=partial(default_args(MDenseBlock).block_f, base_width=Reserved)):
         super().__init__()
-        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        for i, len_ in enumerate(db_lengths):
-            if i > 0:
-                self.add(f'transition{i - 1}',
-                         MDenseTransition(compression, **norm_act_args))
-            self.add(f'db{i}',
-                     MDenseBlock(len_,
-                                 block_f=Reserved.partial(block_f, base_width=growth_rate)))
-        self.add('concat', E.Concat())
-        self.add(norm=default_args(block_f).norm_f(),
-                 act=default_args(block_f).act_f())
+        mf_dense_sequence_init(self, MDenseBlock, MDenseTransition, growth_rate, db_lengths,
+                               compression, block_f)
 
 
 class MDenseNetBackbone(E.Seq):
@@ -857,17 +860,8 @@ class FDenseSequence(E.Seq):
                  compression=default_args(FDenseTransition).compression,
                  block_f=partial(default_args(FDenseBlock).block_f, base_width=Reserved)):
         super().__init__()
-        norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
-        for i, len_ in enumerate(db_lengths):
-            if i > 0:
-                self.add(f'transition{i - 1}',
-                         FDenseTransition(compression, **norm_act_args))
-            self.add(f'db{i}',
-                     FDenseBlock(len_,
-                                 block_f=Reserved.partial(block_f, base_width=growth_rate)))
-        self.add('concat', E.Concat())
-        self.add(norm=default_args(block_f).norm_f(),
-                 act=default_args(block_f).act_f())
+        mf_dense_sequence_init(self, FDenseBlock, FDenseTransition, growth_rate, db_lengths,
+                               compression, block_f)
 
 
 class FDenseNetBackbone(E.Seq):
@@ -920,20 +914,6 @@ class FCNEncoder(E.Seq):
             self.add((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)),
                      (f'act_fc{i}', act_f()),
                      (f'noise_fc{i}', noise_f()))
-
-
-# Autoencoder ######################################################################################
-
-class SimpleEncoder(E.Seq):
-    def __init__(self, kernel_sizes=(4,) * 4, widths=(32, 64, 128, 256), z_width=32,
-                 norm_f=D.norm_f, act_f=E.ReLU, conv_f=D.conv_f):
-        super().__init__()
-        for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add(f'conv{i}', conv_f(out_channels=w, kernel_size=k, stride=2, bias=i == 0))
-            if norm_f is not None:
-                self.add(f'norm{i}', norm_f())
-            self.add(f'act{i}', act_f())
-        self.add('linear_z', E.Linear(z_width))
 
 
 # Adversarial autoencoder ##########################################################################
