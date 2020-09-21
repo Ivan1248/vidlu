@@ -48,7 +48,7 @@ class CheckpointManager(object):
             Directory path where objects will be saved
         experiment_name (str):
             Prefix of the file paths to which objects will be saved.
-        n_saved (int, optional):
+        n_recent_saved (int, optional):
             Number of objects that should be kept on disk. Older files will be
             removed.
         resume (bool, optional):
@@ -84,13 +84,14 @@ class CheckpointManager(object):
         ['lin33_1', 'lin33_2']
     """
 
-    def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_saved=1,
-                 resume=False, remove_old=False):
+    def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_recent_saved=1,
+                 n_best_saved=0, resume=False, remove_old=False, perf_measure=lambda cp: 0):
         self.checkpoints_dir = checkpoints_dir
         self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
         self.experiment_str = experiment_name
         self.experiment_desc = experiment_desc or dict()
-        self._n_saved = n_saved
+        self.n_recent_saved = n_recent_saved
+        self.n_best_saved = n_best_saved
         self._index = 0
         self._required_resuming = resume
 
@@ -103,13 +104,16 @@ class CheckpointManager(object):
             return [p for i, p in index_paths]
 
         self.saved = get_existing_checkpoints()
+        self.path_to_performance = {p: perf_measure(Checkpoint.load(self.experiment_dir / p))
+                                    for p in self.saved}
 
         if resume and remove_old:
             raise RuntimeError("`resume=True` is not allowed if `remove_old=True`.")
         if remove_old:
             self.remove_old_checkpoints(0)
         if resume and len(self.saved) == 0:
-            raise RuntimeError("Cannot resume from checkpoint. Checkpoints not found.")
+            raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
+                               + f" {self.experiment_dir}.")
         if not resume and len(self.saved) > 0:
             raise RuntimeError(f"Files with ID {experiment_name} are already present in the "
                                + f"directory {checkpoints_dir}. If you want to use this ID anyway, "
@@ -118,6 +122,10 @@ class CheckpointManager(object):
     @property
     def last_checkpoint_path(self):
         return self.experiment_dir / self.saved[-1]
+
+    @property
+    def best_checkpoint_path(self):
+        return self.experiment_dir / max(self.saved, key=self.path_to_performance.__getitem__)
 
     def save(self, state, summary=None):
         if self._required_resuming:
@@ -167,10 +175,16 @@ class CheckpointManager(object):
     def _name_to_index(name):
         return int(name)
 
-    def remove_old_checkpoints(self, n_saved=None):
-        n_saved = self._n_saved if n_saved is None else n_saved
-        while len(self.saved) > n_saved:
-            path = self.experiment_dir / self.saved.pop(0)
+    def remove_old_checkpoints(self, n_recent_saved=None, n_best_saved=None):
+        n_recent_saved = self.n_recent_saved if n_recent_saved is None else n_recent_saved
+        n_best_saved = self.n_best_saved if n_best_saved is None else n_best_saved
+        best = set(() if n_best_saved == 0 else
+                   sorted(self.saved, key=self.path_to_performance.__getitem__)[-n_best_saved:])
+        for p in self.saved[:-n_recent_saved]:
+            path = self.experiment_dir / p
+            if path in best:
+                continue
+            self.saved.remove(p)
             try:
                 shutil.rmtree(path)
             except FileNotFoundError:
