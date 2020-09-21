@@ -14,7 +14,7 @@ from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
 import vidlu.utils.func as vuf
 from vidlu.utils.func import Reserved
-from  vidlu.utils.func import partial
+from vidlu.utils.func import partial
 
 from . import defaults
 
@@ -27,7 +27,7 @@ unsafe_eval = eval
 
 def _print_all_args_message(func):
     print("All arguments:")
-    print(f"Argument tree ({func.func}):")
+    print(f"Argument tree ({func.func if isinstance(func, partial) else func}):")
     tree.print_tree(vuf.ArgTree.from_func(func), depth=1)
 
 
@@ -221,6 +221,10 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
     model_class = getattr(models, model_name)
     argtree = defaults.get_model_argtree_for_problem(model_class, problem)
+    input_adapter = get_input_adapter(
+        input_adapter_str, problem=problem,
+        data_statistics=(None if prep_dataset is None
+                         else prep_dataset.info.cache['standardization']))
     if argtree is not None:
         argtree_arg = (
             unsafe_eval(f"t({argtree_arg[0]})",
@@ -232,15 +236,17 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         model_f = vuf.argtree_partial(
             model_class,
             **argtree,
-            input_adapter=get_input_adapter(
-                input_adapter_str, problem=problem,
-                data_statistics=(None if prep_dataset is None
-                                 else prep_dataset.info.cache['standardization'])))
+            input_adapter=input_adapter)
         _print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
     else:
-        model_f = model_class
+        if "input_adapter" not in vuf.params(model_class):
+            if input_adapter_str != "id":
+                raise RuntimeError(f'The model does not support an input adapter.'
+                                   + f' Only "id" is supported, not "{input_adapter_str}".')
+            model_f = model_class
+        else:
+            model_f = partial(model_class, input_adapter=input_adapter)
         _print_args_messages('Model', model_class, model_f, dict(), verbosity=verbosity)
-
 
     model = model_f()
     model.eval()
@@ -314,20 +320,10 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
         raise RuntimeError('Either state_dict should be provided or params_str should contain the'
                            + ' parameters file path at the end of `params_str`.')
     if p.file != '':
-        path = Path(p.file)
-        if not path.is_absolute():
-            path = Path(params_dir) / p.file
-
-        state_dict = paramtrans.get_translated_parameters(p.translator, path, subdict=p.src_dict)
-    else:
-        state_dict = paramtrans.get_translated_parameters(p.translator, state_dict,
-                                                          subdict=p.src_dict)
-    if len(p.src_module) > 0:  # or len(p.dest_module) > 0:
-        # start = f'{p.dest_module}.' if len(p.dest_module) > 0 else ''
-        # state_dict = {start + k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
-        #              if k.startswith(p.src_module)}
-        state_dict = {k[len(p.src_module) + 1:]: v for k, v in state_dict.items()
-                      if k.startswith(p.src_module)}
+        state_dict = paramtrans.load_params_file(path if (path := Path(p.file)).is_absolute() else
+                                                 Path(params_dir) / path)
+    state_dict = paramtrans.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
+    state_dict = paramtrans.remove_key_prefix(state_dict, p.src_module)
     return state_dict, p.dest_module
 
 

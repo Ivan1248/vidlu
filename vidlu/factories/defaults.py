@@ -1,12 +1,16 @@
 import inspect
 import warnings
 from functools import partial
+import logging
 
 from vidlu.models import DiscriminativeModel, Autoencoder, MNISTNet
 from vidlu.factories.problem import (Classification, SemanticSegmentation, DepthRegression,
                                      get_problem_type)
 import vidlu.training as t
 from vidlu.utils.func import ArgTree, params
+
+logger = logging.getLogger(__file__)
+logger.addHandler(logging.NullHandler())
 
 
 # Problem ######################################################################
@@ -34,7 +38,9 @@ def get_model_argtree_for_problem(model_class, problem):
                 return ArgTree(head_f=partial(components.ClassificationHead,
                                               class_count=problem.class_count))
             elif type(problem) is SemanticSegmentation:
-                if not isinstance(params(model_class).head_f, components.SegmentationHead):
+                if "head_f" not in params(model_class):
+                    logger.info('The model factory does not accept an "head_f" argument.')
+                elif not isinstance(params(model_class).head_f, components.SegmentationHead):
                     return ArgTree(head_f=partial(components.SegmentationHead,
                                                   class_count=problem.class_count,
                                                   shape=problem.y_shape))

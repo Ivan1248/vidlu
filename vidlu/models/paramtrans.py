@@ -6,14 +6,26 @@ import torch
 from vidlu.utils import text
 
 
+def remove_key_prefix(state_dict, prefix):
+    if len(prefix) == 0:
+        return state_dict
+    for k in state_dict:
+        if not k.startswith(prefix):
+            raise RuntimeError(f'state_dict contains at least 1 key that does not start with'
+                               + f' {prefix=}. (The key is {k}.)')
+    return {k[len(prefix) + 1:]: v for k, v in state_dict.items()}
+
+
 def translate_dict_keys(dict_, input_output_format_pairs, context=None):
     translator = text.FormatTranslatorCascade(input_output_format_pairs, context=context)
     return {translator(k): v for k, v in dict_.items()}
 
 
-def get_translated_parameters(translator_name, state_dict_or_path, subdict=''):
-    state_dict = (state_dict_or_path if isinstance(state_dict_or_path, Mapping)
-                  else torch.load(state_dict_or_path))
+def load_params_file(path):
+    return torch.load(path)
+
+
+def get_translated_parameters(translator_name, state_dict, subdict=''):
     subdict = [] if not subdict else subdict.split(',')
     for sub in subdict:
         state_dict = state_dict[sub]
@@ -38,6 +50,7 @@ def translate_madrylab_resnet(state_dict):
 
 
 def translate_resnet(state_dict):
+    """Translates Torchvision ResNet parameters to Vidlu ResNet parameters."""
     return translate_dict_keys(
         state_dict,
         {  # backbone
@@ -54,6 +67,7 @@ def translate_resnet(state_dict):
 
 
 def translate_densenet(state_dict):
+    """Translates Torchvision Densenet parameters to Vidlu ResNet parameters."""
     return translate_dict_keys(
         state_dict,
         {  # backbone
@@ -73,6 +87,8 @@ def translate_densenet(state_dict):
 
 
 def translate_swiftnet(state_dict):
+    """Translates Marin's SwiftNet-RN parameters to Vidlu SwiftNet-RN
+     parameters."""
     warnings.warn(f"Unused arrays: 'backbone.img_mean' ({state_dict['backbone.img_mean']}) and 'backbone.img_std' "
                   + f"({state_dict['backbone.img_std']}) removed from state_dict.")
     del state_dict['backbone.img_std']
