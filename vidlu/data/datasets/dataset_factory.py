@@ -31,14 +31,18 @@ class DatasetFactory:
                               'trainval': (('train', 'val'), 0.8)}
         self.default_parts, self.default_splits = default_parts, default_splits
         self.ds_to_info = {
-            k.lower(): _DatasetInfo(v, path=getattr(v, 'default_dir', None))
+            k: _DatasetInfo(v, path=getattr(v, 'default_dir', None))
             for k, v in itertools.chain(*(vars(dm).items() for dm in datasets_modules))
             if inspect.isclass(v) and issubclass(v, Dataset) and v is not Dataset}
+        self.ds_name_lower_to_normal = {k.lower(): k for k in self.ds_to_info}
 
     def __call__(self, name: str, **kwargs):
-        name = name.lower()
+        name = name
         if name not in self.ds_to_info:
-            raise KeyError(f'No dataset has the name "{name}".')
+            if (name_fixed := self.ds_name_lower_to_normal.get(name.lower(), None)) is not None:
+                raise KeyError(f'No dataset has the name "{name}". Did you mean "{name_fixed}".')
+            raise KeyError(f'No dataset has the name "{name}".'
+                           + f' Available datasets: {", ".join(self.ds_to_info.keys())}.')
         ds_info = self.ds_to_info[name]
         subsets = ds_info.cls.subsets
         try:
