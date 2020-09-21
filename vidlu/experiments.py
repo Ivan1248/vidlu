@@ -75,7 +75,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
             logger.log(f"{prefix}: {eval_str(metrics)}")
 
     # noinspection PyUnresolvedReferences
-    @trainer.evaluation.iteration_completed.handler
+    @trainer.evaluation.iter_completed.handler
     def interact(state):
         from IPython import embed
         from vidlu.utils.presentation import visualization
@@ -90,7 +90,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
             except Exception as ex:
                 print(f'Cannot execute "{optional_input}"\n{ex}.')
 
-    @trainer.training.iteration_completed.handler
+    @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
         if es.iteration % es.batch_count % (max(1, es.batch_count // 5)) == 0:
             remaining = es.batch_count - es.iteration % es.batch_count

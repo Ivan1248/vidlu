@@ -84,8 +84,8 @@ class Engine(object):
         self.completed = Event()
         self.epoch_started = Event()
         self.epoch_completed = Event()
-        self.iteration_started = Event()
-        self.iteration_completed = Event()
+        self.iter_started = Event()
+        self.iter_completed = Event()
 
         if self._process_function is None:
             raise ValueError("Engine must be given a processing function in order to run.")
@@ -110,9 +110,9 @@ class Engine(object):
         for batch in self.state.data_loader:
             self.state.iteration += 1
             self.state.batch = batch
-            self.iteration_started(self.state)
+            self.iter_started(self.state)
             self.state.output = self._process_function(self, batch)
-            self.iteration_completed(self.state)
+            self.iter_completed(self.state)
             del self.state.batch, self.state.output
             if self.should_terminate or self.should_terminate_epoch:
                 self.should_terminate_epoch = False
@@ -207,7 +207,7 @@ class Evaluator:
 
         self.evaluation = Engine(lambda e, b: self._run_step(self.eval_step, b))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
-        self.evaluation.iteration_completed.add_handler(self._update_metrics)
+        self.evaluation.iter_completed.add_handler(self._update_metrics)
 
     @torch.no_grad()
     def _reset_metrics(self):
@@ -300,7 +300,7 @@ class Trainer(Evaluator):
         self.training = Engine(lambda e, b: self._run_step(self.train_step, b))
         self.training.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
-        self.training.iteration_completed.add_handler(self._update_metrics)
+        self.training.iter_completed.add_handler(self._update_metrics)
 
         self.extensions = [e() for e in extension_fs]
         if len(set(map(type, self.extensions))) < len(self.extensions):
