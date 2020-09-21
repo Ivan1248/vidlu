@@ -1,6 +1,8 @@
 from functools import partial, partialmethod
 from fractions import Fraction as Frac
 import typing as T
+import warnings
+import logging
 
 import torch
 
@@ -11,6 +13,9 @@ from vidlu.modules.other import mnistnet
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
 from . import initialization
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 # Backbones ########################################################################################
@@ -133,6 +138,11 @@ class SeqModel(M.Seq):
     initialize = Model.initialize
 
 
+class WrappedModel(SeqModel):
+    def __init__(self, wrapped, init, input_adapter=None):
+        super().__init__(seq=wrapped, init=init, input_adapter=input_adapter)
+
+
 # Discriminative models ############################################################################
 
 class DiscriminativeModel(SeqModel):
@@ -213,18 +223,20 @@ class SwiftNet(SegmentationModel):
 
     def __init__(self,
                  backbone_f=resnet_v1_backbone,
-                 ladder_width=128, head_f=vmc.heads.SegmentationHead, input_adapter=None,
+                 ladder_width=128,
+                 head_f=vmc.heads.SegmentationHead,
+                 input_adapter=None,
                  init=partial(initialization.kaiming_resnet, module=Reserved),
-                 lateral_blocks=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [0] * 3)),
-                 lateral_kind: T.Literal['sum', 'act', ''] = '',
+                 lateral_prefixes=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [0] * 3)),
+                 lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  mem_efficiency=1):
-        if lateral_kind not in ('sum', 'act', ''):
-            raise ValueError("lateral_name should be either 'sum' or 'act'.")
+        if lateral_suffix not in ('sum', 'act', ''):
+            raise ValueError("lateral_suffix should be either 'sum' or 'act'.")
         super().__init__(
             backbone_f=partial(vmc.KresoLadderNet,
                                backbone_f=backbone_f,
-                               laterals=[f"{lb}.{lateral_kind}" if lateral_kind else lb
-                                         for lb in lateral_blocks],
+                               laterals=[f"{p}.{lateral_suffix}" if lateral_suffix else p
+                                         for p in lateral_prefixes],
                                ladder_width=ladder_width,
                                context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
                                                  out_size=128, grid_sizes=(8, 4, 2)),
@@ -233,8 +245,8 @@ class SwiftNet(SegmentationModel):
             head_f=partial(head_f, kernel_size=1),
             init=init,
             input_adapter=input_adapter)
-        self.lateral_blocks = lateral_blocks
-        self.lateral_name = lateral_kind
+        self.lateral_prefixes = lateral_prefixes
+        self.lateral_suffix = lateral_suffix
         self.mem_efficiency = mem_efficiency
 
     def post_build(self, *args, **kwargs):
@@ -243,9 +255,11 @@ class SwiftNet(SegmentationModel):
         super().post_build()
         for name, module in self.named_modules():
             if hasattr(module, 'inplace'):
+                if module.inplace and self.mem_efficiency == 0:
+                    warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
                 module.inplace = self.mem_efficiency >= 1  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
-        if self.lateral_name == 'sum':
-            for lb in self.lateral_blocks:
+        if self.lateral_suffix == 'sum':
+            for lb in self.lateral_prefixes:
                 module = vm.get_submodule(self.backbone.backbone, f"{lb}.act")
                 module.inplace = False
         if self.mem_efficiency >= 3:  # 6022MiB 5.83/s
