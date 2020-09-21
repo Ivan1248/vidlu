@@ -55,7 +55,7 @@ class CheckpointManager(object):
             If True, `load_last` needs to be called in order to restore the last
             checkpoint and continue. If `load_last` is not called before
             saving/updating, an exception is raised.
-        remove_old (bool, optional):
+        reset (bool, optional):
             If True, existing checkpoints with the same checkpoints_dir and
             experiment_name will be deleted.
 
@@ -85,7 +85,7 @@ class CheckpointManager(object):
     """
 
     def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_recent_saved=1,
-                 n_best_saved=0, resume=False, remove_old=False, perf_measure=lambda cp: 0):
+                 n_best_saved=0, resume=False, reset=False, perf_measure=lambda cp: 0):
         self.checkpoints_dir = checkpoints_dir
         self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
         self.experiment_str = experiment_name
@@ -106,18 +106,17 @@ class CheckpointManager(object):
         self.saved = get_existing_checkpoints()
         self.path_to_performance = {p: perf_measure(Checkpoint.load(self.experiment_dir / p))
                                     for p in self.saved}
-
-        if resume and remove_old:
-            raise RuntimeError("`resume=True` is not allowed if `remove_old=True`.")
-        if remove_old:
-            self.remove_old_checkpoints(0)
+        if resume and reset:
+            raise RuntimeError("`resume=True` is not allowed if `reset=True`.")
+        if reset:
+            self.remove_old_checkpoints(0, 0)
         if resume and len(self.saved) == 0:
             raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
                                + f" {self.experiment_dir}.")
         if not resume and len(self.saved) > 0:
             raise RuntimeError(f"Files with ID {experiment_name} are already present in the "
                                + f"directory {checkpoints_dir}. If you want to use this ID anyway, "
-                               + "pass either `remove_old=True` or `resume=True`. ")
+                               + "pass either `reset=True` or `resume=True`. ")
 
     @property
     def last_checkpoint_path(self):
@@ -180,7 +179,7 @@ class CheckpointManager(object):
         n_best_saved = self.n_best_saved if n_best_saved is None else n_best_saved
         best = set(() if n_best_saved == 0 else
                    sorted(self.saved, key=self.path_to_performance.__getitem__)[-n_best_saved:])
-        for p in self.saved[:-n_recent_saved]:
+        for p in (self.saved[:-n_recent_saved] if n_recent_saved > 0 else self.saved):
             path = self.experiment_dir / p
             if path in best:
                 continue

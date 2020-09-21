@@ -111,8 +111,7 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     print('Learner name:', learner_name)
     print('Experiment ID:', experiment_id)
     return CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
-                             experiment_desc=training_args, resume=a.resume,
-                             remove_old=a.redo)
+                             experiment_desc=training_args, resume=a.resume, reset=a.redo)
 
 
 # Experiment #######################################################################################
