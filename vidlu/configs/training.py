@@ -225,7 +225,7 @@ swiftnet_mo_cityscapes = TrainerConfig(
     optimizer_f=OptimizerMaker(
         optim.Adam,
         [dict(params=p, lr=1e-4, weight_decay=2.5e-5)
-         for p in ['conv1', 'bn1', 'relu', 'maxpool', 'layer1', 'layer2', 'layer3', 'layer4']],
+         for p in ["wrapped.backbone", "wrapped.logits"]],
         lr=4e-4, betas=(0.9, 0.99), weight_decay=1e-4))
 
 swiftnet_camvid = TrainerConfig(
