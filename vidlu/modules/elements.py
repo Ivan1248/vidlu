@@ -1290,7 +1290,7 @@ def deep_join(left: Module, right: Module):
     return left.deep_join(right)
 
 
-def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
+def with_intermediate_outputs(module: nn.Module, submodule_paths: list = None,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
                               return_dict=False):
     """Creates a function wrapping `module` that returns a pair containing the
@@ -1312,7 +1312,10 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
         >>> module_wio(x)
         tensor(...), (tensor(...), tensor(...))
     """
-    if isinstance(submodule_paths, str):
+
+    if submodule_paths is None:
+        submodule_paths = [k for k, _ in module.named_modules()]
+    elif isinstance(submodule_paths, str):
         submodule_paths = [submodule_paths]
 
     def get_submodules():
@@ -1357,7 +1360,7 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list,
 
 def with_intermediate_outputs_tree(
         module: nn.Module, submodule_paths=None,
-        inplace_modified_action: T.Literal['warn', 'error', None] = 'warn'):
+        inplace_modified_action: T.Literal['warn', 'error', None] = 'warn', leaf_name='out'):
     """Creates a function wrapping `module` that returns a pair containing the
     output of `module.forward` as well as a tree of intermediate outputs as
     defined by `submodule_paths`.
@@ -1378,11 +1381,18 @@ def with_intermediate_outputs_tree(
         >>> module_wiot(x)
         tensor(...), {'block1': {'conv': tensor(...), ...}, ...}
     """
-    output, outputs = with_intermediate_outputs(
+
+    wio = with_intermediate_outputs(
         module, submodule_paths=submodule_paths,
         inplace_modified_action=inplace_modified_action, return_dict=True)
-    path_to_value = ((k.split('.'), v) for k, v in outputs.items())
-    return output, tree.unflatten(path_to_value)
+
+    @functools.wraps(module)
+    def wrapper(*args, **kwargs):
+        output, outputs = wio(*args, **kwargs)
+        path_to_value = (((*k.split('.'), leaf_name), v) for k, v in outputs.items())
+        return output, tree.unflatten(path_to_value)
+
+    return wrapper
 
 
 class IntermediateOutputsModuleWrapper(Module):
