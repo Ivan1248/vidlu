@@ -5,7 +5,7 @@ from datetime import datetime
 from vidlu.utils.state import state
 import inspect
 
-from vidlu.utils.indent_print import indent_print
+from vidlu.utils.collections import FileDict
 
 
 def trace_calls():
@@ -69,3 +69,6 @@ def here_state(id=None, new_value=old_value):
     if new_value is not old_value:
         state[(here_state, id)] = new_value
     return value
+
+
+FileDict = FileDict

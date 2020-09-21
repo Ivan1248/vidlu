@@ -1,8 +1,12 @@
-from collections.abc import MutableMapping
+import pickle
+import os
+from collections.abc import MutableMapping, Mapping
+import typing as T
+from pathlib import Path
+import warnings
 
 
 class NameDict(MutableMapping):
-
     def __init__(self, *args, **kwargs):
         super().__init__()
         if len(args) > 1:
@@ -15,7 +19,7 @@ class NameDict(MutableMapping):
         return f"{type(self).__name__}({', '.join(arg_strings)})"
 
     def __eq__(self, other):
-        if not isinstance(other, NameDict):
+        if not isinstance(other, type(self)):
             return NotImplemented
         return vars(self) == vars(other)
 
@@ -70,7 +74,6 @@ class NameDict(MutableMapping):
 
 
 class SingleWriteDict(dict):
-
     def __init__(self, *a, **k):
         dict.__init__(self, *a, **k)
 
@@ -97,3 +100,87 @@ class SingleWriteDict(dict):
 
     def __repr__(self):
         return f'SingleWriteDict({dict.__repr__(self)})'
+
+
+class FileDict(MutableMapping):
+    __slots__ = ("path", "load_proc", "store_proc", "_dict")
+
+    def __init__(self, path: os.PathLike, load_proc=pickle.load, save_proc=pickle.dump,
+                 error_on_corrupt_file=False):
+        self.path = Path(path)
+        self.load_proc, self.store_proc = load_proc, save_proc
+        self._dict = dict()
+        if self.path.exists():
+            try:
+                self.load()
+            except EOFError as ex:
+                message = f"Error loading FileDict from file {self.path}: {ex}"
+                if error_on_corrupt_file:
+                    raise EOFError(message)
+                else:
+                    self.path.unlink()
+                    warnings.warn(message)
+
+    def __repr__(self):
+        return f"{type(self).__name__}({repr(self._dict)})"
+
+    def __eq__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        return vars(self) == vars(other)
+
+    def __contains__(self, key):
+        return key in self._dict
+
+    def __getitem__(self, name):
+        return self._dict[name]
+
+    def __setitem__(self, name, value):
+        self._dict[name] = value
+        self.save()
+
+    def __delitem__(self, name):
+        del self._dict[name]
+        self.save()
+
+    def __iter__(self):
+        return iter(self._dict)
+
+    def __len__(self):
+        return len(self._dict)
+
+    def __getstate__(self):
+        return self._dict
+
+    def __setstate__(self, state):
+        self._dict = state
+        self.save()
+
+    def _get_kwargs(self):
+        return self._dict.items()
+
+    def keys(self):
+        return self._dict.keys()
+
+    def values(self):
+        return self._dict.values()
+
+    def items(self):
+        return self._dict.items()
+
+    def clear(self):
+        self._dict.clear()
+
+    def pop(self, *args):
+        result = self._dict.pop(*args)
+        self.save()
+        return result
+
+    def load(self):
+        with open(self.path, "rb") as file:
+            self._dict.clear()
+            self._dict.update(pickle.load(file))
+
+    def save(self):
+        with open(self.path, "wb") as file:
+            pickle.dump(self._dict, file)
