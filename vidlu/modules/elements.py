@@ -433,10 +433,14 @@ class ModuleTable(Module):
             raise KeyError(f"Invalid index: {idx}.")
         return idx
 
+    @property
+    def _slice_class(self):
+        return Seq
+
     def __getitem__(self, idx):
         idx = self._idx_to_canonical_form(idx)
         if isinstance(idx, slice):
-            return type(self)(dict(list(self._modules.items())[idx]))
+            return self._slice_class(dict(list(self._modules.items())[idx]))
         elif isinstance(idx, str):
             return self._modules[idx]
         else:
@@ -478,14 +482,9 @@ class Seq(ModuleTable, nn.Sequential):
         super().__init__(*args, **kwargs)
         self._checkpoints = None
 
-    def __getitem__(self, idx):
-        idx = self._idx_to_canonical_form(idx)
-        if isinstance(idx, slice):
-            return Seq(dict(list(self._modules.items())[idx]))
-        elif isinstance(idx, str):
-            return self._modules[idx]
-        else:
-            return self._get_item_by_idx(self._modules.values(), idx)
+    @property
+    def _slice_class(self):
+        return Seq
 
     def forward(self, x):
         modules = [x for x in self._modules.values()]
@@ -954,6 +953,8 @@ def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.
 
 
 def _get_conv_padding(padding_type, kernel_size, dilation):
+    if not isinstance(padding_type, str):
+        return padding_type
     if any(k % 2 == 0 for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size)):
         raise ValueError(f"`kernel_size` must be an odd positive integer "
                          f"or a sequence of them, not {kernel_size}.")
@@ -992,8 +993,7 @@ class Conv(WrappedModule):
                  bias=None, in_channels=None, padding_mode='zeros'):
         if bias is None:
             raise ValueError("The bias argument should be provided for the Conv module.")
-        padding = (_get_conv_padding(padding, kernel_size, dilation)
-                   if isinstance(padding, str) else padding)
+        padding = _get_conv_padding(padding, kernel_size, dilation)
         super().__init__(orig=None)
         self.store_args()
 
@@ -1006,8 +1006,7 @@ class DeconvConv(WrappedModule):
                  bias=None, in_channels=None, padding_mode='zeros'):
         if bias is None:
             raise ValueError("The bias argument should be provided for the Conv module.")
-        padding = (_get_conv_padding(padding, kernel_size, dilation)
-                   if isinstance(padding, str) else padding)
+        padding = _get_conv_padding(padding, kernel_size, dilation)
         if padding_mode != 'zeros':
             raise NotImplemented("padding_mode other than 'zeros' not supported.")
         del padding_mode
@@ -1024,8 +1023,7 @@ class DeconvConv(WrappedModule):
 class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
                  ceil_mode=False):
-        padding = (_get_conv_padding(padding, kernel_size, dilation)
-                   if isinstance(padding, str) else padding)
+        padding = _get_conv_padding(padding, kernel_size, dilation)
         super().__init__(orig=None)
         self.store_args()
 
@@ -1037,8 +1035,7 @@ class MaxPool(WrappedModule):
 class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
                  count_include_pad=True, divisor_override=None):
-        padding = (_get_conv_padding(padding, kernel_size, dilation=1)
-                   if isinstance(padding, str) else padding)
+        padding = _get_conv_padding(padding, kernel_size, dilation=1)
         super().__init__(orig=None)
         self.store_args()
 
