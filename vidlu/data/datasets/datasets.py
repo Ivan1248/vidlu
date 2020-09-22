@@ -794,6 +794,11 @@ class CamVid(Dataset):
 class Cityscapes(Dataset):
     subsets = ['train', 'val', 'test']  # 'test' labels are invalid
     default_dir = 'Cityscapes'
+    subset_to_size = dict(train=2975, val=500, test=1525, train_extra="Ne znam")
+    info = dict(problem='semantic_segmentation', class_count=19,
+                class_names=[l.name for l in cslabels if l.trainId >= 0],
+                class_colors=[l.color for l in cslabels if l.trainId >= 0],
+                in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
 
     def __init__(self, data_dir, subset='train', downsampling=1):
         data_dir = Path(data_dir)
@@ -801,42 +806,49 @@ class Cityscapes(Dataset):
         if downsampling < 1:
             raise ValueError("downsampling must be greater or equal to 1.")
 
-        self._downsampling = downsampling
+        self.downsampling = downsampling
         self._shape = np.array([1024, 2048]) // downsampling
 
-        if 'leftImg8bit' in (x.name for x in data_dir.glob('*')):
+        subdirs = {x.name for x in data_dir.glob('*')}
+        if 'leftImg8bit' in subdirs:
             images_dir, labels_dir = 'leftImg8bit', 'gtFine'
             img_suffix, lab_suffix = "_leftImg8bit.png", "_gtFine_labelIds.png"
             self._id_to_label = {l.id: l.trainId for l in cslabels}
-        else:  # IK's format
+        elif 'rgb' in subdirs:  # IK's format
             images_dir, labels_dir = 'rgb', 'labels'
             img_suffix, lab_suffix = ".ppm", ".png"
             self._id_to_label = {i: i for i in range(19)}
             self._id_to_label[19] = -1
+        else:
+            raise RuntimeError(f"Invalid directory structure in {data_dir}.")
 
-        self._images_dir = data_dir / f'{images_dir}/{subset}'
-        self._labels_dir = data_dir / f'{labels_dir}/{subset}'
-        self._image_list = list(sorted([
+        self._images_dir = data_dir / images_dir / subset
+        self._labels_dir = data_dir / labels_dir / subset
+        self._images = list(sorted([
             x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]))
-        self._label_list = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._image_list]
+        self._labels = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._images]
+
+        if not (len(self._images) == len(self._labels) == self.subset_to_size[subset]):
+            raise RuntimeError(f"The number of found images ({len(self._images)}) or labels"
+                               + f" ({len(self._labels)}) is not {self.subset_to_size[subset]}.")
 
         info = dict(problem='semantic_segmentation', class_count=19,
                     class_names=[l.name for l in cslabels if l.trainId >= 0],
                     class_colors=[l.color for l in cslabels if l.trainId >= 0],
                     in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
         modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=info, )
+        super().__init__(subset=subset, modifiers=modifiers, info=self.info)
 
     def get_example(self, idx):
-        im_path = self._images_dir / self._image_list[idx]
-        lab_path = self._labels_dir / self._label_list[idx]
-        d = self._downsampling
+        im_path = self._images_dir / self._images[idx]
+        lab_path = self._labels_dir / self._labels[idx]
+        d = self.downsampling
         return _make_record(
             x_=lambda: load_image(im_path, d),
             y_=lambda: load_segmentation_with_downsampling(lab_path, d, self._id_to_label))
 
     def __len__(self):
-        return len(self._image_list)
+        return len(self._images)
 
 
 class WildDash(Dataset):
@@ -984,53 +996,6 @@ class VOC2012Segmentation(Dataset):
             return numpy_transforms.center_crop(lab, [500] * 2, fill=-1)  # -1 ok?
 
         return _make_record(x_=load_img, y_=load_lab)
-
-    def __len__(self):
-        return len(self._image_list)
-
-
-class Cityscapes(Dataset):
-    subsets = ['train', 'val', 'test']  # 'test' labels are invalid
-    default_dir = 'Cityscapes'
-    info = dict(problem='semantic_segmentation', class_count=19,
-                class_names=[l.name for l in cslabels if l.trainId >= 0],
-                class_colors=[l.color for l in cslabels if l.trainId >= 0],
-                in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
-
-    def __init__(self, data_dir, subset='train', downsampling=1):
-        data_dir = Path(data_dir)
-        _check_subsets(self.__class__, subset)
-        if downsampling < 1:
-            raise ValueError("downsampling must be greater or equal to 1.")
-        self.downsampling = downsampling
-
-        if 'leftImg8bit' in (x.name for x in data_dir.glob('*')):
-            images_dir, labels_dir = 'leftImg8bit', 'gtFine'
-            img_suffix, lab_suffix = "_leftImg8bit.png", "_gtFine_labelIds.png"
-            self._id_to_label = {l.id: l.trainId for l in cslabels}
-        else:  # IK's format
-            images_dir, labels_dir = 'rgb', 'labels'
-            img_suffix, lab_suffix = ".ppm", ".png"
-            self._id_to_label = {i: i for i in range(19)}
-            self._id_to_label[19] = -1
-
-        self._images_dir = data_dir / images_dir / subset
-        self._labels_dir = data_dir / labels_dir / subset
-        self._image_list = list(sorted([
-            x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]))
-        self._label_list = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._image_list]
-
-        # vup.get_partition(data_dir) == 'tmpfs'
-        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=self.info)
-
-    def get_example(self, idx):
-        im_path = self._images_dir / self._image_list[idx]
-        lab_path = self._labels_dir / self._label_list[idx]
-        d = self.downsampling
-        return _make_record(
-            x_=lambda: load_image(im_path, d),
-            y_=lambda: load_segmentation_with_downsampling(lab_path, d, self._id_to_label))
 
     def __len__(self):
         return len(self._image_list)
