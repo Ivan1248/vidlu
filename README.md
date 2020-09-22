@@ -7,7 +7,6 @@ A deep learning library for research with emphasis on computer vision, based on 
 [![Codacy Badge](https://api.codacy.com/project/badge/Grade/7f89c65e677f490bab26c0e5c7cae116)](https://www.codacy.com/manual/Ivan1248/Vidlu?utm_source=github.com&utm_medium=referral&utm_content=Ivan1248/Vidlu&utm_campaign=Badge_Grade)
 [![Documentation Status](https://readthedocs.org/projects/vidlu/badge/?version=latest)](https://vidlu.readthedocs.io/en/latest/?badge=latest)
 
-
 ## Things (to be) done
 
 -   data  

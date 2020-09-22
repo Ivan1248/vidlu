@@ -103,17 +103,17 @@ class SingleWriteDict(dict):
 
 
 class FileDict(MutableMapping):
-    __slots__ = ("path", "load_proc", "store_proc", "_dict")
+    __slots__ = ("path", "load_proc", "save_proc", "_dict")
 
     def __init__(self, path: os.PathLike, load_proc=pickle.load, save_proc=pickle.dump,
                  error_on_corrupt_file=False):
         self.path = Path(path)
-        self.load_proc, self.store_proc = load_proc, save_proc
+        self.load_proc, self.save_proc = load_proc, save_proc
         self._dict = dict()
         if self.path.exists():
             try:
                 self.load()
-            except EOFError as ex:
+            except (EOFError, RuntimeError) as ex:
                 message = f"Error loading FileDict from file {self.path}: {ex}"
                 if error_on_corrupt_file:
                     raise EOFError(message)
@@ -179,8 +179,8 @@ class FileDict(MutableMapping):
     def load(self):
         with open(self.path, "rb") as file:
             self._dict.clear()
-            self._dict.update(pickle.load(file))
+            self._dict.update(self.load_proc(file))
 
     def save(self):
         with open(self.path, "wb") as file:
-            pickle.dump(self._dict, file)
+            self.save_proc(self._dict, file)

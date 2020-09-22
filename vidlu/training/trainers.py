@@ -276,7 +276,7 @@ class Trainer(Evaluator):
     optimizer_f: InitVar[T.Callable] = None  # O
     epoch_count: int = Required  # O
     lr_scheduler_f: InitVar[T.Callable] = ConstLR  # O
-    train_step: T.Callable = Required  # O
+    train_step: T.Callable = Required  # O; vidlu.training.steps
     jitter: T.Callable = None  # D
     extension_fs: InitVar[T.Sequence] = ()  # D
 

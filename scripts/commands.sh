@@ -21,33 +21,32 @@ python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 # semantic segmentation
 
 ## DenseNet (pretrained on ImageNet)
-python run.py train "cityscapes(downsampling=2){train,val}" id "DenseNet,backbone_f=t(depth=121,small_input=False)" "tc.ladder_densenet,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone':1/5})" --params "densenet(backbone),backbone:densenet121-a639ec97.pth"
+python run.py train "Cityscapes(downsampling=2){train,val}" id "DenseNet,backbone_f=t(depth=121,small_input=False)" "tc.ladder_densenet,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone':1/5})" --params "densenet(backbone),backbone:densenet121-a639ec97.pth"
 
 
 ## ResNet
 python run.py train "camvid(downsampling=2){train,val}" id "ResNetV1,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,jitter=jitter.SegRandomCropHFlip((360,480)),optimizer_maker=None" -r
 
 ## Swiftnet
-python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
-python run.py train "cityscapes(downsampling=2){train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
+python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
+python run.py train "Cityscapes(downsampling=2){train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
 python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid"
 # network deconvolution
-python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False,block_f=t(norm_f=None,conv_f=partial(vm.DeconvConv,bias=True,padding='half')))" "tc.swiftnet_cityscapes"
+python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False,block_f=t(norm_f=None,conv_f=partial(vm.DeconvConv,bias=True,padding='half')))" "tc.swiftnet_cityscapes"
 
 ## SwiftNet pretrained on Cityscapes
-python run.py train "cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
-python run.py train "cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
-CUDA_VISIBLE_DEVICES=1 python run.py train "cityscapes{train,val}" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:rn18_single_scale/model.pt  # 74.39
+python run.py train "Cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
+python run.py train "Cityscapes{train,val}" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:rn18_single_scale/model.pt  # 75.39
 ## SwiftNet pretrained on ImageNet
-python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth"
-python run.py train "cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "CamVid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params "resnet(backbone),backbone.backbone:resnet18-5c106cde.pth"
 
 ## SegResNetV1 pretrained
-python run.py train "cityscapes{train,val}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.ladder_densenet"
+python run.py train "Cityscapes{train,val}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.ladder_densenet"
 
 ## SegResNetV1 pretrained
-python run.py train "camvid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "resnet(backbone),backbone:resnet50-19c8e357.pth"
-python run.py train "camvid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "madrylab_resnet(backbone),backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
+python run.py train "CamVid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "resnet(backbone),backbone:resnet50-19c8e357.pth"
+python run.py train "CamVid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "madrylab_resnet(backbone),backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
 
 
 # Adversarial training
@@ -57,7 +56,7 @@ python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "tc.resnet_cifar,tc.adversarial,attack_f=partial(tc.madry_cifar10_attack,step_count=7),eval_attack_f=partial(tc.madry_cifar10_attack,step_count=20),train_step=tc.AdversarialTrainMultiStep(),epoch_count=25"
 
 ## Swiftnet
-python run.py train "cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,epoch_count=40,batch_size=1,tc.adversarial,train_step=tc.AdversarialTrainStep(False),attack_f=partial(tc.madry_cifar10_attack, step_count=40, eps=48/255, clip_bounds=None)" --params swiftnet:swiftnet_ss_cs.pt
+python run.py train "Cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,epoch_count=40,batch_size=1,tc.adversarial,train_step=tc.AdversarialTrainStep(False),attack_f=partial(tc.madry_cifar10_attack, step_count=40, eps=48/255, clip_bounds=None)" --params swiftnet:swiftnet_ss_cs.pt
 
 # Tent activations
 python run.py train "cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=C.Tent))" "tc.wrn_cifar_tent,tc.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(tc.madry_cifar10_attack,step_count=7,stop_on_success=True)"

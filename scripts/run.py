@@ -13,6 +13,7 @@ import numpy as np
 
 # noinspection PyUnresolvedReferences
 import _context  # vidlu, dirs
+
 from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
