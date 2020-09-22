@@ -220,14 +220,13 @@ class MNISTNet(ClassificationModel):
 
 
 class SwiftNet(SegmentationModel):
-
     def __init__(self,
                  backbone_f=resnet_v1_backbone,
                  ladder_width=128,
                  head_f=vmc.heads.SegmentationHead,
                  input_adapter=None,
                  init=partial(initialization.kaiming_resnet, module=Reserved),
-                 lateral_prefixes=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [0] * 3)),
+                 lateral_prefixes=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  mem_efficiency=1):
         if lateral_suffix not in ('sum', 'act', ''):
