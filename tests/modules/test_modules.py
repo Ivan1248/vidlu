@@ -45,8 +45,15 @@ class TestFunc:
 
 
 class TestSequentialForkParallelReduce:
+    def test_module_table(self):
+        m = ModuleTable(a=Identity(), b=Identity())
+        assert m['a'] is m[0]
+        assert m['b'] is m[1]
+
     def test_seq(self):
         m = Seq(a=Func(lambda x: x + 1), b=Func(lambda x: x * 3))
+        assert m['a'] is m[0]
+        assert m['b'] is m[1]
         for i in range(100):
             assert m(torch.tensor(i)) == (i + 1) * 3
 
