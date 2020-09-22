@@ -6,14 +6,13 @@ import torch
 from vidlu.utils import text
 
 
-def remove_key_prefix(state_dict, prefix):
+def filter_by_and_remove_key_prefix(state_dict, prefix, error_on_no_match=False):
     if len(prefix) == 0:
         return state_dict
-    for k in state_dict:
-        if not k.startswith(prefix):
-            raise RuntimeError(f'state_dict contains at least 1 key that does not start with'
-                               + f' {prefix=}. (The key is {k}.)')
-    return {k[len(prefix) + 1:]: v for k, v in state_dict.items()}
+    result = {k[len(prefix) + 1:]: v for k, v in state_dict.items() if k.startswith(prefix)}
+    if error_on_no_match and len(result) == 0:
+        raise RuntimeError(f'No key in state_dict starts with {prefix=}. (Example keys: {list(state_dict)[:5]}.)')
+    return result
 
 
 def translate_dict_keys(dict_, input_output_format_pairs, context=None):
@@ -131,7 +130,4 @@ def translate_swiftnet_orig_backbone(state_dict):
             r"logits.norm{e:(.*)}": "backbone.norm{e}",
             r"backbone.{e:(.*)}": "backbone.{e}"
         }.items())
-    class_count = state_dict["head.logits.orig.weight"].shape[0]
-    # requires_grad=False is ignored
-    state_dict["head.logits.orig.bias"] = torch.zeros(class_count)
     return state_dict

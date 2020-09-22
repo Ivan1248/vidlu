@@ -281,18 +281,18 @@ get_model.help = \
 # Initial pre-trained parameters ###################################################################
 
 def _parse_parameter_translation_string(params_str):
-    module_re = fr'\w+(?:\.\w+)*'
+    dst_re = fr'\w+(?:\.\w+)*'
+    src_re = fr'(\w+(?:,\w+)*)?{dst_re}'
     regex = re.compile(
-        fr'(?P<translator>[\w]+)(?:\[(?P<src_dict>{module_re})\])?'
-        + fr'(?:\((?P<src_module>{module_re})\))?'
-        + fr'(?:,(?P<dest_module>{module_re}))?(?::(?P<file>.+))?')
+        fr'(?P<transl>[\w]+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<file>.+))?')
     m = regex.fullmatch(params_str.strip())
     if m is None:
-        raise ValueError('`params_str` does not match the pattern'
-                         + ' "translator[[<src_dict>]][(<src_module>)][,<dest_module>][!][:file]".')
-    return Namespace(
-        **{k: m.group(k) or '' for k in
-           ['translator', 'src_dict', 'src_module', 'dest_module', 'file']})
+        raise ValueError(
+            '`params_str` does not match the pattern "translator[[<src>]][-><dst>][!][:file]".'
+            + " <src> supports indexing nested dictionaries by putting commas between keys.")
+    p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'file']})
+    *src_dict, src = p1.src.split(",")
+    return Namespace(translator=p1.transl, src_dict=src_dict, src_module=src, dest_module=p1.dst, file=p1.file)
 
 
 def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
@@ -323,8 +323,9 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
         state_dict = paramtrans.load_params_file(path if (path := Path(p.file)).is_absolute() else
                                                  Path(params_dir) / path)
     state_dict = paramtrans.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
-    state_dict = paramtrans.remove_key_prefix(state_dict, p.src_module)
-    return state_dict, p.dest_module
+    state_dict_fr = paramtrans.filter_by_and_remove_key_prefix(state_dict, p.src_module,
+                                                               error_on_no_match=True)
+    return state_dict_fr, p.dest_module
 
 
 # Training and evaluation ##########################################################################
