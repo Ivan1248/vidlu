@@ -119,9 +119,6 @@ def translate_swiftnet(state_dict):
             r"logits.conv.{e:(.*)}":
                 r"head.logits.orig.{e}"
         }.items())
-    class_count = state_dict["head.logits.orig.weight"].shape[0]
-    # requires_grad=False is ignored
-    state_dict["head.logits.orig.bias"] = torch.zeros(class_count)
     return state_dict
 
 
