@@ -7,7 +7,6 @@ from pathlib import Path
 import time
 import contextlib
 from multiprocessing.sharedctypes import RawArray
-import urllib.request
 import weakref
 
 from tqdm import tqdm
@@ -138,6 +137,8 @@ def download_if_not_downloaded(url, output_path):
 
 
 def download(url, output_path, md5=None):
+    import urllib.request
+
     def check_integrity(fpath, md5):
         # from torchvision.datasets.utils
         if not os.path.isfile(fpath):

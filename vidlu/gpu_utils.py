@@ -1,6 +1,5 @@
 import subprocess
 import warnings
-import xmltodict
 from argparse import Namespace
 import os
 import time
@@ -9,6 +8,7 @@ import numpy as np
 
 
 def nvidia_smi():
+    import xmltodict
     xml_output = subprocess.Popen(['nvidia-smi', '-q', '-x'], stdout=subprocess.PIPE) \
         .communicate()[0]
     return xmltodict.parse(xml_output)['nvidia_smi_log']
