@@ -1,6 +1,6 @@
 # ViDLU: Vision Deep Learning Utilities
 
-A deep learning library for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/).
+A deep learning framework for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/).
 
 [![Build Status](https://travis-ci.org/Ivan1248/Vidlu.svg?branch=master)](https://travis-ci.org/Ivan1248/Vidlu)
 [![codecov](https://codecov.io/gh/Ivan1248/Vidlu/branch/master/graph/badge.svg)](https://codecov.io/gh/Ivan1248/Vidlu)

@@ -10,7 +10,7 @@ pytest
 scikit-image
 scipy
 seaborn
-torch>=1.6.0
+torch>=1.5.0
 torchvision
 tqdm
 urllib3
