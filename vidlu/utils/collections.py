@@ -27,15 +27,17 @@ class NameDict(MutableMapping):
         return key in self.__dict__
 
     def __getitem__(self, name):
-        return getattr(self, name)
+        return self.__dict__[name]
 
     def __setitem__(self, name, value):
-        setattr(self, name, value)
+        self.__dict__[name] = value
 
     def __delitem__(self, name):
         del self.__dict__[name]
 
     def __getattr__(self, item):
+        if item not in self.__dict__:
+            raise AttributeError()
         return self.__dict__[item]
 
     def __iter__(self):
