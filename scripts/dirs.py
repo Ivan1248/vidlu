@@ -12,7 +12,7 @@ def _find(path_end):
     try:
         return Path(path.find_in_ancestors(__file__, path_end))
     except FileNotFoundError:
-        warnings.warn(f'Cannot find directory "{path_end}".')
+        warnings.warn(f'Cannot find directory "{path_end}" in ancestors of {__file__}.')
         return None
 
 
@@ -21,8 +21,8 @@ def filter_valid(items):
 
 
 # Directories for looking up datasets
-DATASETS = filter_valid([os.environ.get("VIDLU_DATASETS", None), Path('/tmp/'),
-                         _find('data/datasets'), _find('datasets')])
+DATASETS = filter_valid([os.environ.get("VIDLU_DATASETS", None), _find('data/datasets'),
+                         _find('datasets'), Path('/tmp/')])
 # Directory with pre-trained parameters
 PRETRAINED = Path(os.environ.get("VIDLU_PRETRAINED", None) or _find('data/pretrained_parameters'))
 # Directory for storing cache and experimental results/states
