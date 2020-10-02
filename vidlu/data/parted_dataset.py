@@ -2,7 +2,7 @@ import typing as T
 from typing import Iterator
 
 from vidlu.utils.func import valmap
-from collections import Mapping
+from collections.abc import Mapping
 
 from .dataset import Dataset
 
