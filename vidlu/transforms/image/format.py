@@ -151,7 +151,7 @@ def numpy_to_pil(npimg, mode=None):
             mode = 'RGB'
 
     if mode is None:
-        raise TypeError(f'Input type {npimg.dtype} is not supported.')
+        raise TypeError(f'Input type {npimg.dtype} and shape {tuple(npimg.shape)} not supported.')
 
     return Image.fromarray(npimg, mode=mode)
 
