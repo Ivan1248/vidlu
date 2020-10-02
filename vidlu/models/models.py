@@ -63,8 +63,8 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
     return vmc.ResNetV2Backbone(base_width=16,
                                 small_input=small_input,
                                 group_lengths=[blocks_per_group] * group_count,
-                                width_factors=[width_factor] * 2,
-                                block_f=partial(block_f, kernel_sizes=ksizes),
+                                block_f=partial(block_f, kernel_sizes=ksizes,
+                                                width_factors=[width_factor] * 2),
                                 dim_change=dim_change)
 
 
@@ -252,15 +252,18 @@ class SwiftNet(SegmentationModel):
         """Sets up in-place operations and gradient checkpointing for
         efficiency."""
         super().post_build()
+
+        inplace = self.mem_efficiency >= 1
         for name, module in self.named_modules():
             if hasattr(module, 'inplace'):
                 if module.inplace and self.mem_efficiency == 0:
                     warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
-                module.inplace = self.mem_efficiency >= 1  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
+                module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
         if self.lateral_suffix == 'sum':
             for lb in self.lateral_prefixes:
                 module = vm.get_submodule(self.backbone.backbone, f"{lb}.act")
                 module.inplace = False
+
         if self.mem_efficiency >= 3:  # 6022MiB 5.83/s
             for res_unit in self.backbone.backbone.bulk:
                 res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))
