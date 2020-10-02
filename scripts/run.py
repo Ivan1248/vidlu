@@ -18,7 +18,7 @@ from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
-from vidlu.training.checkpoint_manager import FileNames as cpman_filenames
+from vidlu.training.checkpoint_manager import Files as cpman_filenames
 import dirs
 
 
@@ -29,7 +29,7 @@ def log_run(status):
         with (dirs.EXPERIMENTS / 'runs.txt').open('a') as runs_file:
             prefix = f"[{status} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
             fcntl.flock(runs_file, fcntl.LOCK_EX)
-            runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")
+            runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")  # add quotes where needed
             fcntl.flock(runs_file, fcntl.LOCK_UN)
     except Exception as e:
         warnings.warn(str(e))
@@ -63,9 +63,7 @@ def train(args):
 
     e.cpman.remove_old_checkpoints()
 
-    print(f'Trained model saved in\n{e.cpman.experiment_dir}')
-    print(f'Trained model parameters saved in'
-          + f'\n{e.cpman.last_checkpoint_path / cpman_filenames.MODEL_STATE}')
+    print(f'State saved in\n{e.cpman.last_checkpoint_path}')
 
 
 def path(args):

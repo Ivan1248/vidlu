@@ -9,7 +9,7 @@ from vidlu.factories.problem import (Classification, SemanticSegmentation, Depth
 import vidlu.training as t
 from vidlu.utils.func import ArgTree, params
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
@@ -72,7 +72,7 @@ def get_trainer_args(trainer_extension_fs, dataset):
 
 # Metrics ##########################################################################################
 
-def get_metrics(trainer, problem):
+def get_metrics(trainer, problem):  # TODO: move to configs
     from vidlu import metrics
 
     ret = [partial(metrics.MaxMultiMetric, name_filter=lambda k: k.startswith('mem')),
@@ -84,16 +84,16 @@ def get_metrics(trainer, problem):
         ret.append(partial(metrics.AverageMultiMetric, name_filter=lambda k: k.startswith('loss')))
         if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
             ret.append(partial(metrics.with_suffix(metrics.ClassificationMetrics, 'adv'),
-                               hard_prediction_name="other_outputs_adv.hard_prediction",
+                               hard_prediction_name="other_outputs_p.hard_prediction",
                                class_count=problem.class_count, metrics=clf_metric_names))
         elif any(isinstance(e, t.SemiSupervisedVAT) for e in trainer.extensions):
             hard_prediction_name = "other_outputs_l.hard_prediction"
         ret.append(partial(metrics.ClassificationMetrics, hard_prediction_name=hard_prediction_name,
                            class_count=problem.class_count, metrics=clf_metric_names))
+        main_metrics = ("mIoU",) if isinstance(problem, SemanticSegmentation) else ("A",)
     elif isinstance(problem, DepthRegression):
         raise NotImplementedError()
         # ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
     else:
-        warnings.warn(f"get_metrics: There are no default metrics for problem {type(problem)}.")
-        ret = []
-    return ret
+        raise RuntimeError(f"get_metrics: There are no default metrics for problem {type(problem)}.")
+    return ret, main_metrics

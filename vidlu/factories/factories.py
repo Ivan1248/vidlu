@@ -347,7 +347,7 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
                               ta=ta, tc=tc, ts=ts, attacks=attacks, jitter=jitter, partial=partial))
 
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
-    trainer_f = partial(Trainer, **tc.to_trainer_args(default_config, config))
+    trainer_f = partial(Trainer, **tc.TrainerConfig(default_config, config).normalized())
 
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
 
@@ -373,10 +373,10 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
                              + " or the problem argument need to be given.")
         problem = defaults.get_problem_from_dataset(dataset)
 
-    default_metrics = defaults.get_metrics(trainer, problem)
+    default_metrics, main_metrics = defaults.get_metrics(trainer, problem)
 
     metrics_str = metrics_str.strip()
     metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
     additional_metrics = [getattr(metrics, name) for name in metric_names]
 
-    return default_metrics + additional_metrics
+    return default_metrics + additional_metrics, main_metrics

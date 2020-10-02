@@ -163,6 +163,7 @@ def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), e
         return locals_[returns]
     return {k: locals_[k] for k in returns}
 
+
 def mIoU(cm, eps=1e-8):
     is_batch = int(cm.dim() == 3)
     tp = cm.diagonal(dim1=is_batch, dim2=is_batch + 1)
@@ -206,9 +207,9 @@ class ClassificationMetrics(AccumulatingMetric):
 
 
 class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
-    def __init__(self, name, extract_func=None):
+    def __init__(self, name, value_extractor=None):
         self.name = name
-        self.extract_func = extract_func or (lambda x: x[name])
+        self.value_extractor = value_extractor or (lambda x: x[name])
         self.reset()
 
     def reset(self):
@@ -218,7 +219,7 @@ class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
 
 class AverageMetric(_MeanMetric):
     def update(self, iter_output):
-        self._sum += self.extract_func(iter_output)
+        self._sum += self.value_extractor(iter_output)
         self._n += 1
 
     def compute(self):
@@ -227,7 +228,7 @@ class AverageMetric(_MeanMetric):
 
 class HarmonicMeanMetric(_MeanMetric):
     def update(self, iter_output):
-        self._sum += 1 / self.extract_func(iter_output)
+        self._sum += 1 / self.value_extractor(iter_output)
         self._n += 1
 
     def compute(self):

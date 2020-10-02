@@ -102,8 +102,8 @@ class Engine(object):
         """Sends terminate signal to the engine, so that it terminates the current epoch after the
         current iteration
         """
-        self._logger.info("Terminate current epoch is signaled. "
-                          "Current epoch iteration will stop after current iteration is finished.")
+        self._logger.info("Terminate current epoch is signaled. Current epoch iteration will stop"
+                          + " after current iteration is finished.")
         self.should_terminate_epoch = True
 
     def _run_once_on_dataset(self):
@@ -205,8 +205,12 @@ class Evaluator:
         self.prepare_batch = partial(self.prepare_batch, device=vmu.get_device(self.model),
                                      non_blocking=False)
 
+        def put_metrics_into_state():
+            self.evaluation.state.metrics = self.get_metric_values()
+
         self.evaluation = Engine(lambda e, b: self._run_step(self.eval_step, b))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
+        self.evaluation.epoch_completed.add_handler(lambda _: put_metrics_into_state())
         self.evaluation.iter_completed.add_handler(self._update_metrics)
 
     @torch.no_grad()
@@ -318,15 +322,17 @@ class Trainer(Evaluator):
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None):
-        super().eval(*datasets,
-                     batch_size=self.eval_batch_size if batch_size is None else batch_size)
+        return super().eval(*datasets,
+                            batch_size=self.eval_batch_size if batch_size is None else batch_size)
 
     def state_dict(self):
-        return {k: getattr(self, k).state_dict() for k in type(self).state_attrs}
+        return {k: attr.state_dict() for k in type(self).state_attrs
+                if (hasattr(attr := getattr(self, k), "state_dict"))}
 
     def load_state_dict(self, state_dict):
         for k in type(self).state_attrs:
-            getattr(self, k).load_state_dict(state_dict[k])
+            if hasattr(obj := getattr(self, k), "load_state_dict"):
+                obj.load_state_dict(state_dict[k])
 
     def __getattr__(self, key):
         for e in self.extensions:

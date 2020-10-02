@@ -1,44 +1,122 @@
-import os
 import dataclasses as dc
 from pathlib import Path
 import shutil
 import warnings
+import typing as T
+import logging
+import os
 
 import torch
 
+import json
+
 from vidlu.utils.path import create_file_atomic
+from vidlu.utils.func import params
 
 
-class FileNames:
-    MODEL_STATE = 'model_state.pth'
-    TRAINING_STATE = 'training_state.pth'
-    PROGRESS_INFO = 'progress.info'
-    EXPERIMENT_DESC = 'experiment.info'
-    SUMMARY = 'summary.p'
+class _Smallest(float):  # float inheritance needed storing as JSON
+    def __new__(cls):
+        return float.__new__(cls, "-inf")
+
+    def __lt__(self, other):
+        return not isinstance(other, _Smallest)
+
+    def __gt__(self, other):
+        return False
+
+
+smallest = _Smallest()
+
+
+class FileInterface:
+    @staticmethod
+    def save(obj, file):
+        raise NotImplemented
+
+    @staticmethod
+    def load(obj, file):
+        raise NotImplemented
+
+
+class BinaryFileInterface(FileInterface):
+    read_mode = "rb"
+    write_mode = "wb"
+
+
+class BaseTextFileInterface(FileInterface):
+    read_mode = "r"
+    write_mode = "w"
+
+
+class TorchFileInterface(BinaryFileInterface):
+    save = torch.save
+    load = torch.load
+
+
+class JsonFileInterface(BaseTextFileInterface):
+    save = json.dump
+    load = json.load
+
+
+class TextFileInterface(BaseTextFileInterface):
+    save = lambda o, f: (Path(f).write_text if isinstance(f, os.PathLike) else f.write)(o)
+    load = lambda o, f: Path(f).read_text() if isinstance(f, os.PathLike) else f.read()
+
+
+class Files:
+    extracted_state = (None, TorchFileInterface)
+    state = ('training_state.pth', TorchFileInterface)
+    progress_info = ('progress.info', TorchFileInterface)
+    info = ('experiment.info', TorchFileInterface)
+    summary = ('summary.p', TorchFileInterface)
+    perf = ('perf.json', JsonFileInterface)
+    log = ('log.txt', TextFileInterface)
 
 
 @dc.dataclass
 class Checkpoint:  # TODO
-    model_state: dict
-    training_state: dict
-    progress_info: dict
-    experiment_desc: dict
-    summary: dict
+    info: T.Mapping
+    state: T.Mapping  # special
+    summary: T.Mapping
+    progress_info: T.Mapping
+
+    perf: object = smallest
+    log: str = ""
 
     def save(self, path):
-        for k, v in vars(self).items():
-            self._save(path / getattr(FileNames, k.upper()), v)
+        separately_saved_state_parts = self.info['separately_saved_state_parts']
+        extracted_state_parts = {f"{k}_state": self.state[k] for k in separately_saved_state_parts}
+        other_state = {k: v for k, v in self.state.items() if k not in separately_saved_state_parts}
+        stuff = dict(**{**{k: getattr(self, k) for k in self.__annotations__},
+                        'state': other_state}, **extracted_state_parts)
+        try:
+            for k, v in stuff.items():
+                name, file_interface = getattr(Files, k, None) or (f"{k}.pth", TorchFileInterface)
+                create_file_atomic(path=path / name, mode=file_interface.write_mode,
+                                   write_action=lambda f: file_interface.save(v, f))
+        except Exception as ex:
+            shutil.rmtree(path)
+            raise
 
     @classmethod
     def load(cls, path, map_location=None):
-        return cls(**{k: torch.load(path / getattr(FileNames, k.upper()), map_location=map_location)
-                      for k, v in cls.__annotations__.items()})
+        fields = {k: (getattr(cls, k) if k in ("perf", "log") else
+                      Checkpoint._load(path, k, map_location=map_location))
+                  for k in cls.__annotations__}
+        for k in fields['info']['separately_saved_state_parts'] \
+                if isinstance(fields['info'], T.Mapping) else ['model']:  # TODO: remove ['model']
+            fields['state'][k] = cls._load(path, f"{k}_state", map_location=map_location)
+        return Checkpoint(**fields)
 
     @staticmethod
-    def _save(path, obj):
-        create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
+    def _load(path, k, map_location=None):
+        name, fi = getattr(Files, k, None) or (f"{k}.pth", TorchFileInterface)
+        path = path / name
+        return fi.load(path, map_location=map_location) if "map_location" in params(fi.load) \
+            else fi.load(path)
 
 
+@dc.dataclass
 class CheckpointManager(object):
     """ Checkpoint manager can be used to periodically save objects to disk.
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
@@ -48,7 +126,7 @@ class CheckpointManager(object):
             Directory path where objects will be saved
         experiment_name (str):
             Prefix of the file paths to which objects will be saved.
-        n_recent_saved (int, optional):
+        n_last_kept (int, optional):
             Number of objects that should be kept on disk. Older files will be
             removed.
         resume (bool, optional):
@@ -84,39 +162,59 @@ class CheckpointManager(object):
         ['lin33_1', 'lin33_2']
     """
 
-    def __init__(self, checkpoints_dir, experiment_name, experiment_desc=None, n_recent_saved=1,
-                 n_best_saved=0, resume=False, reset=False, perf_measure=lambda cp: 0):
+    def __init__(self, checkpoints_dir, experiment_name: str, info: T.Mapping = None,
+                 n_last_kept=1, n_best_kept=0, resume=False,
+                 separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
+                 log_func=lambda s: "", name_suffix_func=lambda s: ""):
         self.checkpoints_dir = checkpoints_dir
         self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
-        self.experiment_str = experiment_name
-        self.experiment_desc = experiment_desc or dict()
-        self.n_recent_saved = n_recent_saved
-        self.n_best_saved = n_best_saved
-        self._index = 0
-        self._required_resuming = resume
+        self.info = info or dict()
+        self.n_recent_kept, self.n_best_kept = n_last_kept, n_best_kept
+        self.resuming_required = resume
+        self.separately_saved_state_parts = separately_saved_state_parts
+        self.perf_func, self.log_func, self.name_suffix_func = perf_func, log_func, name_suffix_func
+        self.index = 0
+
+        self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+        self._logger.addHandler(logging.NullHandler())
 
         def get_existing_checkpoints():
             if not self.experiment_dir.exists():
                 return []
-            paths = [str(p.stem) for p in self.experiment_dir.iterdir()]
-            indexes = map(self._name_to_index, paths)
-            index_paths = sorted(zip(indexes, paths), key=lambda x: x[0])
-            return [p for i, p in index_paths]
+            return sorted([p.name for p in self.experiment_dir.iterdir()], key=lambda p: int(p.split("_")[0]))
 
         self.saved = get_existing_checkpoints()
-        self.path_to_performance = {p: perf_measure(Checkpoint.load(self.experiment_dir / p))
-                                    for p in self.saved}
-        if resume and reset:
-            raise RuntimeError("`resume=True` is not allowed if `reset=True`.")
-        if reset:
-            self.remove_old_checkpoints(0, 0)
+        self.id_to_perf = {id: perf_func(Checkpoint.load(self.experiment_dir / id).summary)
+                           for id in self.saved}
+
         if resume and len(self.saved) == 0:
             raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
                                + f" {self.experiment_dir}.")
-        if not resume and len(self.saved) > 0:
-            raise RuntimeError(f"Files with ID {experiment_name} are already present in the "
-                               + f"directory {checkpoints_dir}. If you want to use this ID anyway, "
-                               + "pass either `reset=True` or `resume=True`. ")
+        elif not resume and len(self.saved) > 0:
+            raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If you"
+                               + " want to use this ID anyway, pass `resume=True`.")
+
+    def save(self, state, summary=None):
+        if self.resuming_required:
+            raise RuntimeError("Cannot save state before resuming. The `load_last` method"
+                               + " needs to be called before saving to resume the training.")
+        if len(state) == 0:
+            raise RuntimeError("There are no objects to checkpoint in `state`.")
+
+        self.index += 1
+
+        cp = Checkpoint(state=state, summary=summary, progress_info=dict(index=self.index),
+                        info=dict(info=self.info,
+                                  separately_saved_state_parts=self.separately_saved_state_parts),
+                        perf=self.perf_func(summary), log=self.log_func(summary))
+        name = f"{self.index}" + ("" if (suff := self.name_suffix_func(summary)) == "" else suff)
+        path = self.experiment_dir / name
+        path.mkdir(parents=True, exist_ok=True)
+        self._logger.info(f"Saving checkpoint {name} in {self.experiment_dir}.")
+        cp.save(path)
+        self.saved.append(name)
+        self.id_to_perf[name] = cp.perf
+        self.remove_old_checkpoints()
 
     @property
     def last_checkpoint_path(self):
@@ -124,65 +222,34 @@ class CheckpointManager(object):
 
     @property
     def best_checkpoint_path(self):
-        return self.experiment_dir / max(self.saved, key=self.path_to_performance.__getitem__)
-
-    def save(self, state, summary=None):
-        if self._required_resuming:
-            raise RuntimeError("Cannot save state before resuming. The `load_last` method"
-                               + " needs to be called before saving to resume the training.")
-        if len(state) == 0:
-            raise RuntimeError("There are no objects to checkpoint in `state`.")
-
-        self._index += 1
-
-        name = self._index_to_name(self._index)
-        path = self.experiment_dir / name
-        path.mkdir(parents=True, exist_ok=True)
-
-        Checkpoint(model_state=state['model'],
-                   training_state={k: v for k, v in state.items() if k != 'model'},
-                   progress_info=dict(index=self._index),
-                   experiment_desc=self.experiment_desc,
-                   summary=summary).save(path)
-
-        self.saved.append(name)
-
-        self.remove_old_checkpoints()
+        return self.experiment_dir / max(self.saved, key=self.id_to_perf.__getitem__)
 
     def load_last(self, map_location=None):
-        path = self.last_checkpoint_path
+        return self._load(self.last_checkpoint_path, map_location=map_location)
 
+    def load_best(self, map_location=None):
+        return self._load(self.best_checkpoint_path, map_location=map_location)
+
+    def _load(self, path, map_location=None):
+        self._logger.info(f"Loading checkpoint {path.name}.")
         cp = Checkpoint.load(path, map_location=map_location)
-        self._index = (pi if isinstance(pi := cp.progress_info, dict) else pi.__dict__)['index']
-        self.experiment_desc = cp.experiment_desc
-        state = cp.training_state
-        state['model'] = cp.model_state
-        summary = cp.summary
+        self.index = (pi if isinstance(pi := cp.progress_info, dict) else pi.__dict__)['index']
+        self.info = cp.info
+        self.resuming_required = False
+        return cp.state, cp.summary
 
-        self._required_resuming = False
-        return state, summary
+    def remove_checkpoints(self):
+        self.remove_old_checkpoints(0, 0)
 
-    @staticmethod
-    def _save(path, obj):
-        create_file_atomic(path=path, save_action=lambda file: torch.save(obj, file))
-
-    @staticmethod
-    def _index_to_name(index):
-        return f'{index}'
-
-    @staticmethod
-    def _name_to_index(name):
-        return int(name)
-
-    def remove_old_checkpoints(self, n_recent_saved=None, n_best_saved=None):
-        n_recent_saved = self.n_recent_saved if n_recent_saved is None else n_recent_saved
-        n_best_saved = self.n_best_saved if n_best_saved is None else n_best_saved
-        best = set(() if n_best_saved == 0 else
-                   sorted(self.saved, key=self.path_to_performance.__getitem__)[-n_best_saved:])
-        for p in (self.saved[:-n_recent_saved] if n_recent_saved > 0 else self.saved):
+    def remove_old_checkpoints(self, n_recent_kept=None, n_best_kept=None):
+        n_recent_kept = self.n_recent_kept if n_recent_kept is None else n_recent_kept
+        n_best_kept = self.n_best_kept if n_best_kept is None else n_best_kept
+        best = set(() if n_best_kept == 0 else
+                   sorted(self.saved, key=self.id_to_perf.__getitem__)[-n_best_kept:])
+        olds = self.saved[:-n_recent_kept] if n_recent_kept > 0 else self.saved[:]
+        removed = [x for x in olds if x not in best]
+        for p in removed:
             path = self.experiment_dir / p
-            if path in best:
-                continue
             self.saved.remove(p)
             try:
                 shutil.rmtree(path)

@@ -38,7 +38,8 @@ class TrainingExperimentFactoryArgs:
 # Component factories (or factory wrappers) ########################################################
 
 
-def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
+def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, data, logger,
+                                 main_metrics: T.Sequence[str]):
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
@@ -49,8 +50,12 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
     def on_epoch_completed(es):
         if es.epoch % max(1, len(data.test) // len(data.train)) == 0 \
                 or es.epoch == es.max_epochs - 1:
-            trainer.eval(data.test)
-            cpman.save(trainer.state_dict(), summary=logger.state_dict())  # checkpoint
+            es_val = trainer.eval(data.test)
+            cpman.save(trainer.state_dict(),
+                       summary=dict(logger=logger.state_dict(),
+                                    perf=es_val.metrics[main_metrics[0]],
+                                    log="\n".join(logger.lines),
+                                    epoch=es.epoch))
 
     def report_metrics(es, is_validation=False):
         def eval_str(metrics):
@@ -66,6 +71,7 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
                                   f"{k}={fmt(v)}" for k, v in metrics.items()])
 
         metrics = trainer.get_metric_values(reset=True)
+
         with indent_print():
             epoch_fmt, iter_fmt = f'{len(str(es.max_epochs))}d', f'{len(str(es.batch_count))}d'
             iter_ = es.iteration % es.batch_count
@@ -73,22 +79,26 @@ def define_training_loop_actions(trainer: Trainer, cpman, data, logger):
                       else f'{format(es.epoch, epoch_fmt)}.'
                            + f'{format((iter_ - 1) % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
+            # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
 
     # noinspection PyUnresolvedReferences
     @trainer.evaluation.iter_completed.handler
     def interact(state):
+        if (optional_input := try_input()) is None:
+            return
+
         from IPython import embed
         from vidlu.utils.presentation import visualization
         nonlocal trainer, data
-
-        optional_input = try_input()
-        if optional_input is not None:
+        try:
             if optional_input == 'i':
-                optional_input = 'embed()'
-            try:
-                exec(optional_input)
-            except Exception as ex:
-                print(f'Cannot execute "{optional_input}"\n{ex}.')
+                embed()
+            elif optional_input == 'd':
+                # For some other debugger, you can set e.g. PYTHONBREAKPOINT=pudb.set_trace.
+                breakpoint()
+            exec("print(locals().keys()); " + optional_input)
+        except Exception as ex:
+            print(f'Cannot execute "{optional_input}". Error:\n{ex}.')
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
@@ -111,7 +121,10 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     print('Learner name:', learner_name)
     print('Experiment ID:', experiment_id)
     return CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
-                             experiment_desc=training_args, resume=a.resume, reset=a.redo)
+                             info=training_args, separately_saved_state_parts=("model",),
+                             n_best_kept=1, resume=a.resume, perf_func=lambda s: s.get('perf', 0),
+                             log_func=lambda s: s.get('log', ""),
+                             name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
 
 
 # Experiment #######################################################################################
@@ -153,34 +166,41 @@ class TrainingExperiment:
             print(a.data)
             with Stopwatch() as t:
                 data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
+            first_ds = next(iter(data.values()))
             print(f"Data initialized in {t.time:.2f} s.")
 
         with indent_print('Initializing model...'):
             print(a.model)
             with Stopwatch() as t:
                 model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
-                                            prep_dataset=next(iter(data.values())), device=a.device,
+                                            prep_dataset=first_ds, device=a.device,
                                             verbosity=a.verbosity)
             print(f"Model initialized in {t.time:.2f} s.")
 
         with indent_print('Initializing trainer and evaluation...'):
             print(a.trainer)
-            trainer = factories.get_trainer(a.trainer, model=model,
-                                            dataset=next(iter(data.values())),
+            trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
                                             verbosity=a.verbosity)
-            for m in factories.get_metrics(a.metrics, trainer, dataset=next(iter(data.values()))):
+            metrics, main_metrics = factories.get_metrics(a.metrics, trainer, dataset=first_ds)
+            for m in metrics:
                 trainer.metrics.append(m())
 
-        logger = Logger()
-        logger.log("Resume command:\n"
-                   + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
-                   + f' -d "{a.device}" --metrics "{a.metrics}" -r')
-        cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
-        define_training_loop_actions(trainer, cpman, data, logger)
+        with indent_print('Initializing checkpoint manager and logger...'):
+            logger = Logger()
+            logger.log("Resume command:\n"
+                       + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
+                       + f' -d "{a.device}" --metrics "{a.metrics}" -r')
+            cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
+            if a.redo:
+                if a.resume:
+                    raise ValueError('Remove the "resume" argument if you want to restart the experiment.')
+                cpman.remove_checkpoints()
+            define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
 
         if a.resume:
-            for obj, state in zip([trainer, logger], cpman.load_last(map_location=a.device)):
-                obj.load_state_dict(state)
+            state, summary = cpman.load_last(map_location=a.device)
+            trainer.load_state_dict(state)
+            logger.load_state_dict(summary.get('logger', summary))  # TODO: remove backward compatibility
             logger.print_all()
         elif a.params is not None:
             with indent_print("Loading parameters..."):
