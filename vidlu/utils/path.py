@@ -59,18 +59,20 @@ def remove_dir_trees_with_no_files(path: Path, verbose=False):
 # File #############################################################################################
 
 
-def create_file_atomic(path, save_action):
+def create_file_atomic(path, write_action, mode="w+b"):
     """
-    Performs `save_action` on a temporary file and, if successful, moves the
+    Performs `write_action` on a temporary file and, if successful, moves the
     temporary file to `path`. This avoids creation of incomplete files if an
     error during writing occurs.
+
     Args:
         path: The path of the output file.
-        save_action: A procedure that accepts a file as the only argument.
+        write_action: A procedure that accepts a file as the only argument.
+        mode: Tile opening mode.
     """
-    tmp = tempfile.NamedTemporaryFile(delete=False, dir=Path(path).parent)
+    tmp = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=Path(path).parent)
     try:
-        save_action(tmp.file)
+        write_action(tmp.file)
     except BaseException:
         tmp.close()
         os.remove(tmp.name)
