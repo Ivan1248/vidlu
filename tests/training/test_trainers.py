@@ -28,11 +28,12 @@ class TestTrainers:
                   eval_step=vts.supervised_eval_step)
 
     def test_trainer_init(self):
-        Trainer(**vct.to_trainer_args(vct.resnet_cifar, model=get_a_model(),
-                                      loss=partial(NLLLossWithLogits(), ignore_index=-1)))
+        Trainer(**vct.TrainerConfig(
+            vct.resnet_cifar, model=get_a_model(),
+            loss=partial(NLLLossWithLogits(), ignore_index=-1)).normalized())
 
     def test_adversarial_trainer_init(self):
-        Trainer(
-            **vct.to_trainer_args(vct.resnet_cifar, vct.adversarial, model=get_a_model(),
-                                  attack_f=GradientSignAttack,
-                                  loss=partial(NLLLossWithLogits(), ignore_index=-1)))
+        Trainer(**vct.TrainerConfig(
+            vct.resnet_cifar, vct.adversarial, model=get_a_model(),
+            attack_f=GradientSignAttack,
+            loss=partial(NLLLossWithLogits(), ignore_index=-1)).normalized())

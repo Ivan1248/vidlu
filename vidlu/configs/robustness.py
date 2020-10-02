@@ -51,7 +51,7 @@ virtual_pgd_cifar10_attack = partial(madry_cifar10_attack,
 vat_pgd_cifar10_attack = partial(madry_cifar10_attack,
                                  to_virtual_target='probs',
                                  loss=losses.kl_div_l)
-0
+
 mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
                                     eps=0.3,
                                     step_size=0.1,

@@ -46,6 +46,8 @@ class OptimizerMaker:
         return self.optimizer_f([{'params': remaining_params}] + params, **self.kwargs)
 
 
+# Trainer config
+
 class TrainerConfig(NameDict):
     def __init__(self, *args, **kwargs):
         ext_args = []  # extension factories are concatenated in order of appearance
@@ -63,7 +65,17 @@ class TrainerConfig(NameDict):
         all_kwargs.update(kwargs)
         super().__init__(**all_kwargs, extension_fs=ext)
 
-    def with_bound_extension_args(self):
+    def normalized(self):
+        """Creates an equivalent TrainerConfig where arguments for extensions
+         are bound to corresponding extension factories and removed from the
+         main namespace.
+
+        A normalized TrainerConfig can be given to the Trainer constructor.
+
+        Example:
+            >>> tc: TrainerConfig(...)
+            >>> trainer = Trainer(**tc.normalized())
+        """
         result = TrainerConfig(**self)
         arg_name_to_ext = dict()
         ext = []
@@ -78,10 +90,6 @@ class TrainerConfig(NameDict):
                 arg_name_to_ext[name] = ext_f
         result.extension_fs = ext
         return result
-
-
-def to_trainer_args(*args, **kwargs):
-    return TrainerConfig(*args, **kwargs).with_bound_extension_args()
 
 
 # Extend output
@@ -131,18 +139,65 @@ semisupervised_vat_2way = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
-                                             block_grad_for_clean=False))
+                                             block_grad_on_clean=False))
+
+semisupervised_vat_2way_entmin = TrainerConfig(
+    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
+                                             block_grad_on_clean=False,
+                                             entropy_loss_coef=1))
 
 semisupervised_vat_l = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
     train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True))
 
+semisupervised_vat_l_2way = TrainerConfig(
+    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True,
+                                             block_grad_on_clean=False))
+
 semisupervised_vat_entmin = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
                                              entropy_loss_coef=1))
+
+mean_teacher_custom_tps = TrainerConfig(
+    partial(te.SemiSupervisedVAT, attack_f=partial(tps_warp_attack, step_count=0,
+                                                   loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
+
+mean_teacher_custom_tps_weaker = TrainerConfig(
+    partial(te.SemiSupervisedVAT,
+            attack_f=partial(tps_warp_attack,
+                             initializer=perturbation.NormalInitializer({'offsets': (0, 0.05)}),
+                             projection=perturbation.ScalingProjection({'offsets': 10}),
+                             step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
+
+mean_teacher_custom_tps_more_weaker = TrainerConfig(
+    partial(te.SemiSupervisedVAT,
+            attack_f=partial(tps_warp_attack,
+                             initializer=perturbation.NormalInitializer({'offsets': (0, 0.02)}),
+                             projection=perturbation.ScalingProjection({'offsets': 10}),
+                             step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
+
+mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
+    partial(te.SemiSupervisedVAT,
+            attack_f=partial(tps_warp_attack,
+                             initializer=perturbation.NormalInitializer({'offsets': (0, 0.02)}),
+                             projection=perturbation.ScalingProjection({'offsets': 10}),
+                             step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False,
+                                       clean_teacher_input=True))
 
 classification = TrainerConfig(
     supervised,
@@ -217,7 +272,7 @@ swiftnet_cityscapes = TrainerConfig(
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
     batch_size=14,
-    eval_batch_size=6,
+    eval_batch_size=2,  # 6
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0))
 
 swiftnet_mo_cityscapes = TrainerConfig(
