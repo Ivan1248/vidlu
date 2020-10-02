@@ -30,3 +30,30 @@ if MO is False:
     e.trainer.training.iter_started.add_handler(save_activations)
 
 # end
+
+
+# Logit warping
+
+# from vidlu.modules.inputwise import TPSWarp
+# from vidlu.training.robustness.perturbation import NormalInitializer
+# import matplotlib.pyplot as plt
+#
+# warp = TPSWarp(forward=False).on(state.batch[0])
+# with torch.no_grad():
+#     NormalInitializer(dict(offsets=(0, 0.1)))(warp, None)
+# plt.imsave("/home/igrubisic/images/x.png", state.batch[0][0].permute(1, 2, 0).numpy())
+
+# logits3 = logits[0, :3]
+# mi = logits3.min()
+# s = logits3.max() - mi
+# breakpoint()
+# plt.imsave("/home/igrubisic/images/a.png", logits3.permute(1, 2, 0).sub(mi).div(s).cpu().numpy())
+# plt.imsave("/home/igrubisic/images/b.png", warp(logits)[0, :3].permute(1, 2, 0).sub(mi).div(s).cpu().numpy())
+# logits_p = warp(logits)
+# probs = logits.softmax(1)
+# probs_p = warp(probs)
+# mask = warp(torch.ones(probs[:, :1].shape).to(probs.device)).eq(1.).float()
+# return kl_div_l(logits_p, probs_p).max(dim=(-1), keepdim=True)[0].max(-2, keepdim=True)[0] * (mask / mask.mean(dim=(-2, -1), keepdim=True))
+
+
+# end
