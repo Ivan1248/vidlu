@@ -90,8 +90,12 @@ def rev_crossentropy_ll(target_logits, logits):
     return crossentropy_l(logits, target_logits.softmax(1))
 
 
-def rev_kl_div_ll(target_logits, logits):
+def kl_div_ll(logits, target_logits):
     return kl_div_l(logits, target_logits.softmax(1))
+
+
+def rev_kl_div_ll(target_logits, logits):
+    return kl_div_ll(logits, target_logits)
 
 
 def symmetric_crossentropy_ll(p_logits, q_logits):
