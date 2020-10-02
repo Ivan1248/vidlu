@@ -1,8 +1,5 @@
 from functools import partial
-import dataclasses as dc
-import typing as T
 from numpy import s_
-import torch
 
 import vidlu.modules as vm
 import vidlu.modules.inputwise as vmi
@@ -72,46 +69,3 @@ class OrsicPhotometricAndTPS(PertModel):
             vm.Seq(photometric=OrsicPhotometric(clamp, forward_arg_count),
                    tps=vmi.BackwardTPSWarp()),
             forward_arg_count=forward_arg_count)
-
-
-# Initializers and projections
-
-
-@dc.dataclass
-class LInfBallUniformInitializer:
-    param_path_to_bounds: T.Mapping[str, T.Sequence[T.Union[float, torch.Tensor]]]
-
-    def __call__(self, pert_model, x):
-        for path, bounds in self.param_path_to_bounds.items():
-            vo.random_uniform_(vm.get_submodule(pert_model, path), *bounds)
-
-
-@dc.dataclass
-class NormalInitializer:
-    param_path_to_mean_std: T.Mapping[str, T.Tuple[float, float]]
-
-    def __call__(self, pert_model, x):
-        for path, (mean, std) in self.param_path_to_mean_std.items():
-            vm.get_submodule(pert_model, path).normal_(mean=mean, std=std)
-
-
-@dc.dataclass
-class ClampProjection:
-    param_path_to_bounds: T.Mapping[str, T.Sequence[T.Union[float, torch.Tensor]]]
-
-    def __call__(self, pert_model, x):
-        for path, bounds in self.param_path_to_bounds.items():
-            vo.clamp(vm.get_submodule(pert_model, path), *bounds, inplace=True)
-
-
-@dc.dataclass
-class ScalingProjection:
-    param_path_to_radius: T.Mapping[str, float]
-    dim: T.Union[int, T.Sequence[int]] = -1
-    p: int = 2
-
-    def __call__(self, pert_model, x):
-        for path, radius in self.param_path_to_radius.items():
-            par = vm.get_submodule(pert_model, path)
-            norm = par.norm(self.p, dim=self.dim, keepdim=True)
-            par.mul_(torch.where(norm > radius, radius / norm, norm.new_ones(())))

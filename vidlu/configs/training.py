@@ -73,6 +73,7 @@ class TrainerConfig(NameDict):
         A normalized TrainerConfig can be given to the Trainer constructor.
 
         Example:
+            >>> from vidlu.training.trainers import Trainer
             >>> tc: TrainerConfig(...)
             >>> trainer = Trainer(**tc.normalized())
         """
@@ -175,7 +176,7 @@ mean_teacher_custom_tps_weaker = TrainerConfig(
     partial(te.SemiSupervisedVAT,
             attack_f=partial(tps_warp_attack,
                              initializer=perturbation.NormalInitializer({'offsets': (0, 0.05)}),
-                             projection=perturbation.ScalingProjection({'offsets': 10}),
+                             projection=perturbation.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
@@ -184,7 +185,7 @@ mean_teacher_custom_tps_more_weaker = TrainerConfig(
     partial(te.SemiSupervisedVAT,
             attack_f=partial(tps_warp_attack,
                              initializer=perturbation.NormalInitializer({'offsets': (0, 0.02)}),
-                             projection=perturbation.ScalingProjection({'offsets': 10}),
+                             projection=perturbation.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
@@ -193,7 +194,7 @@ mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
     partial(te.SemiSupervisedVAT,
             attack_f=partial(tps_warp_attack,
                              initializer=perturbation.NormalInitializer({'offsets': (0, 0.02)}),
-                             projection=perturbation.ScalingProjection({'offsets': 10}),
+                             projection=perturbation.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False,

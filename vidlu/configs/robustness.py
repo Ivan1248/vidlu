@@ -74,7 +74,7 @@ morsic_tps_warp_attack = partial(attacks.PertModelAttack,
 def get_standard_pert_modeL_attack_params(param_to_bounds, param_to_initialization_params=None,
                                           param_to_step_size=None, step_size_factor=None,
                                           initializer_f=perturbation.LInfBallUniformInitializer,
-                                          projection_f=perturbation.ClampProjection):
+                                          projection_f=perturbation.ClampProjector):
     if (param_to_step_size is None) == (step_size_factor is None):
         raise RuntimeError("Either param_to_step_size or step_size should be provided.")
     if param_to_initialization_params is None:
@@ -106,7 +106,7 @@ tps_warp_attack = partial(
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
     initializer=perturbation.NormalInitializer({'offsets': (0, 0.1)}),
-    projection=perturbation.ScalingProjection({'offsets': 0.1}, p=2, dim=-1))
+    projection=perturbation.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
 
 import vidlu.transforms.jitter as vtj
 
@@ -132,4 +132,4 @@ tps_warp_attack_weaker = partial(
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
     initializer=perturbation.NormalInitializer({'offsets': (0, 0.03)}),
-    projection=perturbation.ScalingProjection({'offsets': 0.03}, p=2, dim=-1))
+    projection=perturbation.ScalingProjector({'offsets': 0.03}, p=2, dim=-1))
