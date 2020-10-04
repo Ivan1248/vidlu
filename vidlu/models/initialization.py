@@ -6,14 +6,19 @@ import vidlu.modules.components as vmc
 import vidlu.modules as vm
 
 
+def batchnorm_single(m):
+    nn.init.constant_(m.weight, 1)
+    nn.init.constant_(m.bias, 0)
+
+
 def kaiming_standard_single(m, mode, nonlinearity):
-    if isinstance(m, (nn.Conv2d, vm.FastDeconv)) or 'Conv' in type(m).__name__ and hasattr(m, 'weight'):
+    if isinstance(m, (nn.Conv2d, vm.FastDeconv)) \
+            or 'Conv' in type(m).__name__ and hasattr(m, 'weight'):
         nn.init.kaiming_normal_(m.weight, mode=mode, nonlinearity=nonlinearity)
         if getattr(m, 'bias', None) is not None:
             nn.init.constant_(m.bias, 0)
     elif isinstance(m, nn.BatchNorm2d):
-        nn.init.constant_(m.weight, 1)
-        nn.init.constant_(m.bias, 0)
+        batchnorm_single(m)
     elif isinstance(m, nn.Linear):
         m.reset_parameters()
         nn.init.constant_(m.bias, 0)
@@ -58,7 +63,6 @@ def kaiming_mnistnet(module, nonlinearity='relu'):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.BatchNorm2d):
-            nn.init.constant_(m.weight, 1)
-            nn.init.constant_(m.bias, 0)
+            batchnorm_single(m)
         elif len(m._parameters) > 0:
             warnings.warn(f"kaiming_mnistnet initialization not defined for {name}: {type(m)}.")
