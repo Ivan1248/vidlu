@@ -1,7 +1,9 @@
 from contextlib import suppress as ctx_suppress
-from dataclasses import dataclass
+import dataclasses as dc
 from functools import partial
 import typing as T
+from torch import nn
+import copy
 
 import torch
 
@@ -13,6 +15,16 @@ import vidlu.modules.losses as vml
 
 
 # Training/evaluation steps ########################################################################
+
+@dc.dataclass
+class TrainerStep:  # TODO: use to reduce
+    outputs: dict = dc.field(
+        default_factory=lambda: dict(zip(*[["x", "target", "output", "other_outputs", "loss"]] * 2)))
+
+    def __call__(self, trainer, batch):
+        output = self.run(trainer, batch)
+        return NameDict({self.outputs[k]: v for k, v in output.items() if k in self.outputs})
+
 
 # Supervised
 
@@ -45,7 +57,7 @@ def supervised_train_step(trainer, batch):
 
 # Supervised multistep
 
-@dataclass
+@dc.dataclass
 class SupervisedTrainMultiStep:
     """A training step where each batch is used multiple times consecutively.
 
@@ -69,7 +81,7 @@ class SupervisedTrainMultiStep:
         return NameDict(x=x, target=y, **initial, **{f"{k}_post": v for k, v in final.items()})
 
 
-@dataclass
+@dc.dataclass
 class SupervisedSlidingBatchTrainStep:
     """A training step where the batch slides through training examples with a
     stride smaller than batch size, making each example used
@@ -136,8 +148,8 @@ class SupervisedSlidingBatchTrainStep:
 
 # Supervised accumulated batch
 
-@dataclass
-class SupervisedTrainAcummulatedBatchStep:
+@dc.dataclass
+class SupervisedTrainAcumulatedBatchStep:
     batch_split_factor: int
     reduction: T.Literal['mean', 'sum'] = 'mean'
 
@@ -187,7 +199,7 @@ class CleanResultCallback:
                 **dict(zip(("output", "other_outputs"), self.extend_output(r.output)))})
 
 
-@dataclass
+@dc.dataclass
 class AdversarialTrainStep:
     """ Adversarial training step with the option to keep a the batch partially
     clean.
@@ -216,18 +228,18 @@ class AdversarialTrainStep:
         >>>
         >>> trainer.model.eval()
         >>> crc = CleanResultCallback(trainer.extend_output)
-        >>> x_adv = trainer.attack.perturb(trainer.model, x, None if self.virtual else y,
+        >>> x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y,
         >>>                                backward_callback=crc)
         >>> trainer.model.train()
         >>>
-        >>> output, other_outputs = trainer.extend_output(trainer.model(x_adv))
-        >>> loss_adv = trainer.loss(output, y).mean()
-        >>> do_optimization_step(trainer.optimizer, loss=loss_adv)
+        >>> output, other_outputs = trainer.extend_output(trainer.model(x_p))
+        >>> loss_p = trainer.loss(output, y).mean()
+        >>> do_optimization_step(trainer.optimizer, loss=loss_p)
         >>>
         >>> return NameDict(x=x, output=crc.result.output, target=y,
         >>>                 other_outputs=crc.result.other_outputs, loss=crc.result.loss_mean,
-        >>>                 x_adv=x_adv, target_adv=y, output_adv=output,
-        >>>                 other_outputs_adv=other_outputs, loss_adv=loss_adv.item())
+        >>>                 x_p=x_p, target_p=y, output_p=output,
+        >>>                 other_outputs_p=other_outputs, loss_p=loss_p.item())
         """
         x, y = trainer.prepare_batch(batch)
         cln_count = round(self.clean_proportion * len(x))
@@ -237,25 +249,25 @@ class AdversarialTrainStep:
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
         crc = CleanResultCallback(trainer.extend_output)
-        x_adv = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y_a,
-                                       backward_callback=crc)
+        x_p = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y_a,
+                                     backward_callback=crc)
         trainer.model.train()
 
-        output, other_outputs = trainer.extend_output(trainer.model(torch.cat((x_c, x_adv), dim=0)))
-        output_c, output_adv = split(output)
-        loss_adv = trainer.loss(output_adv, y_a).mean()
+        output, other_outputs = trainer.extend_output(trainer.model(torch.cat((x_c, x_p), dim=0)))
+        output_c, output_p = split(output)
+        loss_p = trainer.loss(output_p, y_a).mean()
         loss_c = trainer.loss(output_c, y_c).mean() if len(y_c) > 0 else 0
         do_optimization_step(trainer.optimizer,
-                             loss=cln_proportion * loss_c + (1 - cln_proportion) * loss_adv)
+                             loss=cln_proportion * loss_c + (1 - cln_proportion) * loss_p)
 
-        other_outputs_adv = NameDict({k: a[cln_count:] for k, a in other_outputs.items()})
+        other_outputs_p = NameDict({k: a[cln_count:] for k, a in other_outputs.items()})
         return NameDict(x=x, output=crc.result.output, target=y,
                         other_outputs=crc.result.other_outputs, loss=crc.result.loss_mean,
-                        x_adv=x_adv, target_adv=y_a, output_adv=output_adv,
-                        other_outputs_adv=other_outputs_adv, loss_adv=loss_adv.item())
+                        x_p=x_p, target_p=y_a, output_p=output_p,
+                        other_outputs_p=other_outputs_p, loss_p=loss_p.item())
 
 
-@dataclass
+@dc.dataclass
 class AdversarialCombinedLossTrainStep:
     """A training step that performs an optimization on an weighted
     combination of the standard loss and the adversarial loss.
@@ -286,24 +298,24 @@ class AdversarialCombinedLossTrainStep:
         x, y = trainer.prepare_batch(batch)
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
-        x_adv = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
+        x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
 
         trainer.model.train()
         output_c, other_outputs_c = trainer.extend_output(trainer.model(x))
         loss_c = trainer.loss(output_c, y).mean()
-        output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
-        loss_adv = (trainer.attack if self.use_attack_loss else trainer).loss(output_adv, y).mean()
+        output_p, other_outputs_p = trainer.extend_output(trainer.model(x_p))
+        loss_p = (trainer.attack if self.use_attack_loss else trainer).loss(output_p, y).mean()
 
         do_optimization_step(trainer.optimizer,
-                             loss=self.clean_weight * loss_c + self.adv_weight * loss_adv)
+                             loss=self.clean_weight * loss_c + self.adv_weight * loss_p)
 
         return NameDict(x=x, output=output_c, target=y, other_outputs=other_outputs_c,
                         loss=loss_c.item(),
-                        x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
-                        loss_adv=loss_adv.item())
+                        x_p=x_p, output_p=output_p, other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item())
 
 
-@dataclass
+@dc.dataclass
 class AdversarialTrainBiStep:
     """A training step that first performs an optimization step on a clean batch
     and then on the batch turned into adversarial examples.
@@ -318,15 +330,15 @@ class AdversarialTrainBiStep:
         x, y = trainer.prepare_batch(batch)
         clean_result = _supervised_train_step_x_y(trainer, x, y)
         trainer.model.eval()  # adversarial examples are generated in eval mode
-        x_adv = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
-        result_adv = _supervised_train_step_x_y(trainer, x_adv, y)
+        x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
+        result_p = _supervised_train_step_x_y(trainer, x_p, y)
         return NameDict(x=x, output=clean_result.output, target=y,
                         other_outputs=clean_result.other_outputs, loss=clean_result.loss_mean,
-                        x_adv=x_adv, output_adv=result_adv.output,
-                        other_outputs_adv=result_adv.other_outputs, loss_adv=result_adv.loss_mean)
+                        x_p=x_p, output_p=result_p.output,
+                        other_outputs_p=result_p.other_outputs, loss_p=result_p.loss_mean)
 
 
-@dataclass
+@dc.dataclass
 class AdversarialTrainMultiStep:
     """A training step that performs a model parameter update for each
     adversarial perturbation update.
@@ -358,22 +370,22 @@ class AdversarialTrainMultiStep:
             perturb = trainer.attack.perturb
             if self.reuse_pert:
                 perturb = partial(perturb, initial_pert=self.last_pert)
-            x_adv = perturb(trainer.model, x, None if self.virtual else y, backward_callback=step)
+            x_p = perturb(trainer.model, x, None if self.virtual else y, backward_callback=step)
             if self.reuse_pert:
-                self.last_pert = x_adv - x
+                self.last_pert = x_p - x
 
         trainer.model.train()
-        output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
-        loss_adv = trainer.loss(output_adv, y).mean()
-        do_optimization_step(trainer.optimizer, loss_adv)
+        output_p, other_outputs_p = trainer.extend_output(trainer.model(x_p))
+        loss_p = trainer.loss(output_p, y).mean()
+        do_optimization_step(trainer.optimizer, loss_p)
 
         return NameDict(x=x, target=y, output=clean_result.output,
                         other_outputs=trainer.extend_output(clean_result.output)[1],
-                        loss=clean_result.loss_mean, x_adv=x_adv, output_adv=output_adv,
-                        other_outputs_adv=other_outputs_adv, loss_adv=loss_adv.item())
+                        loss=clean_result.loss_mean, x_p=x_p, output_p=output_p,
+                        other_outputs_p=other_outputs_p, loss_p=loss_p.item())
 
 
-@dataclass
+@dc.dataclass
 class VATTrainStep:
     alpha: float = 1
     attack_eval_model: bool = False
@@ -385,33 +397,33 @@ class VATTrainStep:
         model.train()
 
         x, y = trainer.prepare_batch(batch)
-        output, other_outputs = trainer.extend_output(trainer.model(x))
+        output, other_outputs = trainer.extend_output(model(x))
         loss = trainer.loss(output, y).mean()
         with torch.no_grad() if self.block_grad_for_clean else ctx_suppress():
-            target = attack.output_to_target(output)
+            target = attack.output_to_target(output)  # usually the same as other_outputs.probs
             if self.block_grad_for_clean:
                 target = target.detach()
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
-                x_adv = attack.perturb(trainer.model, x, target)
-                output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-                loss_adv = attack.loss(output_adv, target).mean()
-                loss = loss + self.alpha * loss_adv
-                loss_ent = vml.entropy_l(output_adv).mean()
-                if self.entropy_loss_coef:
-                    loss += self.entropy_loss_coef * loss_ent
-                do_optimization_step(trainer.optimizer, loss=loss)
+                x_p = attack.perturb(model, x, target)
+                output_p, other_outputs_p = trainer.extend_output(model(x_p))
+        loss_p = attack.loss(output_p, target).mean()
+        loss = loss + self.alpha * loss_p
+        loss_ent = vml.entropy_l(output_p).mean()
+        if self.entropy_loss_coef:
+            loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
+        do_optimization_step(trainer.optimizer, loss=loss)
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-                        x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
-                        loss_adv=loss_adv.item(), loss_ent=loss_ent.item())
+                        x_p=x_p, output_p=output_p, other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item(), loss_ent=loss_ent.item())
 
 
-@dataclass
-class UDATrainStep:  # TODO
+@dc.dataclass
+class PertConsistencyTrainStep:  # TODO
     alpha: float = 1
     entropy_loss_coef: float = 0
-    track_bn_stats_of_perturbed: bool = False
+    track_pert_bn_stats: bool = False
     block_grad_for_clean: bool = True
 
     def __call__(self, trainer, batch):
@@ -421,26 +433,26 @@ class UDATrainStep:  # TODO
         x, y = trainer.prepare_batch(batch)
         output, other_outputs = trainer.extend_output(trainer.model(x))
         loss = trainer.loss(output, y).mean()
-        with batchnorm_stats_tracking_off(model) if self.track_bn_stats_of_perturbed \
+        with batchnorm_stats_tracking_off(model) if not self.track_pert_bn_stats \
                 else ctx_suppress():
             with torch.no_grad():
                 x_p, y_p = trainer.pert_model(x, y)
             output_p, other_outputs_p = trainer.extend_output(model(x_p))
-            loss_adv = trainer.loss(output_p, y_p).mean()
-            loss = loss + self.alpha * loss_adv
+            target_p = output.detach() if self.block_grad_for_clean else output
+            loss_p = trainer.loss(output_p, target_p).mean()
+            loss = loss + self.alpha * loss_p
             if self.entropy_loss_coef:
                 loss_ent = vml.entropy_l(output_p).mean()
                 loss += self.entropy_loss_coef * loss_ent
             do_optimization_step(trainer.optimizer, loss=loss)
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-                        x_adv=x_p, output_adv=output_p, other_outputs_adv=other_outputs_p,
-                        loss_adv=loss_adv.item(),
-                        loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
+                        x_p=x_p, target_p=target_p, output_p=output_p, other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item(), loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
 
 
 @torch.no_grad()
-def _prepare_semisupervised_vat_input(trainer, batch):
+def _prepare_semisupervised_input(trainer, batch):
     x_u = None
     if isinstance(batch, BatchTuple):
         (x_l, y_l), (x_u, *_) = [trainer.prepare_batch(b) for b in batch]
@@ -449,14 +461,16 @@ def _prepare_semisupervised_vat_input(trainer, batch):
     return x_l, y_l, x_u
 
 
-def _get_unsupervised_vat_outputs(output, other_outputs, unsupervised_start_index):
-    output_uns, probs_uns = output, other_outputs.probs
-    if unsupervised_start_index > 0:
-        output_uns, probs_uns = (o[unsupervised_start_index:] for o in (output_uns, probs_uns))
-    return output_uns, probs_uns
+def _get_unsupervised_vat_outputs(out, uns_start, block_grad_for_clean, output_to_target):
+    out_uns = out[uns_start:]  # _get_unsupervised_vat_outputs(out, other_outs, uns_start)
+    with torch.no_grad() if block_grad_for_clean else ctx_suppress():
+        target_uns = output_to_target(out_uns)
+        if block_grad_for_clean:
+            target_uns = target_uns.detach()
+    return out_uns, target_uns
 
 
-@dataclass
+@dc.dataclass
 class SemisupervisedVATEvalStep:
     consistency_loss_on_labeled: bool = True
 
@@ -464,7 +478,7 @@ class SemisupervisedVATEvalStep:
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x_l, y_l, x_u = _prepare_semisupervised_vat_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
         if x_u is None:
             x_c = x_all = x_l
             uns_start = 0
@@ -474,72 +488,162 @@ class SemisupervisedVATEvalStep:
             uns_start = len(x_l) if self.consistency_loss_on_labeled else 0
 
         with torch.no_grad():
-            output, other_outputs = trainer.extend_output(model(x_all))
-            output_uns, probs_uns = _get_unsupervised_vat_outputs(output, other_outputs, uns_start)
-        x_adv = attack.perturb(model, x_c, probs_uns)
+            out, other_outs = trainer.extend_output(model(x_all))
+            out_uns, target_uns = _get_unsupervised_vat_outputs(
+                out, uns_start, True, attack.output_to_target)
+
+        x_p = attack.perturb(model, x_c, target_uns)
 
         with torch.no_grad():
-            output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-            loss_adv = attack.loss(output_adv, attack.output_to_target(output_uns)).mean()
-            loss_ent_adv = vml.entropy_l(output_adv).mean()
+            out_p, other_outs_p = trainer.extend_output(model(x_p))
+            loss_p = attack.loss(out_p, attack.output_to_target(out_uns)).mean()
+            loss_ent_p = vml.entropy_l(out_p).mean()
 
-            output_l = output[:len(x_l)]
-            loss_l = trainer.loss(output_l, y_l).mean()
+            out_l = out[:len(x_l)]
+            loss_l = trainer.loss(out_l, y_l).mean()
 
-        other_outputs_l = type(other_outputs)({k: v[:len(x_l)] for k, v in other_outputs.items()})
-        return NameDict(x=x_all, output=output, other_outputs=other_outputs, output_l=output_l,
-                        other_outputs_l=other_outputs_l, loss_l=loss_l.item(), x_adv=x_adv,
-                        loss_adv=loss_adv.item(), x_l=x_l, target=y_l, output_adv=output_adv,
-                        other_outputs_adv=other_outputs_adv, loss_ent_adv=loss_ent_adv.item())
+        other_outs_l = type(other_outs)({k: v[:len(x_l)] for k, v in other_outs.items()})
+        return NameDict(x=x_all, output=out, other_outputs=other_outs, output_l=out_l,
+                        other_outputs_l=other_outs_l, loss_l=loss_l.item(), x_p=x_p,
+                        loss_p=loss_p.item(), x_l=x_l, target=y_l, output_p=out_p,
+                        other_outputs_p=other_outs_p, loss_ent_adv=loss_ent_p.item())
 
 
-@dataclass
+@dc.dataclass
 class SemisupervisedVATTrainStep:
     alpha: float = 1
     attack_eval_model: bool = False
     consistency_loss_on_labeled: bool = False
     entropy_loss_coef: float = 0
-    block_grad_for_clean: bool = True
+    block_grad_on_clean: bool = True
 
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
         model.train()
 
-        x_l, y_l, x_u = _prepare_semisupervised_vat_input(trainer, batch)
-        x_all = torch.cat([x_l, x_u])
-        x_c = x_all if self.consistency_loss_on_labeled else x_u
-        uns_start = 0 if self.consistency_loss_on_labeled else len(x_l)
+        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        x = torch.cat([x_l, x_u])
+        x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
 
-        output, other_outputs = trainer.extend_output(model(x_all))
-        output_uns, probs_uns = _get_unsupervised_vat_outputs(output, other_outputs, uns_start)
+        out, other_outs = trainer.extend_output(model(x))
+        out_uns, target_uns = _get_unsupervised_vat_outputs(
+            out, uns_start, self.block_grad_on_clean, attack.output_to_target)
+
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
-                x_adv = attack.perturb(model, x_c, probs_uns.detach())
+                x_p = attack.perturb(model, x_c, target_uns)
                 # NOTE: putting this outside of batchnorm_stats_tracking_off harms learning:
-                output_adv, other_outputs_adv = trainer.extend_output(model(x_adv))
-            with torch.no_grad() if self.block_grad_for_clean else ctx_suppress():
-                target_uns = attack.output_to_target(output_uns)
-                if self.block_grad_for_clean:  # just in case
-                    target_uns = target_uns.detach()
-            loss_adv = attack.loss(output_adv, target_uns).mean()
+                out_p, other_outs_p = trainer.extend_output(model(x_p))
 
-        output_l = output[:len(x_l)]
-        loss_l = trainer.loss(output_l, y_l).mean()
-
-        loss = loss_l + self.alpha * loss_adv
-        loss_ent = vml.entropy_l(output_adv).mean()
+        loss_p = attack.loss(out_p, target_uns).mean()
+        loss_l = trainer.loss(out_l := out[:len(x_l)], y_l).mean()
+        loss = loss_l + self.alpha * loss_p
+        loss_ent = vml.entropy_l(out_p).mean()
         if self.entropy_loss_coef:
             loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
+
         do_optimization_step(trainer.optimizer, loss=loss)
-        other_outputs_l = type(other_outputs)({k: v[:len(x_l)] for k, v in other_outputs.items()})
-        return NameDict(x=x_all, output=output, other_outputs=other_outputs, output_l=output_l,
-                        other_outputs_l=other_outputs_l, loss_l=loss_l.item(),
-                        loss_adv=loss_adv.item(), x_l=x_l, target=y_l, x_adv=x_adv,
-                        output_adv=output_adv, other_outputs_adv=other_outputs_adv,
+        other_outs_l = type(other_outs)({k: v[:len(x_l)] for k, v in other_outs.items()})
+
+        return NameDict(x=x, output=out, other_outputs=other_outs, output_l=out_l,
+                        other_outputs_l=other_outs_l, loss_l=loss_l.item(), loss_p=loss_p.item(),
+                        x_l=x_l, target=y_l, x_p=x_p, output_p=out_p, other_outputs_p=other_outs_p,
                         loss_ent=loss_ent.item())
 
 
-@dataclass
+@dc.dataclass
+class OldMeanTeacherTrainStep:  # TODO
+    alpha: float = 1
+    entropy_loss_coef: float = 0
+    track_pert_bn_stats: bool = False
+    block_grad_for_clean: bool = True
+
+    def __call__(self, trainer, batch):
+        m_student = trainer.model.student
+        m_teacher = trainer.model.teacher  # teacher
+        m_student.train()
+
+        x, y = trainer.prepare_batch(batch)
+        with torch.no_grad():
+            output, other_outputs = trainer.extend_output(trainer.m_teacher(x))
+        output, other_outputs = trainer.extend_output(trainer.m_student(x))
+        loss = trainer.loss(output, y).mean()
+        with batchnorm_stats_tracking_off(m_student) if not self.track_pert_bn_stats \
+                else ctx_suppress():
+            with torch.no_grad():
+                x_p, y_p = trainer.pert_model(x, y)
+            output_p, other_outputs_p = trainer.extend_output(m_student(x_p))
+            target_p = output.detach() if self.block_grad_for_clean else output
+            loss_p = trainer.loss(output_p, target_p).mean()
+            loss = loss + self.alpha * loss_p
+            if self.entropy_loss_coef:
+                loss_ent = vml.entropy_l(output_p).mean()
+                loss += self.entropy_loss_coef * loss_ent
+            do_optimization_step(trainer.optimizer, loss=loss)
+
+        return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
+                        x_p=x_p, target_p=target_p, output_p=output_p, other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item(), loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
+
+
+@dc.dataclass
+class MeanTeacherTrainStep:
+    alpha: float = 1
+    consistency_loss_on_labeled: bool = False  # True
+    entropy_loss_coef: float = 0
+    ema_teacher: nn.Module = None  # should this be here?
+    ema_decay = 0.99
+    clean_teacher_input: bool = False
+
+    def __call__(self, trainer, batch):
+        model, attack = trainer.model, trainer.attack
+        if self.ema_teacher is None:
+            self.ema_teacher = copy.deepcopy(model)
+        elif next(self.ema_teacher.parameters()).device != next(model.parameters()).device:
+            self.ema_teacher.to(model.device)
+        teacher = self.ema_teacher
+        model.train()
+        teacher.train()
+
+        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        x = torch.cat([x_l, x_u])
+        x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
+
+        out_l, other_outs_l = trainer.extend_output(model(x_l))
+        # out_uns, target_uns = _get_unsupervised_vat_outputs(
+        #    out, uns_start, self.block_grad_on_clean, attack.output_to_target)
+        assert attack.output_to_target(out_l) is out_l
+        x_pt = x_c if self.clean_teacher_input else attack.perturb(teacher, x_c)
+        with torch.no_grad():
+            out_pt, other_outs_pt = trainer.extend_output(teacher(x_pt))
+        x_p = attack.perturb(model, x_c)
+        out_p, other_outs_p = trainer.extend_output(model(x_p))
+
+        loss_c = attack.loss(out_p, out_pt).mean()
+        loss_l = trainer.loss(out_l, y_l).mean()
+        loss = loss_l + self.alpha * loss_c
+        loss_ent = vml.entropy_l(out_p).mean()
+        if self.entropy_loss_coef:
+            loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
+
+        do_optimization_step(trainer.optimizer, loss=loss)
+        with torch.no_grad():
+            for p, pt in zip(model.parameters(), teacher.parameters()):
+                pt.mul_(self.ema_decay).add(p, alpha=1 - self.ema_decay)
+
+        return NameDict(x=x, output=None, other_outputs=None, output_l=out_l,
+                        other_outputs_l=other_outs_l, loss_l=loss_l.item(), loss_c=loss_c.item(),
+                        x_l=x_l, target=y_l, x_p=x_p, output_p=out_p, other_outputs_p=other_outs_p,
+                        loss_ent=loss_ent.item())
+
+    def state_dict(self):
+        return self.ema_teacher.state_dict()
+
+    def load_state_dict(self, state_dict):  # TODO
+        self.ema_teacher.load_state_dict(state_dict)
+
+
+@dc.dataclass
 class AdversarialEvalStep:
     virtual: bool = False
     entropy_loss_coef: float = 0
@@ -554,15 +658,15 @@ class AdversarialEvalStep:
             output, other_outputs = trainer.extend_output(trainer.model(x))
             loss = trainer.loss(output, y).mean()
 
-        x_adv = attack.perturb(trainer.model, x, None if self.virtual else y)
+        x_p = attack.perturb(trainer.model, x, None if self.virtual else y)
         with torch.no_grad():
-            output_adv, other_outputs_adv = trainer.extend_output(trainer.model(x_adv))
-            loss_adv = (attack.loss(output_adv, attack.output_to_target(output)) if self.virtual
-                        else trainer.loss(output_adv, y)).mean()
+            output_p, other_outputs_p = trainer.extend_output(trainer.model(x_p))
+            loss_p = (attack.loss(output_p, attack.output_to_target(output)) if self.virtual
+                      else trainer.loss(output_p, y)).mean()
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-                        x_adv=x_adv, output_adv=output_adv, other_outputs_adv=other_outputs_adv,
-                        loss_adv=loss_adv.item())
+                        x_p=x_p, output_p=output_p, other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item())
 
 
 class AdversarialTargetedEvalStep:
@@ -584,16 +688,16 @@ class AdversarialTargetedEvalStep:
         result = dict()
         for i, t in enumerate(self.targets):
             t_var = torch.full_like(y, t)
-            x_adv = trainer.eval_attack.perturb(trainer.model, x, t_var)
+            x_p = trainer.eval_attack.perturb(trainer.model, x, t_var)
             with torch.no_grad():
-                result[f"output_adv{i}"], result[f"other_outputs_adv{i}"] = trainer.extend_output(
-                    trainer.model(x_adv))
-                result[f"loss_adv_targ{i}"] = trainer.loss(result[f"output_adv{i}"],
-                                                           t_var).mean().item()
-                result[f"loss_adv{i}"] = trainer.loss(result[f"output_adv{i}"], y).mean().item()
+                result[f"output_p{i}"], result[f"other_outputs_p{i}"] = trainer.extend_output(
+                    trainer.model(x_p))
+                result[f"loss_p_targ{i}"] = trainer.loss(result[f"output_p{i}"],
+                                                         t_var).mean().item()
+                result[f"loss_p{i}"] = trainer.loss(result[f"output_p{i}"], y).mean().item()
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-                        x_adv=x_adv, **result)
+                        x_p=x_p, **result)
 
 
 # Autoencoder
