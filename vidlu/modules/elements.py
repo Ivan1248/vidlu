@@ -247,6 +247,18 @@ class LogJacobianMixin:  # TODO
         return hasattr(self, 'inverse_forward') or hasattr(self, 'inverse_module')
 
 
+class InitializableMixin:
+    def initialize(self: nn.Module, *args, **kwargs):
+        if len(*args) + len(**kwargs) != 0:
+            y = self(*args, **kwargs)
+        if hasattr(self, '_init') and not hasattr(type(self), '_init'):
+            if len(vuf.params(self.init)) == 1:
+                self.init(self)
+            else:
+                self.init(self, *args, **kwargs)
+        return y
+
+
 # Core Modules #####################################################################################
 
 def is_built(module, including_submodules=False):
@@ -260,10 +272,10 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     def __init__(self):
         super().__init__()
         self._built = False
-        self._check = None  # when this attreibute
+        self._check = None
 
     def is_built(self, including_submodules=False):
-        if not self._built:
+        if not self.is_built():
             return False
         if including_submodules:
             return all(not hasattr(m, "is_built") or m.is_built(False) for m in self.modules())
