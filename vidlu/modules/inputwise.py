@@ -1,7 +1,6 @@
 import typing as T
 from functools import partial
 import inspect
-from typing import Any
 import copy
 import warnings
 
@@ -12,7 +11,6 @@ from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
-from vidlu.utils.collections import NameDict
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -60,6 +58,12 @@ class PertModelBase(E.Module):
                     break
         else:
             self.forward_arg_count = forward_arg_count
+        # self.init = init
+
+    # def initialize(self, input=None):  # TODO: make initialize?
+    #     if input is not None:
+    #         self(input)
+    #     self.init(self, input)
 
     def build(self, x):
         # dummy_x has properties like x, but takes up almost no memory
@@ -358,7 +362,8 @@ class MorsicTPSWarp(PertModelBase):
 class TPSWarp(PertModelBase):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
-    def __init__(self, *, forward, control_grid_shape=(2, 2), control_grid_align_corners=False,
+    def __init__(self, *, forward: bool, control_grid_shape=(2, 2),
+                 control_grid_align_corners=False,
                  align_corners=True, padding_mode='zeros', interpolation_mode='bilinear',
                  label_interpolation_mode='nearest', label_padding_mode=-1, swap_src_dst=False):
         super().__init__()
