@@ -6,7 +6,7 @@ from argparse import Namespace
 import torch
 
 from vidlu import models, metrics
-from vidlu.models import paramtrans
+from vidlu.models import params
 from vidlu.data.extra import CachingDatasetFactory, dataset_ops
 from vidlu.data import DataLoader
 from vidlu.training import Trainer
@@ -320,11 +320,11 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
         raise RuntimeError('Either state_dict should be provided or params_str should contain the'
                            + ' parameters file path at the end of `params_str`.')
     if p.file != '':
-        state_dict = paramtrans.load_params_file(path if (path := Path(p.file)).is_absolute() else
-                                                 Path(params_dir) / path)
-    state_dict = paramtrans.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
-    state_dict_fr = paramtrans.filter_by_and_remove_key_prefix(state_dict, p.src_module,
-                                                               error_on_no_match=True)
+        state_dict = params.load_params_file(path if (path := Path(p.file)).is_absolute() else
+                                             Path(params_dir) / path)
+    state_dict = params.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
+    state_dict_fr = params.filter_by_and_remove_key_prefix(state_dict, p.src_module,
+                                                           error_on_no_match=True)
     return state_dict_fr, p.dest_module
 
 
