@@ -10,7 +10,7 @@ import torch
 
 import vidlu.modules.utils as vmu
 from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
-from vidlu.training.lr_schedulers import ConstLR
+from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import Event, Stopwatch
@@ -274,15 +274,21 @@ class Evaluator:
 
 @dataclass
 class Trainer(Evaluator):
-    state_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
+    """ A class encapsulating all machine learning algorithm components.
+
+    Additional state should be stored in in the `trainer.training.state`
+    dictionary or in a training extension from `trainer.extensions`.
+    """
+    state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
 
     eval_batch_size: int = None
-    optimizer_f: InitVar[T.Callable] = None  # O
-    epoch_count: int = Required  # O
-    lr_scheduler_f: InitVar[T.Callable] = ConstLR  # O
-    train_step: T.Callable = Required  # O; vidlu.training.steps
-    jitter: T.Callable = None  # D
-    extension_fs: InitVar[T.Sequence] = ()  # D
+
+    epoch_count: int = Required  # optimization
+    optimizer_f: InitVar[T.Callable] = None  # optimization; vidlu.optim
+    lr_scheduler_f: InitVar[T.Callable] = ConstLR  # optimization; vidlu.optim.lr_schedulers
+    jitter: T.Callable = None  # learning
+    train_step: T.Callable = Required  # learning; vidlu.training.steps
+    extension_fs: InitVar[T.Sequence] = ()  # learning
 
     optimizer: T.Any = dc.field(init=False)
     lr_scheduler: T.Any = dc.field(init=False)
@@ -310,6 +316,8 @@ class Trainer(Evaluator):
         if len(set(map(type, self.extensions))) < len(self.extensions):
             raise RuntimeError("Multiple extensions of the same type are not allowed. The types are"
                                + f"{', '.join([type(e).__name__ for e in self.extensions])}.")
+        self.state = NameDict()
+
         for e in self.extensions:
             e.initialize(self)
 
@@ -326,13 +334,16 @@ class Trainer(Evaluator):
                             batch_size=self.eval_batch_size if batch_size is None else batch_size)
 
     def state_dict(self):
-        return {k: attr.state_dict() for k in type(self).state_attrs
-                if (hasattr(attr := getattr(self, k), "state_dict"))}
+        return dict(**{k: attr.state_dict() for k in type(self).state_dict_attrs
+                       if (hasattr(attr := getattr(self, k), "state_dict"))},
+                    extensions={f"{type(e)}": e.state_dict() for e in self.extensions})
 
     def load_state_dict(self, state_dict):
-        for k in type(self).state_attrs:
-            if hasattr(obj := getattr(self, k), "load_state_dict"):
-                obj.load_state_dict(state_dict[k])
+        for k in self.state_dict_attrs:
+            getattr(self, k).load_state_dict(state_dict[k])
+        if 'extensions' in state_dict:  # TODO: remove if
+            for e in self.extensions:
+                e.load_state_dict(state_dict['extensions'][f"{type(e)}"])
 
     def __getattr__(self, key):
         for e in self.extensions:

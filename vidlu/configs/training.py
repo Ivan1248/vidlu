@@ -5,7 +5,7 @@ from vidlu.modules import get_submodule
 from vidlu.transforms import jitter
 from vidlu.utils.collections import NameDict
 from vidlu.utils.func import params, Required
-from vidlu.training.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
+from vidlu.optim.lr_schedulers import ScalableMultiStepLR, ScalableLambdaLR, CosineLR
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
 
