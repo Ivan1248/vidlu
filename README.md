@@ -15,7 +15,7 @@ A deep learning framework for research with emphasis on computer vision, based o
     -   [x] lazy data loading and processing (e.g. if segmentation labels are not requested, they are not loaded)  
     -   [x] many datasets (data loaders)  
 -   modules  
-    -   [x] modules that infer their input dimension automatically (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet)) -- requires an initial run for initialization  
+    -   [x] modules with shape inference (like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet)) -- an initial run in necessary for initialization  
     -   [x] procedures for getting module names (paths) from the call stack and extracting intermediate layer outputs through their names  
     -   [x] high generality/customizability of components and models (deep arguments) (not completely satisfactory)  
     -   [x] deep module splitting and joining (implemented for `vidlu.modules.Sequential`)  
