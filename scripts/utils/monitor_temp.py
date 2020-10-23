@@ -110,14 +110,6 @@ with Stopwatch() as t:
         gpuutses.append(get_utilization())
         pbar.update(int(t.time * 10) - pbar.n)
 
-    # ob = OutputBuilder()
-    # ob.add(f"[{datetime.now().strftime('%H:%M:%S')}]\n")
-    # for t in curr_temps:
-    #     ob.add(str(t))
-    # ob.add(str(curr_freq))
-    # print(str(ob))
-    # sys.stdout.flush()
-
 print(f"max: {np.max(np.array(tempses))}")
 print(f"mean: {np.average(np.array(tempses))}")
 print(f"std: {np.std(np.array(tempses))}")
