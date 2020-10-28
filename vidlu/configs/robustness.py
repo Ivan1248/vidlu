@@ -4,10 +4,11 @@ import torch
 
 import vidlu.optim as vo
 import vidlu.modules.inputwise as vmi
+import vidlu.modules as vm
 from vidlu.modules import losses
 from vidlu.training.robustness import attacks
-
-from vidlu.training.robustness import perturbation
+from vidlu.training.robustness import perturbation as pert
+import vidlu.transforms.jitter as vtj
 
 # Adversarial attacks
 
@@ -63,7 +64,7 @@ mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
 morsic_tps_warp_attack = partial(attacks.PertModelAttack,
                                  # pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2),
                                  #                      label_padding_mode='zeros'),
-                                 pert_model_f=partial(perturbation.OrsicPhotometricAndTPS),
+                                 pert_model_f=pert.PhotoTPS20,
                                  # pert_model_init=lambda pmodel: pmodel.theta.uniform_(-.1, .1),
                                  pert_model_init=lambda pmodel: vmi.reset_parameters(pmodel),
                                  step_size=0.01,
@@ -73,8 +74,8 @@ morsic_tps_warp_attack = partial(attacks.PertModelAttack,
 
 def get_standard_pert_modeL_attack_params(param_to_bounds, param_to_initialization_params=None,
                                           param_to_step_size=None, step_size_factor=None,
-                                          initializer_f=perturbation.LInfBallUniformInitializer,
-                                          projection_f=perturbation.ClampProjector):
+                                          initializer_f=pert.UniformInit,
+                                          projection_f=pert.ClampProjector):
     if (param_to_step_size is None) == (step_size_factor is None):
         raise RuntimeError("Either param_to_step_size or step_size should be provided.")
     if param_to_initialization_params is None:
@@ -97,7 +98,7 @@ def get_channel_gamma_hsv_attack_params(log_gamma_bounds=(-0.4, 0.4), hsv_addend
 channel_gamma_hsv_attack = partial(
     attacks.PertModelAttack,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
-    pert_model_f=perturbation.ChannelGammaHsv,
+    pert_model_f=pert.ChannelGammaHsv,
     **get_channel_gamma_hsv_attack_params())
 
 tps_warp_attack = partial(
@@ -105,10 +106,20 @@ tps_warp_attack = partial(
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
-    initializer=perturbation.NormalInitializer({'offsets': (0, 0.1)}),
-    projection=perturbation.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
+    initializer=pert.NormalInit({'offsets': (0, 0.1)}),
+    projection=pert.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
 
-import vidlu.transforms.jitter as vtj
+phtps_attack_20 = partial(
+    tps_warp_attack,
+    pert_model_f=pert.PhotoTPS20,
+    initializer=pert.CombinedInit(
+        dict(tps=pert.NormalInit({'offsets': (0, 0.1)}),
+             photometric=pert.UniformInit(
+                 {'module.add_v.addend': [-0.25, 0.25],
+                  'module.mul_s.factor': [0.25, 2.],
+                  'module.add_h.addend': [-0.1, 0.1],
+                  'module.mul_v.factor': [0.25, 2.]}))),
+    projection=lambda: "should not be called")
 
 
 class BatchRandAugment:
@@ -131,5 +142,5 @@ tps_warp_attack_weaker = partial(
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
-    initializer=perturbation.NormalInitializer({'offsets': (0, 0.03)}),
-    projection=perturbation.ScalingProjector({'offsets': 0.03}, p=2, dim=-1))
+    initializer=pert.NormalInit({'offsets': (0, 0.03)}),
+    projection=pert.ScalingProjector({'offsets': 0.03}, p=2, dim=-1))

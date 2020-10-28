@@ -166,6 +166,13 @@ semisupervised_vat_entmin = TrainerConfig(
     train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
                                              entropy_loss_coef=1))
 
+semisup_consistency_phtps20 = TrainerConfig(
+    partial(te.SemiSupervisedVAT,
+            attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
+                             output_to_target=lambda x: x)),
+    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True))
+
 mean_teacher_custom_tps = TrainerConfig(
     partial(te.SemiSupervisedVAT, attack_f=partial(tps_warp_attack, step_count=0,
                                                    loss=losses.kl_div_ll, output_to_target=lambda x: x)),
@@ -175,8 +182,8 @@ mean_teacher_custom_tps = TrainerConfig(
 mean_teacher_custom_tps_weaker = TrainerConfig(
     partial(te.SemiSupervisedVAT,
             attack_f=partial(tps_warp_attack,
-                             initializer=perturbation.NormalInitializer({'offsets': (0, 0.05)}),
-                             projection=perturbation.ScalingProjector({'offsets': 10}),
+                             initializer=pert.NormalInit({'offsets': (0, 0.05)}),
+                             projection=None,
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
@@ -184,8 +191,8 @@ mean_teacher_custom_tps_weaker = TrainerConfig(
 mean_teacher_custom_tps_more_weaker = TrainerConfig(
     partial(te.SemiSupervisedVAT,
             attack_f=partial(tps_warp_attack,
-                             initializer=perturbation.NormalInitializer({'offsets': (0, 0.02)}),
-                             projection=perturbation.ScalingProjector({'offsets': 10}),
+                             initializer=pert.NormalInit({'offsets': (0, 0.02)}),
+                             projection=pert.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
@@ -193,8 +200,8 @@ mean_teacher_custom_tps_more_weaker = TrainerConfig(
 mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
     partial(te.SemiSupervisedVAT,
             attack_f=partial(tps_warp_attack,
-                             initializer=perturbation.NormalInitializer({'offsets': (0, 0.02)}),
-                             projection=perturbation.ScalingProjector({'offsets': 10}),
+                             initializer=pert.NormalInit({'offsets': (0, 0.02)}),
+                             projection=pert.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False,
@@ -241,6 +248,14 @@ irevnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
     # TODO: check lr. schedule and init
     optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=5e-4))
 
+irevnet_hybrid_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
+    irevnet_cifar,
+    # overriding
+    # TODO: check lr. schedule and init
+    eval_step=ts.DiscriminativeFlowSupervisedEvalStep(flow_end="backbone.concat", gen_weight=1.),
+    train_step=ts.DiscriminativeFlowSupervisedTrainStep(flow_end="backbone.concat", gen_weight=1.),
+    optimizer_f=partial(optim.Adamax, lr=1e-3, weight_decay=5e-4))
+
 densenet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1608.06993
     resnet_cifar,
     optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=1e-4, nesterov=True),
@@ -273,8 +288,15 @@ swiftnet_cityscapes = TrainerConfig(
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
     batch_size=14,
-    eval_batch_size=2,  # 6
+    eval_batch_size=4,  # 6
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0))
+
+swiftnet_irevnet_hybrid_cityscapes = TrainerConfig(
+    swiftnet_cityscapes,
+    eval_step=ts.DiscriminativeFlowSupervisedEvalStep(flow_end="backbone.backbone.concat", gen_weight=1.),
+    train_step=ts.DiscriminativeFlowSupervisedTrainStep(flow_end="backbone.backbone.concat", gen_weight=1.),
+    optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=5e-4),
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(256, 256), max_scale=2, overflow=0))
 
 swiftnet_mo_cityscapes = TrainerConfig(
     swiftnet_cityscapes,
