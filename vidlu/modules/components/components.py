@@ -148,8 +148,8 @@ class PreactBlock(E.Seq):
         noise_f: Noise module factory.
     """
 
-    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1,
-                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
+    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1, dilation=1,
+                 noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
                  conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
                                 stride=Reserved, dilation=Reserved),
                  noise_f=None):
@@ -185,11 +185,9 @@ class PostactBlock(E.Seq):
         noise_f: Noise module factory.
     """
 
-    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1,
-                 dilation=1, noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
-                 conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
-                                stride=Reserved, dilation=Reserved),
-                 noise_f=None):
+    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1, dilation=1,
+                 noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
+                 conv_f=params(PreactBlock).conv_f, noise_f=None):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
@@ -730,7 +728,7 @@ class DenseNetBackbone(E.Seq):
 class MDenseTransition(E.Seq):
     def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=E.ReLU,
                  conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
-                 pool_f=partial(E.AvgPool, kernel_size=2, stride=Reserved)):
+                 pool_f=params(DenseTransition).pool_f):
         super().__init__()
         self.store_args()
 
@@ -966,12 +964,7 @@ class AdditiveCouplingR(E.Module):
 
 
 class AffineCouplingD(E.Module):
-    def __init__(self, first=False, block_f=PreactBlock):
-        super().__init__()
-        if (w := params(block_f).width_factors[-1]) != 1:
-            raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
-        self.store_args()
-        self.baguette = self.block = None
+    __init__ = AdditiveCouplingR.__init__
 
     def build(self, x):
         a, block_args = self.args, params(self.args.block_f)
@@ -995,35 +988,6 @@ class AffineCouplingD(E.Module):
         bx1 = self.block(x1)
         t, pre_s = torch.split(bx1, bx1.shape[1] // 2, dim=1)
         inv_s = pre_s.tanh().neg_().exp()
-        return self.baguette.inverse((y[1] - t) * inv_s), x1
-
-
-class AffineCouplingR2(E.Module):
-    def __init__(self, first=False, block_f=PreactBlock):
-        super().__init__()
-        if (w := params(block_f).width_factors[-1]) != 1:
-            raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
-        self.store_args()
-        self.baguette = self.s_block = self.t_block = None
-
-    def build(self, x):
-        a, block_args = self.args, params(self.args.block_f)
-        self.baguette = Baguette(block_args.stride) if block_args.stride != 1 else E.Identity()
-        self.s_block = a.block_f()['conv0':] if a.first else a.block_f()
-        self.t_block = a.block_f()['conv0':] if a.first else a.block_f()
-
-    def forward(self, x):
-        x1_ = Ladj.stop(x[1])
-        ln_s, t = self.s_block(x1_).tanh(), self.t_block(x1_)
-        y = self.baguette(x[1]), self.baguette(x[0]) * ln_s.exp() + t
-        return Ladj.add(y, x, lambda: ln_s.view(ln_s.shape[0], -1).sum(1))
-
-    def inverse_forward(self, y):
-        if Ladj.has(y[0]):
-            raise NotImplementedError()
-        x1 = self.baguette.inverse(y[0])
-        x1_ = Ladj.stop(x1)
-        inv_s, t = self.s_block(x1_).neg_().tanh().exp(), self.t_block(x1_)
         return self.baguette.inverse((y[1] - t) * inv_s), x1
 
 
