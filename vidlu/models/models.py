@@ -10,6 +10,7 @@ import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
 from vidlu.modules.other import mnistnet
+from vidlu.models.utils import ladder_input_names
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
 from . import initialization
@@ -25,21 +26,24 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
                        small_input=default_args(vmc.ResNetV1Backbone).small_input,
                        block_f=partial(default_args(vmc.ResNetV1Backbone).block_f,
                                        kernel_sizes=Reserved),
-                       backbone_f=vmc.ResNetV1Backbone):
+                       backbone_f=vmc.ResNetV1Backbone,
+                       group_lengths=(2,) * 4, width_factors=(1, 1), ksizes=(3, 3),
+                       dim_change='proj'):
     # TODO: dropout
-    basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
-    bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
-    group_lengths, (ksizes, width_factors, dim_change) = {
-        10: ([1] * 4, basic),  # [1] bw 64
-        18: ([2] * 4, basic),  # [1] bw 64
-        34: ([3, 4, 6, 3], basic),  # [1] bw 64
-        110: ([18] * 3, basic),  # [1] bw 16
-        50: ([3, 4, 6, 3], bottleneck),  # [1] bw 64
-        101: ([3, 4, 23, 3], bottleneck),  # [1] bw 64
-        152: ([3, 8, 36, 3], bottleneck),  # [1] bw 64
-        164: ([18] * 3, bottleneck),  # [1] bw 16
-        200: ([3, 24, 36, 3], bottleneck),  # [2] bw 64
-    }[depth]
+    if depth is not None:
+        basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
+        bottleneck = ([1, 3, 1], [1, 1, 4], 'proj')  # last paragraph in [2]
+        group_lengths, (ksizes, width_factors, dim_change) = {
+            10: ([1] * 4, basic),  # [1] bw 64
+            18: ([2] * 4, basic),  # [1] bw 64
+            34: ([3, 4, 6, 3], basic),  # [1] bw 64
+            110: ([18] * 3, basic),  # [1] bw 16
+            50: ([3, 4, 6, 3], bottleneck),  # [1] bw 64
+            101: ([3, 4, 23, 3], bottleneck),  # [1] bw 64
+            152: ([3, 8, 36, 3], bottleneck),  # [1] bw 64
+            164: ([18] * 3, bottleneck),  # [1] bw 16
+            200: ([3, 24, 36, 3], bottleneck),  # [2] bw 64
+        }[depth]
     return backbone_f(base_width=base_width, small_input=small_input, group_lengths=group_lengths,
                       block_f=partial(block_f, kernel_sizes=ksizes, width_factors=width_factors),
                       dim_change=dim_change)
@@ -111,9 +115,10 @@ def irevnet_backbone(init_stride=2, group_lengths=(6, 16, 72, 6),
                      block_f=partial(default_args(vmc.IRevNetBackbone).block_f,
                                      kernel_sizes=(3, 3, 3),
                                      width_factors=(Frac(1, 4), Frac(1, 4), 1)),
-                     base_width=None):
+                     base_width=None,
+                     groups_f=default_args(vmc.IRevNetBackbone).groups_f):
     return vmc.IRevNetBackbone(init_stride=init_stride, group_lengths=group_lengths,
-                               base_width=base_width, block_f=block_f)
+                               base_width=base_width, block_f=block_f, groups_f=groups_f)
 
 
 # Models ###########################################################################################
@@ -219,35 +224,48 @@ class MNISTNet(ClassificationModel):
                              init=partial(initialization.kaiming_mnistnet, module=Reserved))
 
 
-class SwiftNet(SegmentationModel):
+class SwiftNetBase(SegmentationModel):
     def __init__(self,
                  backbone_f=resnet_v1_backbone,
                  ladder_width=128,
                  head_f=vmc.heads.SegmentationHead,
                  input_adapter=None,
                  init=partial(initialization.kaiming_resnet, module=Reserved),
-                 lateral_prefixes=tuple(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
+                 laterals=None,  # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  mem_efficiency=1):
         if lateral_suffix not in ('sum', 'act', ''):
             raise ValueError("lateral_suffix should be either 'sum' or 'act'.")
         super().__init__(
-            backbone_f=partial(vmc.KresoLadderNet,
-                               backbone_f=backbone_f,
-                               laterals=[f"{p}.{lateral_suffix}" if lateral_suffix else p
-                                         for p in lateral_prefixes],
-                               ladder_width=ladder_width,
-                               context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
-                                                 out_size=128, grid_sizes=(8, 4, 2)),
-                               up_blend_f=partial(vmc.LadderUpsampleBlend, pre_blending='sum'),
-                               post_activation=True),
+            backbone_f=backbone_f,
             head_f=partial(head_f, kernel_size=1),
             init=init,
             input_adapter=input_adapter)
-        self.lateral_prefixes = lateral_prefixes
+        self.laterals = laterals
         self.lateral_suffix = lateral_suffix
         self.mem_efficiency = mem_efficiency
+        self.ladder_width = ladder_width
 
+    def build(self, x):
+        backbone = self.backbone
+        if self.laterals is None or callable(self.laterals):
+            backbone(x)
+            self.laterals = self.laterals(backbone) if callable(self.laterals) else \
+                ladder_input_names(backbone)
+        self.backbone = vmc.KresoLadderNet(
+            backbone_f=lambda: backbone,
+            laterals=[f"{p}.{self.lateral_suffix}" if self.lateral_suffix else
+                      p for p in self.laterals],
+            ladder_width=self.ladder_width,
+            context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
+                              out_size=128, grid_sizes=(8, 4, 2)),
+            up_blend_f=partial(vmc.LadderUpsampleBlend, pre_blending='sum'),
+            post_activation=True,
+            lateral_preprocessing=lambda x: (torch.cat(x, dim=1) if isinstance(x, tuple) else x))
+        super().build(x)
+
+
+class SwiftNet(SwiftNetBase):
     def post_build(self, *args, **kwargs):
         """Sets up in-place operations and gradient checkpointing for
         efficiency."""
@@ -260,7 +278,7 @@ class SwiftNet(SegmentationModel):
                     warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
                 module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
         if self.lateral_suffix == 'sum':
-            for lb in self.lateral_prefixes:
+            for lb in self.laterals:
                 module = vm.get_submodule(self.backbone.backbone, f"{lb}.act")
                 module.inplace = False
 
@@ -270,6 +288,23 @@ class SwiftNet(SegmentationModel):
         elif self.mem_efficiency >= 2:  # 6260MiB, 5.84/s
             for res_unit in self.backbone.backbone.bulk:
                 res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))
+
+
+class SwiftNetIRevNet(SwiftNetBase):
+    __init__ = partialmethod(SwiftNet.__init__, backbone_f=irevnet_backbone)
+
+    def post_build(self, *args, **kwargs):
+        super().post_build()
+
+        inplace = self.mem_efficiency >= 1
+        for name, module in self.named_modules():
+            if hasattr(module, 'inplace'):
+                if module.inplace and self.mem_efficiency == 0:
+                    warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
+                module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
+
+        if self.mem_efficiency >= 2:
+            raise NotImplementedError()
 
 
 class LadderDensenet(DiscriminativeModel):
@@ -285,9 +320,8 @@ class LadderDensenet(DiscriminativeModel):
             ladder_width:
         """
         if laterals is None:
-            laterals = tuple(
-                f"bulk.db{i}.unit{j}.sum"  # TODO: automatic based on backbone
-                for i, j in zip(range(3), [1] * 3))
+            laterals = tuple(f"bulk.db{i}.unit{j}.sum" for i, j in zip(range(3), [1] * 3))
+            # TODO: automatic based on backbone, split DB3
         super().__init__(backbone_f=partial(vmc.KresoLadderNet,
                                             backbone_f=backbone_f,
                                             laterals=laterals,

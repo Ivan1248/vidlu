@@ -2,12 +2,16 @@ from functools import partial, partialmethod
 from collections.abc import Sequence
 import typing as T
 import math
+import numpy as np
+import warnings
 
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 import vidlu.modules.elements as E
+from vidlu.modules import tensor_extra
+from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
 
@@ -212,12 +216,17 @@ class AffineCoupling(E.Module):
         self.scale, self.translation = scale_f(), translation_f()
 
     def forward(self, x1, x2):
-        return x1, x2 * self.scale(x1).exp() + self.translation(x1)
+        s = self.scale(x1).exp()
+        y = Ladj.stop(x1), x2 * s + self.translation(x1)
+        return Ladj.add(y, (x1, x2), lambda: s.view(s.shape[0], -1).sum(1))
 
     def inverse_forward(self, y1, y2):
+        if Ladj.has(y1):
+            raise NotImplementedError()
         return y1, (y2 - self.translation(y1)) * (-self.scale(y1)).exp()
 
 
+@E.zero_log_abs_det_jac
 class AdditiveCoupling(E.Module):
     # http://arxiv.org/abs/1410.8516 (NICE)
     def __init__(self, translation_f):
@@ -231,6 +240,7 @@ class AdditiveCoupling(E.Module):
         return y1, y2 - self.translation(y1)
 
 
+@E.zero_log_abs_det_jac
 class ProportionSplit(E.Module):
     reconstruction_tols = dict(rtol=0, atol=0)
 
@@ -258,7 +268,11 @@ class _PadChannelsBase(E.Module):
 
 
 def pad_channels(x, padding):
-    return F.pad(x, [0, 0, 0, 0] + padding)
+    y = F.pad(x, [0, 0, 0, 0] + padding)
+    if Ladj.has(x) and y.shape != x.shape:
+        # raise RuntimeError("Non-zero padding does not have a square jacobian.")
+        warnings.warn("Non-zero padding does not have a square jacobian.")
+    return Ladj.add(y, x, lambda: 0)
 
 
 class PadChannels(_PadChannelsBase):
@@ -328,8 +342,7 @@ class Baguette(E.Seq):
 
 class Invertible1x1Conv(E.Conv):
     def __init__(self, num_channels):
-        self.num_channels = num_channels
-        nn.Conv2d.__init__(self, num_channels, num_channels, 1, bias=False)
+        super().__init__(self, num_channels, 1, bias=False)
 
     def reset_parameters(self):
         # initialization done with rotation matrix
@@ -338,21 +351,18 @@ class Invertible1x1Conv(E.Conv):
         w_init = w_init.unsqueeze(-1).unsqueeze(-1)
         self.weight.data.copy_(w_init)
 
-    def forward_(self, x, objective):
-        dlogdet = torch.det(self.weight.squeeze()).abs().log() * x.size(-2) * x.size(-1)
-        objective += dlogdet
-        output = F.conv2d(x, self.weight, self.bias, self.stride, self.padding, \
-                          self.dilation, self.groups)
+    def forward(self, x):
+        y = super().forward(x)
+        return Ladj.add(y, x, lambda: self._ladj(y, x))
 
-        return output, objective
+    def inverse_forward(self, y):
+        w_inv = torch.inverse(self.weight.squeeze()).unsqueeze(-1).unsqueeze(-1)
+        x = F.conv2d(y, w_inv, self.bias, self.stride, self.padding, self.dilation, self.groups)
+        return Ladj.add(x, y, lambda: self._ladj(x, y, inverse=True))
 
-    def reverse_(self, x, objective):
-        dlogdet = torch.det(self.weight.squeeze()).abs().log() * x.size(-2) * x.size(-1)
-        objective -= dlogdet
-        weight_inv = torch.inverse(self.weight.squeeze()).unsqueeze(-1).unsqueeze(-1)
-        output = F.conv2d(x, weight_inv, self.bias, self.stride, self.padding, \
-                          self.dilation, self.groups)
-        return output, objective
+    def _ladj(self, y, x, inverse=False):
+        a, lad_w = np.prod(x.shape[2:]), self.orig.weight.squeeze().det().abs().log()
+        return (-a if inverse else a) * lad_w
 
 
 # Attention ########################################################################################
@@ -446,8 +456,8 @@ class DenseSPP(E.Module):
 class LadderUpsampleBlend(E.Module):
     """ For LadderDenseNet and SwiftNet. """
     _pre_blendings = dict(
-        sum=E.Sum,
-        concat=E.Concat
+        concat=E.Concat,
+        sum=E.Sum
     )
 
     def __init__(self, out_channels, pre_blending='concat',
@@ -500,7 +510,8 @@ class KresoContext(E.Seq):
 
 class KresoLadderNet(E.Module):
     def __init__(self, backbone_f, laterals: T.Sequence[str], ladder_width: int,
-                 context_f=DenseSPP, up_blend_f=LadderUpsampleBlend, post_activation=False):
+                 context_f=DenseSPP, up_blend_f=LadderUpsampleBlend, post_activation=False,
+                 lateral_preprocessing=lambda x: x):
         super().__init__()
         self.backbone = backbone_f()
         self.laterals = laterals
@@ -510,10 +521,12 @@ class KresoLadderNet(E.Module):
         self.post_activation = post_activation
         if post_activation:
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
+        self.lateral_preprocessing = lateral_preprocessing
 
     def forward(self, x):
         context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
         context = self.context(context_input)
+        laterals = list(map(self.lateral_preprocessing, laterals))
         ladder_output = self.ladder(context, laterals[::-1])
         return self.act(self.norm(ladder_output)) if self.post_activation else ladder_output
 
@@ -928,27 +941,95 @@ class AAEDiscriminator(E.Seq):
 # iRevNet ##########################################################################################
 
 
-class RevNetUnitTransform(E.Module):
+@E.zero_log_abs_det_jac
+class AdditiveCouplingR(E.Module):
     def __init__(self, first=False, block_f=PreactBlock):
         super().__init__()
+        self.store_args()
+        if (w := params(block_f).width_factors[-1]) != 1:
+            raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
+        self.baguette = self.block = None
+
+    def build(self, x):
+        a, block_args = self.args, params(self.args.block_f)
+        self.baguette = Baguette(block_args.stride) if block_args.stride != 1 else E.Identity()
+        self.block = a.block_f()['conv0':] if a.first else a.block_f()
+
+    def forward(self, x):
+        t = self.block(Ladj.stop(x[1]))
+        return self.baguette(x[1]), self.baguette(x[0]) + t
+
+    def inverse_forward(self, y):
+        x1 = self.baguette.inverse(y[0])
+        t = self.block(Ladj.stop(x1))
+        return self.baguette.inverse(y[1] - t), x1
+
+
+class AffineCouplingD(E.Module):
+    def __init__(self, first=False, block_f=PreactBlock):
+        super().__init__()
+        if (w := params(block_f).width_factors[-1]) != 1:
+            raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
         self.store_args()
         self.baguette = self.block = None
 
     def build(self, x):
-        a, ba = self.args, params(self.args.block_f)
-        self.baguette = Baguette(ba.stride) if ba.stride != 1 else E.Identity()
-        self.block = a.block_f()['conv0':] if a.first else a.block_f()
+        a, block_args = self.args, params(self.args.block_f)
+        self.baguette = Baguette(block_args.stride) if block_args.stride != 1 else E.Identity()
+        width_factors = list(block_args.width_factors)
+        width_factors[-1] *= 2
+        block_f = partial(a.block_f, width_factors=width_factors)
+        self.block = block_f()['conv0':] if a.first else block_f()
 
     def forward(self, x):
-        return self.baguette(x[1]), self.block(x[1]) + self.baguette(x[0])
+        bx1 = self.block(Ladj.stop(x[1]))
+        t, pre_s = torch.chunk(bx1, 2, dim=1)
+        ln_s = pre_s.tanh()
+        y = self.baguette(x[1]), self.baguette(x[0]) * ln_s.exp() + t
+        return Ladj.add(y, x, lambda: ln_s.view(ln_s.shape[0], -1).sum(1))
 
     def inverse_forward(self, y):
-        h1 = self.baguette.inverse(y[0])
-        return self.baguette.inverse(y[1] - self.block(h1)), h1
+        if Ladj.has(y[0]):
+            raise NotImplementedError()
+        x1 = self.baguette.inverse(y[0])
+        bx1 = self.block(x1)
+        t, pre_s = torch.split(bx1, bx1.shape[1] // 2, dim=1)
+        inv_s = pre_s.tanh().neg_().exp()
+        return self.baguette.inverse((y[1] - t) * inv_s), x1
+
+
+class AffineCouplingR2(E.Module):
+    def __init__(self, first=False, block_f=PreactBlock):
+        super().__init__()
+        if (w := params(block_f).width_factors[-1]) != 1:
+            raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
+        self.store_args()
+        self.baguette = self.s_block = self.t_block = None
+
+    def build(self, x):
+        a, block_args = self.args, params(self.args.block_f)
+        self.baguette = Baguette(block_args.stride) if block_args.stride != 1 else E.Identity()
+        self.s_block = a.block_f()['conv0':] if a.first else a.block_f()
+        self.t_block = a.block_f()['conv0':] if a.first else a.block_f()
+
+    def forward(self, x):
+        x1_ = Ladj.stop(x[1])
+        ln_s, t = self.s_block(x1_).tanh(), self.t_block(x1_)
+        y = self.baguette(x[1]), self.baguette(x[0]) * ln_s.exp() + t
+        return Ladj.add(y, x, lambda: ln_s.view(ln_s.shape[0], -1).sum(1))
+
+    def inverse_forward(self, y):
+        if Ladj.has(y[0]):
+            raise NotImplementedError()
+        x1 = self.baguette.inverse(y[0])
+        x1_ = Ladj.stop(x1)
+        inv_s, t = self.s_block(x1_).neg_().tanh().exp(), self.t_block(x1_)
+        return self.baguette.inverse((y[1] - t) * inv_s), x1
 
 
 class IRevNetUnit(E.Seq):
-    def __init__(self, first=False, block_f=PreactBlock, force_surjection=False):
+    def __init__(self, first=False, block_f=PreactBlock, force_surjection=False,
+                 coupling_f=AdditiveCouplingR):
         super().__init__()
         self.store_args()
 
@@ -959,7 +1040,8 @@ class IRevNetUnit(E.Seq):
             self.add(input_pad=E.Seq(concat=E.Concat(1),  # TODO: make more efficient
                                      inj_pad=PadChannels(padding),
                                      psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
-        self.add(transform=RevNetUnitTransform(first=a.first, block_f=a.block_f))
+        # assert padding == 0, (padding, block_out_ch)
+        self.add(transform=a.coupling_f(first=a.first, block_f=a.block_f))  # rename ot coupling
 
     @staticmethod
     def _input_padding(x, block_out_ch, stride, force_surjection):
@@ -973,9 +1055,8 @@ class IRevNetUnit(E.Seq):
             if stride != 1:
                 raise RuntimeError(f"Stride is {stride}, but must be 1 for injective padding.")
             if force_surjection:
-                raise RuntimeError(
-                    f"For bijectivity, the input channel count ({in_ch}) times stride^2"
-                    + f" ({stride ** 2}) must equal the number of output channels ({block_out_ch})")
+                raise RuntimeError(f"Input channel count ({in_ch}) times stride^2 ({stride ** 2})"
+                                   f" must equal the output channel count ({block_out_ch}).")
         return input_padding
 
 
@@ -1010,32 +1091,30 @@ class IRevNetBackbone(E.Seq):
             if rem != 0:
                 raise RuntimeError(f"The number of channels after the first baguette with"
                                    f" stride {a.init_stride} is not even.")
-        self.add(
-            baguette=Baguette(a.init_stride),
-            psplit=ProportionSplit(0.5, dim=1, rounding=math.floor),
-            bulk=a.groups_f(a.group_lengths, base_width=base_width, block_f=a.block_f),
-            concat=E.Concat(dim=1))
+        self.add(baguette=Baguette(a.init_stride),
+                 psplit=ProportionSplit(0.5, dim=1, rounding=math.floor),
+                 bulk=a.groups_f(a.group_lengths, base_width=base_width, block_f=a.block_f),
+                 concat=E.Concat(dim=1))
         if not self.args.no_final_postact:
             if (norm_f := default_args(a.block_f).norm_f) is not None:
                 self.add('post_norm', norm_f())
             self.add('post_act', default_args(a.block_f).act_f())
 
-
-class IRevNetNuisanceSplit(E.Seq):
-    def __init__(self, module, final_submodule='backbone.concat'):
-        assert module.args.no_final_postact
-        super().__init__(
-            module=E.IntermediateOutputsModuleWrapper(module, final_submodule, 'error'),
-
-        )
-
-
-class InvertibleNuisanceSplitter(E.Module):
-    def __init__(self, module, final_submodule, split, unsplit):
-        self.module = module
-        self.final_submodule = final_submodule
-        self.split, self.unsplit = split, unsplit
-
-    def forward(self, *args, **kwargs):
-        module_inj = E.with_intermediate_outputs(self.module, self.final_submodule)
-        self.module(*args, **kwargs)
+# class IRevNetNuisanceSplit(E.Seq):
+#     def __init__(self, module, final_submodule='backbone.concat'):
+#         assert module.args.no_final_postact
+#         super().__init__(
+#             module=E.IntermediateOutputsModuleWrapper(module, final_submodule, 'error'),
+#
+#         )
+#
+#
+# class InvertibleNuisanceSplitter(E.Module):
+#     def __init__(self, module, final_submodule, split, unsplit):
+#         self.module = module
+#         self.final_submodule = final_submodule
+#         self.split, self.unsplit = split, unsplit
+#
+#     def forward(self, *args, **kwargs):
+#         module_inj = E.with_intermediate_outputs(self.module, self.final_submodule)
+#         self.module(*args, **kwargs)
