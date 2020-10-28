@@ -10,7 +10,7 @@ import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
 from vidlu.modules.other import mnistnet
-from vidlu.models.utils import ladder_input_names
+from vidlu.models.utils import ladder_input_names, set_inplace
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
 from . import initialization
@@ -271,16 +271,11 @@ class SwiftNet(SwiftNetBase):
         efficiency."""
         super().post_build()
 
-        inplace = self.mem_efficiency >= 1
-        for name, module in self.named_modules():
-            if hasattr(module, 'inplace'):
-                if module.inplace and self.mem_efficiency == 0:
-                    warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
-                module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
+        set_inplace(self, self.mem_efficiency >= 1)
+
         if self.lateral_suffix == 'sum':
             for lb in self.laterals:
-                module = vm.get_submodule(self.backbone.backbone, f"{lb}.act")
-                module.inplace = False
+                vm.get_submodule(self.backbone.backbone, f"{lb}.act").inplace = False
 
         if self.mem_efficiency >= 3:  # 6022MiB 5.83/s
             for res_unit in self.backbone.backbone.bulk:
@@ -295,14 +290,7 @@ class SwiftNetIRevNet(SwiftNetBase):
 
     def post_build(self, *args, **kwargs):
         super().post_build()
-
-        inplace = self.mem_efficiency >= 1
-        for name, module in self.named_modules():
-            if hasattr(module, 'inplace'):
-                if module.inplace and self.mem_efficiency == 0:
-                    warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
-                module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
-
+        set_inplace(self, self.mem_efficiency >= 1)
         if self.mem_efficiency >= 2:
             raise NotImplementedError()
 

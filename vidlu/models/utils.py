@@ -1,10 +1,12 @@
+import warnings
+
 import vidlu.modules.components as vmc
 
 
 def _last_by_prefix(names, name_to_prefix, parent_last):
     prev_name = names[0]
     for name in names[1:]:
-        if (a:=name_to_prefix(name)) != (b:=name_to_prefix(prev_name)):
+        if (a := name_to_prefix(name)) != (b := name_to_prefix(prev_name)):
             yield prev_name
         if not (parent_last and name.startswith(prev_name + '.')):
             prev_name = name
@@ -20,3 +22,11 @@ def ladder_input_names(backbone):
     elif isinstance(backbone, vmc.DenseNetBackbone):
         names = [name for name in next(zip(*backbone.bulk.named_children())) if name.startswith("db")]
     return [f"bulk.{name}" for name in names][:-1]
+
+
+def set_inplace(module, inplace):
+    for name, module in module.named_modules():
+        if hasattr(module, 'inplace'):
+            if module.inplace and not inplace:
+                warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
+            module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
