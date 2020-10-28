@@ -1,7 +1,6 @@
 import pickle
 import os
 from collections.abc import MutableMapping, Mapping
-import typing as T
 from pathlib import Path
 import warnings
 
@@ -37,7 +36,7 @@ class NameDict(MutableMapping):
 
     def __getattr__(self, item):
         if item not in self.__dict__:
-            raise AttributeError()
+            raise AttributeError(f"The NameDict instance does not contain the key {item}.")
         return self.__dict__[item]
 
     def __iter__(self):
