@@ -1,5 +1,5 @@
 # this module keeps the state
 
-from vidlu.utils.collections import NameDict
+from argparse import Namespace
 
-state = NameDict()
+state = Namespace()
