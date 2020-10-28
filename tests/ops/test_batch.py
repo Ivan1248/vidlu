@@ -5,7 +5,7 @@ from vidlu.ops import batch
 
 torch.no_grad()
 
-weaker_tols = dict(rtol=1e-4, atol=1e-5)
+weaker_tols = dict(rtol=1e-3, atol=1e-4)
 
 
 class TestBatchops:
