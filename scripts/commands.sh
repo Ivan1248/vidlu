@@ -9,10 +9,13 @@ python run.py train "Cifar10{train,val}" id "DenseNet,backbone_f=t(depth=121,sma
 # CIFAR
 python run.py train "Cifar10{trainval,test}" id "ResNetV1,backbone_f=t(depth=18,small_input=True)" "tc.resnet_cifar"
 python run.py train "Cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "tc.resnet_cifar"
-python run.py train "Cifar10{trainval,test}" id "IRevNet,backbone_f=t(init_stride=1,base_width=8,group_lengths=(2,2,2,2))" "tc.irevnet_cifar"
 python run.py train "Cifar10{trainval,test}" id "WideResNet,backbone_f=t(depth=28,width_factor=10,small_input=True)" "tc.resnet_cifar"
-python run.py train "Cifar10{trainval,test}" id "DenseNet,backbone_f=t(depth=121,small_input=True)" "tc.densenet_cifar"
 
+python run.py train "Cifar10{trainval,test}" id "DenseNet,backbone_f=t(depth=121,small_input=True)" "tc.densenet_cifar"
+## i-RevNet
+python run.py train "Cifar10{trainval,test}" id  "IRevNet,backbone_f=t(init_stride=1,base_width=12,group_lengths=(4,)*4,block_f=t(kernel_sizes=(3,3),width_factors=(1,1)))" "tc.irevnet_cifar"
+python run.py train "Cifar10{trainval,test}" id  "IRevNet,backbone_f=t(init_stride=1,base_width=12,group_lengths=(2,6,6,2),block_f=t(kernel_sizes=(3,3),width_factors=(1,1)))" "tc.irevnet_cifar"
+python run.py train "Cifar10{trainval,test}" id  "IRevNet,backbone_f=t(init_stride=1,base_width=12,group_lengths=(2,6,6,2),block_f=t(kernel_sizes=(3,3),width_factors=(1,1)))" "tc.irevnet_hybrid_cifar"
 python run.py train "train,test:Cifar10{trainval,test}:(d[0][:100],d[1][:100])" id "ResNetV2,backbone_f=t(depth=10,small_input=True)" "tc.resnet_cifar"
 
 
