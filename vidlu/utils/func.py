@@ -478,8 +478,28 @@ def type_checked(func):
     return wrapper
 
 
-# Other ############################################################################################
+# Caching ##########################################################################################
 
+class _FactoryHolder:
+    __slots__ = 'factory'
+
+    def __init__(self, factory):
+        self.factory = factory
+
+
+class Cached:
+    __slots__ = '_item'
+
+    def __init__(self, factory):
+        self._item = _FactoryHolder(factory)
+
+    def __call__(self):
+        if isinstance(self._item, _FactoryHolder):
+            self._item = self._item.factory()
+        return self._item
+
+
+# Other ############################################################################################
 
 def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__call__', name=None):
     from inspect import signature
