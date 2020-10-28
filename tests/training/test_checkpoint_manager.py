@@ -16,7 +16,7 @@ def test_training_experiment(tmpdir, scores, kept):
 
     with pytest.raises(RuntimeError):
         cpman2 = cpman_f()
-    cpman2: CheckpointManager = cpman_f(resume=True)
+    cpman2: CheckpointManager = cpman_f(mode='resume')
     assert set(cpman2.saved) == set(map(str, kept))
 
     with pytest.raises(RuntimeError):
@@ -24,10 +24,12 @@ def test_training_experiment(tmpdir, scores, kept):
     state, summary = cpman2.load_last()
     cpman2.save(dict(s=10), dict(i=10, s=10))
 
-    cpman2.remove_checkpoints()
-
+    cpman2.remove_old_checkpoints(0, 0)
     with pytest.raises(RuntimeError):
-        cpman3: CheckpointManager = cpman_f(resume=True)
-
-    cpman3: CheckpointManager = cpman_f(resume=False)
+        cpman_f(mode='resume')
+    cpman3: CheckpointManager = cpman_f(mode='new')
     assert len(cpman3.saved) == 0
+
+    cpman3.save(dict(s=8), dict(i=0, s=8))
+    cpman4: CheckpointManager = cpman_f(mode='restart')
+    assert len(cpman4.saved) == 0

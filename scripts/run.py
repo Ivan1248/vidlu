@@ -18,6 +18,7 @@ from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
+from vidlu.utils.misc import query_yes_no
 from vidlu.training.checkpoint_manager import Files as cpman_filenames
 import dirs
 
@@ -29,41 +30,45 @@ def log_run(status):
         with (dirs.EXPERIMENTS / 'runs.txt').open('a') as runs_file:
             prefix = f"[{status} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
             fcntl.flock(runs_file, fcntl.LOCK_EX)
-            runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")  # add quotes where needed
+            runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")  # add quotes where neceessary
             fcntl.flock(runs_file, fcntl.LOCK_UN)
     except Exception as e:
         warnings.warn(str(e))
 
 
 def train(args):
+    if args.restart and not query_yes_no("Are you sure you want to restart the experiment?"):
+        exit()
+
     seed = int(time()) % 100 if args.seed is None else args.seed  # 53
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
         rseed(seed)
 
-    e = TrainingExperiment.from_args(
+    exp = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
-    e.logger.log(f"RNG seed: {seed}")
+    exp.logger.log(f"RNG seed: {seed}")
+
 
     if not args.no_init_test:
         print('Evaluating initially...')
-        e.trainer.eval(e.data.test)
+        exp.trainer.eval(exp.data.test)
     log_run('cont.' if args.resume else 'start')
 
     print(('Continuing' if args.resume else 'Starting') + ' training...')
-    training_datasets = {k: v for k, v in e.data.items() if k.startswith("train")}
-    e.trainer.train(*training_datasets.values(), restart=False)
+    training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
+    exp.trainer.train(*training_datasets.values(), restart=False)
 
     print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
     for name, ds in training_datasets.items():
-        e.trainer.eval(ds)
+        exp.trainer.eval(ds)
     log_run('done')
 
     print(f"RNG seed: {seed}")
 
-    e.cpman.remove_old_checkpoints()
+    exp.cpman.remove_old_checkpoints()
 
-    print(f'State saved in\n{e.cpman.last_checkpoint_path}')
+    print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
 
 
 def path(args):
@@ -87,7 +92,7 @@ def test(args):
 def test_trained(args):
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs,
-                                 {**args.__dict__, **dict(resume=True, redo=False)}), dirs=dirs)
+                                 {**args.__dict__, **dict(resume=True, restart=False)}), dirs=dirs)
 
     print('Starting evaluation (test/val):...')
     e.trainer.eval(e.data.test)
@@ -122,7 +127,7 @@ def add_standard_arguments(parser, func):
     if func is train:
         parser.add_argument("-r", "--resume", action='store_true',
                             help="Resume training from the last checkpoint of the same experiment.")
-        parser.add_argument("--redo", action='store_true',
+        parser.add_argument("--restart", action='store_true',
                             help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_test", action='store_true',
                         help="Skip testing before training.")

@@ -4,6 +4,7 @@ from pathlib import Path
 from argparse import Namespace
 
 import torch
+import numpy as np
 
 from vidlu import models, metrics
 from vidlu.models import params
@@ -255,6 +256,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         model.to(device)
         init_input = init_input.to(device)
     if hasattr(model, 'initialize'):
+        size = np.array(init_input.shape[-2:])
+        if size.min() > 128:  # for faster initialization
+            init_input = init_input[:, :, :128, :128]
         model.initialize(init_input)
     else:
         warnings.warn("The model does not have an initialize method.")

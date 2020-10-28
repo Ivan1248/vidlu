@@ -30,7 +30,7 @@ class TrainingExperimentFactoryArgs:
     params: T.Optional[str]
     experiment_suffix: str
     resume: bool
-    redo: bool
+    restart: bool
     device: T.Optional[torch.device]
     verbosity: int
 
@@ -92,11 +92,14 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
         nonlocal trainer, data
         try:
             if optional_input == 'i':
-                embed()
+                cmd = "embed()"
             elif optional_input == 'd':
                 # For some other debugger, you can set e.g. PYTHONBREAKPOINT=pudb.set_trace.
-                breakpoint()
-            exec("print(locals().keys()); " + optional_input)
+                cmd = "breakpoint()"
+            else:
+                cmd = optional_input
+            print(f"Variables: " + ",".join(locals().keys()))
+            exec(cmd)
         except Exception as ex:
             print(f'Cannot execute "{optional_input}". Error:\n{ex}.')
 
@@ -120,11 +123,14 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     experiment_id = f'{a.data}/{learner_name}/{expsuff}'
     print('Learner name:', learner_name)
     print('Experiment ID:', experiment_id)
-    return CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
-                             info=training_args, separately_saved_state_parts=("model",),
-                             n_best_kept=1, resume=a.resume, perf_func=lambda s: s.get('perf', 0),
-                             log_func=lambda s: s.get('log', ""),
-                             name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
+    cpman = CheckpointManager(checkpoints_dir, experiment_name=experiment_id,
+                              info=training_args, separately_saved_state_parts=("model",),
+                              n_best_kept=1,
+                              mode='restart' if a.restart else 'resume' if a.resume else 'new',
+                              perf_func=lambda s: s.get('perf', 0),
+                              log_func=lambda s: s.get('log', ""),
+                              name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
+    return cpman
 
 
 # Experiment #######################################################################################
@@ -190,11 +196,13 @@ class TrainingExperiment:
             logger.log("Resume command:\n"
                        + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
                        + f' -d "{a.device}" --metrics "{a.metrics}" -r')
+
+            def loading_handler(state, summary):
+                trainer.load_state_dict(state)
+                logger.load_state_dict(summary.get('logger', summary))  # TODO: remove backward compatibility
+                logger.print_all()
+
             cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
-            if a.redo:
-                if a.resume:
-                    raise ValueError('Remove the "resume" argument if you want to restart the experiment.')
-                cpman.remove_checkpoints()
             define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
 
         if a.resume:

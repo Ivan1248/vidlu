@@ -116,7 +116,6 @@ class Checkpoint:  # TODO
             else fi.load(path)
 
 
-@dc.dataclass
 class CheckpointManager(object):
     """ Checkpoint manager can be used to periodically save objects to disk.
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
@@ -163,36 +162,46 @@ class CheckpointManager(object):
     """
 
     def __init__(self, checkpoints_dir, experiment_name: str, info: T.Mapping = None,
-                 n_last_kept=1, n_best_kept=0, resume=False,
+                 n_last_kept=1, n_best_kept=0, mode: T.Literal['restart', 'resume', 'new'] = False,
                  separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
                  log_func=lambda s: "", name_suffix_func=lambda s: ""):
+        self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+        self._logger.addHandler(logging.NullHandler())
+
         self.checkpoints_dir = checkpoints_dir
         self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
         self.info = info or dict()
         self.n_recent_kept, self.n_best_kept = n_last_kept, n_best_kept
-        self.resuming_required = resume
         self.separately_saved_state_parts = separately_saved_state_parts
         self.perf_func, self.log_func, self.name_suffix_func = perf_func, log_func, name_suffix_func
+
         self.index = 0
+        self.sync()
+        if mode == 'restart':
+            self.restart()
+        self.resuming_required = mode == 'resume'
+        if self.resuming_required and len(self.saved) == 0:
+            raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
+                               + f" {self.experiment_dir}.")
+        elif not self.resuming_required and len(self.saved) > 0:
+            raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If you"
+                               + " want to use this ID anyway, pass `mode='resume'`.")
 
-        self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-        self._logger.addHandler(logging.NullHandler())
+    def restart(self):
+        self.remove_old_checkpoints(0, 0)  # does not remove checkpoints when called from __init__
+        self.index = 0
+        self.resuming_required = False
 
+    def sync(self):
         def get_existing_checkpoints():
             if not self.experiment_dir.exists():
                 return []
-            return sorted([p.name for p in self.experiment_dir.iterdir()], key=lambda p: int(p.split("_")[0]))
+            return sorted([p.name for p in self.experiment_dir.iterdir()],
+                          key=lambda p: int(p.split("_")[0]))
 
         self.saved = get_existing_checkpoints()
-        self.id_to_perf = {id: perf_func(Checkpoint.load(self.experiment_dir / id).summary)
+        self.id_to_perf = {id: self.perf_func(Checkpoint.load(self.experiment_dir / id).summary)
                            for id in self.saved}
-
-        if resume and len(self.saved) == 0:
-            raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
-                               + f" {self.experiment_dir}.")
-        elif not resume and len(self.saved) > 0:
-            raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If you"
-                               + " want to use this ID anyway, pass `resume=True`.")
 
     def save(self, state, summary=None):
         if self.resuming_required:
@@ -207,7 +216,7 @@ class CheckpointManager(object):
                         info=dict(info=self.info,
                                   separately_saved_state_parts=self.separately_saved_state_parts),
                         perf=self.perf_func(summary), log=self.log_func(summary))
-        name = f"{self.index}" + ("" if (suff := self.name_suffix_func(summary)) == "" else suff)
+        name = f"{self.index}" + ("" if (suff := self.name_suffix_func(summary)) == "" else f"_{suff}")
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
         self._logger.info(f"Saving checkpoint {name} in {self.experiment_dir}.")
@@ -238,9 +247,6 @@ class CheckpointManager(object):
         self.resuming_required = False
         return cp.state, cp.summary
 
-    def remove_checkpoints(self):
-        self.remove_old_checkpoints(0, 0)
-
     def remove_old_checkpoints(self, n_recent_kept=None, n_best_kept=None):
         n_recent_kept = self.n_recent_kept if n_recent_kept is None else n_recent_kept
         n_best_kept = self.n_best_kept if n_best_kept is None else n_best_kept
@@ -255,3 +261,6 @@ class CheckpointManager(object):
                 shutil.rmtree(path)
             except FileNotFoundError:
                 warnings.warn(f"Old checkpoint {path} is already deleted.")
+        self.id_to_perf = {k: self.id_to_perf[k] for k in self.saved}
+        if len(self.saved) == 0 and self.experiment_dir.exists():
+            shutil.rmtree(self.experiment_dir)

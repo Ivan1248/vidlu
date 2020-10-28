@@ -26,7 +26,7 @@ def test_training_experiment(tmpdir):
             resume=False,
             device=None,
             verbosity=1,
-            redo=True),
+            restart=True),
         dirs=get_dirs(tmpdir))
 
     e.trainer.eval(e.data.test)
