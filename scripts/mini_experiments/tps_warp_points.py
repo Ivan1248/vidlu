@@ -32,8 +32,6 @@ with torch.no_grad():
     offsets[..., 0, 0] = np.random.uniform(0, 0.9)
     offsets[..., 0, 1] = np.random.uniform(0, 0.9)
 
-forward = False
-
 N, C, H, W = x.shape
 k = dict(device=x.device, dtype=x.dtype)
 mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)])

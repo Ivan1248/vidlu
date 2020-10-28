@@ -120,9 +120,10 @@ def segreggrad(x, delta, y, t):
 
 def ent(y, t, attack=trainer.attack):
     from vidlu.modules import losses
-    loss = losses.entropy_l(y) #.mean()
+    loss = losses.entropy_l(y)  # .mean()
     print(y.mean())
     return loss
+
 
 def logit_sum(y, t, attack=trainer.attack):
     loss = y.mean(1)
@@ -130,7 +131,7 @@ def logit_sum(y, t, attack=trainer.attack):
     return -loss
 
 
-#trainer.attack.loss = ent #, segreggrad
+# trainer.attack.loss = ent #, segreggrad
 # trainer.attack.loss = NLLLossWithLogits()  # , segreggrad
 trainer.attack.loss = logit_sum  # , segreggrad
 
@@ -329,26 +330,195 @@ for k, v in trainer.model.named_buffers():
 
 # i-RevNet reconstruction
 
-from torchvision.transforms.functional import to_tensor, to_pil_image
-import torch
-from PIL import Image
-import matplotlib.pyplot as plt
 
-import vidlu.modules as vm
+def visualize_reconstructions(trainer, **kwargs):
+    def random_tps_warp(x):
+        import vidlu.modules.functional as vmf
+        import numpy as np
+        c_src = vmf.uniform_grid_2d((2, 2)).view(-1, 2).unsqueeze(0).to(x.device)
+        offsets = c_src * 0
+        offsets[..., 0, 0] = np.random.uniform(0, 0.5)
+        offsets[..., 0, 1] = np.random.uniform(0, 0.5)
+        from vidlu.modules.inputwise import TPSWarp
+        warp = TPSWarp(forward=False, control_grid_shape=(2, 2))
+        warp(x)
+        with torch.no_grad():
+            warp.offsets.add_(offsets)
+        return warp
 
-img = Image.open('mini_experiments/image.jpg')
-x = to_tensor(img)[:, :80, :112].unsqueeze(0).to(trainer.model.device)
-images = [to_pil_image(x.cpu())]
+    from torchvision.transforms.functional import to_tensor, to_pil_image
+    import torch
+    from PIL import Image
+    import matplotlib.pyplot as plt
 
-model_injective = vm.deep_split(trainer.model, 'backbone.concat')[0]
+    import vidlu.modules as vm
 
-h = model_injective(x)
-x_r = model_injective.inverse(h).squeeze().clamp(0, 1)
+    img = Image.open('mini_experiments/image.jpg')
+    x1 = to_tensor(img)[:, :80, :112].unsqueeze(0).to(trainer.model.device)  # 1CHW
 
-images += [to_pil_image(x_r.cpu())]
+    warp = random_tps_warp(x1)
+    xs = [x1, torch.flip(x1, [1, 2]), warp(x1)]
 
-fig, axs = plt.subplots(1, len(images))
-for i, im in enumerate(images):
-    axs[i].imshow(im)
-plt.show()
+    with torch.no_grad():
+        model_injective = vm.deep_split(trainer.model, 'backbone.concat')[0]
+        hs = list(map(model_injective, xs))
+        hs.append((hs[0] + hs[1]) / 2)
+        hs.append(warp(hs[0]))
+        hs.append(torch.flip(hs[0], [2]))
+        # hs.append(torch.randn_like(hs[0]))
 
+        x_rs = [model_injective.inverse(h).clamp(0, 1) for h in hs]
+        x_rs = [model_injective.inverse(torch.roll(h, [0, 0], dims=[2, 3])).clamp(0, 1) for h in hs]
+
+    images = [to_pil_image(x[0].cpu()) for x in xs]
+    images += [to_pil_image(x_r[0].cpu()) for x_r in x_rs]
+
+    for x in x_rs:
+        print(x.shape, x.dtype)
+
+    w = int(len(images) ** 0.5 + 0.5)
+    h = len(images) // w
+
+    fig, axs = plt.subplots(h, w)
+    axs = axs.flat
+    for i, im in enumerate(images):
+        axs[i].imshow(im)
+    plt.show()
+
+
+visualize_reconstructions(**globals(), **locals())
+
+
+# i-RevNet interpolation
+
+
+def visualize_interpolation(trainer, state, **kwargs):
+    from torchvision.transforms.functional import to_tensor, to_pil_image
+    import torch
+    import matplotlib.pyplot as plt
+    import vidlu.modules as vm
+    import PIL.Image as pimg
+    from torch.nn.functional import interpolate
+
+    papiga = to_tensor(pimg.open("/home/igrubisic/Potty3.webp"))
+
+    x = state.output.x[:20].clone()
+    x[0, :, 10:250, 20:230] = papiga
+
+    with torch.no_grad():
+        # model_inj = vm.deep_split(trainer.model, 'backbone.concat')[0]
+        # model_inj = trainer.model.backbone.backbone
+        model_inj = vm.deep_split(trainer.model.backbone.backbone, 'concat')[0]
+        h = model_inj(x)
+        hr = torch.roll(h, [1], dims=[0])
+        h2 = h.clone()
+        h_papiga = interpolate(hr, scale_factor=1, mode="bilinear")
+        h2[:, :, 2:10, 2:12] = h_papiga[:, :, 2:10, 2:12]
+        hr = h2
+        xint = [model_inj.inverse((1 - a) * h + a * hr) for a in np.linspace(0, 1, 5)]
+        # xint = [model_inj.inverse(torch.randn_like(h)) for a in np.linspace(0, 1, 5)]
+
+    imageses = [[to_pil_image(x.clamp(0, 0.99).cpu()) for x in xs] for xs in xint]
+
+    fig, axeses = plt.subplots(len(imageses), len(imageses[0]))
+    for axes, images in zip(axeses, imageses):
+        for ax, im in zip(axes, images):
+            ax.axis("off")
+            ax.imshow(im)
+    plt.subplots_adjust(wspace=.05, hspace=.05)
+    plt.show()
+
+
+visualize_interpolation(**{**globals(), **locals()})
+
+
+def visualize_interpolation_seq(trainer, state, **kwargs):
+    from torchvision.transforms.functional import to_tensor, to_pil_image
+    import torch
+    import matplotlib.pyplot as plt
+    import vidlu.modules as vm
+    import PIL.Image as pimg
+    from torch.nn.functional import interpolate
+    from pathlib import Path
+
+    path = Path("/home/shared/datasets/Cityscapes/leftImg8bit_sequence/val/frankfurt")
+    x = [to_tensor(pimg.open(im)) for im in sorted(list(path.iterdir()))[:4 * 2:2]]
+    x = torch.stack(x)
+    x = interpolate(x, size=state.output.x.shape[-2:]).to(state.output.x.device)
+
+    with torch.no_grad():
+        model_inj = vm.deep_split(trainer.model.backbone.backbone, 'concat')[0]
+        h = model_inj(x)
+        hr = torch.roll(h, [1], dims=[0])
+        xint = [model_inj.inverse((1 - a) * h + a * hr) for a in np.linspace(0, 1, 3)]
+
+    imageses = [[to_pil_image(x.clamp(0, 0.99).cpu()) for x in xs] for xs in xint]
+
+    fig, axeses = plt.subplots(len(imageses), len(imageses[0]))
+    for axes, images in zip(axeses, imageses):
+        for ax, im in zip(axes, images):
+            ax.axis("off")
+            ax.imshow(im)
+    plt.subplots_adjust(wspace=.05, hspace=.05)
+    plt.show()
+
+
+visualize_interpolation_seq(**{**globals(), **locals()})
+
+
+# noisy batchnorm stats
+
+def noisy_batchnorm_stats(trainer: "vidlu.training.Trainer", state, data, **kwargs):
+    from torch import nn
+    import math
+
+    model = trainer.model
+
+    metric_name = 'mIoU'
+    # baseline = .9454
+    baseline = .7398
+    baseline = .7539
+    jitter = False
+
+    train_A = []
+    test_A = []
+    ns = [2 ** p for p in range(0, int(math.log2(len(data.train))) + 1)]
+    ns.append(len(data.train))
+    print(ns)
+    for n in ns:
+        bs = min(n, trainer.batch_size)
+
+        data_train = trainer.get_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
+                                             batch_size=bs, shuffle=False, drop_last=True)
+        for m in [m for m in model.modules() if isinstance(m, nn.BatchNorm2d)]:
+            m.momentum = None
+            m.reset_running_stats()
+        model.train()
+        data_iter = iter(data_train)
+        print(f"{len(data_iter)}")
+        with torch.no_grad():
+            for i in range(n // bs):
+                x = trainer.prepare_batch(next(data_iter))[0]
+                model(x)
+        print(f"\nN = {n}, Batch size = {bs}")
+        # s = trainer.eval(data.train)
+        # train_A.append(s.metrics[metric_name])
+        s = trainer.eval(data.test)
+        test_A.append(s.metrics[metric_name])
+
+    # print(train_A)
+    print(test_A)
+
+    import matplotlib.pyplot as plt
+    # plt.plot(ns, [.9454 for _ in ns], label='test_baseline')
+    plt.plot(ns, [baseline for _ in ns], label='test_baseline')
+    # plt.plot(ns, train_A, label='train')
+    plt.plot(ns, test_A, label='test')
+    plt.xscale("log")
+    plt.xlabel("N")
+    plt.ylabel(metric_name)
+    plt.legend()
+    plt.show()
+
+
+noisy_batchnorm_stats(**locals())
