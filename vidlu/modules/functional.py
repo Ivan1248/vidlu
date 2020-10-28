@@ -1,3 +1,6 @@
+import typing as T
+
+import numpy as np
 import torch
 from torch.nn import functional as F
 
@@ -249,11 +252,7 @@ def gaussian_forward_warp_josa(features, flow, sigma=1., normalize=True):
     return future_features
 
 
-def homography_warp_grid(shape, params, size):
-    N, _, H, W = size
-    k = dict(device=theta.device, dtype=theta.dtype)
-    grid = uniform_grid_2d((H, W), homog_coord=True, homog_dim=0, **k)
-    grid = grid.unsqueeze(0).expand(N, H, W, 3)  # aspect ratio not preserved
-    assert False, "TODO"
-    z = tps(theta, ctrl, grid)
-    return grid[..., 1:].add(z).mul(2).sub(1)  # [-1,1] range for F.sample_grid
+def shuffle(x, dim):
+    if not isinstance(dim, T.Sequence):
+        dim = [dim]
+    return x[[torch.randperm(s) if i in dim else np.s_[:] for i, s in enumerate(x.shape)]]

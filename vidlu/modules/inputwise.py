@@ -171,6 +171,8 @@ def reset_parameters(pert_model):
     PertModelBase.reset_parameters(pert_model)
 
 
+# TODO: redesign perturbation models using vidlu.modules.Parallel (remove forward_arg_count)
+
 class PertModel(PertModelBase):
     def __init__(self, module, forward_arg_count=None):
         super().__init__(forward_arg_count=forward_arg_count)
@@ -206,9 +208,9 @@ class SliceSimplePertModel(PertModelBase):
         self.slice = slice if slice is None or isinstance(slice, tuple) else (slice,)
 
     def create_default_params(self, x):
-        shape = list(x.shape)
         if self.slice is not None:
-            x = x.__getitem__(*self.slice)
+            x = x.__getitem__(self.slice)
+        shape = list(x.shape)
         for d in self.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
         dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
@@ -246,7 +248,7 @@ class Additive(SliceSimplePertModel):
         if self.slice is None:
             return x + self.addend
         y = x.clone()
-        y.__getitem__(*self.slice).__iadd__(self.addend)
+        y.__getitem__(self.slice).__iadd__(self.addend)
         return y
 
     def ensure_output_within_bounds(self, x, bounds, computed_output=None):
@@ -258,9 +260,9 @@ class Multiplicative(SliceSimplePertModel):
 
     def forward(self, x):
         if self.slice is None:
-            return x + self.factor
+            return x * self.factor
         y = x.clone()
-        y.__getitem__(*self.slice).__imul__(self.factor)
+        y.__getitem__(self.slice).__imul__(self.factor)
         return y
 
 

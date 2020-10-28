@@ -1,3 +1,7 @@
+import itertools
+import typing as T
+
+import torch
 from torch import nn
 from functools import partial
 
@@ -42,3 +46,15 @@ func_to_module_class = partial(func_to_class, superclasses=nn.Module, method_nam
 
 def sole_tuple_to_varargs(inputs):  # tuple, not any sequence type
     return inputs[0] if len(inputs) == 1 and isinstance(inputs[0], tuple) else inputs
+
+
+def extract_tensors(*args, **kwargs):
+    for a in itertools.chain(args, kwargs.values()):
+        if isinstance(a, torch.Tensor):
+            yield a
+        elif isinstance(a, T.Sequence):
+            for x in extract_tensors(*a):
+                yield x
+        elif isinstance(a, T.Mapping):
+            for x in extract_tensors(*a.values()):
+                yield x

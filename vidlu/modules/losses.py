@@ -80,6 +80,10 @@ def crossentropy_ll(logits, target_logits):
     return crossentropy_l(logits, target_logits.softmax(1))
 
 
+def symmetric_crossentropy_ll(logits, target_logits):
+    return crossentropy_ll(logits, target_logits) + crossentropy_ll(target_logits, logits)
+
+
 def clipped_rev_crossentropy_ll(logits, target_logits, A):
     # https://arxiv.org/abs/1908.06112
     # similar to reverse cross-entropy with smoothed

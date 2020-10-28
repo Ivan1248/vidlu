@@ -2,7 +2,7 @@ from abc import ABC
 from argparse import Namespace
 import collections
 import functools
-from functools import reduce, partial
+from functools import reduce
 import typing as T
 import itertools
 from os import PathLike
@@ -29,6 +29,8 @@ from vidlu.utils import tree
 
 import vidlu.modules.utils as vmu
 from vidlu.modules.deconv import FastDeconv
+from vidlu.modules.tensor_extra import LogAbsDetJac
+from vidlu.modules.utils import extract_tensors
 
 # Some of modules and functions from torch.nn are replaced with wrappers.
 # Look for references of the `replaces` procedure to find the code doing it.
@@ -45,20 +47,8 @@ def replaces(*names):
 # Module class extensions ##########################################################################
 
 
-def _extract_tensors(*args, **kwargs):
-    for a in itertools.chain(args, kwargs.values()):
-        if isinstance(a, torch.Tensor):
-            yield a
-        elif isinstance(a, T.Sequence):
-            for x in _extract_tensors(*a):
-                yield x
-        elif isinstance(a, T.Mapping):
-            for x in _extract_tensors(*a.values()):
-                yield x
-
-
 def _try_get_device_from_args(*args, **kwargs):
-    x = next(_extract_tensors(*args, **kwargs), None)
+    x = next(extract_tensors(*args, **kwargs), None)
     return None if x is None else x.device
 
 
@@ -112,8 +102,7 @@ class SplittableMixin:
         raise TypeError(f"Splitting not implemented for module type {type(self)}")
 
     def deep_split(self, submodule_path):
-        raise TypeError(
-            f"Deep splitting not implemented for module type {type(self)}")
+        raise TypeError(f"Deep splitting not implemented for module type {type(self)}")
 
     def join(self, other):
         raise TypeError(f"Joining not implemented for module type {type(self)}")
@@ -132,7 +121,7 @@ def register_inverse_check_hook(module):
         # again under the `module.inverse` call, e.g. when `module.inverse` is `module` itself.
         handle.remove()
         rec = module.inverse(output)
-        inp_list, rec_list = (list(_extract_tensors(x)) for x in [input, rec])
+        inp_list, rec_list = (list(extract_tensors(x)) for x in [input, rec])
 
         if (ninp := len(inp_list)) != (nrec := len(rec_list)):
             raise RuntimeError(
@@ -188,63 +177,33 @@ class InvertibleMixin:
         # overload either this or inverse_module
         raise InverseError()
 
-    @functools.cached_property
-    def flow(self) -> nn.Module:
-        return self.flow_module()
-
-    def flow_module(self) -> nn.Module:
-        if type(self).flow_forward is not InvertibleMixin.flow_forward:
-            module = copy.copy(self)
-            module.forward = self.flow_forward
-            return module
-        raise TypeError(f"`flow_forward` is not defined for `{type(self)}`."
-                        + " Either `flow_forward` or `flow_module` should be overloaded.")
-
-    def flow_forward(self, *args, **kwargs):
-        # overload either this or flow_module
-        raise InverseError()
-
     def check_inverse(self: nn.Module, *inputs):
         for m in self.modules():
             register_inverse_check_hook(m)
         self(*inputs)
+
+
+def zero_log_abs_det_jac(func_or_module_class):
+    fm = func_or_module_class
+    if inspect.isclass(fm):
+        fm.forward = zero_log_abs_det_jac(fm.forward)
+        if fm.inverse_forward is InvertibleMixin.inverse_forward \
+                and fm.inverse_module is InvertibleMixin.inverse_module:
+            raise RuntimeError("`inverse_forward` or `inverse_module` not defined.")
+        if fm.inverse_forward is not InvertibleMixin.inverse_forward:
+            fm.inverse_forward = zero_log_abs_det_jac(fm.inverse_forward)
+        return func_or_module_class
+    else:
+        @functools.wraps(fm)
+        def wrapper(self, *args):
+            y = fm(self, *args)
+            return LogAbsDetJac.add(y, args, LogAbsDetJac.zero(next(extract_tensors(y))))
+
+        return wrapper
 
 
 class LogJacobianMixin:  # TODO
-    # Note: reconstruction_tols is used in inverse check.
-    # It can be overridden with a property.
-    reconstruction_tols = dict(rtol=1e-2, atol=1e-2)
-
-    @functools.cached_property
-    def inverse(self: nn.Module) -> nn.Module:
-        # print(vmu.try_get_module_name_from_call_stack(self))
-        try:
-            inv_module = self.inverse_module()
-            # The inverse of the inverse is the original module and `property` is used so that the
-            # original module is not recognized as a child of the inverse module, which would result
-            # in an infinite recursion when the `children` method is called on the inverse.
-            inv_module.inverse = property(self._get_self)
-        except AttributeError as e:
-            # Turn it into a TypeError so that it doesn't get turned into a confusing
-            # AttributeError saying that this module has no `inverse` attribute
-            raise TypeError(f"The inverse for the module `{type(self)}` is not defined: {e}")
-        return inv_module
-
-    def _get_self(self):
-        return self
-
-    def inverse_module(self) -> nn.Module:
-        if hasattr(self, 'inverse_forward'):
-            return Inverse(self)
-        raise TypeError(f"An inverse for the module `{type(self)}` is not defined.")
-
-    def check_inverse(self: nn.Module, *inputs):
-        for m in self.modules():
-            register_inverse_check_hook(m)
-        self(*inputs)
-
-    def is_invertible(self) -> bool:
-        return hasattr(self, 'inverse_forward') or hasattr(self, 'inverse_module')
+    pass
 
 
 class InitializableMixin:
@@ -268,47 +227,94 @@ def is_built(module, including_submodules=False):
 
 @replaces('Module')
 class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
-    # Based on https://github.com/MagNet-DL/magnet/blob/master/magnet/nodes/nodes.py
+    """ An abstract module class that supports shape inference and checks
+    whether the input is in-place modified in an undesired way.
+
+    The shape inference mechanism is based on
+    https://github.com/MagNet-DL/magnet/blob/master/magnet/nodes/nodes.py
+    """
+
     def __init__(self):
         super().__init__()
         self._built = False
         self._check = None
+        self._mode = dict()
 
-    def is_built(self, including_submodules=False):
-        if not self.is_built():
-            return False
-        if including_submodules:
-            return all(not hasattr(m, "is_built") or m.is_built(False) for m in self.modules())
+    @property
+    def _checked(self):
+        return not hasattr(self, "_check")
+
+    @property
+    def mode(self):
+        return Namespace(**self._mode, training=self.training)
+
+    def _init_call(self, *args, **kwargs):
+        device = _try_get_device_from_args(*args, **kwargs)
+        if type(self).build != Module.build:
+            self.build(*args, **kwargs)
+        if device is not None:
+            self.to(device)
+        if type(self).post_build != Module.post_build:
+            super().__call__(*args, **kwargs)
+            self.post_build(*args, **kwargs)
+            if device is not None:
+                self.to(device)
+        self._built = True
+        return super().__call__(*args, **kwargs)
+
+    def _check_call(self, *args, **kwargs):
+        check_hash = hash(tuple(extract_tensors(*args, **kwargs)))
+        if self._check is None:
+            self._check = check_hash
+        elif self._check != check_hash:
+            del self._check
+            self._check_modified(*args, **kwargs)  # single check after the parent is built
+            inp_to_ver = {a: a._version for a in extract_tensors(*args, **kwargs)}
+            return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
+        return super().__call__(*args, **kwargs)
 
     def __call__(self, *args, **kwargs):
-        # Modified to support in-place modification checking and shape inference
+        """Modified to support shape inference and an in-place modification
+        check.
+
+        The optional `build` method defines initialization based on the input
+        before the first `forward` call. The optional `post_build` method is
+        called after the first forward call.
+
+        The second time `__call__` is called, a check is performed whether the
+        input has been in-place modified by a parallel node and marks the output
+        for subsequent checks.
+
+        Example:
+            >>> h: Module = SomeModel()
+            >>> x = torch.randn((1, 3, 16, 16))
+            >>> y = h(x)  # call with shape inference with `_init_call`
+            >>> assert h.is_built()
+            >>> y = h(x)  # call with an in-place modification check
+            >>> y = h(x)  # a normal call
+        """
         try:
-            if self._built:
-                if hasattr(self, '_check'):  # checks are performed on the second input
-                    check_hash = hash(tuple(_extract_tensors(*args, **kwargs)))
-                    if self._check is None:
-                        self._check = check_hash
-                    elif self._check != check_hash:
-                        # check on the second unique input, after post_build of the previous module
-                        return self._call_with_check(*args, **kwargs)
-                return super().__call__(*args, **kwargs)
+            if not self._built:
+                result = self._init_call(*args, **kwargs)
+            elif not self._checked:  # checks are performed on the second input
+                result = self._check_call(*args, **kwargs)
             else:
-                device = _try_get_device_from_args(*args, **kwargs)
-                if type(self).build != Module.build:
-                    self.build(*args, **kwargs)
-                if device is not None:
-                    self.to(device)
-                if type(self).post_build != Module.post_build:
-                    super().__call__(*args, **kwargs)
-                    self.post_build(*args, **kwargs)
-                    if device is not None:
-                        self.to(device)
-                self._built = True
-                return super().__call__(*args, **kwargs)
+                result = super().__call__(*args, **kwargs)
+            return result
         except Exception as e:
-            print(
-                f"Error in {vmu.try_get_module_name_from_call_stack(self)}, {type(self).__name__}")
+            name = vmu.try_get_module_name_from_call_stack(self)
+            print(f"Error in {name}, {type(self).__name__}")
             raise e
+
+    def __getattr__(self, name: str) -> T.Union[torch.Tensor, nn.Module]:
+        try:
+            return super().__getattr__(name)
+        except nn.modules.module.ModuleAttributeError as e:
+            raise nn.modules.module.ModuleAttributeError(
+                f"{type(self).__name__} object has no attribute '{name}'."
+                + "".join(f"\nAvaliable {k}: {', '.join(names)}."
+                          if (names := getattr(self, f"_{k}", None)) else ""
+                          for k in ['modules', 'parameters', 'buffers']))
 
     # In-place modification of input checking
 
@@ -320,21 +326,15 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         elif isinstance(out, T.Mapping):
             return type(out)((k, self._mark_if_modified(o, inp_to_ver)) for k, o in out.items())
 
-    def _call_with_check(self, *args, **kwargs):
-        self._check_input(*args, **kwargs)  # single check after the parent is built
-        del self._check
-        inp_to_ver = {a: a._version for a in _extract_tensors(*args, **kwargs)}
-        return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
-
-    def _check_input(self, *args, **kwargs):
+    def _check_modified(self, *args, **kwargs):
         """Checks whether the input is not in-place modified.
 
         This is evaluated when the module is called a second time,
         i.e. when the parent is built. It should not to modify the module.
         """
-        if is_modified(args[0]):
+        if any(map(is_modified, extract_tensors(*args, **kwargs))):
             module_name = vmu.try_get_module_name_from_call_stack(self)
-            raise RuntimeError(f"The input of {module_name} is in-place modified.")
+            raise RuntimeError(f"The input of {module_name} ({type(self)}) is in-place modified.")
 
     # Initialization with shape inference
 
@@ -346,6 +346,11 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             self.__dict__.update(args)
         else:
             setattr(self, attribute_name, NameDict(args))
+
+    def is_built(self, including_submodules=False):
+        if including_submodules:
+            return all(not hasattr(m, "is_built") or m.is_built(False) for m in self.modules())
+        return self._built
 
     def build(self, *args, **kwargs):
         """This is run before the first evaluation"""
@@ -375,8 +380,8 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         return None if param is None else param[0].device
 
     def load_state_dict(self, state_dict_or_path, strict=True):
-        """Handle a path being given instead of a file. (preferred since it
-        automatically maps to the correct device). Taken from MagNet."""
+        """Handles a path being given instead of a file (then it automatically
+        maps to the correct device). Taken from MagNet."""
         sd = state_dict_or_path
         if isinstance(sd, PathLike):
             sd = torch.load(sd, map_location=self.device)
@@ -517,7 +522,8 @@ class Seq(ModuleTable, nn.Sequential):
                     x = run_segment(x)
                 i, cp_range = cp_range[1] + 1, next(cp_iter, None)
             else:
-                x = modules[i](x)
+                y = modules[i](x)
+                x = y
                 i += 1
         return x
 
@@ -592,27 +598,25 @@ class Parallel(ModuleTable):
         return tuple(m(x) for m, x in zip(self, inputs))
 
 
+class ConditionalSelector(Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.modules = ModuleTable({k: v[0] for k, v in kwargs.items()})
+        self.conds = {k: v[1] for k, v in kwargs.items()}
+
+    def forward(self, x):
+        for k, cond in self.conds.items():
+            if cond(x):
+                return self.modules[k](x)
+        raise RuntimeError("`x` satisfies no condition.")
+
+
 class Merge(nn.Module):
     def forward(self, *inputs):
         inputs = vmu.sole_tuple_to_varargs(inputs)
         result = []
         for x in inputs:
             (result.extend if isinstance(x, tuple) else result.append)(x)
-        return tuple(result)
-
-
-class TupleSplit(Module):
-    def __init__(self, split_indices):
-        super().__init__()
-        self.split_indices = split_indices
-
-    def forward(self, x):
-        result = []
-        last_si = 0
-        for si in self.split_indices:
-            result.append(x[last_si:si])
-            last_si = si
-        result.append(x[self.split_indices[-1]:])
         return tuple(result)
 
 
@@ -661,6 +665,7 @@ class Sum(Module):  # TODO: rename to "Add"
         return y
 
 
+@zero_log_abs_det_jac
 class Concat(Module):
     def __init__(self, dim=1):
         super().__init__()
@@ -678,10 +683,11 @@ class Concat(Module):
         return Split(self.sizes, dim=self.dim)
 
 
+@zero_log_abs_det_jac
 class Split(Module):
-    def __init__(self, split_size: T.Union[int, T.Sequence], dim=1):
+    def __init__(self, split_size_or_sections: T.Union[int, T.Sequence], dim=1):
         super().__init__()
-        self.split_size_or_sections, self.dim = split_size, dim
+        self.split_size_or_sections, self.dim = split_size_or_sections, dim
 
     def forward(self, x: torch.Tensor):
         return x.split(self.split_size_or_sections, dim=self.dim)
@@ -690,6 +696,7 @@ class Split(Module):
         return Concat(self.dim)
 
 
+@zero_log_abs_det_jac
 class Chunk(Module):
     def __init__(self, chunk_count: int, dim=1):
         super().__init__()
@@ -702,6 +709,7 @@ class Chunk(Module):
         return Concat(self.dim)
 
 
+@zero_log_abs_det_jac
 class Permute(Module):
     def __init__(self, *dims):
         super().__init__()
@@ -718,6 +726,7 @@ class Permute(Module):
         return Permute(*inv_dims)
 
 
+@zero_log_abs_det_jac
 class Transpose(Module):
     def __init__(self, dim0, dim1):
         super().__init__()
@@ -739,6 +748,7 @@ class Reshape(Module):
         return torch.reshape(x, (x.shape[0], *self.shape))
 
 
+@zero_log_abs_det_jac
 class BatchReshape(Module):
     def __init__(self, *shape_or_func: T.Union[tuple, T.Callable[[tuple], tuple]]):
         super().__init__()
@@ -772,6 +782,7 @@ def _parse_auto_reshape_arg(dims_or_factors):
             int(x) for x in dims_or_factors]
 
 
+@zero_log_abs_det_jac
 class AutoReshape(Module):
     """A reshape module that can be adaptive to input shape."""
 
@@ -800,6 +811,7 @@ class AutoReshape(Module):
         return BatchReshape(*self.orig_shape)
 
 
+@zero_log_abs_det_jac
 class Rearrange(Module):  # TODO: einops.layers.torch import Rearrange
     def __init__(self, expr: str):
         super().__init__()
@@ -812,6 +824,7 @@ class Rearrange(Module):  # TODO: einops.layers.torch import Rearrange
         return Rearrange("->".join(reversed(self.expr.split("->"))))
 
 
+@zero_log_abs_det_jac
 class Contiguous(Module):
     def forward(self, x):
         return x.contiguous()
@@ -956,11 +969,11 @@ def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.
     if dim not in [1, 2, 3]:
         raise ValueError(f"Cannot infer {name} dimension from input shape.")
     name = f"{name}{dim}d"
-    layer_func = nn.__getattribute__(name)
-    for k in vuf.params(layer_func).keys():
+    factory = nn.__getattribute__(name)
+    for k in vuf.params(factory).keys():
         if k not in args:
             raise ValueError(f"Missing argument for {name}: {k}.")
-    module = layer_func(**args)
+    module = factory(**args)
     return module
 
 
@@ -1161,23 +1174,8 @@ class Inverse(Module):
     def forward(self, *args, **kwargs):
         return self.module.inverse_forward(*args, **kwargs)
 
-    def flow_module(self):
-        return self.module.flow.inverse
-
     def inverse_module(self):
         return self.module
-
-
-class Flow(Module):
-    def __init__(self, module):
-        super().__init__()
-        self.module = module
-
-    def forward(self, *args, **kwargs):
-        return self.module.flow_forward(*args, **kwargs)
-
-    def inverse_module(self):  # TODO
-        return self.module.inverse.flow
 
 
 # Stochastic #######################################################################################
@@ -1299,7 +1297,7 @@ def deep_join(left: Module, right: Module):
     return left.deep_join(right)
 
 
-def with_intermediate_outputs(module: nn.Module, submodule_paths: list = None,
+def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List[str], str] = None,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
                               return_dict=False):
     """Creates a function wrapping `module` that returns a pair containing the
@@ -1324,7 +1322,8 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list = None,
 
     if submodule_paths is None:
         submodule_paths = [k for k, _ in module.named_modules()]
-    elif isinstance(submodule_paths, str):
+        single = False
+    elif single := isinstance(submodule_paths, str):
         submodule_paths = [submodule_paths]
 
     def get_submodules():
@@ -1361,7 +1360,8 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: list = None,
                     else:
                         raise RuntimeError(message)
 
-        outputs = dict(zip(submodule_paths, outputs)) if return_dict else tuple(outputs)
+        outputs = dict(zip(submodule_paths, outputs)) if return_dict else \
+            outputs[0] if single else tuple(outputs)
         return output, outputs
 
     return wrapper

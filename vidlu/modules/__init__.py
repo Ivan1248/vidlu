@@ -1,5 +1,7 @@
 from .elements import *
-from . import losses, functional
+from . functional import *
+from . import losses
+from . import functional
 from . import components
 from . import other
 from . import utils
