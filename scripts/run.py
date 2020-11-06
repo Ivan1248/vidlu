@@ -18,7 +18,7 @@ from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
-from vidlu.utils.misc import query_yes_no
+from vidlu.utils.misc import query_user
 from vidlu.training.checkpoint_manager import Files as cpman_filenames
 import dirs
 
@@ -37,7 +37,7 @@ def log_run(status):
 
 
 def train(args):
-    if args.restart and not query_yes_no("Are you sure you want to restart the experiment?"):
+    if args.restart and not query_user("Are you sure you want to restart the experiment?", timeout=30, default=True):
         exit()
 
     seed = int(time()) % 100 if args.seed is None else args.seed  # 53
@@ -48,7 +48,6 @@ def train(args):
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
     exp.logger.log(f"RNG seed: {seed}")
-
 
     if not args.no_init_test:
         print('Evaluating initially...')

@@ -112,14 +112,26 @@ def try_input(default=None):
     return input() if input_available() else default
 
 
-def query_yes_no(question):
-    valid = dict(yes=True, y=True, no=False, n=False)
+def query_user(question, default=None, timeout=np.inf, options=None):
+    if timeout is not np.inf and default is not None:
+        raise ValueError("`default` should be defined if `timeout` is finite.")
+
+    options = options or dict(y=True, n=False)
+    options_str = "/".join(f"{{{c}}}" if c == default else c for c in options)
     while True:
-        sys.stdout.write(f'{question} [y/n]: ')
-        choice = valid.get(input().lower(), None)
-        if choice is not None:
-            return choice
-        print("Please respond with either 'yes', 'no', 'y', or 'n').")
+        sys.stdout.write(f'{question} [{options_str}]: ')
+        sys.stdout.flush()
+        sw = Stopwatch().start()
+        inp = sw
+        while sw.time < timeout:
+            time.sleep(0.1)
+            if (inp := try_input(sw )) is not sw:
+                break
+        if inp is sw:
+            return options[default]
+        elif inp in options:
+            return options[inp]
+        print(f"Please respond with either of {', '.join(options.keys())}.")
 
 
 # Downloading ######################################################################################
@@ -239,7 +251,7 @@ class Stopwatch:
 
     def start(self):
         if self.running:
-            raise RuntimeError("Stopwatch is already running.")
+            self.reset()
         self.start_time = self._time_func()
         self.running = True
         return self
