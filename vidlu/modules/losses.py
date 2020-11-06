@@ -3,12 +3,13 @@ import typing as T
 import torch
 from torch import nn
 import torch.nn.functional as F
+import numpy as np
 
 from vidlu.utils.func import class_to_func
 from vidlu.torch_utils import batchnorm_stats_tracking_off, save_grads
 from vidlu.ops import one_hot
-
 from vidlu import metrics
+from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 
 
 # Loss adapter #####################################################################################
@@ -220,3 +221,15 @@ class CarliniWagnerLoss(nn.Module):
         wrong_logit = torch.max((1. - label_mask) * x, dim=1)[0]
         loss = -F.relu(correct_logit - wrong_logit + 50.).sum()
         return loss
+
+
+# Generative
+
+def input_image_nll(x, z, bin_count=256):
+    N, dim = len(x), x[0].numel()
+    ll_z = -0.5 * (z ** 2 + np.log(2 * np.pi))
+    ll_z = ll_z.view(N, -1).sum(-1) - np.log(bin_count) * dim
+    ladj = Ladj.get(z)()
+    loss_ladj = -ladj
+    loss_ll_z = -ll_z
+    return (loss_ladj + loss_ll_z) / dim
