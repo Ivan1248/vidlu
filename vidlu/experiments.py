@@ -82,6 +82,7 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
             # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
 
     # noinspection PyUnresolvedReferences
+    @trainer.evaluation.started.handler
     @trainer.evaluation.iter_completed.handler
     def interact(state):
         if (optional_input := try_input()) is None:

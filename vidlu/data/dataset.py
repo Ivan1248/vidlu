@@ -18,7 +18,7 @@ import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
-from vidlu.utils.misc import slice_len, query_yes_no
+from vidlu.utils.misc import slice_len, query_user
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
 
@@ -87,7 +87,7 @@ class Dataset(abc.Sequence):
 
     def download_if_necessary(self, data_dir):
         if not data_dir.exists():
-            if not query_yes_no(f'Dataset not found in {data_dir}. Would you like to download it?'):
+            if not query_user(f'Dataset not found in {data_dir}. Would you like to download it?'):
                 raise FileNotFoundError(f"The dataset doesn't exist in {data_dir}.")
             self.download(data_dir)
 

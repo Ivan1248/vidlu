@@ -1,7 +1,6 @@
 from functools import partial
 from numpy import s_
 
-import vidlu.modules as vm
 import vidlu.modules.inputwise as vmi
 import vidlu.modules as vm
 from vidlu.modules.inputwise import PertModel

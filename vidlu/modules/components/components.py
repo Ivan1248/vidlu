@@ -359,8 +359,8 @@ class Invertible1x1Conv(E.Conv):
         return Ladj.add(x, y, lambda: self._ladj(x, y, inverse=True))
 
     def _ladj(self, y, x, inverse=False):
-        a, lad_w = np.prod(x.shape[2:]), self.orig.weight.squeeze().det().abs().log()
-        return (-a if inverse else a) * lad_w
+        a, ladj_w = np.prod(x.shape[2:]), self.orig.weight.squeeze().det().abs().log()
+        return (-a if inverse else a) * ladj_w
 
 
 # Attention ########################################################################################
