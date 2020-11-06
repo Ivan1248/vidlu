@@ -60,7 +60,7 @@ def parse_data_str(data_str):
     # full regex: r'((?:^|(?:,\s*))(\w+)(\([^{]*\))?{(\w+(?:\s*,\s*\w+)*)})'
     start_re = r'(?:^|(?:,\s*))'
     name_re, options_re, subsets_re = r'(\w+)', r'(\([^{]*\))', r'{(\w+(?:\s*,\s*\w+)*)}'
-    single_ds_re = re.compile(fr'({start_re}{name_re}{options_re}?{subsets_re})')
+    single_ds_re = re.compile(fr'({start_re}{name_re}{options_re}?{subsets_re}?)')
     single_ds_configs = [x[0] for x in single_ds_re.findall(data_str)]
     reconstructed_config = ''.join(single_ds_configs)
     if reconstructed_config != data_str:
@@ -99,18 +99,16 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
     if cache_dir is not None:
         get_parted_dataset = CachingDatasetFactory(get_parted_dataset, cache_dir,
                                                    add_statistics=True)
-    data = dict()
+    data = []
     for name, options_str, subsets in name_options_subsets_tuples:
         options = unsafe_eval(f'dict{options_str or "()"}')
         pds = get_parted_dataset(name, **options)
         k = f"{name}{options_str or ''}"
-        if k in data:
-            raise ValueError(f'"{k}" shouldn\'t occur more than once in `data_str`.')
-        data[k] = {s: getattr(pds, s) for s in subsets}
+        for s in subsets:
+            data.append(((k, s), getattr(pds, s)))
 
     if transform_str is not None:
-        flat_data = dict([((k1, k2), v) for k1, d in data.items() for k2, v in d.items()])
-        values = unsafe_eval(transform_str, dict(d=list(flat_data.values()),
+        values = unsafe_eval(transform_str, dict(d=[v for k, v in data],
                                                  **{k: v for k, v in vars(dataset_ops).items()
                                                     if not k.startswith('_')}))
         data = dict(((f'data{i}', {'sub0': v}) for i, v in enumerate(values)))
@@ -125,20 +123,28 @@ get_data.help = \
 
 
 def get_data_preparation(*datasets):
-    dataset = datasets[0]
     from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
-    fields = tuple(dataset[0].keys())
-    if set('xy').issubset(fields):
-        return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
-                                        func_name='prepare')
-    raise ValueError(f"Unknown record format: {fields}.")
+    if len(datasets) == 1:
+        fields = tuple(datasets[0][0].keys())
+        if set('xy').issubset(fields):
+            return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
+                                            func_name='prepare')
+        elif fields == ('x',):
+            return lambda ds: ds.map_fields(dict(x=prepare_input_image), func_name='prepare_x')
+        raise ValueError(f"Unknown record format: {fields}.")
+    else:
+        return [get_data_preparation(ds) for ds in datasets]
+
+
+def prepare_data(data, datasets_dir, cache_dir):
+    datasets = dict(tree.flatten(data)).values()
+    preparers = get_data_preparation(*datasets)
+    return tuple(prepare(ds) for prepare, ds in zip(preparers, datasets))
 
 
 def get_prepared_data(data_str: str, datasets_dir, cache_dir):
     data = get_data(data_str, datasets_dir, cache_dir)
-    datasets = dict(tree.flatten(data)).values()
-    prepare = get_data_preparation(*datasets)
-    return tuple(map(prepare, datasets))
+    return prepare_data(data, datasets_dir, cache_dir)
 
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
@@ -150,10 +156,10 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
                              + f' Some of {names} do not.')
     else:
         names = ['train', 'test']
+
     data = get_data(data_str, datasets_dir, cache_dir)
-    datasets = dict(tree.flatten(data)).values()
-    prepare = get_data_preparation(*datasets)
-    datasets = map(prepare, datasets)
+    datasets = prepare_data(data, datasets_dir, cache_dir)
+
     names_iter = iter(names)
     print("Datasets: " + ", ".join(f"{name}.{k}({len(ds)}) as {next(names_iter)}"
                                    for name, subsets in data.items()
