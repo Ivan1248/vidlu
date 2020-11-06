@@ -20,6 +20,8 @@ class SegmentationJitter:
 
 class ClassificationJitter:
     def __call__(self, x):
+        if len(x) == 1:
+            return (self.apply_input(x[0]),)
         return self.apply_input(x[0]), self.apply_label(x[1])
 
     def apply_input(self, x):
