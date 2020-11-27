@@ -90,9 +90,13 @@ def get_temps_and_freqs(cpu_count=1, pattern=r"\d+(?:\.\d+)?"):
            [int(line.strip()) for line in freqs]
 
 
-def get_utilization():
+def get_gpu_utilization():
     lines = run_command("nvidia-smi | grep %;").split("\n")[:-1]
-    return [float(re.findall(r"\d+%", line)[-1][:-1]) for line in lines]
+    return [float(re.findall(r"\d+%", line)[-1][:-1]) for line in lines]  # %
+
+def get_gpu_temp():
+    lines = run_command("nvidia-smi | grep %;").split("\n")[:-1]
+    return [float(re.findall(r"\d+C", line)[-1][:-1]) for line in lines]  # %
 
 
 log_path = f"{args.prefix}_s{datetime.now().strftime('%H_%M')}_c{args.duration}_p{args.period}.json"
@@ -107,7 +111,7 @@ with Stopwatch() as t:
         times.append(t.time)
         tempses.append(curr_temps)
         freqses.append(curr_freqs)
-        gpuutses.append(get_utilization())
+        gpuutses.append(get_gpu_utilization())
         pbar.update(int(t.time * 10) - pbar.n)
 
 print(f"max: {np.max(np.array(tempses))}")

@@ -1,11 +1,11 @@
 import argparse
 
 import torch
+import matplotlib.pyplot as plt
 
 # noinspection PyUnresolvedReferences
 import _context
 from vidlu.utils.collections import NameDict
-
 from vidlu.utils.func import tryable
 from vidlu.utils.presentation.visualization import plot_curves
 import parse
@@ -47,16 +47,22 @@ scanner_action = [
 """
 
 scanner_action = [
+    # batches_per_epoch, epoch_lr
     (lambda x: parse.parse("{} Starting epoch {epoch:d}/{:d} ({batches:d} batches, lr={lr:e}{}",
                            x).named,
      lambda epoch, batches, lr: (print(batches), (batches_per_epoch.append(batches),
                                                   epoch_lr.append(NameDict(epoch=epoch, lr=lr))))),
-    (lambda x: parse.parse("{} {epoch:d}.{last_batch:d}: {evaluation}", x).named,
+    # train_evals
+    (lambda x: parse.parse("{}/s, {epoch:d}.{last_batch:d}: {evaluation}", x).named,
      lambda epoch, last_batch, evaluation: train_evals.append(
          NameDict(epoch=epoch, last_batch=last_batch, evals=eval(f"dict({evaluation})")))),
-    (lambda x: parse.parse("{} val: {evaluation}", x).named,
+    # val_evals
+    (lambda x: parse.parse("{} val: {}/s, {evaluation}", x).named,
      lambda evaluation: val_evals.append(
          eval(f"NameDict(evals=NameDict({evaluation}), epoch={epoch_lr[-1].epoch})"))),
+    # # error
+    # (lambda x: parse.parse("{}", x),
+    #  lambda line: print(f"No parsing rule defined for line\n{line}")),
 ]
 
 includes = None if args.include is None else args.include.split(",")
@@ -79,16 +85,16 @@ def parse_line(line):
     return False
 
 
-for line in data.lines:
+for line in data.logger['lines']:
     print(line)
     if not parse_line(line):
         print(f"Unparsed: {line}")
 
 batches_per_epoch = batches_per_epoch[0]
 
-epoch_count = train_evals[-1].epoch
+epoch_count = val_evals[-1].epoch
 train_curve_x = [(x.epoch - 1) + x.last_batch / batches_per_epoch for x in train_evals]
-train_curve_ys = dict(zip(train_evals[0].evals.keys(),
+train_curve_ys = dict(zip(train_evals[0].evals.keys() if len(train_evals) > 0 else (),
                           (list(zip(*[e.evals.values() for e in train_evals])))))
 train_curves = NameDict({f"{k}_train": (train_curve_x, y) for k, y in train_curve_ys.items()})
 
@@ -101,3 +107,4 @@ curves = {**train_curves, **val_curves}
 curves = {k: v for k, v in curves.items() if name_filter(k)}
 
 plot_curves(curves)
+plt.show()
