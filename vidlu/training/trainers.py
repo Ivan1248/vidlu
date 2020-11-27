@@ -208,7 +208,7 @@ class Evaluator:
         def put_metrics_into_state():
             self.evaluation.state.metrics = self.get_metric_values()
 
-        self.evaluation = Engine(lambda e, b: self._run_step(self.eval_step, b))
+        self.evaluation = Engine(lambda engine, batch: self._run_step(self.eval_step, batch))
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.epoch_completed.add_handler(lambda _: put_metrics_into_state())
         self.evaluation.iter_completed.add_handler(self._update_metrics)
