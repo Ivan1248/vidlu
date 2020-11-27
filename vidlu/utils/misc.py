@@ -113,7 +113,7 @@ def try_input(default=None):
 
 
 def query_user(question, default=None, timeout=np.inf, options=None):
-    if timeout is not np.inf and default is not None:
+    if timeout is not np.inf and default is None:
         raise ValueError("`default` should be defined if `timeout` is finite.")
 
     options = options or dict(y=True, n=False)
@@ -125,7 +125,7 @@ def query_user(question, default=None, timeout=np.inf, options=None):
         inp = sw
         while sw.time < timeout:
             time.sleep(0.1)
-            if (inp := try_input(sw )) is not sw:
+            if (inp := try_input(sw)) is not sw:
                 break
         if inp is sw:
             return options[default]
