@@ -107,12 +107,12 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
         for s in subsets:
             data.append(((k, s), getattr(pds, s)))
 
-    if transform_str is not None:
+    if transform_str is not None:  # TODO: improve names if necessary
         values = unsafe_eval(transform_str, dict(d=[v for k, v in data],
                                                  **{k: v for k, v in vars(dataset_ops).items()
                                                     if not k.startswith('_')}))
-        data = dict(((f'data{i}', {'sub0': v}) for i, v in enumerate(values)))
-    return data
+        data = [((f'data{i}', 'sub0'), v) for i, v in enumerate(values)]
+    return data  # not dict since elements can repeat
 
 
 get_data.help = \
@@ -137,7 +137,8 @@ def get_data_preparation(*datasets):
 
 
 def prepare_data(data, datasets_dir, cache_dir):
-    datasets = dict(tree.flatten(data)).values()
+    datasets = [ds for _, ds in data]
+    # datasets = dict(tree.flatten(data)).values()
     preparers = get_data_preparation(*datasets)
     return tuple(prepare(ds) for prepare, ds in zip(preparers, datasets))
 
@@ -162,8 +163,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
 
     names_iter = iter(names)
     print("Datasets: " + ", ".join(f"{name}.{k}({len(ds)}) as {next(names_iter)}"
-                                   for name, subsets in data.items()
-                                   for k, ds in subsets.items()))
+                                   for (name, k), ds in data))
     return NameDict(**dict(zip(names, datasets)))
 
 
@@ -345,6 +345,7 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     from torch import optim
     from torch.optim import lr_scheduler
     from vidlu.modules import losses
+    import vidlu.data as vd
     import vidlu.training.robustness as ta
     import vidlu.configs.training as tc
     import vidlu.training.steps as ts
@@ -353,8 +354,9 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     t = vuf.ArgTree
 
     config = unsafe_eval(f"tc.TrainerConfig({trainer_str})",
-                         dict(t=t, math=math, optim=optim, lr_scheduler=lr_scheduler, losses=losses,
-                              ta=ta, tc=tc, ts=ts, attacks=attacks, jitter=jitter, partial=partial))
+                         dict(t=t, vd=vd, math=math, optim=optim, lr_scheduler=lr_scheduler,
+                              losses=losses, ta=ta, tc=tc, ts=ts, attacks=attacks, jitter=jitter,
+                              partial=partial))
 
     default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     trainer_f = partial(Trainer, **tc.TrainerConfig(default_config, config).normalized())
