@@ -30,5 +30,5 @@ class AdversarialTraining(_AdversarialTrainingBase):
     pass
 
 
-class SemiSupervisedVAT(_AdversarialTrainingBase):
+class SemisupVAT(_AdversarialTrainingBase):
     pass  # intentionally not a subclass of AdversarialTraining because of default metrics etc.
