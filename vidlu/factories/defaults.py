@@ -91,7 +91,7 @@ def get_metrics(trainer, problem):  # TODO: move to configs
             ret.append(partial(metrics.with_suffix(metrics.ClassificationMetrics, 'adv'),
                                hard_prediction_name="other_outputs_p.hard_prediction",
                                class_count=problem.class_count, metrics=clf_metric_names))
-        elif any(isinstance(e, t.SemiSupervisedVAT) for e in trainer.extensions):
+        elif any(isinstance(e, t.SemisupVAT) for e in trainer.extensions):
             hard_prediction_name = "other_outputs_l.hard_prediction"
         ret.append(partial(metrics.ClassificationMetrics, hard_prediction_name=hard_prediction_name,
                            class_count=problem.class_count, metrics=clf_metric_names))

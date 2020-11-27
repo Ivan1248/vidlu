@@ -131,79 +131,117 @@ vat = TrainerConfig(
     eval_step=ts.AdversarialEvalStep(virtual=True),
     attack_f=attacks.VATAttack)
 
-semisupervised_vat = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False))
+semisup_vat = TrainerConfig(
+    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False))
 
-semisupervised_vat_2way = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
-                                             block_grad_on_clean=False))
+semisup_vat_2way = TrainerConfig(
+    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False))
 
-semisupervised_vat_2way_entmin = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
-                                             block_grad_on_clean=False,
-                                             entropy_loss_coef=1))
+semisup_vat_2way_entmin = TrainerConfig(
+    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False,
+                                      block_grad_on_clean=False,
+                                      entropy_loss_coef=1))
 
-semisupervised_vat_l = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True))
+semisup_vat_l = TrainerConfig(
+    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True))
 
-semisupervised_vat_l_2way = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True,
-                                             block_grad_on_clean=False))
+semisup_vat_l_2way = TrainerConfig(
+    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True, block_grad_on_clean=False))
 
-semisupervised_vat_entmin = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=False,
-                                             entropy_loss_coef=1))
+semisup_vat_entmin = TrainerConfig(
+    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, entropy_loss_coef=1))
 
-semisup_consistency_phtps20 = TrainerConfig(
-    partial(te.SemiSupervisedVAT,
+semisup_cons_phtps20 = TrainerConfig(
+    partial(te.SemisupVAT,
             attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                              output_to_target=lambda x: x)),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=True),
-    train_step=ts.SemisupervisedVATTrainStep(consistency_loss_on_labeled=True))
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False))
+
+semisup_cons_phtps20 = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
+                             output_to_target=lambda x: x)),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False))
+
+semisup_cons_noise = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
+                             output_to_target=lambda x: x)),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False))
+
+semisup_cons_phtps20_r1w = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(phtps_attack_20, step_count=0, loss=lambda p, c: losses.kl_div_ll(p.detach(), c),
+                             output_to_target=lambda x: x)),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False))
+
+semisup_cons_phtps20_1wa = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(phtps_attack_20, step_count=0, loss=lambda p, c: losses.kl_div_ll(p, c.detach()),
+                             output_to_target=lambda x: x)),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False))
+
+semisup_cons_phtps20_entmin = TrainerConfig(
+    semisup_cons_phtps20,
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, entropy_loss_coef=1))
+
+semisup_cons_phtps20_l = TrainerConfig(
+    semisup_cons_phtps20,
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True))
+
+semisup_cons_phtps20_entmin_l = TrainerConfig(
+    semisup_cons_phtps20_l,
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True, entropy_loss_coef=1))
 
 mean_teacher_custom_tps = TrainerConfig(
-    partial(te.SemiSupervisedVAT, attack_f=partial(tps_warp_attack, step_count=0,
-                                                   loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    partial(te.SemisupVAT, attack_f=partial(tps_warp_attack, step_count=0,
+                                            loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
 
 mean_teacher_custom_tps_weaker = TrainerConfig(
-    partial(te.SemiSupervisedVAT,
+    partial(te.SemisupVAT,
             attack_f=partial(tps_warp_attack,
                              initializer=pert.NormalInit({'offsets': (0, 0.05)}),
                              projection=None,
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
 
 mean_teacher_custom_tps_more_weaker = TrainerConfig(
-    partial(te.SemiSupervisedVAT,
+    partial(te.SemisupVAT,
             attack_f=partial(tps_warp_attack,
                              initializer=pert.NormalInit({'offsets': (0, 0.02)}),
                              projection=pert.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False))
 
 mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
-    partial(te.SemiSupervisedVAT,
+    partial(te.SemisupVAT,
             attack_f=partial(tps_warp_attack,
                              initializer=pert.NormalInit({'offsets': (0, 0.02)}),
                              projection=pert.ScalingProjector({'offsets': 10}),
                              step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupervisedVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False,
                                        clean_teacher_input=True))
 

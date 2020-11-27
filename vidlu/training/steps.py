@@ -471,7 +471,7 @@ def _get_unsupervised_vat_outputs(out, uns_start, block_grad_for_clean, output_t
 
 
 @dc.dataclass
-class SemisupervisedVATEvalStep:
+class SemisupVATEvalStep:
     consistency_loss_on_labeled: bool = True
 
     def __call__(self, trainer, batch):
@@ -510,7 +510,7 @@ class SemisupervisedVATEvalStep:
 
 
 @dc.dataclass
-class SemisupervisedVATTrainStep:
+class SemisupVATTrainStep:
     alpha: float = 1
     attack_eval_model: bool = False
     consistency_loss_on_labeled: bool = False
@@ -543,12 +543,80 @@ class SemisupervisedVATTrainStep:
             loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
 
         do_optimization_step(trainer.optimizer, loss=loss)
+
         other_outs_l = type(other_outs)({k: v[:len(x_l)] for k, v in other_outs.items()})
 
         return NameDict(x=x, output=out, other_outputs=other_outs, output_l=out_l,
                         other_outputs_l=other_outs_l, loss_l=loss_l.item(), loss_p=loss_p.item(),
                         x_l=x_l, target=y_l, x_p=x_p, output_p=out_p, other_outputs_p=other_outs_p,
                         loss_ent=loss_ent.item())
+
+
+@dc.dataclass
+class SemisupVATCorrEvalStep:
+    alpha: float = 1
+    attack_eval_model: bool = False
+    entropy_loss_coef: float = 0
+    block_grad_on_clean: bool = True
+    corr_step_size: float = 1e-5
+
+    def __call__(self, trainer, batch):
+        model, attack = trainer.model, trainer.attack
+        model.eval()
+
+        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        assert x_u is None
+        x = x_l
+        x_c, uns_start = (x, 0)
+
+        out, other_outs = trainer.extend_output(model(x))
+        out_uns, target_uns = _get_unsupervised_vat_outputs(
+            out, uns_start, self.block_grad_on_clean, attack.output_to_target)
+
+        x_p = attack.perturb(model, x_c, target_uns)
+        out_p, other_outs_p = trainer.extend_output(model(x_p))
+
+        loss_p = attack.loss(out_p, target_uns).mean()
+        loss_l = trainer.loss(out_l := out[:len(x_l)], y_l).mean()
+        loss = loss_l + self.alpha * loss_p
+        loss_ent = vml.entropy_l(out_p).mean()
+        if self.entropy_loss_coef:
+            loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
+
+        import vidlu.torch_utils as vtu
+        with vtu.save_params(model.parameters()):
+            loss_p.backward()
+            with torch.no_grad():
+                for p in model.parameters():
+                    p += self.corr_step_size * p.grad
+                    p.grad.zero_()
+
+                out_c0 = out[uns_start:]  # clean logits before update (N×C)
+                out_p0 = out_p  # perturbed logits before update
+                out_c1 = model(x_c)
+                out_p1 = model(x_p)
+
+                dcp0 = out_c0 - out_p0
+                dcp1 = out_c1 - out_p1
+                uc = out_c1 - out_c0
+                up = out_p1 - out_p0
+                for x in [dcp0, dcp1, uc, up]:
+                    x -= x.mean(dim=1, keepdims=True)
+                    x /= x.norm(dim=1).view(-1, 1)
+
+                dot = partial(torch.einsum, 'nc,nc->n')
+                corr_c = dot(uc, dcp0).mean(0)
+                corr_p = dot(up, dcp0).mean(0)
+                corr_ucp = dot(uc, up).mean(0)
+                corr_dcp = dot(dcp1, dcp0).mean(0)
+
+        other_outs_l = type(other_outs)({k: v[:len(x_l)] for k, v in other_outs.items()})
+
+        return NameDict(x=x, output=out, other_outputs=other_outs, output_l=out_l,
+                        other_outputs_l=other_outs_l, loss_l=loss_l.item(), loss_p=loss_p.item(),
+                        x_l=x_l, target=y_l, x_p=x_p, output_p=out_p, other_outputs_p=other_outs_p,
+                        loss_ent=loss_ent.item(),
+                        corr_c=corr_c.item(), corr_p=corr_p.item(), corr_ucp=corr_ucp.item(), corr_dcp=corr_dcp.item())
 
 
 @dc.dataclass
@@ -565,7 +633,7 @@ class OldMeanTeacherTrainStep:  # TODO
 
         x, y = trainer.prepare_batch(batch)
         with torch.no_grad():
-            output, other_outputs = trainer.extend_output(trainer.m_teacher(x))
+            output, other_outputs = trainer.extend_output(m_teacher(x))
         output, other_outputs = trainer.extend_output(trainer.m_student(x))
         loss = trainer.loss(output, y).mean()
         with batchnorm_stats_tracking_off(m_student) if not self.track_pert_bn_stats \
@@ -594,8 +662,10 @@ class MeanTeacherTrainStep:
     ema_teacher: nn.Module = None  # should this be here?
     ema_decay = 0.99
     clean_teacher_input: bool = False
+    block_teacher_grad: bool = False
 
     def __call__(self, trainer, batch):
+        assert not self.block_teacher_grad
         model, attack = trainer.model, trainer.attack
         if self.ema_teacher is None:
             self.ema_teacher = copy.deepcopy(model)
