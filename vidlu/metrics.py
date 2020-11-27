@@ -266,18 +266,18 @@ class MinMetric(_ExtremumMetric):
 
 
 class _MultiMetric(AccumulatingMetric):
-    def __init__(self, name_filter, metric_f):
-        self.name_filter = name_filter
-        self.metrics = []
+    def __init__(self, filter, metric_f):
+        self.filter = filter
+        self.metrics = None
         self.metric_f = metric_f
 
     def reset(self):
-        self.metrics = []
+        self.metrics = None
 
     @torch.no_grad()
     def update(self, iter_output):
-        if len(self.metrics) == 0:
-            self.metrics = [self.metric_f(k) for k in iter_output.keys() if self.name_filter(k)]
+        if self.metrics is None:
+            self.metrics = [self.metric_f(k) for k, v in iter_output.items() if self.filter(k, v)]
         for m in self.metrics:
             m.update(iter_output)
 
@@ -290,23 +290,23 @@ class _MultiMetric(AccumulatingMetric):
 
 
 class AverageMultiMetric(_MultiMetric):
-    def __init__(self, name_filter):
-        super().__init__(name_filter=name_filter, metric_f=AverageMetric)
+    def __init__(self, filter):
+        super().__init__(filter=filter, metric_f=AverageMetric)
 
 
 class HarmonicMeanMultiMetric(_MultiMetric):
-    def __init__(self, name_filter):
-        super().__init__(name_filter=name_filter, metric_f=HarmonicMeanMetric)
+    def __init__(self, filter):
+        super().__init__(filter=filter, metric_f=HarmonicMeanMetric)
 
 
 class MaxMultiMetric(_MultiMetric):
-    def __init__(self, name_filter):
-        super().__init__(name_filter=name_filter, metric_f=MaxMetric)
+    def __init__(self, filter):
+        super().__init__(filter=filter, metric_f=MaxMetric)
 
 
 class MinMultiMetric(_MultiMetric):
-    def __init__(self, name_filter):
-        super().__init__(name_filter=name_filter, metric_f=MinMetric)
+    def __init__(self, filter):
+        super().__init__(filter=filter, metric_f=MinMetric)
 
 
 class SoftClassificationMetrics(AccumulatingMetric):

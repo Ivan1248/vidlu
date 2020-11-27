@@ -75,13 +75,18 @@ def get_trainer_args(trainer_extension_fs, dataset):
 def get_metrics(trainer, problem):  # TODO: move to configs
     from vidlu import metrics
 
-    ret = [partial(metrics.MaxMultiMetric, name_filter=lambda k: k.startswith('mem')),
-           partial(metrics.HarmonicMeanMultiMetric, name_filter=lambda k: k.startswith('freq'))]
+    common_names = ['mem', 'freq', 'loss', 'A', 'mIoU']
+
+    ret = [partial(metrics.MaxMultiMetric, filter=lambda k, v: k.startswith('mem')),
+           partial(metrics.HarmonicMeanMultiMetric, filter=lambda k, v: k.startswith('freq')),
+           partial(metrics.AverageMultiMetric, filter=lambda k, v: k.startswith('loss'))]
 
     if isinstance(problem, (Classification, SemanticSegmentation)):
         clf_metric_names = ('A', 'mIoU', 'IoU') if isinstance(problem, SemanticSegmentation) else ('A',)
         hard_prediction_name = "other_outputs.hard_prediction"
-        ret.append(partial(metrics.AverageMultiMetric, name_filter=lambda k: k.startswith('loss')))
+        ret.append(partial(metrics.AverageMultiMetric,
+                           filter=lambda k, v: isinstance(v, (int, float))
+                                               and not (any(k.startswith(c) for c in common_names))))
         if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
             ret.append(partial(metrics.with_suffix(metrics.ClassificationMetrics, 'adv'),
                                hard_prediction_name="other_outputs_p.hard_prediction",
