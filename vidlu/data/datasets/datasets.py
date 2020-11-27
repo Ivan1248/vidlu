@@ -57,6 +57,18 @@ def _check_subsets(dataset_class, subset):
         raise ValueError(f"Invalid subset name for {dataset_class.__name__}.")
 
 
+def _check_size(*images, size):
+    if len(images) == 1:
+        images = images[0]
+        if not (len(images) == size):
+            raise RuntimeError(f"The number of found images ({len(images)}) does not equal {size}.")
+    else:
+        images, labels = images
+        if not (len(images) == len(labels) == size):
+            raise RuntimeError(f"The number of found images ({len(images)}) or labels"
+                               + f" ({len(labels)}) does not equal {size}.")
+
+
 def load_image(path, downsampling):
     if not isinstance(downsampling, int):
         raise ValueError("`downsampling` must be an `int`.")
@@ -828,9 +840,7 @@ class Cityscapes(Dataset):
             x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]))
         self._labels = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._images]
 
-        if not (len(self._images) == len(self._labels) == self.subset_to_size[subset]):
-            raise RuntimeError(f"The number of found images ({len(self._images)}) or labels"
-                               + f" ({len(self._labels)}) is not {self.subset_to_size[subset]}.")
+        _check_size(self._images, self._labels, size=self.subset_to_size[subset])
 
         info = dict(problem='semantic_segmentation', class_count=19,
                     class_names=[l.name for l in cslabels if l.trainId >= 0],
