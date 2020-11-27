@@ -37,7 +37,8 @@ def log_run(status):
 
 
 def train(args):
-    if args.restart and not query_user("Are you sure you want to restart the experiment?", timeout=30, default=True):
+    if args.restart and not query_user("Are you sure you want to restart the experiment?", 
+                                       gtimeout=30, default='y'):
         exit()
 
     seed = int(time()) % 100 if args.seed is None else args.seed  # 53
