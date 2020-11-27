@@ -5,13 +5,19 @@ import typing as T
 from torch import nn
 import copy
 
+import numpy as np
 import torch
+from torch import nn
 
 from vidlu.data import BatchTuple
 from vidlu.utils.collections import NameDict
 from vidlu.torch_utils import (concatenate_tensors_trees, switch_training,
                                batchnorm_stats_tracking_off)
 import vidlu.modules.losses as vml
+import vidlu.modules.elements as vme
+import vidlu.modules.utils as vmu
+
+from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 
 
 # Training/evaluation steps ########################################################################
@@ -53,6 +59,88 @@ def _supervised_train_step_x_y(trainer, x, y):
 
 def supervised_train_step(trainer, batch):
     return _supervised_train_step_x_y(trainer, *trainer.prepare_batch(batch))
+
+
+@dc.dataclass
+class ClassifierEnsembleEvalStep:
+    model_iter: T.Callable[[nn.Module], T.Iterator[nn.Module]]
+    combine: T.Callable[[T.Sequence], torch.Tensor] = lambda x: torch.stack(x).mean(0)
+
+    def __call__(self, trainer, batch):
+        trainer.model.eval()
+        x, y = trainer.prepare_batch(batch)
+        output = self.combine(model(x) for model in self.model_iter(trainer.model))
+        _, other_outputs = trainer.extend_output(output)
+        loss = trainer.loss(output, y).mean()
+        return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item())
+
+
+# generative flows and discriminative hybrids
+
+def dequantize(x, bin_count, scale=1):
+    return x + scale / bin_count * torch.rand_like(x)
+
+
+def call_flow(model, x, end=None):
+    Ladj.set(x, Ladj.zero(x))
+    # hooks = [m.register_forward_hook(vmu.hooks.check_propagates_log_abs_det_jac)
+    #         for m in model.backbone.concat.modules()]
+    assert end is not None
+    out = (model if end is None else vme.with_intermediate_outputs(model, end))(x)
+    # for h in hooks:
+    #    h.remove()
+    return out
+
+
+@dc.dataclass
+class DiscriminativeFlowSupervisedTrainStep:  # TODO: improve
+    gen_weight: float = 1.  # bit/dim
+    dis_weight: float = 1.
+    bin_count: float = 256
+    flow_end: str = None
+
+    def __call__(self, trainer, batch):
+        trainer.model.train()
+
+        x, y = trainer.prepare_batch(batch)
+        x = dequantize(x, 256)
+
+        output, z = call_flow(trainer.model, x, end=self.flow_end)
+        output, other_outputs = trainer.extend_output(output)
+
+        loss_gen = vml.input_image_nll(x, z, self.bin_count).mean()
+        loss_dis = trainer.loss(output, y).mean()
+        loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
+
+        do_optimization_step(trainer.optimizer, loss)
+
+        return NameDict(x=x, target=y, z=z, output=output, other_outputs=other_outputs,
+                        loss=loss.item(), loss_dis=loss_dis.item(),
+                        loss_gen_b=loss_gen.item() / np.log(2.))
+
+
+@dc.dataclass
+class DiscriminativeFlowSupervisedEvalStep:  # TODO: improve
+    gen_weight: float = 1.  # bit/dim
+    dis_weight: float = 1.
+    bin_count: float = 256
+    flow_end: str = None
+
+    def __call__(self, trainer, batch):
+        trainer.model.eval()
+
+        x, y = trainer.prepare_batch(batch)
+
+        output, z = call_flow(trainer.model, x, end=self.flow_end)
+        output, other_outputs = trainer.extend_output(output)
+
+        loss_gen = vml.input_image_nll(z, self.bin_count)
+        loss_dis = trainer.loss(output, y).mean()
+        loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
+
+        return NameDict(x=x, target=y, z=z, output=output, other_outputs=other_outputs,
+                        loss=loss.item(), loss_dis=loss_dis.item(),
+                        loss_gen_b=loss_gen.item() / np.log(2.))
 
 
 # Supervised multistep
