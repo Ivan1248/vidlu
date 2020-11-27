@@ -338,23 +338,22 @@ class Baguette(E.Seq):
     # TODO: IMPROVING GLOW https://arogozhnikov.github.io/einops/pytorch-examples.html
 
 
-class Invertible1x1Conv(E.Conv):
+class Invertible1x1Conv(E.Conv): # TODO: implement QR parametrization, which can be a little faster
     def __init__(self, num_channels):
         super().__init__(self, num_channels, 1, bias=False)
 
+    @torch.no_grad()
     def reset_parameters(self):
         # initialization done with rotation matrix
-        w_init = np.linalg.qr(np.random.randn(self.num_channels, self.num_channels))[0]
-        w_init = torch.from_numpy(w_init.astype('float32'))
-        w_init = w_init.unsqueeze(-1).unsqueeze(-1)
-        self.weight.data.copy_(w_init)
+        w_init = torch.qr(torch.randn((self.num_channels, self.num_channels))).Q
+        self.weight[:] = w_init[:, :, None, None]
 
     def forward(self, x):
         y = super().forward(x)
         return Ladj.add(y, x, lambda: self._ladj(y, x))
 
     def inverse_forward(self, y):
-        w_inv = torch.inverse(self.weight.squeeze()).unsqueeze(-1).unsqueeze(-1)
+        w_inv = torch.inverse(self.weight.squeeze())[:, :, None, None]
         x = F.conv2d(y, w_inv, self.bias, self.stride, self.padding, self.dilation, self.groups)
         return Ladj.add(x, y, lambda: self._ladj(x, y, inverse=True))
 
