@@ -200,8 +200,13 @@ class CheckpointManager(object):
                           key=lambda p: int(p.split("_")[0]))
 
         self.saved = get_existing_checkpoints()
-        self.id_to_perf = {id: self.perf_func(Checkpoint.load(self.experiment_dir / id).summary)
-                           for id in self.saved}
+        self.id_to_perf = dict()
+        for id in list(self.saved):
+            try:
+                self.id_to_perf[id] = self.perf_func(Checkpoint.load(self.experiment_dir / id).summary)
+            except EOFError as e:
+                warnings.warn(f"Checkpoint loading error:\n{e}")
+                self.saved.remove(id)
 
     def save(self, state, summary=None):
         if self.resuming_required:
