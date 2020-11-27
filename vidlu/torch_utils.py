@@ -85,9 +85,18 @@ def batchnorm_stats_tracking_off(module):
 @contextlib.contextmanager
 def save_grads(params):
     param_grads = [(p, p.grad.detach().clone()) for p in params]
-    yield
+    yield param_grads
     for p, g in param_grads:
         p.grad = g
+
+
+@contextlib.contextmanager
+def save_params(params):
+    param_param_saved = [(p, p.detach().clone()) for p in params]
+    yield param_param_saved
+    with torch.no_grad():
+        for p, p_saved in param_param_saved:
+            p.data = p_saved
 
 
 # tensor trees
