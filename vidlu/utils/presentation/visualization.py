@@ -272,15 +272,20 @@ def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
                        backward_callback=save_frame)
 
 
-def plot_curves(curves):
-    # plt.yticks(np.arange(0, 0.51, 0.05))
-    # axes.set_xlim([0, 200])
-    plt.figure()
+def plot_curves(curves, xlim=None, ylim=None, xticks=None, yticks=None):
+    fig = plt.figure()
     axes = plt.gca()
-    axes.set_ylim([0, 1])
+    if yticks:
+        plt.yticks(yticks)
+    if xticks:
+        plt.xticks(xticks)
+    if xlim:
+        axes.set_ylim(xlim)
+    if ylim:
+        axes.set_ylim(ylim)
     axes.grid(color='0.9', linestyle='-', linewidth=1)
     for name, (x, y) in curves.items():
         plt.plot(x, y, label=name, linewidth=1)
     plt.xlabel("broj završenih epoha")
     plt.legend()
-    plt.show()
+    return fig, axes
