@@ -176,7 +176,8 @@ class Attack:
         Return:
             Perturbed input.
         """
-        return self(model, x, y=y, output=output, **kwargs)(x)
+        perturb = self(model, x, y=y, output=output, **kwargs)
+        return perturb(x)
 
     @torch.no_grad()
     def _get_target(self, model, x, output):
