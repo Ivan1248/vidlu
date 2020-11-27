@@ -476,12 +476,11 @@ def noisy_batchnorm_stats(trainer: "vidlu.training.Trainer", state, data, **kwar
 
     metric_name = 'mIoU'
     # baseline = .9454
-    baseline = .7398
+    # baseline = .7398
     baseline = .7539
     jitter = False
 
-    train_A = []
-    test_A = []
+    perfs = []
     ns = [2 ** p for p in range(0, int(math.log2(len(data.train))) + 1)]
     ns.append(len(data.train))
     print(ns)
@@ -495,25 +494,19 @@ def noisy_batchnorm_stats(trainer: "vidlu.training.Trainer", state, data, **kwar
             m.reset_running_stats()
         model.train()
         data_iter = iter(data_train)
-        print(f"{len(data_iter)}")
         with torch.no_grad():
             for i in range(n // bs):
                 x = trainer.prepare_batch(next(data_iter))[0]
                 model(x)
         print(f"\nN = {n}, Batch size = {bs}")
-        # s = trainer.eval(data.train)
-        # train_A.append(s.metrics[metric_name])
         s = trainer.eval(data.test)
-        test_A.append(s.metrics[metric_name])
+        perfs.append(s.metrics[metric_name])
 
-    # print(train_A)
-    print(test_A)
+    print(perfs)
 
     import matplotlib.pyplot as plt
-    # plt.plot(ns, [.9454 for _ in ns], label='test_baseline')
     plt.plot(ns, [baseline for _ in ns], label='test_baseline')
-    # plt.plot(ns, train_A, label='train')
-    plt.plot(ns, test_A, label='test')
+    plt.plot(ns, perfs, label='test')
     plt.xscale("log")
     plt.xlabel("N")
     plt.ylabel(metric_name)
@@ -522,3 +515,70 @@ def noisy_batchnorm_stats(trainer: "vidlu.training.Trainer", state, data, **kwar
 
 
 noisy_batchnorm_stats(**locals())
+
+
+# batchnorm ensemble
+
+def batchnorm_ensemble(trainer, state, data, **kwargs):
+    from torch import nn
+    from vidlu.training.steps import ClassifierEnsembleEvalStep
+
+    metric_name = 'A'
+    baseline = .7539
+    baseline = .9460
+    jitter = False
+
+    perfs = []
+    ns = [2 ** p for p in range(0, 5 + 1)]
+    print(ns)
+
+    @torch.no_grad()
+    def model_iter(model, n=3, batch_count=16):
+        data_train = trainer.get_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
+                                             batch_size=trainer.batch_size, shuffle=True, drop_last=True)
+        for i in range(n):
+            for m in [m for m in model.modules() if isinstance(m, nn.BatchNorm2d)]:
+                m.momentum = None
+                m.reset_running_stats()
+            is_training = model.training
+            model.train()
+            data_iter = iter(data_train)
+            for _ in range(batch_count):
+                x = trainer.prepare_batch(next(data_iter))[0]
+                model(x)
+            model.train(is_training)
+            yield model
+
+    @torch.no_grad()
+    def combine(xs):
+        s, n = next(xs), 1
+        for x in xs:
+            s += x.softmax(dim=-1)
+            n += 1
+        s /= n
+        return s
+
+    for n in ns:
+        trainer.eval_step = ClassifierEnsembleEvalStep(model_iter=partial(model_iter, n=n), combine=combine)
+        print(f"\nN = {n}")
+        with torch.no_grad():
+            s = trainer.eval(data.test)
+        perfs.append(s.metrics[metric_name])
+        del s
+
+    print(ns)
+    print(perfs)
+
+    import matplotlib.pyplot as plt
+    plt.plot(ns, [baseline for _ in ns], label='test_baseline')
+    plt.plot(ns, perfs, label='test')
+    plt.xscale("log")
+    plt.xlabel("N")
+    plt.ylabel(metric_name)
+    plt.legend()
+    plt.show()
+
+
+batchnorm_ensemble(**locals())
+
+# 8e-6
