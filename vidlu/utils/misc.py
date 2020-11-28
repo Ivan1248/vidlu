@@ -8,6 +8,8 @@ import time
 import contextlib
 from multiprocessing.sharedctypes import RawArray
 import weakref
+import zipfile
+import gzip
 
 from tqdm import tqdm
 import numpy as np
@@ -132,6 +134,24 @@ def query_user(question, default=None, timeout=np.inf, options=None):
         elif inp in options:
             return options[inp]
         print(f"Please respond with either of {', '.join(options.keys())}.")
+
+
+# Archive files ####################################################################################
+
+
+def extract_zip(path, dest_path):
+    with zipfile.ZipFile(path) as archive:
+        files = list(archive.namelist())
+        for filename in tqdm(files, f"Extracting {path} to {dest_path}"):
+            archive.extract(filename, dest_path)
+    return files
+
+
+def extract_gz(path, dest_path):
+    with gzip.open(path, 'rb') as gz:
+        with open(dest_path, 'wb') as raw:
+            raw.write(gz.read())
+    return dest_path
 
 
 # Downloading ######################################################################################
