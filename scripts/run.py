@@ -31,11 +31,14 @@ def log_run(status):
         with (dirs.EXPERIMENTS / 'runs.txt').open('a') as runs_file:
             prefix = f"[{status} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
             fcntl.flock(runs_file, fcntl.LOCK_EX)
-            runs_file.write(f"{prefix} {' '.join(sys.argv)}\n")  # add quotes where neceessary
+            args = [a if i < 2 or len(a) == 0 or a[0] == '-' else f'"{a}"'
+                    for i, a in enumerate(sys.argv)]
+            runs_file.write(f"{prefix} {' '.join(args)}\n")
             fcntl.flock(runs_file, fcntl.LOCK_UN)
-    except Exception as e:
+    except IOError as e:
         warnings.warn(str(e))
-
+        traceback.print_exc()
+        print(e)
 
 def train(args):
     if args.restart and not query_user("Are you sure you want to restart the experiment?",
