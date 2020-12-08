@@ -220,112 +220,85 @@ trainer.eval_attack.step_count = 50
 trainer.eval_attack.eps *= 4
 trainer.eval_attack.loss = lambda *a, **k: -trainer.eval_attack.loss(*a, **k)
 
+
 # show adversarial examples
-embed()
 
-import vidlu.modules.inputwise as vmi
+def show_adversarial_examples(trainer, state, **kwargs):
+    import vidlu.modules.inputwise as vmi
 
-trainer.eval_attack.pert_model_f = vmi.Warp
+    trainer.eval_attack.pert_model_f = vmi.Warp
 
-trainer.eval_attack.eps = 0.2
-trainer.eval_attack.step_size = 0.01
-trainer.eval_attack.step_count = 100
-trainer.eval_attack.stop_on_success = True
+    trainer.eval_attack.eps = 0.2
+    trainer.eval_attack.step_size = 0.01
+    trainer.eval_attack.step_count = 100
+    trainer.eval_attack.stop_on_success = True
 
-import torch
+    import torch
 
-with torch.no_grad():
-    from torchvision.utils import make_grid
+    with torch.no_grad():
+        from torchvision.utils import make_grid
+
+        def show(img):
+            import numpy as np
+            import matplotlib.pyplot as plt
+            npimg = img.detach().cpu().numpy()
+            plt.close()
+            plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
+            plt.show()
+
+        N = 16
+        adv = state.output.x_adv[:N]
+        clean = state.output.x[:N]
+        diff = 0.5 + (adv - clean) * 255 / 80
+        pred = state.output.other_outputs_adv.hard_prediction[:len(state.output.target)]
+        target = state.output.target
+
+        fooled = (pred != target)[:N]
+        fooled = fooled.reshape(-1, *[1] * (len(adv.shape) - 1))
+        fooled = fooled.float() * (adv * 0 + 1)
+
+        class_repr = [None] * 10
+        for i, c in enumerate(target):
+            if class_repr[c] is None:
+                class_repr[c] = state.output.x[i]
+        for i, x in enumerate(class_repr):
+            if x is None:
+                x = 0 * adv[0]
+
+        predicted_class_representatives = list(map(class_repr.__getitem__, pred[:N]))
+
+    show(make_grid(
+        sum((list(x) for x in [clean, adv, diff, fooled, predicted_class_representatives]), []),
+        nrow=len(adv)))
 
 
-    def show(img):
-        import numpy as np
-        import matplotlib.pyplot as plt
-        npimg = img.detach().cpu().numpy()
-        plt.close()
-        plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
-        plt.show()
+show_adversarial_examples(**locals())
 
-
-    N = 16
-    adv = state.output.x_adv[:N]
-    clean = state.output.x[:N]
-    diff = 0.5 + (adv - clean) * 255 / 80
-    pred = state.output.other_outputs_adv.hard_prediction[:len(state.output.target)]
-    target = state.output.target
-
-    fooled = (pred != target)[:N]
-    fooled = fooled.reshape(-1, *[1] * (len(adv.shape) - 1))
-    fooled = fooled.float() * (adv * 0 + 1)
-
-    class_repr = [None] * 10
-    for i, c in enumerate(target):
-        if class_repr[c] is None:
-            class_repr[c] = state.output.x[i]
-    for i, x in enumerate(class_repr):
-        if x is None:
-            x = 0 * adv[0]
-
-    predicted_class_representatives = list(map(class_repr.__getitem__, pred[:N]))
-
-show(make_grid(
-    sum((list(x) for x in [clean, adv, diff, fooled, predicted_class_representatives]), []),
-    nrow=len(adv)))
-
-# tent hyperparameters WRN
-from torch import optim
-
-delta_params = [v for k, v in trainer.model.named_parameters() if k.endswith('delta')]
-other_params = [v for k, v in trainer.model.named_parameters() if not k.endswith('delta')]
-trainer.optimizer = optim.Adam(
-    [dict(params=other_params), dict(params=delta_params, weight_decay=0.12)], lr=1e-3,
-    weight_decay=1e-6)
-for m in trainer.model.modules():
-    if hasattr(m, 'max_delta'):
-        print(m.max_delta, m.delta)
-        m.max_delta = 1.0
-        m.min_delta = 0.05
-
-for m in trainer.model.modules():
-    if 'ReLU' in str(type(m)):
-        print(type(m))
-
-# tent adversairal example visualization pre-code
-state = torch.load(
-    '/home/igrubisic/data/states/cifar10{trainval,test}/ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=mc.Tent))/AdversarialTrainer,++{++configs.wrn_cifar_tent,++configs.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(configs.madry_cifar10_attack,step_count=7,stop_on_success=True)/_/91/state.pth')
-trainer.model.load_state_dict(state['model'])
-from vidlu.configs.training import *
-
-trainer.eval_attack = madry_cifar10_attack(trainer.model, step_count=50, eps=40 / 255)
-
-"""
-from torch import optim
-delta_params = [v for k, v in trainer.model.named_parameters() if k.endswith('delta')]
-other_params = [v for k, v in trainer.model.named_parameters() if not k.endswith('delta')]
-trainer.optimizer=optim.SGD([dict(params=other_params), dict(params=delta_params, weight_decay=4e-2)], lr=1e-3, momentum=0.9, weight_decay=5e-4)"""
 
 # activations
-from vidlu.modules import with_intermediate_outputs
 
-for i in range(4):
-    print((with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.output.x)[1][
-               0] != 0).float().mean())
+def activations(trainer, **kwargs):
+    from vidlu.modules import with_intermediate_outputs
 
-from vidlu.modules import with_intermediate_outputs
+    for i in range(4):
+        print((with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.output.x)[1][
+                   0] != 0).float().mean())
 
-for i in range(4):
-    print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
-        0]).float())
+    from vidlu.modules import with_intermediate_outputs
 
-from vidlu.modules import with_intermediate_outputs
+    for i in range(4):
+        print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
+            0]).float())
 
-for i in range(4):
-    print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
-               0] > 0.5).float().mean())
+    from vidlu.modules import with_intermediate_outputs
 
-for k, v in trainer.model.named_buffers():
-    if 'bias' in k:
-        print(v)
+    for i in range(4):
+        print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
+                   0] > 0.5).float().mean())
+
+    for k, v in trainer.model.named_buffers():
+        if 'bias' in k:
+            print(v)
 
 
 # i-RevNet reconstruction
@@ -387,6 +360,57 @@ def visualize_reconstructions(trainer, **kwargs):
 
 
 visualize_reconstructions(**globals(), **locals())
+
+
+def visualize_inverse_adv_examples(trainer, state, **kwargs):
+    from torchvision.transforms.functional import to_tensor, to_pil_image
+    import torch
+    import matplotlib.pyplot as plt
+    from itertools import chain
+    import vidlu.utils.presentation.visualization
+
+    n = 6
+
+    xs = state.batch[0].to('cuda')
+    # logits, *other_out = state.output.other_outputs.full_output
+    # breakpoint()
+    logits, *other_out = trainer.model(xs)
+
+    with torch.no_grad():
+        trainer.model.eval()
+        pred = logits[:, :10].argmax(1)
+        print("c", logits[:10, -1], pred)
+        logits_m = logits.roll(1, dims=0)
+        pred_m = logits_m[:, :10].argmax(1)
+        print("a", logits_m[:10, -1], (pred_m == pred).float().mean())
+        # logits_m[:, -1].neg_()
+        print(logits_m[:, -1].roll(1, dims=0).sigmoid().mean())
+        for i in range(3):
+            xs_adv = trainer.model.inverse((logits_m, *other_out)).clamp(-1, 1)
+            logits_r, *other_out_r = trainer.model(xs_adv)
+            pred_r = logits_r[:, :10].argmax(1)
+            print("r", logits_r[:10, -1].sigmoid().mean(), (pred_r == pred).float().mean())
+            xs_adv2 = trainer.model.inverse((logits_r, *other_out)).clamp(-1, 1)
+            logits_m = logits_r
+            # xs_adv2 = trainer.model.inverse((logits_r, *other_out_r)).clamp(-1,1)
+
+    xs = xs[:n]
+    xs_adv = xs_adv[:n]
+    deltas = xs_adv - xs + 0.5
+
+    images = [to_pil_image(x.cpu()) for x in chain(xs, xs_adv, deltas, xs_adv2[:n])]
+
+    h = 4  # len(images) // w
+    w = len(images) // h  # int(len(images) ** 0.5 + 0.5)
+
+    fig, axs = plt.subplots(h, w)
+    axs = axs.flat
+    for i, im in enumerate(images):
+        axs[i].imshow(im)
+    plt.show()
+
+
+visualize_inverse_adv_examples(**{**globals(), **locals()})
 
 
 # i-RevNet interpolation
@@ -520,6 +544,7 @@ noisy_batchnorm_stats(**locals())
 # batchnorm ensemble
 
 def batchnorm_ensemble(trainer, state, data, **kwargs):
+    import torch
     from torch import nn
     from vidlu.training.steps import ClassifierEnsembleEvalStep
 
