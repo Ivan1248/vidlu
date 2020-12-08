@@ -5,6 +5,7 @@ from time import time
 import random
 from datetime import datetime
 import fcntl
+import traceback
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -37,8 +38,8 @@ def log_run(status):
 
 
 def train(args):
-    if args.restart and not query_user("Are you sure you want to restart the experiment?", 
-                                       gtimeout=30, default='y'):
+    if args.restart and not query_user("Are you sure you want to restart the experiment?",
+                                       timeout=30, default='y'):
         exit()
 
     seed = int(time()) % 100 if args.seed is None else args.seed  # 53
@@ -124,11 +125,13 @@ def add_standard_arguments(parser, func):
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
                              + " with the same configuration.")
-    if func is train:
-        parser.add_argument("-r", "--resume", action='store_true',
-                            help="Resume training from the last checkpoint of the same experiment.")
-        parser.add_argument("--restart", action='store_true',
-                            help="Delete the data of an experiment with the same name.")
+    parser.add_argument("-rb", "--resume_best", action='store_true',
+                        help="Use the best checkpoint if --resume is provided.")
+    #if func is train:
+    parser.add_argument("-r", "--resume", action='store_true',
+                        help="Resume training from a checkpoint of the same experiment.")
+    parser.add_argument("--restart", action='store_true',
+                        help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_test", action='store_true',
                         help="Skip testing before training.")
     parser.add_argument("-s", "--seed", type=int, default=None,

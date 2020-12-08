@@ -30,6 +30,7 @@ class TrainingExperimentFactoryArgs:
     params: T.Optional[str]
     experiment_suffix: str
     resume: bool
+    resume_best: bool
     restart: bool
     device: T.Optional[torch.device]
     verbosity: int
@@ -207,7 +208,7 @@ class TrainingExperiment:
             define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
 
         if a.resume:
-            state, summary = cpman.load_last(map_location=a.device)
+            state, summary = (cpman.load_best if a.resume_best else cpman.load_last)(map_location=a.device)
             trainer.load_state_dict(state)
             logger.load_state_dict(summary.get('logger', summary))  # TODO: remove backward compatibility
             logger.print_all()
