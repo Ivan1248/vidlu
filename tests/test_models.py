@@ -62,10 +62,10 @@ class TestIRevNet:
         # numerical error too high for randomly initialized model and high-frequecy input
         # model_injective.check_inverse(x)
 
-        for error in [False, True]:
-            for m in model.modules() if error else model_injective.modules():
+        for should_error in [False, True]:
+            for m in (model if should_error else model_injective).modules():
                 m.register_forward_hook(vmu.hooks.check_propagates_log_abs_det_jac)
-            with pytest.raises(RuntimeError) if error else ctx.suppress():
+            with pytest.raises(RuntimeError) if should_error else ctx.suppress():
                 out, z = vm.with_intermediate_outputs(model, 'backbone.concat')(x)
             ladj = LogAbsDetJac.get(z)()
             assert torch.all(ladj == 0) and ladj.shape == (len(x),)

@@ -1,3 +1,5 @@
+import pytest
+
 from vidlu.modules import *
 from vidlu.modules.components import Baguette
 from vidlu.utils.collections import NameDict
@@ -25,6 +27,15 @@ class TestModule:
         assert m1.args == NameDict(args=(1, 2, 3), kwargs={'c': 'spam'})
         m2 = TModule2(1, 2, c='unladen', swallow=8)
         assert m2.args == NameDict(a=1, args=(2,), c='unladen', d=6, kwargs={'swallow': 8})
+
+    def test_inverse_error(self):
+        class A(Module):
+            def forward(self, x):
+                return x * 0
+
+        m = A()
+        with pytest.raises(ModuleInverseError):
+            m.inverse
 
     """
     def test_scoped_sequential(self):
@@ -163,6 +174,23 @@ class TestBaguette:
         assert bk.inverse is bk.inverse
         x = torch.arange(2 * 4 * 8 * 6).view(2, 4, 8, 6)
         assert torch.all(bk.inverse(bk(x)) == x)
+
+
+class TestSplit:
+    def test_split(self):
+        x = torch.zeros(2, 5)
+        split = Split(2)
+        a, b, c = split(x)
+        assert torch.all(b.eq(x[:, 2:4]))
+
+    def test_split_ellipsis(self):
+        x = torch.zeros(1, 5)
+        split1 = Split([2, ...])
+        split2 = Split([2, 3])
+        a1, b1 = split1(x)
+        a2, b2 = split2(x)
+        assert torch.all(a1.eq(a2))
+        assert torch.all(b1.eq(b2))
 
 
 class TestDeepSplit:

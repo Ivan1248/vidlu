@@ -24,6 +24,7 @@ def test_training_experiment(tmpdir):
             params=None,
             experiment_suffix="_",
             resume=False,
+            resume_best=False,
             device=None,
             verbosity=1,
             restart=True),
