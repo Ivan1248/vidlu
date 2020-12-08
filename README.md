@@ -3,6 +3,7 @@
 A deep learning framework for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/).
 
 [![Build Status](https://travis-ci.org/Ivan1248/Vidlu.svg?branch=master)](https://travis-ci.org/Ivan1248/Vidlu)
+[![Build Status](https://github.com/Ivan1248/Vidlu/workflows/build/badge.svg)](https://github.com/Ivan1248/Vidlu/actions)
 [![codecov](https://codecov.io/gh/Ivan1248/Vidlu/branch/master/graph/badge.svg)](https://codecov.io/gh/Ivan1248/Vidlu)
 [![Codacy Badge](https://api.codacy.com/project/badge/Grade/7f89c65e677f490bab26c0e5c7cae116)](https://www.codacy.com/manual/Ivan1248/Vidlu?utm_source=github.com&utm_medium=referral&utm_content=Ivan1248/Vidlu&utm_campaign=Badge_Grade)
 [![Documentation Status](https://readthedocs.org/projects/vidlu/badge/?version=latest)](https://vidlu.readthedocs.io/en/latest/?badge=latest)

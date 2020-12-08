@@ -193,6 +193,3 @@ venv.bak/
 vidlu/libs/
 libs/
 *.ini
-
-# GitHub actions
-.github/
