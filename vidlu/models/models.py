@@ -116,9 +116,11 @@ def irevnet_backbone(init_stride=2, group_lengths=(6, 16, 72, 6),
                                      kernel_sizes=(3, 3, 3),
                                      width_factors=(Frac(1, 4), Frac(1, 4), 1)),
                      base_width=None,
-                     groups_f=default_args(vmc.IRevNetBackbone).groups_f):
+                     groups_f=default_args(vmc.IRevNetBackbone).groups_f,
+                     no_final_postact=False):
     return vmc.IRevNetBackbone(init_stride=init_stride, group_lengths=group_lengths,
-                               base_width=base_width, block_f=block_f, groups_f=groups_f)
+                               base_width=base_width, block_f=block_f, groups_f=groups_f,
+                               no_final_postact=no_final_postact)
 
 
 # Models ###########################################################################################
