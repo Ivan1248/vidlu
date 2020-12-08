@@ -10,6 +10,7 @@ from multiprocessing.sharedctypes import RawArray
 import weakref
 import zipfile
 import gzip
+import warnings
 
 from tqdm import tqdm
 import numpy as np
@@ -111,7 +112,11 @@ def try_input(default=None):
         if sys.stdin.isatty():
             return select.select([sys.stdin], [], [], 0)[0]
 
-    return input() if input_available() else default
+    try:
+        return input() if input_available() else default
+    except UnicodeDecodeError as e:
+        warnings.warn(e)
+        return default
 
 
 def query_user(question, default=None, timeout=np.inf, options=None):
@@ -129,7 +134,7 @@ def query_user(question, default=None, timeout=np.inf, options=None):
             time.sleep(0.1)
             if (inp := try_input(sw)) is not sw:
                 break
-        if inp is sw:
+        if inp == "":
             return options[default]
         elif inp in options:
             return options[inp]
