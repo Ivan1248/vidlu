@@ -14,6 +14,7 @@ from vidlu.modules import tensor_extra
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
 from vidlu.utils.collections import NameDict
+import vidlu.modules.utils as vmu
 
 from . import _default_factories as D
 
@@ -269,7 +270,7 @@ def pad_channels(x, padding):
     y = F.pad(x, [0, 0, 0, 0] + padding)
     if Ladj.has(x) and y.shape != x.shape:
         # raise RuntimeError("Non-zero padding does not have a square jacobian.")
-        warnings.warn("Non-zero padding does not have a square jacobian.")
+        warnings.warn("Non-null padding does not have a square jacobian.")
     return Ladj.add(y, x, lambda: 0)
 
 
@@ -338,7 +339,7 @@ class Baguette(E.Seq):
     # TODO: IMPROVING GLOW https://arogozhnikov.github.io/einops/pytorch-examples.html
 
 
-class Invertible1x1Conv(E.Conv): # TODO: implement QR parametrization, which can be a little faster
+class Invertible1x1Conv(E.Conv):  # TODO: implement QR parametrization, which can be a little faster
     def __init__(self, num_channels):
         super().__init__(self, num_channels, 1, bias=False)
 
@@ -362,7 +363,24 @@ class Invertible1x1Conv(E.Conv): # TODO: implement QR parametrization, which can
         return (-a if inverse else a) * ladj_w
 
 
+class ChannelMeanSplitter(E.Module):
+    def forward(self, x):
+        mean = x.view(*x.shape[:2], -1).mean(-1)
+        y = (mean, x - self._align_dims(mean, x))
+        return Ladj.add(y, x, Ladj.zero(x))
+
+    def inverse_forward(self, mean_other):
+        mean, other = mean_other
+        x = self._align_dims(mean, other) + other
+        return Ladj.add(x, mean_other, Ladj.zero(x))
+
+    def _align_dims(self, mean, other):
+        broadcast_shape = list(mean.shape) + [1] * (other.dim() - mean.dim())
+        return mean.view(broadcast_shape)
+
+
 # Attention ########################################################################################
+
 
 class SqueezeExcitation(E.Module):
     def __init__(self, channel, reduction=16, squeeze_f=nn.AdaptiveAvgPool2d, act_f=E.ReLU):
@@ -937,9 +955,7 @@ class AAEDiscriminator(E.Seq):
 
 # iRevNet ##########################################################################################
 
-
-@E.zero_log_abs_det_jac
-class AdditiveCouplingR(E.Module):
+class CouplingBaseR(E.Module):
     def __init__(self, first=False, block_f=PreactBlock):
         super().__init__()
         self.store_args()
@@ -947,6 +963,9 @@ class AdditiveCouplingR(E.Module):
             raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
         self.baguette = self.block = None
 
+
+@E.zero_log_abs_det_jac
+class AdditiveCouplingR(CouplingBaseR):
     def build(self, x):
         a, block_args = self.args, params(self.args.block_f)
         self.baguette = Baguette(block_args.stride) if block_args.stride != 1 else E.Identity()
@@ -962,9 +981,7 @@ class AdditiveCouplingR(E.Module):
         return self.baguette.inverse(y[1] - t), x1
 
 
-class AffineCouplingD(E.Module):
-    __init__ = AdditiveCouplingR.__init__
-
+class AffineCouplingD(CouplingBaseR):
     def build(self, x):
         a, block_args = self.args, params(self.args.block_f)
         self.baguette = Baguette(block_args.stride) if block_args.stride != 1 else E.Identity()
@@ -986,7 +1003,7 @@ class AffineCouplingD(E.Module):
         x1 = self.baguette.inverse(y[0])
         bx1 = self.block(x1)
         t, pre_s = torch.split(bx1, bx1.shape[1] // 2, dim=1)
-        inv_s = pre_s.tanh().neg_().exp()
+        inv_s = pre_s.tanh().neg().exp()  # neg_ sometimes results in an error
         return self.baguette.inverse((y[1] - t) * inv_s), x1
 
 
@@ -999,12 +1016,13 @@ class IRevNetUnit(E.Seq):
     def build(self, x):
         a, ba = self.args, params(self.args.block_f)
         block_out_ch = round(ba.base_width * ba.width_factors[-1])
-        if 0 < (padding := self._input_padding(x, block_out_ch, ba.stride, a.force_surjection)):
+        padding = self._input_padding(x, block_out_ch, ba.stride, a.force_surjection)
+        if padding > 0:
             self.add(input_pad=E.Seq(concat=E.Concat(1),  # TODO: make more efficient
                                      inj_pad=PadChannels(padding),
                                      psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
         # assert padding == 0, (padding, block_out_ch)
-        self.add(transform=a.coupling_f(first=a.first, block_f=a.block_f))  # rename ot coupling
+        self.add(transform=a.coupling_f(first=a.first, block_f=a.block_f))  # rename to coupling
 
     @staticmethod
     def _input_padding(x, block_out_ch, stride, force_surjection):
@@ -1052,8 +1070,8 @@ class IRevNetBackbone(E.Seq):
         if base_width is None:
             base_width, rem = divmod(x.shape[1] * a.init_stride ** 2, 2)
             if rem != 0:
-                raise RuntimeError(f"The number of channels after the first baguette with"
-                                   f" stride {a.init_stride} is not even.")
+                raise RuntimeError(f"The number of channels after the first baguette with stride"
+                                   f" {a.init_stride} is not even and cannot be split.")
         self.add(baguette=Baguette(a.init_stride),
                  psplit=ProportionSplit(0.5, dim=1, rounding=math.floor),
                  bulk=a.groups_f(a.group_lengths, base_width=base_width, block_f=a.block_f),
@@ -1063,21 +1081,3 @@ class IRevNetBackbone(E.Seq):
                 self.add('post_norm', norm_f())
             self.add('post_act', default_args(a.block_f).act_f())
 
-# class IRevNetNuisanceSplit(E.Seq):
-#     def __init__(self, module, final_submodule='backbone.concat'):
-#         assert module.args.no_final_postact
-#         super().__init__(
-#             module=E.IntermediateOutputsModuleWrapper(module, final_submodule, 'error'),
-#
-#         )
-#
-#
-# class InvertibleNuisanceSplitter(E.Module):
-#     def __init__(self, module, final_submodule, split, unsplit):
-#         self.module = module
-#         self.final_submodule = final_submodule
-#         self.split, self.unsplit = split, unsplit
-#
-#     def forward(self, *args, **kwargs):
-#         module_inj = E.with_intermediate_outputs(self.module, self.final_submodule)
-#         self.module(*args, **kwargs)
