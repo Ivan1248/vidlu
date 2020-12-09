@@ -10,7 +10,6 @@ from fractions import Fraction
 import re
 import warnings
 import inspect
-import copy
 import weakref
 
 import numpy as np
@@ -709,7 +708,11 @@ class Split(Module):
         self.split_size_or_sections, self.dim = split_size_or_sections, dim
 
     def forward(self, x: torch.Tensor):
-        return x.split(self.split_size_or_sections, dim=self.dim)
+        ssos = self.split_size_or_sections
+        if isinstance(ssos, T.Sequence) and ssos[-1] is ...:
+            ssos = list(ssos)
+            ssos[-1] = x.shape[self.dim] - ssos[-2]
+        return x.split(ssos, dim=self.dim)
 
     def inverse_module(self):
         return Concat(self.dim)
@@ -776,7 +779,7 @@ class BatchReshape(Module):
         self.shape_or_func = shape_or_func
         self.shape_inv = dict()
 
-    def _get_out_shape(self, x):
+    def _get_out_shape(self, x):  # updates self.shape_inv
         in_shape = x.shape[1:]
         out_shape = sof(*in_shape) if callable(sof := self.shape_or_func) else sof
         if (n_in := np.prod(in_shape)) != (n_out := np.prod(out_shape)):
@@ -912,6 +915,15 @@ class PrintAround(Module):
         if self.after:
             print(self.after(y))
         return y
+
+
+class Breakpoint(Module):
+    def forward(self, x):
+        breakpoint()
+        return x
+
+    def inverse_module(self) -> nn.Module:
+        return self
 
 
 # in-place modification marking
@@ -1099,7 +1111,7 @@ class ConvTranspose(WrappedModule):
 
 
 @replaces('Linear')
-class Linear(WrappedModule):
+class Affine(WrappedModule):
     def __init__(self, out_features: int, bias=True, in_features=None):
         super().__init__(orig=None)
         self.store_args()
@@ -1112,6 +1124,9 @@ class Linear(WrappedModule):
         if len(x.shape) != 2:
             x = x.view(x.size(0), -1)
         return super().forward(x)
+
+
+Linear = Affine
 
 
 @replaces(*(f'BatchNorm{i}d' for i in range(1, 4)))
@@ -1267,12 +1282,11 @@ class Adapter(Module):
 
 def parameter_count(module) -> Namespace:
     trainable, non_trainable = 0, 0
-    for _, p in module.named_parameters():
-        n = np.prod(p.size())
+    for p in module.parameters():
         if p.requires_grad:
-            trainable += n
+            trainable += p.numel()
         else:
-            non_trainable += n
+            non_trainable += p.numel()
 
     return Namespace(trainable=trainable, non_trainable=non_trainable)
 
