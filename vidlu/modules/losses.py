@@ -228,8 +228,8 @@ class CarliniWagnerLoss(nn.Module):
 def input_image_nll(x, z, bin_count=256):
     N, dim = len(x), x[0].numel()
     ll_z = -0.5 * (z ** 2 + np.log(2 * np.pi))
-    ll_z = ll_z.view(N, -1).sum(-1) - np.log(bin_count) * dim
-    ladj = Ladj.get(z)()
-    loss_ladj = -ladj
+    ll_z = ll_z.view(N, -1).sum(-1)
+    ll_z -= np.log(bin_count) * dim
+    loss_ladj = -Ladj.get(z)()
     loss_ll_z = -ll_z
     return (loss_ladj + loss_ll_z) / dim
