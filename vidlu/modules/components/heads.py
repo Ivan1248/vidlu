@@ -1,12 +1,16 @@
 import math
 from functools import partial
 
+import torch
 from torch import nn
 import torch.nn.functional as F
 
 import vidlu.modules.elements as E
+import vidlu.modules.components as vmc
 from . import _default_factories as D
 
+
+# Standard #########################################################################################
 
 class ClassificationHead(E.Seq):
     def __init__(self, class_count):
@@ -42,7 +46,17 @@ class SegmentationHead(E.Module):
         return self.interpolate(self.logits(x), shape or self.shape)
 
 
-class TCSegmentationHead(E.Seq):  # TODO: decide what to do about it
+class RegressionHead(E.Seq):
+    def __init__(self, class_count, shape):
+        super().__init__(logits=E.Conv(class_count, kernel_size=1),
+                         upsample=E.Func(partial(F.interpolate, size=shape, mode='bilinear',
+                                                 align_corners=False)),
+                         log_probs=nn.LogSoftmax(dim=1))
+
+
+# Non-standard #####################################################################################
+
+class TCSegmentationHead(E.Seq):  # TODO: deal with it?
     def __init__(self, class_count, shape, norm_f=D.norm_f, act_f=E.ReLU, convt_f=D.convt_f):
         super().__init__()
         self.shape = shape
@@ -62,9 +76,36 @@ class TCSegmentationHead(E.Seq):  # TODO: decide what to do about it
                                          align_corners=False)))
 
 
-class RegressionHead(E.Seq):
-    def __init__(self, class_count, shape):
-        super().__init__(logits=E.Conv(class_count, kernel_size=1),
-                         upsample=E.Func(partial(F.interpolate, size=shape, mode='bilinear',
-                                                 align_corners=False)),
-                         log_probs=nn.LogSoftmax(dim=1))
+class ChannelMeanLogitsSplitter(E.Seq):
+    """Extracts logits as channel means of the first class_count channels.
+
+    Args:
+        class_count (int): Number of classes.
+
+    Returns:
+        (logits, other1, other2) (tuple): cat([logits + other1, other2], dim=1)
+        is the input, and the other logits has shape N×class_count×1×....
+    """
+
+    def __init__(self, class_count):
+        super().__init__(spl=E.Split([class_count, ...]),
+                         par=E.Parallel(mean_split=vmc.ChannelMeanSplitter(), id=E.Identity()),
+                         restruct=E.Func(lambda x: (*x[0], x[1]),
+                                         inv=lambda y: (y[:2], y[2])))
+
+class AdvChannelMeanLogitsSplitter(E.Seq):
+    """Extracts logits as channel means of the first class_count channels.
+
+    Args:
+        class_count (int): Number of classes.
+
+    Returns:
+        (logits, other1, other2) (tuple): cat([logits + other1, other2], dim=1)
+        is the input, and the other logits has shape N×class_count×1×....
+    """
+
+    def __init__(self, class_count):
+        super().__init__(cmls=E.Split([class_count, ...]),
+                         par=E.Parallel(mean_split=vmc.ChannelMeanSplitter(), id=E.Identity()),
+                         restruct=E.Func(lambda x: (*x[0], x[1]),
+                                         inv=lambda y: (y[:2], y[2])))
