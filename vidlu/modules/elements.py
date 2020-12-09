@@ -141,7 +141,7 @@ def register_inverse_check_hook(module):
     return handle
 
 
-class InverseError(RuntimeError):
+class ModuleInverseError(RuntimeError):
     pass
 
 
@@ -149,33 +149,45 @@ class InvertibleMixin:
     # Note: reconstruction_tols is used in inverse check.
     # It can be overridden with a property.
     reconstruction_tols = dict(rtol=10, atol=1e-5)
+    _module_to_inverse = weakref.WeakKeyDictionary()
+    _inverses = weakref.WeakSet()
+
+    class _Property(property):
+        # used for identifying whether a module is an inverse
+        pass
 
     def _del_inverse_cache(self):
         del self.inverse
 
+    @property
+    def is_inverse(self: nn.Module) -> bool:
+        return self in InvertibleMixin._inverses
+
     @functools.cached_property
     def inverse(self: nn.Module) -> nn.Module:
         try:
+            if self in InvertibleMixin._module_to_inverse:
+                return InvertibleMixin._module_to_inverse[self]()
             module = self.inverse_module()
-            # The inverse of the inverse is the original module. `property` is used so that the
-            # original module is not recognized as a child of the inverse module as this would
-            # result in an infinite recursion when the `children` method is called on the inverse.
-            module.inverse = property(weakref.ref(self, lambda s: module._del_inverse_cache))
+            InvertibleMixin._module_to_inverse[self] = weakref.ref(module)
+            InvertibleMixin._module_to_inverse[module] = weakref.ref(self)
+            InvertibleMixin._inverses.add(module)
             return module
-        except TypeError as e:
+        except ModuleInverseError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
             # AttributeError saying that this module has no `inverse` attribute
-            raise TypeError(f"The inverse for the module `{type(self)}` is not defined: {e}")
+            raise ModuleInverseError(f"The inverse for the module `{type(self)}` is not defined. Error: {e}")
 
     def inverse_module(self) -> nn.Module:
         if type(self).inverse_forward is not InvertibleMixin.inverse_forward:
-            return Inverse(self)
-        raise TypeError(f"`inverse_forward` is not defined for `{type(self)}`."
-                        + " Either `inverse_forward` or `inverse_module` should be overloaded.")
+            inverse_type = type(f"{type(self).__name__}Inverse", (Inverse,), {})
+            return inverse_type(self)
+        raise ModuleInverseError(f"`inverse_forward` is not defined for `{type(self)}`."
+                                 + " Either `inverse_forward` or `inverse_module` should be overloaded.")
 
     def inverse_forward(*args, **kwargs):
         # overload either this or inverse_module
-        raise InverseError()
+        raise ModuleInverseError()
 
     def check_inverse(self: nn.Module, *inputs):
         for m in self.modules():
@@ -303,7 +315,11 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             return result
         except Exception as e:
             name = vmu.try_get_module_name_from_call_stack(self)
-            print(f"Error in {name}, {type(self).__name__}")
+            error_message = f"Error in {name}, {type(self).__name__}"
+            if self.is_inverse:
+                inv_module = self.inverse
+                error_message += f" (inverse of {type(inv_module).__name__})"
+            print(error_message)
             raise e
 
     def __getattr__(self, name: str) -> T.Union[torch.Tensor, nn.Module]:
@@ -312,9 +328,9 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         except nn.modules.module.ModuleAttributeError as e:
             raise nn.modules.module.ModuleAttributeError(
                 f"{type(self).__name__} object has no attribute '{name}'."
-                + "".join(f"\nAvaliable {k}: {', '.join(names)}."
-                          if (names := getattr(self, f"_{k}", None)) else ""
-                          for k in ['modules', 'parameters', 'buffers']))
+                + "".join(f"\nAvaliable {k[1:]}: {', '.join(names)}."
+                          if (names := getattr(self, k, None)) else ""
+                          for k in ['_modules', '_parameters', '_buffers']))
 
     # In-place modification of input checking
 
@@ -596,6 +612,9 @@ class Parallel(ModuleTable):
                              + " match the number of parallel modules."
                              + f"\nError in {vmu.try_get_module_name_from_call_stack(self)}.")
         return tuple(m(x) for m, x in zip(self, inputs))
+
+    def inverse_module(self) -> nn.Module:
+        return Parallel(**{name: module.inverse for name, module in self.named_children()})
 
 
 class ConditionalSelector(Module):
@@ -1155,14 +1174,14 @@ class _Func(Module):
 
 
 class Func(_Func):
-    def __init__(self, func, func_inv=None, module=None):
+    def __init__(self, func, inv=None, module=None):
         super().__init__(func)
-        self._inv = func_inv
+        self._inv = inv
         self.module = (module if module else func if isinstance(func, nn.Module) else None)
 
     def inverse_module(self):
         if self._inv is None:
-            raise RuntimeError("Inverse not defined.")
+            raise ModuleInverseError("Inverse not defined.")
         return Func(self._inv, self._func, module=self.module)
 
 
