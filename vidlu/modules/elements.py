@@ -28,7 +28,7 @@ from vidlu.utils import tree
 
 import vidlu.modules.utils as vmu
 from vidlu.modules.deconv import FastDeconv
-from vidlu.modules.tensor_extra import LogAbsDetJac
+from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 from vidlu.modules.utils import extract_tensors
 
 # Some of modules and functions from torch.nn are replaced with wrappers.
@@ -208,7 +208,7 @@ def zero_log_abs_det_jac(func_or_module_class):
         @functools.wraps(fm)
         def wrapper(self, *args):
             y = fm(self, *args)
-            return LogAbsDetJac.add(y, args, LogAbsDetJac.zero(next(extract_tensors(y))))
+            return Ladj.add(y, args, Ladj.zero(next(extract_tensors(y))))
 
         return wrapper
 
@@ -594,11 +594,15 @@ class Seq(ModuleTable, nn.Sequential):
 
 
 class Fork(ModuleTable):
-    def forward(self, input):
-        return tuple(m(input) for m in self)
+    def __init__(self, *args, inverse_branch: T.Union[int, str] = None, **kwargs):
+        super(Fork, self).__init__(*args, **kwargs)
+        self.inverse_branch = 0 if inverse_branch is None else inverse_branch
 
-    def inverse_module(self):
-        return Fork({k: m.inverse() for k, m in self.named_children()})
+    def forward(self, x):
+        return tuple(m(x) for m in self)
+
+    def inverse_forward(self, y):
+        return self[self.inverse_branch].inverse(y)
 
 
 class Parallel(ModuleTable):
@@ -881,6 +885,7 @@ class AutoReshape(Module):
         super().__init__()
         if isinstance(dims_or_factors, str):
             self.dims_or_factors = _parse_auto_reshape_arg(dims_or_factors)
+        self.orig_shape = self.shape = None
 
     def build(self, x):
         def get_subshape(d, dims_or_factors):
