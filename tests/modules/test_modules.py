@@ -212,16 +212,19 @@ class TestSplit:
 
 class TestRestruct:
     def test_restruct(self):
-        restruct = Restruct("((a, b),c,( d ))", "(((a) ,b), (c, d))")
+        restruct = Restruct("(a, b),c,( d )", "((a) ,b), (c, d)")
         x = ((1, 2), 3, (4,))
         y = (((1,), 2), (3, 4))
         assert restruct(x) == y
         assert restruct.inverse(y) == x
 
     def test_restruct_error(self):
-        with pytest.raises(Exception):
-            Restruct("(a, b), (c)", "(a), b, (c)")
-        Restruct("((a, b), (c))", "((a), b, (c))")
+        x = ((1, 2), (3,))
+        restruct = Restruct("((a, b), (c))", "((a), b, (c))")
+        with pytest.raises(TypeError):
+            restruct(x)
+        restruct = Restruct("(a, b), (c)", "(a), b, (c)")
+        assert restruct(x) == ((1,), 2, (3,))
 
 
 class TestDeepSplit:

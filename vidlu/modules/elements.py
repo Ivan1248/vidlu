@@ -652,75 +652,6 @@ class Reduce(Module):
         return reduce(self.func, inputs[1:], inputs[0].clone())
 
 
-class Restruct(Module):
-    """Restructures an arbitrarily nested tuple structure.
-
-    The module is invertible.
-
-    Arguments:
-        in_expr (str): A string representing the structure of the input.
-        out_expr (str) A string representing the structure of the output.
-
-    Returns:
-        tuple: Restructured input.
-
-    Example:
-        >>> restruct = Restruct("(a, b), c, (d)", "(a, b, (c, d))")
-        >>> x = ((1, 2), 3, (4,))
-        >>> y = (1, 2, (3, 4))
-        >>> assert restruct(x) == y
-        >>> assert restruct.inverse(y) == x
-
-    """
-
-    def __init__(self, in_expr: str, out_expr: str):
-        super().__init__()
-        import arpeggio
-        from arpeggio import (ZeroOrMore, PTNodeVisitor, RegExMatch)
-
-        # Parentheses around the whole expression are required:
-        # "((a, b), (c))" is OK, "(a, b), (c)" is not
-        self.in_expr, self.out_expr = [x.replace(" ", "") for x in (in_expr, out_expr)]
-
-        def var(): return RegExMatch(r"\w+")
-
-        def tuple_(): return "(", [var, tuple_], ZeroOrMore(",", [var, tuple_]), ")"
-
-        def expr(): return tuple_, arpeggio.EOF
-
-        class InVisitor(PTNodeVisitor):
-            def visit_var(self, node, children):
-                return lambda a: ((node.value, a),)
-
-            def visit_tuple_(self, node, children):
-                return lambda a: sum((c(x) for c, x in zip(children, a)), ())
-
-            def visit_expr(self, node, children):
-                return children[0]
-
-        class OutVisitor(PTNodeVisitor):
-            def visit_var(self, node, children):
-                return lambda d: d[node.value]
-
-            def visit_tuple_(self, node, children):
-                return lambda d: tuple(c(d) for c in children)
-
-            def visit_expr(self, node, children):
-                return children[0]
-
-        parser = arpeggio.ParserPython(expr, debug=False)
-        in_tree = parser.parse(self.in_expr)
-        out_tree = parser.parse(self.out_expr)
-        self.destruct = arpeggio.visit_parse_tree(in_tree, InVisitor())
-        self.construct = arpeggio.visit_parse_tree(out_tree, OutVisitor())
-
-    def forward(self, x):
-        return self.construct(dict(self.destruct(x)))
-
-    def inverse_module(self):
-        return Restruct(self.out_expr, self.in_expr)
-
-
 def pasum(x):
     def sum_pairs(l, r):
         return [a + b for a, b in zip(l, r)]
@@ -935,6 +866,86 @@ class InvContiguous(Identity):
 
     def inverse_module(self):
         return Contiguous()
+
+
+class Restruct(Module):
+    """Restructures an arbitrarily nested tuple structure.
+
+    The module is invertible.
+
+    Arguments:
+        in_expr (str): A string representing the structure of the input.
+        out_expr (str) A string representing the structure of the output.
+
+    Returns:
+        tuple: Restructured input.
+
+    Example:
+        >>> restruct = Restruct("(a, b), c, (d)", "(a, b, (c, d))")
+        >>> x = ((1, 2), 3, (4,))
+        >>> y = (1, 2, (3, 4))
+        >>> assert restruct(x) == y
+        >>> assert restruct.inverse(y) == x
+
+    """
+
+    def __init__(self, in_expr: str, out_expr: str):
+        super().__init__()
+        import arpeggio
+        from arpeggio import (ZeroOrMore, PTNodeVisitor, RegExMatch)
+
+        # Parentheses around the whole expression are required:
+        # "((a, b), (c))" is OK, "(a, b), (c)" is not
+        self.in_expr, self.out_expr = [x.replace(" ", "") for x in (in_expr, out_expr)]
+
+        def var(): return RegExMatch(r"\w+")
+
+        def tuple_(): return "(", [var, tuple_], ZeroOrMore(",", [var, tuple_]), ")"
+
+        def expr(): return tuple_, arpeggio.EOF
+
+        class InVisitor(PTNodeVisitor):
+            def visit_var(self, node, children):
+                return lambda a: ((node.value, a),)
+
+            def visit_tuple_(self, node, children):
+                format_ = format("".join(str(x) for x in node))
+
+                def read(a):
+                    if not isinstance(a, tuple):
+                        raise TypeError(f"Expected tuple '{format_}', but got {type(a).__name__}.")
+                    return sum((c(x) for c, x in zip(children, a)), ())
+
+                return read
+
+            def visit_expr(self, node, children):
+                return children[0]
+
+        class OutVisitor(PTNodeVisitor):
+            def visit_var(self, node, children):
+                return lambda d: d[node.value]
+
+            def visit_tuple_(self, node, children):
+                return lambda d: tuple(c(d) for c in children)
+
+            def visit_expr(self, node, children):
+                return children[0]
+
+        parser = arpeggio.ParserPython(expr, debug=False)
+        in_tree = parser.parse(f"({self.in_expr})")
+        out_tree = parser.parse(f"({self.out_expr})")
+        self.destruct = arpeggio.visit_parse_tree(in_tree, InVisitor())
+        self.construct = arpeggio.visit_parse_tree(out_tree, OutVisitor())
+
+    def forward(self, x):
+        try:
+            d = dict(self.destruct(x))
+        except TypeError as e:
+            raise TypeError(f"Input does not match the format '{self.in_expr}'.\nError: {e}")
+        return self.construct(d)
+
+    def inverse_module(self):
+        return Restruct(self.out_expr, self.in_expr)
 
 
 class Index(Module):
