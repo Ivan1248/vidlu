@@ -91,6 +91,8 @@ class LogAbsDetJac(ExtraBase):
 
     @classmethod
     def add(cls, outputs, inputs, closure):
+        if not callable(closure):
+            raise TypeError("The closure must be callable.")
         x = next(vmu.extract_tensors(inputs))
         if cls.has(x):
             input_ladj = cls.get(x)
