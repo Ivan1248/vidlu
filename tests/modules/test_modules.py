@@ -210,6 +210,20 @@ class TestSplit:
         assert torch.all(b1.eq(b2))
 
 
+class TestRestruct:
+    def test_restruct(self):
+        restruct = Restruct("((a, b),c,( d ))", "(((a) ,b), (c, d))")
+        x = ((1, 2), 3, (4,))
+        y = (((1,), 2), (3, 4))
+        assert restruct(x) == y
+        assert restruct.inverse(y) == x
+
+    def test_restruct_error(self):
+        with pytest.raises(Exception):
+            Restruct("(a, b), (c)", "(a), b, (c)")
+        Restruct("((a, b), (c))", "((a), b, (c))")
+
+
 class TestDeepSplit:
     def test_deep_split(self):
         module = Seq(a=Linear(8),
