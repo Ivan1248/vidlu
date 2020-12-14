@@ -1198,6 +1198,20 @@ class Affine(WrappedModule):
 Linear = Affine
 
 
+class PositiveChannelScale(Module):
+    def __init__(self):
+        super().__init__()
+
+    def build(self, x):
+        self.log_scale = nn.Parameter(torch.zeros((1, x.shape[1])), requires_grad=True)
+
+    def forward(self, x):
+        return Ladj.add(x * torch.exp(self.log_scale), x, lambda: torch.sum(self.log_scale))
+
+    def inverse_forward(self, x):
+        return Ladj.add(x * torch.exp(-self.log_scale), x, lambda: -torch.sum(self.log_scale))
+
+
 @replaces(*(f'BatchNorm{i}d' for i in range(1, 4)))
 class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
