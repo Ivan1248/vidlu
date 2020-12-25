@@ -1,8 +1,25 @@
 import torch
+import functools
+import contextlib
 
 from .utils import try_get_module_name_from_call_stack, extract_tensors
-from vidlu.modules.tensor_extra import LogAbsDetJac
+from vidlu.modules.tensor_extra import LogAbsDetJac, Name
 
+
+def register_self_removing(register_proc, hook):
+    handle_container = []
+
+    @functools.wraps(hook)
+    def wrapper(*args):
+        result = hook(*args)
+        handle_container[0].remove()
+        return result
+
+    handle_container.append(register_proc(wrapper))
+    return handle_container[0]
+
+
+# Hooks  ###########################################################################################
 
 def check_no_inf_nan(module, input, output):
     """
@@ -28,10 +45,16 @@ def print_norm(module, input, output):
         print(f"{module_name=}, [{output_index}] l2_norm={out.norm().item()}, linf_norm={out.abs().max()}")
 
 
+def check_outputs_log_abs_det_jac(module, input, output):
+    for i, y in enumerate(extract_tensors(output)):
+        if not LogAbsDetJac.has(y):
+            module_name = try_get_module_name_from_call_stack(module)
+            raise RuntimeError(f"Output ({i}) of {module_name} ({type(module)}) has no"
+                               + f" `ln(abs(det(jacobian)))` it.")
+        else:
+            print(Name.get(output, "noname"), try_get_module_name_from_call_stack(module))
+
+
 def check_propagates_log_abs_det_jac(module, input, output):
     if LogAbsDetJac.has(next(extract_tensors(input))):
-        for i, y in enumerate(extract_tensors(output)):
-            if not LogAbsDetJac.has(y):
-                module_name = try_get_module_name_from_call_stack(module)
-                raise RuntimeError(f"Output ({i}) of {module_name} ({type(module)}) has no"
-                                   + f" `ln(abs(det(jacobian)))` despite input(s) having it.")
+        check_outputs_log_abs_det_jac(module, input, output)
