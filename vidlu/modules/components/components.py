@@ -364,8 +364,14 @@ class Invertible1x1Conv(E.Conv):  # TODO: implement QR parametrization, which ca
 
 
 class ChannelMeanSplitter(E.Module):
+    def __init__(self, keepdim=False):
+        super().__init__()
+        self.keep_dims = keepdim
+
     def forward(self, x):
         mean = x.view(*x.shape[:2], -1).mean(-1)
+        if self.keep_dims:
+            mean = self._align_dims(mean, x)
         y = (mean, x - self._align_dims(mean, x))
         return Ladj.add(y, x, Ladj.zero(x))
 
@@ -1080,4 +1086,3 @@ class IRevNetBackbone(E.Seq):
             if (norm_f := default_args(a.block_f).norm_f) is not None:
                 self.add('post_norm', norm_f())
             self.add('post_act', default_args(a.block_f).act_f())
-
