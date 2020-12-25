@@ -58,3 +58,12 @@ def extract_tensors(*args, **kwargs):
         elif isinstance(a, T.Mapping):
             for x in extract_tensors(*a.values()):
                 yield x
+
+
+def map_tensors(a, f):
+    if isinstance(a, torch.Tensor):
+        return f(a)
+    elif isinstance(a, T.Sequence):
+        return type(a)(map_tensors(x, f) for x in a)
+    elif isinstance(a, T.Mapping):
+        return type(a)({k: map_tensors(x, f) for k, x in a.items()})
