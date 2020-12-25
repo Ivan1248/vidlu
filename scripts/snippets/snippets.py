@@ -333,7 +333,10 @@ def visualize_reconstructions(trainer, **kwargs):
     xs = [x1, torch.flip(x1, [1, 2]), warp(x1)]
 
     with torch.no_grad():
-        model_injective = vm.deep_split(trainer.model, 'backbone.concat')[0]
+        try:
+            model_injective = vm.deep_split(trainer.model, 'backbone.concat')[0]
+        except TypeError as e:
+            model_injective = vm.deep_split(trainer.model.backbone.backbone, 'concat')[0]
         hs = list(map(model_injective, xs))
         hs.append((hs[0] + hs[1]) / 2)
         hs.append(warp(hs[0]))
@@ -386,11 +389,12 @@ def visualize_inverse_adv_examples(trainer, state, **kwargs):
         # logits_m[:, -1].neg_()
         print(logits_m[:, -1].roll(1, dims=0).sigmoid().mean())
         for i in range(3):
-            xs_adv = trainer.model.inverse((logits_m, *other_out)).clamp(-1, 1)
+            xs_adv = trainer.model.inverse((logits_m, *other_out))  # .clamp(-1, 1)
             logits_r, *other_out_r = trainer.model(xs_adv)
             pred_r = logits_r[:, :10].argmax(1)
             print("r", logits_r[:10, -1].sigmoid().mean(), (pred_r == pred).float().mean())
-            xs_adv2 = trainer.model.inverse((logits_r, *other_out)).clamp(-1, 1)
+            xs_adv2 = trainer.model.inverse((logits_r, *other_out))  # .clamp(-1, 1)
+            print(xs_adv2.min(), xs_adv2.max())
             logits_m = logits_r
             # xs_adv2 = trainer.model.inverse((logits_r, *other_out_r)).clamp(-1,1)
 
@@ -398,7 +402,7 @@ def visualize_inverse_adv_examples(trainer, state, **kwargs):
     xs_adv = xs_adv[:n]
     deltas = xs_adv - xs + 0.5
 
-    images = [to_pil_image(x.cpu()) for x in chain(xs, xs_adv, deltas, xs_adv2[:n])]
+    images = [to_pil_image(x.cpu().clamp(-0.999, 0.999)) for x in chain(xs, xs_adv, deltas, xs_adv2[:n])]
 
     h = 4  # len(images) // w
     w = len(images) // h  # int(len(images) ** 0.5 + 0.5)
@@ -407,6 +411,7 @@ def visualize_inverse_adv_examples(trainer, state, **kwargs):
     axs = axs.flat
     for i, im in enumerate(images):
         axs[i].imshow(im)
+        axs[i].set_axis_off()
     plt.show()
 
 
@@ -416,7 +421,7 @@ visualize_inverse_adv_examples(**{**globals(), **locals()})
 # i-RevNet interpolation
 
 
-def visualize_interpolation(trainer, state, **kwargs):
+def visualize_potty_interpolation(trainer, state, **kwargs):
     from torchvision.transforms.functional import to_tensor, to_pil_image
     import torch
     import matplotlib.pyplot as plt
@@ -453,7 +458,84 @@ def visualize_interpolation(trainer, state, **kwargs):
     plt.show()
 
 
-visualize_interpolation(**{**globals(), **locals()})
+visualize_potty_interpolation(**{**globals(), **locals()})
+
+
+def visualize_latent_imagenet_pasting(trainer, state, **kwargs):
+    from torchvision.transforms.functional import to_tensor, to_pil_image
+    import torch
+    import matplotlib.pyplot as plt
+    import vidlu.modules as vm
+    import PIL.Image as pimg
+    from torch.nn.functional import interpolate
+    import vidlu.transforms.image as vti
+
+    pimages = ['/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10040.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10048.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10074.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_1009.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10108.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10251.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10293.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10323.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10342.JPEG',
+               '/home/shared/datasets/ILSVRC2015/Data/CLS-LOC/train/n01440764/n01440764_10361.JPEG']
+
+    # LURD
+    boxes = [(64, 103, 369, 277),
+             (41, 142, 256, 271),
+             (47, 241, 367, 368),
+             (202, 105, 354, 182),
+             (136, 360, 570, 542),
+             (56, 230, 392, 362),
+             (57, 127, 465, 281),
+             (148, 167, 412, 270),
+             (61, 85, 403, 196),
+             (70, 221, 407, 367)]
+
+    pimages = [to_tensor(pimg.open(x)) for x in pimages]
+
+    pimages = [x[:, :x.shape[1] // 32 * 32, :x.shape[2] // 32 * 32] for x in pimages]
+
+    # images = [x[:, l:l + (r - l) // 32 * 32, u:u + (u - d) // 32 * 32]
+    #          for x, (l, u, r, d) in zip(images, boxes)]
+
+    bimages = state.output.x[:len(pimages)].clone()
+    if len(bimages) < len(pimages):
+        bimages = torch.cat([bimages] * (len(pimages) // len(bimages) + 1), dim=0)
+
+    with torch.no_grad():
+        model_inj = vm.deep_split(trainer.model.backbone.backbone, 'concat')[0]
+        zb = model_inj(bimages)
+        zp = [model_inj(p.unsqueeze(0).to(zb.device)).squeeze(0) for p in pimages]
+        zp = [p[:, u // 16:d // 16, l // 16:r // 16]
+              for p, (l, u, r, d) in zip(zp, boxes)]
+        for i, p in enumerate(zp):
+            #_, h, w = p.shape
+            #p = torch.nn.functional.adaptive_avg_pool2d(p.unsqueeze(0), (h // 2, w // 2)).squeeze(0)
+            _, h, w = p.shape
+            _, _, hb, wb = zb.shape
+            print(zb.shape, p.shape, len(bimages))
+            # zb[i, :, :h, :w] = p[:, :hb, :wb]
+            zb[i, :, 2:h + 2, 3:w + 3] = p[:, :hb, :wb]
+        xr = model_inj.inverse(zb)
+        print(xr.min(), xr.max())
+
+    imageses = [to_pil_image(x.clamp(0.01, 0.99).cpu()) for x in xr]
+    imageses = [imageses[:3],
+                imageses[3:6],
+                imageses[6:9]]
+
+    fig, axeses = plt.subplots(len(imageses), len(imageses[0]))
+    for axes, pimages in zip(axeses, imageses):
+        for ax, im in zip(axes, pimages):
+            ax.axis("off")
+            ax.imshow(im)
+    plt.subplots_adjust(wspace=.05, hspace=.05)
+    plt.show()
+
+
+visualize_latent_imagenet_pasting(**{**globals(), **locals()})
 
 
 def visualize_interpolation_seq(trainer, state, **kwargs):
@@ -464,6 +546,7 @@ def visualize_interpolation_seq(trainer, state, **kwargs):
     import PIL.Image as pimg
     from torch.nn.functional import interpolate
     from pathlib import Path
+    import numpy as np
 
     path = Path("/home/shared/datasets/Cityscapes/leftImg8bit_sequence/val/frankfurt")
     x = [to_tensor(pimg.open(im)) for im in sorted(list(path.iterdir()))[:4 * 2:2]]
