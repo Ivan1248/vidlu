@@ -1,4 +1,5 @@
 from argparse import Namespace
+from functools import partial
 
 import torch
 
@@ -40,14 +41,18 @@ def pop(x, k):
     return v
 
 
-def stop(x, k):
+def _stop(x, k, must_exist=False):
     y = x[:]
     if not has(x):
         return y
     y.extra = Namespace(**vars(x.extra))
-    if has(y, k):
+    if has(y, k) or must_exist:
         delete(y, k)
     return y
+
+
+def stop(x, k, must_exist=False):
+    return vmu.map_tensors(x, partial(_stop, k=k, must_exist=must_exist))
 
 
 class ExtraBase:
@@ -59,8 +64,8 @@ class ExtraBase:
         return x
 
     @classmethod
-    def get(cls, x):
-        return get(x, cls.name)
+    def get(cls, x, default=_NoValue):
+        return get(x, cls.name, default=default)
 
     @classmethod
     def has(cls, x):
@@ -102,3 +107,29 @@ class LogAbsDetJac(ExtraBase):
             for yi in vmu.extract_tensors(outputs):
                 cls.set(yi, ladj)
         return outputs
+
+
+class Name(ExtraBase):
+    name = 'name'
+
+    @classmethod
+    def set(cls, x, name):
+        return super().set(x, name)
+
+    @classmethod
+    def add(cls, x, name):
+        for xi in vmu.extract_tensors(x):
+            if not cls.has(x):
+                cls.set(xi, name)
+            else:
+                prev_name = cls.get(x)
+                from os.path import commonprefix
+                prefix = commonprefix([prev_name, name])
+                p = len(prefix)
+                try:
+                    cls.set(xi,
+                            f"{prefix}({prev_name[p:]}, {name[p:]})" if p > 0 and prefix[-1] != '(' else
+                            f"{prefix}{prev_name[p:-1]}, {name[p:]})")
+                except:
+                    breakpoint()
+            return x
