@@ -126,35 +126,38 @@ _max_int32 = 2 ** 31 - 1
 class WhiteNoise(Dataset):
     subsets = []
 
-    def __init__(self, distribution='normal', example_shape=(32, 32, 3), size=1000, seed=53):
+    def __init__(self, distribution='normal', mean=0, std=1, example_shape=(32, 32, 3), size=50000, seed=53):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
         if distribution not in ('normal', 'uniform'):
             raise ValueError('Distribution not in {"normal", "uniform"}')
         self._distribution = distribution
-        super().__init__(name=f'WhiteNoise-{distribution}({example_shape})', subset=f'{seed}{size}',
+        self.mean = mean
+        self.std = std
+        super().__init__(name=f'WhiteNoise-{distribution}({mean},{std},{example_shape})', subset=f'{seed}{size}',
                          data=self._seeds)
 
     def get_example(self, idx):
         self._rand.seed(self._seeds[idx])
         if self._distribution == 'normal':
-            return _make_record(x=self._rand.randn(*self._shape))
+            return _make_record(x=self._rand.randn(*self._shape) * self.std + self.mean, y=0)
         elif self._distribution == 'uniform':
             d = 12 ** 0.5 / 2
+            raise NotImplementedError("mean, std")
             return _make_record(x=self._rand.uniform(-d, d, self._shape))
 
 
 class RademacherNoise(Dataset):
     subsets = []
 
-    def __init__(self, example_shape=(32, 32, 3), size=1000, seed=53):
+    def __init__(self, shape=(32, 32, 3), size=50000, seed=53):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
-        self._shape = example_shape
+        self._shape = shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
         super().__init__(
-            name=f'RademacherNoise{example_shape}',
+            name=f'RademacherNoise{shape}',
             subset=f'{seed}-{size}',
             data=self._seeds)
 
@@ -167,13 +170,13 @@ class RademacherNoise(Dataset):
 class HBlobs(Dataset):
     subsets = []
 
-    def __init__(self, sigma=None, example_shape=(32, 32, 3), size=1000, seed=53):
+    def __init__(self, sigma=None, shape=(32, 32, 3), size=50000, seed=53):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
-        self._shape = example_shape
+        self._shape = shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
-        self._sigma = sigma or 1.5 * example_shape[0] / 32
-        super().__init__(name=f'HBlobs({example_shape})', subset=f'{seed}-{size}', data=self._seeds)
+        self._sigma = sigma or 1.5 * shape[0] / 32
+        super().__init__(name=f'HBlobs({shape})', subset=f'{seed}-{size}', data=self._seeds)
 
     def get_example(self, idx):
         from skimage.filters import gaussian
@@ -184,14 +187,30 @@ class HBlobs(Dataset):
         return _make_record(x=x)
 
 
+class Blank(Dataset):
+    subsets = []
+
+    def __init__(self, value=0, shape=(32, 32, 3), size=50000):
+        self._shape = shape
+        self._len = size
+        self.value = value
+        super().__init__(name=f'Blank({shape},{value})', subset=f'{size}')
+
+    def get_example(self, idx):
+        return _make_record(x=np.full(self._shape, self.value))
+
+    def __len__(self):
+        return self._len
+
+
 class DummyClassification(Dataset):
     subsets = []
 
-    def __init__(self, example_shape=(28, 28, 3), size=256):
-        self._shape = example_shape
+    def __init__(self, shape=(28, 28, 3), size=256):
+        self._shape = shape
         self._colors = [row for row in np.eye(3, 3) * 255]
         self._len = size
-        super().__init__(name=f'DummyClassification({example_shape})', subset=f'{size}',
+        super().__init__(name=f'DummyClassification({shape})', subset=f'{size}',
                          info=dict(class_count=len(self._colors), problem='classification'))
 
     def get_example(self, idx):
@@ -213,12 +232,6 @@ class ImageFolder(Dataset):
 
     def get_example(self, idx):
         return _make_record(x_=lambda: _load_image(self.data_dir / self._elements[idx]))
-
-
-# Images
-
-class CamVidSequences(ImageFolder):
-    subsets = ['01TP', '01TP', '05VD', '06RO', '16E4']
 
 
 # Classification ###################################################################################
