@@ -803,6 +803,46 @@ class CamVid(Dataset):
         return len(self._img_lab_list)
 
 
+class CamVidSequences(Dataset):  # TODO
+    subsets = ['01TP', '05VD', '06R0', '16E5']
+    subset_to_size = {'01TP': 3691, '05VD': 5101, '06R0': 3001, '16E5': 8251}
+    default_dir = 'CamVid-sequences'
+
+    def download(self, data_dir):
+        raise NotImplementedError()
+
+    def __init__(self, data_dir, subset, downsampling=1):
+        _check_subsets(self.__class__, subset)
+        if downsampling < 1:
+            raise ValueError("downsampling must be greater or equal to 1.")
+
+        data_dir = Path(data_dir)
+        self.download_if_necessary(data_dir)
+
+        self._downsampling = downsampling
+
+        images = list((data_dir / subset).iterdir())
+        _check_size(images, size=self.subset_to_size[subset])
+
+        info = dict(
+            problem='semantic_segmentation', class_count=11,
+            class_names=list(CamVid.class_groups_colors.keys()),
+            class_colors=[next(iter(v.values())) for v in CamVid.class_groups_colors.values()])
+
+        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
+        super().__init__(subset=subset, modifiers=modifiers, info=info)
+
+    def get_example(self, idx):
+        ip, lp = self._img_lab_list[idx]
+        ds = self._downsampling
+        return _make_record(
+            x_=lambda: load_image(ip, ds),
+            y_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label))
+
+    def __len__(self):
+        return len(self._img_lab_list)
+
+
 class Cityscapes(Dataset):
     subsets = ['train', 'val', 'test']  # 'test' labels are invalid
     default_dir = 'Cityscapes'
