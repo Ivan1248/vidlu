@@ -18,6 +18,7 @@ from torch import nn
 import torch.nn.functional as F
 import torch.nn.modules as M
 import torch.utils.checkpoint as cp
+from torch.utils import hooks
 import einops
 
 from vidlu.utils.collections import NameDict
@@ -28,18 +29,18 @@ from vidlu.utils import tree
 
 import vidlu.modules.utils as vmu
 from vidlu.modules.deconv import FastDeconv
-from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
+from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj, Name as TeName
 from vidlu.modules.utils import extract_tensors
 
 # Some of modules and functions from torch.nn are replaced with wrappers.
 # Look for references of the `replaces` procedure to find the code doing it.
 
-_replaces = []
+_replaced = []
 
 
-def replaces(*names):
+def _replaces(*names):
     for name in names:
-        _replaces.append(name)
+        _replaced.append(name)
     return lambda x: x
 
 
@@ -213,10 +214,6 @@ def zero_log_abs_det_jac(func_or_module_class):
         return wrapper
 
 
-class LogJacobianMixin:  # TODO
-    pass
-
-
 class InitializableMixin:
     def initialize(self: nn.Module, *args, **kwargs):
         if len(*args) + len(**kwargs) != 0:
@@ -236,7 +233,7 @@ def is_built(module, including_submodules=False):
                for m in itertools.chain([module], module.modules() if including_submodules else []))
 
 
-@replaces('Module')
+@_replaces('Module')
 class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     """ An abstract module class that supports shape inference and checks
     whether the input is in-place modified in an undesired way.
@@ -250,6 +247,7 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         self._built = False
         self._check = None
         self._mode = dict()
+        self._forward_check_pre_hooks = dict()
 
     @property
     def _checked(self):
@@ -284,7 +282,7 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
         return super().__call__(*args, **kwargs)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *input, **kwargs):
         """Modified to support shape inference and an in-place modification
         check.
 
@@ -304,14 +302,20 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             >>> y = h(x)  # call with an in-place modification check
             >>> y = h(x)  # a normal call
         """
+        for hook in self._forward_check_pre_hooks.values():
+            result = hook(self, input)
+            if result is not None:
+                if not isinstance(result, tuple):
+                    result = (result,)
+                input = result
         try:
             if not self._built:
-                result = self._init_call(*args, **kwargs)
+                result = self._init_call(*input, **kwargs)
             elif not self._checked:  # checks are performed on the second input
-                result = self._check_call(*args, **kwargs)
+                result = self._check_call(*input, **kwargs)
             else:
-                result = super().__call__(*args, **kwargs)
-            return result
+                result = super().__call__(*input, **kwargs)
+            return TeName.add(result, vmu.try_get_module_name_from_call_stack(self))
         except Exception as e:
             name = vmu.try_get_module_name_from_call_stack(self)
             error_message = f"Error in {name}, {type(self).__name__}"
@@ -402,8 +406,13 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             sd = torch.load(sd, map_location=self.device)
         return super().load_state_dict(sd, strict=strict)
 
+    def register_forward_check_pre_hook(self, hook: T.Callable[..., None]) -> hooks.RemovableHandle:
+        handle = hooks.RemovableHandle(self._forward_pre_hooks)
+        self._forward_check_pre_hooks[handle.id] = hook
+        return handle
 
-@replaces('Identity')
+
+@_replaces('Identity')
 class Identity(Module, nn.Identity):
     def __init__(self):
         super().__init__()
@@ -426,7 +435,7 @@ def _to_sequential_init_args(*args, **kwargs):
     return args
 
 
-@replaces('ModuleList')
+@_replaces('ModuleList')
 class ModuleTable(Module):
     def __init__(self, *args, **kwargs):
         super().__init__()
@@ -502,7 +511,7 @@ class ModuleTable(Module):
         return iter(self._modules.values())
 
 
-@replaces('Sequential')
+@_replaces('Sequential')
 class Seq(ModuleTable, nn.Sequential):
     """A wrapper around torch.nn.Seq to enable passing a dict as the only
     parameter whereas in torch.nn.Seq only OrderedDict is accepted
@@ -1064,13 +1073,13 @@ def _wrap_torch_operations(namespace):
     for name, v in vars(F).items():
         if not name.startswith('_') and callable(v) and 'inplace' in vuf.params(v):
             namespace[name] = _func_with_mark_modified(v)
-            replaces(name)
+            _replaces(name)
     for name, v in vars(M).items():
         if not name.startswith('_') and inspect.isclass(v) and issubclass(v, nn.Module) \
                 and 'inplace' in vuf.params(v):
             namespace[name] = type(name, (v,),
                                    {'forward': _forward_method_with_mark_modified(v.forward)})
-            replaces(name)
+            _replaces(name)
 
 
 _wrap_torch_operations(vars())
@@ -1128,7 +1137,7 @@ class WrappedModule(Module):
 
 
 # TODO: Make separate Conv*ds
-@replaces(*(f'Conv{i}d' for i in range(1, 4)))
+@_replaces(*(f'Conv{i}d' for i in range(1, 4)))
 class Conv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
                  bias=None, in_channels=None, padding_mode='zeros'):
@@ -1160,7 +1169,7 @@ class DeconvConv(WrappedModule):
         self.orig = FastDeconv(**self.args)
 
 
-@replaces(*(f'MaxPool{i}d' for i in range(1, 4)))
+@_replaces(*(f'MaxPool{i}d' for i in range(1, 4)))
 class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
                  ceil_mode=False):
@@ -1172,7 +1181,7 @@ class MaxPool(WrappedModule):
         self.orig = _dimensional_build("MaxPool", x, self.args)
 
 
-@replaces(*(f'AvgPool{i}d' for i in range(1, 4)))
+@_replaces(*(f'AvgPool{i}d' for i in range(1, 4)))
 class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
                  count_include_pad=True, divisor_override=None):
@@ -1184,7 +1193,7 @@ class AvgPool(WrappedModule):
         self.orig = _dimensional_build("AvgPool", x, self.args)
 
 
-@replaces(*(f'ConvTranspose{i}d' for i in range(1, 4)))
+@_replaces(*(f'ConvTranspose{i}d' for i in range(1, 4)))
 class ConvTranspose(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, output_padding=1, groups=1,
                  bias=True, dilation=1, in_channels=None):
@@ -1195,7 +1204,7 @@ class ConvTranspose(WrappedModule):
         self.orig = _dimensional_build("ConvTranspose", x, self.args)
 
 
-@replaces('Linear')
+@_replaces('Linear')
 class Affine(WrappedModule):
     def __init__(self, out_features: int, bias=True, in_features=None):
         super().__init__(orig=None)
@@ -1228,7 +1237,7 @@ class PositiveChannelScale(Module):
         return Ladj.add(x * torch.exp(-self.log_scale), x, lambda: -torch.sum(self.log_scale))
 
 
-@replaces(*(f'BatchNorm{i}d' for i in range(1, 4)))
+@_replaces(*(f'BatchNorm{i}d' for i in range(1, 4)))
 class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
                  num_features=None):
@@ -1240,7 +1249,7 @@ class BatchNorm(WrappedModule):
 
 
 class GhostBatchNorm(BatchNorm):
-    # Based on https://myrtle.ai/how-to-train-your-resnet-8-bag-of-tricks/
+    # Based on https://myrtle.ai/learn/how-to-train-your-resnet-8-bag-of-tricks/
     def __init__(self, batch_size, eps=1e-5, momentum=0.1, affine=True,
                  track_running_stats=True, num_features=None):
         super().__init__(eps=eps, momentum=momentum, affine=affine,
@@ -1339,14 +1348,14 @@ class _DropoutNd(StochasticModule, ABC):
         return 'p={}{}'.format(self.p, inplace_str)
 
 
-@replaces('Dropout')
+@_replaces('Dropout')
 class Dropout(_DropoutNd):
     def forward(self, input):
         return F.dropout(mark_modified(input, self.inplace), self.p,
                          training=self.training or self.stochastic_eval, inplace=self.inplace)
 
 
-@replaces('Dropout2d')
+@_replaces('Dropout2d')
 class Dropout2d(_DropoutNd):
     def forward(self, input):
         return F.dropout2d(mark_modified(input, self.inplace), self.p,
