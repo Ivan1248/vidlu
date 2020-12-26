@@ -33,6 +33,7 @@ class TestModule:
     def test_inverse(self):
         m = Func(lambda x: x * 2, lambda x: x // 2)
         assert m.inverse(m(2)) == 2
+        assert m.inverse is m.inverse
         assert not m.is_inverse
         assert m.inverse.is_inverse
         assert m.inverse.inverse is m
