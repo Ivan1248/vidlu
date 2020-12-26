@@ -2,7 +2,6 @@ import pickle
 import json
 import tarfile
 import gzip
-import zipfile
 from pathlib import Path
 import os
 import shutil
@@ -15,11 +14,11 @@ from scipy.io import loadmat
 import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
-from tqdm import tqdm
 
 from .. import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
+from vidlu.utils.misc import extract_zip
 
 from ._cityscapes_labels import labels as cslabels
 
@@ -765,9 +764,7 @@ class CamVid(Dataset):
         download(url="https://github.com/Ivan1248/CamVid/archive/master.zip",
                  output_path=download_path)
         print(f"Extracting dataset to {datasets_dir}")
-        with zipfile.ZipFile(download_path) as archive:
-            for filename in tqdm(archive.namelist(), f"Extracting {download_path}"):
-                archive.extract(filename, datasets_dir)
+        extract_zip(download_path, datasets_dir)
         shutil.move(datasets_dir / 'CamVid-master', data_dir)
         download_path.unlink()
 
