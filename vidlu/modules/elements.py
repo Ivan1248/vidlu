@@ -141,6 +141,15 @@ def register_inverse_check_hook(module):
     return handle
 
 
+def register_ladj_propagation_check_hook(module):
+    def check_ladj_propagation(module, input, output):
+        handle.remove()
+        vmu.hooks.check_propagates_log_abs_det_jac(module, input, output)
+
+    handle = module.register_forward_hook(check_ladj_propagation)
+    return handle
+
+
 class ModuleInverseError(RuntimeError):
     pass
 
@@ -156,23 +165,21 @@ class InvertibleMixin:
         # used for identifying whether a module is an inverse
         pass
 
-    def _del_inverse_cache(self):
-        del self.inverse
-
     @property
     def is_inverse(self: nn.Module) -> bool:
         return self in InvertibleMixin._inverses
 
-    @functools.cached_property
+    @property
     def inverse(self: nn.Module) -> nn.Module:
         try:
-            if self in InvertibleMixin._module_to_inverse:
-                return InvertibleMixin._module_to_inverse[self]()
-            module = self.inverse_module()
-            InvertibleMixin._module_to_inverse[self] = weakref.ref(module)
-            InvertibleMixin._module_to_inverse[module] = weakref.ref(self)
-            InvertibleMixin._inverses.add(module)
-            return module
+            module_to_inv = InvertibleMixin._module_to_inverse
+            if self in module_to_inv and (inv_module := module_to_inv[self]()) is not None:
+                return inv_module
+            inv_module = self.inverse_module()
+            module_to_inv[self] = weakref.ref(inv_module)
+            module_to_inv[inv_module] = weakref.ref(self)
+            InvertibleMixin._inverses.add(inv_module)
+            return inv_module
         except ModuleInverseError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
             # AttributeError saying that this module has no `inverse` attribute
@@ -192,6 +199,11 @@ class InvertibleMixin:
     def check_inverse(self: nn.Module, *inputs):
         for m in self.modules():
             register_inverse_check_hook(m)
+        self(*inputs)
+
+    def check_ladj_propagation(self: nn.Module, *inputs):
+        for m in self.modules():
+            register_ladj_propagation_check_hook(m)
         self(*inputs)
 
 
