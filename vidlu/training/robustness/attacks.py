@@ -1,6 +1,6 @@
 import dataclasses as dc
 from dataclasses import dataclass
-from functools import partial
+from vidlu.utils.func import partial
 from numbers import Number
 import warnings
 import typing as T
@@ -398,16 +398,19 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
     return delta
 
 
-# Generic perturnation optimization loop ###########################################################
+# Generic perturbation optimization loop ###########################################################
 
-def _init_pert_model(pert_model, x, projection):
+def _init_pert_model(pert_model, x, projection=None):
     pmodel = pert_model or vmi.Additive(())
     with torch.no_grad():
         pmodel(x)  # initialize perturbation model (parameter shapes have to be inferred from x)
         warnings.warn("attacks.py 408 uncomment projection")
-        # projection(pmodel, x)
+        if projection is not None:
+            projection(pmodel, x)  # was commented when semi-supervised experiments were performed
     pmodel.train()
     return pmodel
+
+
 
 
 def _reduce_losses(unred_loss, unred_reg_loss=None, nonadv_mask=None):
@@ -452,6 +455,7 @@ def perturb_iterative_with_perturbation_model(
         model, x, y, step_count, optim_f, loss_fn, minimize=False,
         pert_model: vmi.PertModelBase = None,
         projection: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = lambda _: None,
+        project_init: bool = True,
         bounds=(0, 1),
         stop_mask: T.Callable[[AttackState], bool] = None,
         masking_mode: T.Union[MaskingMode, T.Container[MaskingMode]] = None,
@@ -479,6 +483,8 @@ def perturb_iterative_with_perturbation_model(
         projection: A procedure for constraining perturbation model parameters
             so that the perturbed input is within some neighbourhood and that it
             is valid (e.g. within `bounds`).
+        project_init: Whether projection should be applied to perturbation model
+            parameters after initializaion.
         compute_model_grads: It `True`, gradients with respect to model
             parameters are computed, otherwise not. Default: `False`.
         bounds (optional): Minimum and maximum input value pair. Used only for
@@ -504,8 +510,8 @@ def perturb_iterative_with_perturbation_model(
     stop_on_success = stop_mask is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     backward_callback = backward_callback or (lambda _: None)
-    pmodel = _init_pert_model(pert_model, x, projection)  # init. the perturbation model
-    optim = optim_f(pmodel.parameters()) if step_count > 0 else None  # init. stateless optimizer
+    pmodel = _init_pert_model(pert_model, x, projection if project_init else None)  # init
+    optim = optim_f(pmodel.parameters()) if step_count > 0 else None  # init
     if stop_on_success:  # support for early stopping (example-wise and location-wise)
         with torch.no_grad():
             index = torch.arange(len(x))
@@ -666,6 +672,7 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
     optim_f: T.Callable = partial(vo.ProcessedGradientDescent, process_grad=torch.sign)
     initializer: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = None
     projection: T.Union[float, T.Callable[[vmi.PertModelBase, torch.Tensor], None]] = 0.1
+    project_init: bool = True
     step_size: T.Union[float, T.Mapping[str, float]] = 0.05
     step_count: int = 40
 
@@ -705,7 +712,8 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
         return perturb_iterative_with_perturbation_model(
             model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
             minimize=self.minimize, pert_model=pert_model, projection=self.projection,
-            bounds=self.clip_bounds, stop_mask=self.similar if self.stop_on_success else None,
+            project_init=self.project_init, bounds=self.clip_bounds,
+            stop_mask=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback, compute_model_grads=self.compute_model_grads)
 
 
