@@ -1,4 +1,4 @@
-from functools import partial
+from vidlu.utils.func import partial
 
 import torch
 
@@ -20,7 +20,7 @@ madry_cifar10_attack = partial(attacks.PGDAttack,
 
 channelwise_pgd_attack = partial(attacks.PertModelAttack,
                                  pert_model_f=partial(vmi.Additive, ()),
-                                 pert_model_init=None,
+                                 initializer=None,
                                  step_size=2 / 255,
                                  step_count=10,  # TODO: change
                                  clip_bounds=(0, 1),
@@ -28,19 +28,28 @@ channelwise_pgd_attack = partial(attacks.PertModelAttack,
 
 pmodel_attack_1 = partial(attacks.PertModelAttack,
                           pert_model_f=partial(vmi.AlterGamma, (2, 3)),
-                          pert_model_init=None,
+                          initializer=None,
                           step_size=2 / 255,
                           step_count=10,  # TODO: change
                           clip_bounds=(0, 1),
                           projection=0.1)
 
-warp_attack = partial(attacks.PertModelAttack,
-                      pert_model_f=vmi.Warp,
-                      pert_model_init=None,
-                      step_size=0.25,
-                      step_count=7,  # TODO: change
-                      clip_bounds=(0, 1),
-                      projection=1.)  # TODO: semantic segmentation
+# warp_attack = partial(attacks.PertModelAttack,
+#                       pert_model_f=vmi.Warp,
+#                       initializer=None,
+#                       step_size=0.25,
+#                       step_count=7,  # TODO: change
+#                       clip_bounds=None,
+#                       projection=1.)  # TODO: semantic segmentation
+
+smooth_warp_attack = partial(attacks.PertModelAttack,
+                             pert_model_f=vmi.SmoothWarp,
+                             initializer=lambda pmodel, x: torch.nn.init.normal_(
+                                 pmodel.unsmoothed_flow, mean=0, std=5),
+                             projection=10.,
+                             step_size=1,
+                             step_count=7,
+                             clip_bounds=None)
 
 entmin_attack = partial(madry_cifar10_attack,
                         minimize=False,
@@ -65,8 +74,8 @@ morsic_tps_warp_attack = partial(attacks.PertModelAttack,
                                  # pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2),
                                  #                      label_padding_mode='zeros'),
                                  pert_model_f=pert.PhotoTPS20,
-                                 # pert_model_init=lambda pmodel: pmodel.theta.uniform_(-.1, .1),
-                                 pert_model_init=lambda pmodel: vmi.reset_parameters(pmodel),
+                                 # initializer=lambda pmodel: pmodel.theta.uniform_(-.1, .1),
+                                 initializer=lambda pmodel: vmi.reset_parameters(pmodel),
                                  step_size=0.01,
                                  step_count=7,
                                  projection=.2)  # TODO: semantic segmentation
@@ -119,7 +128,19 @@ phtps_attack_20 = partial(
                   'module.mul_s.factor': [0.25, 2.],
                   'module.add_h.addend': [-0.1, 0.1],
                   'module.mul_v.factor': [0.25, 2.]}))),
-    projection=lambda: "should not be called")
+    projection=None)
+
+phg_attack_21 = partial(
+    tps_warp_attack,
+    pert_model_f=pert.PhotoTPS20,
+    initializer=pert.CombinedInit(
+        dict(tps=pert.NormalInit({'offsets': (0, 0.1)}),
+             photometric=pert.UniformInit(
+                 {'module.add_v.addend': [-0.25, 0.25],
+                  'module.mul_s.factor': [0.25, 2.],
+                  'module.add_h.addend': [-0.1, 0.1],
+                  'module.mul_v.factor': [0.25, 2.]}))),
+    projection=None)
 
 
 class BatchRandAugment:
