@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import torch.distributions as D
 
+
 @torch.no_grad()
 def generalized_normal_distribution(p, loc, scale):
     if p in [np.inf, 'inf']:
@@ -12,6 +13,7 @@ def generalized_normal_distribution(p, loc, scale):
         return D.Normal(loc, scale)
     elif p == 1:
         return D.Laplace(loc, scale)
+
 
 @torch.no_grad()
 def generalized_normal_sample(p, loc=0, scale=1, shape=(), dtype=None, device=None):
@@ -41,6 +43,7 @@ def generalized_normal_sample(p, loc=0, scale=1, shape=(), dtype=None, device=No
         return torch.empty(shape, **kw).normal_(loc, scale)
     elif p == 1:
         return D.Laplace(loc, scale).rsample(shape)
+
 
 @torch.no_grad()
 def uniform_sample_from_p_ball(p, shape=(), device=None, dtype=None):
