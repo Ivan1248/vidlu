@@ -22,10 +22,10 @@ from . import _default_factories as D
 # Constant functions
 
 class GaussianFilter2D(E.Module):
-    def __init__(self, sigma=2, ksize=None, padding_mode='reflect'):
+    def __init__(self, sigma=2, ksize=None, ksize_sigma_ratio=4, padding_mode='reflect'):
         # TODO: exploit separability of the kernel if it is large
         if ksize is None:
-            ksize = 5 * sigma
+            ksize = int(sigma_to_ksize_ratio * sigma)
             ksize += int(ksize % 2 == 0)
         elif ksize % 2 == 0:
             ValueError("`ksize` is required to be odd.")
@@ -1072,7 +1072,7 @@ class IRevNetBackbone(E.Seq):
 
     def build(self, x):
         a = self.args
-        base_width = a.base_width
+        base_width = a.base_width  # half
         if base_width is None:
             base_width, rem = divmod(x.shape[1] * a.init_stride ** 2, 2)
             if rem != 0:
