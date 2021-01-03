@@ -21,6 +21,18 @@ class _Swish(torch.autograd.Function):
 swish = _Swish.apply
 
 
+def grid_2d(N, H, W, device=None, dtype=None, channels_first=False):
+    k = dict(device=device, dtype=dtype)
+    mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)])
+    base_grid = torch.stack(list(reversed(mg)), dim=-1)
+    return base_grid.expand(N, H, W, 2)
+
+
+def grid_2d_like(x):
+    N, C, H, W = x.shape
+    return grid_2d(N, H, W, device=x.device, dtype=x.dtype)
+
+
 def warp(x, flow, mode='bilinear', padding_mode='zeros', align_corners=True):
     """ Warps images in an input batch individually with optical flow.
 
@@ -43,18 +55,13 @@ def warp(x, flow, mode='bilinear', padding_mode='zeros', align_corners=True):
             should also be used there to resize the input image before grid sampling.
             Default: ``False``
     """
-    N, C, H, W = x.shape
-    k = dict(device=x.device, dtype=x.dtype)
-    mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)])
-    base_grid = torch.stack(list(reversed(mg)), dim=-1)
-    base_grid = base_grid.expand(N, H, W, 2)
+    _, _, H, W = x.shape
+    base_grid = grid_2d_like(x)
 
     m = (1 + int(align_corners)) / 2  # (dimension) - (the most a pixel at an edge can mode inside)
     scale = torch.tensor([2 / max(W - m, 1), 2 / max(H - m, 1)], device=x.device, dtype=x.dtype)
     flow = torch.einsum('nfhw,f->nhwf', flow, scale)
 
-    # In the PWC-Net source, the output is multiplied with
-    # mask = warp_ones(flow, mode='bilinear', align_corners=True, binarization_threshold=0.9999)
     return F.grid_sample(x, base_grid + flow, mode=mode, padding_mode=padding_mode,
                          align_corners=align_corners)
 
