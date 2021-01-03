@@ -11,6 +11,8 @@ from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
+import vidlu.modules.components as vmc
+import einops
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -69,7 +71,9 @@ class PertModelBase(E.Module):
         # dummy_x has properties like x, but takes up almost no memory
         self.dummy_x = x.new_zeros(()).expand(x.shape)
         default_params = self.create_default_params(x)
-        assert set(default_params) == set(self.param_defaults)
+        if (dp := set(default_params)) != (pd := set(self.param_defaults)):
+            raise TypeError(f"The names of parameters returned by `create_default_params` ({dp}) no"
+                            f" not match the expected names per `param_defaults` ({pd}).")
         for k, v in default_params.items():
             setattr(self, k, BatchParameter(v, requires_grad=True))
 
@@ -275,17 +279,31 @@ class Whiten(SimplePertModel):
 
 
 class Warp(PertModelBase):
-    param_defaults = dict(flow=dict(value=0., bounds=[0, 1]))
-
+    param_defaults = dict(flow=dict(value=0., bounds=[-1, 1]))
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
         super().__init__()
         self.args = dict(mode=mode, padding_mode=padding_mode, align_corners=align_corners)
-
     def create_default_params(self, x):
         return dict(flow=x.new_zeros((x.shape[0], 2, *x.shape[2:])))
-
     def forward(self, x):
         return vmf.warp(x, self.flow, **self.args)
+
+
+class SmoothWarp(PertModelBase):
+    param_defaults = dict(unsmoothed_flow=dict(value=0., bounds=[-100, 100]))
+
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True,
+                 smooth_f=partial(vmc.GaussianFilter2D, sigma=3)):
+        super().__init__()
+        self.args = dict(mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+        self.smooth = smooth_f()
+
+    def create_default_params(self, x):
+        return dict(unsmoothed_flow=x.new_zeros((x.shape[0], 2, *x.shape[2:])))
+
+    def forward(self, x):
+        flow = self.smooth(self.unsmoothed_flow)
+        return vmf.warp(x, flow, **self.args)
 
 
 def _grid_sample_p(x, grid, mode, padding_mode, align_corners):
@@ -364,10 +382,10 @@ class MorsicTPSWarp(PertModelBase):
 class TPSWarp(PertModelBase):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
-    def __init__(self, *, forward: bool, control_grid_shape=(2, 2),
-                 control_grid_align_corners=False,
-                 align_corners=True, padding_mode='zeros', interpolation_mode='bilinear',
-                 label_interpolation_mode='nearest', label_padding_mode=-1, swap_src_dst=False):
+    def __init__(self, *, forward: bool, control_grid_shape=(2, 2), 
+                 control_grid_align_corners=False, align_corners=True, padding_mode='zeros', 
+                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
+                 label_padding_mode=-1, swap_src_dst=False):
         super().__init__()
         self.store_args()
 
@@ -389,6 +407,7 @@ class TPSWarp(PertModelBase):
         c_dst = c_src + self.offsets
         if self.args.swap_src_dst:
             c_src, c_dst = c_dst, c_src
+
         grid = (vmf.tps_grid_from_points if self.args.forward else
                 vmf.backward_tps_grid_from_points)(c_src, c_dst, size=x.shape)
         return _warp(x, y=y, grid=grid,
