@@ -347,7 +347,8 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     from vidlu.modules import losses
     import vidlu.data as vd
     import vidlu.training.robustness as ta
-    import vidlu.configs.training as tc
+    import vidlu.configs.training as ct
+    import vidlu.configs.robustness as cr
     import vidlu.training.steps as ts
     from vidlu.training.robustness import attacks
     from vidlu.transforms import jitter
@@ -355,11 +356,11 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
 
     config = unsafe_eval(f"tc.TrainerConfig({trainer_str})",
                          dict(t=t, vd=vd, math=math, optim=optim, lr_scheduler=lr_scheduler,
-                              losses=losses, ta=ta, tc=tc, ts=ts, attacks=attacks, jitter=jitter,
+                              losses=losses, ta=ta, tc=ct, ct=ct, cr=cr, ts=ts, attacks=attacks, jitter=jitter,
                               partial=partial))
 
-    default_config = tc.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
-    trainer_f = partial(Trainer, **tc.TrainerConfig(default_config, config).normalized())
+    default_config = ct.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
+    trainer_f = partial(Trainer, **ct.TrainerConfig(default_config, config).normalized())
 
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
 
