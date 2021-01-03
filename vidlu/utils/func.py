@@ -31,9 +31,11 @@ class partial(functools.partial):
             sig = inspect.signature(func)
             sigparams = list(sig.parameters.items())
             if len(sigparams) > 0 and sigparams[-1][1].kind is not inspect.Parameter.KEYWORD_ONLY:
-                params_ = params(func)
-                if any((k_ := k) not in params_ for k in {**self.keywords, **kwargs}.keys()):
-                    raise RuntimeError(f"{k_} matches no formal parameter of {func.__name__}"
+                params_ = set(params(func).keys())
+                provided = set({**self.keywords, **kwargs}.keys())
+                unexpected = provided.difference(params_)
+                if len(unexpected) > 0:
+                    raise RuntimeError(f"Unexpected arguments {unexpected} for {func.__name__}"
                                        + f" with signature {sig}.")
         except ValueError:
             pass
