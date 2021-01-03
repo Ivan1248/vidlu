@@ -1,0 +1,28 @@
+z
+cs
+[cs:C×D, z:D]
+
+ds = z - cs
+[cs:C×D, ds:C×D]
+ << z:C×D = ds[0] - cs[0]
+
+ds_sqr = ds ** 2
+ds_sgn = sgn(ds)
+[cs:C×D, ds_sq:C×D, ds_sgn:C×D]
+ << ds:C×D = ds_sgn * ds_sqr ** 1/2
+
+ss = sum(ds_sq, dim=1)
+ds_sq_c = ds_sq - ss
+[cs:C×D, ds_sgn:C×D, ds_sq_c:C×D, ss:C]
+ << ds_sq:C×D =  ds_sq_c + ss / dim
+
+es = exp(ss)
+[cs:C×D, ds_sgn:C×D, ds_sq_c:C×D, es:C]
+ << ss:C = ln(es)
+
+es_sum = sum(es)
+ps = es/es_sum
+[cs:C×D, ds_sgn:C×D, ds_sq_c:C×D, es_sum:1, ps:C]
+ << es:C = ps * es_sum
+
+4 dim(z) memorije više zauzeto
