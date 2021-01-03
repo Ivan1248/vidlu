@@ -461,8 +461,8 @@ class HDDAndRAMCacheDataset(Dataset):
                     chunks = [pickle.load(f)
                               for _ in trange(n, desc="Loading dataset cache from HDD")]
                     data = list(itertools.chain(*chunks))
-            except Exception as ex:
-                self._print(ex)
+            except Exception as e:
+                self._print(e)
                 self._print("Removing invalid HDD-cached dataset...")
                 os.remove(cache_path)
         if data is None:

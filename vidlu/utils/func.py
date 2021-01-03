@@ -170,8 +170,8 @@ def params(func) -> NameDict:
         raise TypeError("The provided type is not callable.")
     try:
         return NameDict({k: v.default for k, v in signature(func).parameters.items()})
-    except ValueError as ex:
-        if 'no signature found for builtin' not in str(ex):
+    except ValueError as e:
+        if 'no signature found for builtin' not in str(e):
             raise
         return NameDict()
 

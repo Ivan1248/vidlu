@@ -57,8 +57,8 @@ class PartedDataset(Mapping):
     def __getitem__(self, item):
         try:
             return self.part_to_ds[item]
-        except KeyError:
-            raise KeyError(f'The parted dataset does not have a part called "{item}".')
+        except KeyError as e:
+            raise KeyError(f'The parted dataset does not have a part called "{item}".') from e
 
     def __getattr__(self, item):
         return self[item]

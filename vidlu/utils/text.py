@@ -167,8 +167,8 @@ class FormatScanner:
         format_parser = arpeggio.ParserPython(scanner_expr)
         try:
             format_parse_tree = format_parser.parse(fmt)
-        except arpeggio.NoMatch as ex:
-            raise NoMatchError("Invalid format", inner_exception=ex)
+        except arpeggio.NoMatch as e:
+            raise NoMatchError("Invalid format.") from e
         input_pattern, self.var_names = visit_parse_tree(format_parse_tree,
                                                          _ScannerExprVisitor(debug=debug))
         self.full_match = full_match
@@ -199,8 +199,8 @@ class FormatWriter:
         self.debug = debug
         try:
             format_parser = arpeggio.ParserPython(writer_expr)
-        except arpeggio.NoMatch as ex:
-            raise NoMatchError("Invalid format.", inner_exception=ex)
+        except arpeggio.NoMatch as e:
+            raise NoMatchError("Invalid format.") from e
         self.format_parse_tree = format_parser.parse(format)
         self.context = context
 
@@ -221,7 +221,7 @@ class FormatTranslator:
         try:
             vars_ = self.scanner(x)
             return self.writer(**vars_, **additional_vars)
-        except NoMatchError as ex:
+        except NoMatchError as e:
             if self.error_on_no_match:
                 raise
             return None
@@ -247,8 +247,8 @@ class FormatTranslatorCascade:
         for (inp, _), t in zip(self.input_output_format_pairs, self.translators):
             try:
                 t(x)
-            except NoMatchError as ex:
-                messages.append((inp, str(ex)))
+            except NoMatchError as e:
+                messages.append((inp, str(e)))
         if self.error_on_no_match:
             messages = '\n'.join(
                 f"  {i}. {inp} -> {err}\n" for i, (inp, err) in enumerate(messages))

@@ -94,7 +94,7 @@ class Checkpoint:  # TODO
                 name, file_interface = getattr(Files, k, None) or (f"{k}.pth", TorchFileInterface)
                 create_file_atomic(path=path / name, mode=file_interface.write_mode,
                                    write_action=lambda f: file_interface.save(v, f))
-        except Exception as ex:
+        except Exception as e:
             shutil.rmtree(path)
             raise
 

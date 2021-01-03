@@ -114,10 +114,10 @@ class FileDict(MutableMapping):
         if self.path.exists():
             try:
                 self.load()
-            except (EOFError, RuntimeError) as ex:
-                message = f"Error loading FileDict from file {self.path}: {ex}"
+            except (EOFError, RuntimeError) as e:
+                message = f"Error loading FileDict from file {self.path}: {e}"
                 if error_on_corrupt_file:
-                    raise EOFError(message)
+                    raise EOFError(message) from e
                 else:
                     self.path.unlink()
                     warnings.warn(message)

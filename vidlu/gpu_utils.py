@@ -83,8 +83,8 @@ def get_first_available_device(max_gpu_util=0.3, min_mem_free=4000, no_processes
             print(f"Selected device {statuses[device_idx].name}"
                   + f" with availability score {availabilities[device_idx]}.")
         return device_idx
-    except RuntimeError as ex:
-        warnings.warn(f"Unable to get GPU(s). \nCaught exception: \n{ex}")
+    except RuntimeError as e:
+        warnings.warn(f"Unable to get GPU(s). \nCaught exception: \n{e}")
         if verbosity > 0:
             print(f"Selected device: CPU.")
         return 'cpu'

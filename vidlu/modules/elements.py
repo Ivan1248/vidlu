@@ -1486,7 +1486,7 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List
     def wrapper(*args, **kwargs):
         try:
             submodules = get_submodules()
-        except AttributeError as ex:
+        except AttributeError as e:
             module(*args, **kwargs)  # in case the module is not yet built
             submodules = get_submodules()
 

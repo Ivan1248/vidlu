@@ -102,8 +102,8 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
                 cmd = optional_input
             print(f"Variables: " + ",".join(locals().keys()))
             exec(cmd)
-        except Exception as ex:
-            print(f'Cannot execute "{optional_input}". Error:\n{ex}.')
+        except Exception as e:
+            print(f'Cannot execute "{optional_input}". Error:\n{e}.')
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
@@ -220,7 +220,7 @@ class TrainingExperiment:
                 module = vm.get_submodule(model, dest)
                 try:
                     module.load_state_dict(parameters, strict=True)
-                except RuntimeError as ex:
-                    warnings.warn(str(ex))
+                except RuntimeError as e:
+                    warnings.warn(str(e))
                     module.load_state_dict(parameters, strict=False)
         return TrainingExperiment(model, trainer, data, logger, cpman)
