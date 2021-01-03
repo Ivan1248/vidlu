@@ -153,7 +153,7 @@ visualization.view_predictions(
         1).squeeze().int().cpu().numpy())
 
 # save and view images
-x, x_av = state.output.x, state.output.x_adv
+x, x_av = state.output.x, state.output.x_p
 # columns = 4  # semseg
 columns = 16  # cifar
 from torchvision import utils
@@ -226,12 +226,12 @@ trainer.eval_attack.loss = lambda *a, **k: -trainer.eval_attack.loss(*a, **k)
 def show_adversarial_examples(trainer, state, **kwargs):
     import vidlu.modules.inputwise as vmi
 
-    trainer.eval_attack.pert_model_f = vmi.Warp
-
-    trainer.eval_attack.eps = 0.2
-    trainer.eval_attack.step_size = 0.01
-    trainer.eval_attack.step_count = 100
-    trainer.eval_attack.stop_on_success = True
+    # trainer.eval_attack.pert_model_f = vmi.Warp
+    #
+    # trainer.eval_attack.eps = 0.2
+    # trainer.eval_attack.step_size = 0.01
+    trainer.eval_attack.step_count = 1000
+    # trainer.eval_attack.stop_on_success = True
 
     import torch
 
@@ -247,10 +247,11 @@ def show_adversarial_examples(trainer, state, **kwargs):
             plt.show()
 
         N = 16
-        adv = state.output.x_adv[:N]
+        #adv = trainer.eval_attack.perturb(trainer.model, state.output.x, state.output.target)
+        adv = state.output.x_p[:N]
         clean = state.output.x[:N]
         diff = 0.5 + (adv - clean) * 255 / 80
-        pred = state.output.other_outputs_adv.hard_prediction[:len(state.output.target)]
+        pred = state.output.other_outputs_p.hard_prediction[:len(state.output.target)]
         target = state.output.target
 
         fooled = (pred != target)[:N]
@@ -511,8 +512,8 @@ def visualize_latent_imagenet_pasting(trainer, state, **kwargs):
         zp = [p[:, u // 16:d // 16, l // 16:r // 16]
               for p, (l, u, r, d) in zip(zp, boxes)]
         for i, p in enumerate(zp):
-            #_, h, w = p.shape
-            #p = torch.nn.functional.adaptive_avg_pool2d(p.unsqueeze(0), (h // 2, w // 2)).squeeze(0)
+            # _, h, w = p.shape
+            # p = torch.nn.functional.adaptive_avg_pool2d(p.unsqueeze(0), (h // 2, w // 2)).squeeze(0)
             _, h, w = p.shape
             _, _, hb, wb = zb.shape
             print(zb.shape, p.shape, len(bimages))
@@ -594,8 +595,8 @@ def noisy_batchnorm_stats(trainer: "vidlu.training.Trainer", state, data, **kwar
     for n in ns:
         bs = min(n, trainer.batch_size)
 
-        data_train = trainer.get_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
-                                             batch_size=bs, shuffle=False, drop_last=True)
+        data_train = trainer.simple_or_zip_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
+                                                       batch_size=bs, shuffle=False, drop_last=True)
         for m in [m for m in model.modules() if isinstance(m, nn.BatchNorm2d)]:
             m.momentum = None
             m.reset_running_stats()
@@ -642,8 +643,8 @@ def batchnorm_ensemble(trainer, state, data, **kwargs):
 
     @torch.no_grad()
     def model_iter(model, n=3, batch_count=16):
-        data_train = trainer.get_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
-                                             batch_size=trainer.batch_size, shuffle=True, drop_last=True)
+        data_train = trainer.simple_or_zip_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
+                                                       batch_size=trainer.batch_size, shuffle=True, drop_last=True)
         for i in range(n):
             for m in [m for m in model.modules() if isinstance(m, nn.BatchNorm2d)]:
                 m.momentum = None
