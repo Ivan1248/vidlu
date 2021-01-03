@@ -138,30 +138,26 @@ semisup_vat = TrainerConfig(
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False))
 
 semisup_vat_2way = TrainerConfig(
-    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    semisup_vat,
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False))
 
 semisup_vat_2way_entmin = TrainerConfig(
-    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    semisup_vat,
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False,
                                       block_grad_on_clean=False,
                                       entropy_loss_coef=1))
 
 semisup_vat_l = TrainerConfig(
-    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
+    semisup_vat,
     eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True))
 
 semisup_vat_l_2way = TrainerConfig(
-    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
+    semisup_vat_l,
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True, block_grad_on_clean=False))
 
 semisup_vat_entmin = TrainerConfig(
-    partial(te.SemisupVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    semisup_vat,
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, entropy_loss_coef=1))
 
 semisup_cons_phtps20 = TrainerConfig(
@@ -287,13 +283,23 @@ irevnet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
     # TODO: check lr. schedule and init
     optimizer_f=partial(optim.SGD, lr=1e-1, momentum=0.9, weight_decay=5e-4))
 
-irevnet_hybrid_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1605.07146
+irevnet_hybrid_cifar = TrainerConfig(
     irevnet_cifar,
     # overriding
     # TODO: check lr. schedule and init
     eval_step=ts.DiscriminativeFlowSupervisedEvalStep(flow_end="backbone.concat", gen_weight=1.),
     train_step=ts.DiscriminativeFlowSupervisedTrainStep(flow_end="backbone.concat", gen_weight=1.),
     optimizer_f=partial(optim.Adamax, lr=1e-3, weight_decay=5e-4))
+
+irevnet_adv_hybrid_cifar = TrainerConfig(
+    irevnet_cifar,
+    eval_step=ts.AdversarialDiscriminativeFlowSupervisedEvalStep(flow_end=('head', slice(2, None))),
+    train_step=ts.AdversarialDiscriminativeFlowSupervisedTrainStep(flow_end=('head', slice(2, None))))
+
+irevnet_at_hybrid_cifar = TrainerConfig(
+    irevnet_cifar,
+    eval_step=ts.AdversarialDiscriminativeFlowSupervisedEvalStep2(flow_end=('head', slice(2, None))),
+    train_step=ts.AdversarialDiscriminativeFlowSupervisedTrainStep2(flow_end=('head', slice(2, None))))
 
 densenet_cifar = TrainerConfig(  # as in www.arxiv.org/abs/1608.06993
     resnet_cifar,
