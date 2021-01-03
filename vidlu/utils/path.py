@@ -2,7 +2,6 @@ import os
 import tempfile
 from pathlib import Path
 import re
-#import psutil
 
 
 # Path #############################################################################################
@@ -100,6 +99,7 @@ def write_lines(path, lines, append=False):
 
 
 def disk_partition(path):
+    import psutil
     best_match = ""
     partition = None
     for part in psutil.disk_partitions():
