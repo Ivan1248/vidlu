@@ -71,7 +71,7 @@ class Required(Empty):
     error saying that a non-default argument follows a default argument.
     """
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         raise TypeError('`Required` constructor has been called, indicating that a parameter with'
                         + ' default value `Required` is not assigned a "real" value.')
 
