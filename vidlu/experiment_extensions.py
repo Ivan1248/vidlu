@@ -3,7 +3,7 @@ import os
 
 import vidlu.experiments as ve
 import vidlu.modules as vm
-from vidlu.utils.misc import Event, RemovableHandle
+
 
 @dc.dataclass
 class ExperimentExtension:
