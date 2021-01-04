@@ -21,13 +21,17 @@ jobs:
         python -m pip install --upgrade pip
         pip install black flake8 pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-    - name: Lint
-      uses: wearerequired/lint-action@v1
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        # Enable linters
-        black: true
-        flake8: false
+    - name: Lint with wemake-python-styleguide
+      uses: wemake-services/wemake-python-styleguide
+      #with:
+      #  path: './your/custom/path'
+#    - name: Lint
+#      uses: wearerequired/lint-action@v1
+#      with:
+#        github_token: ${{ secrets.GITHUB_TOKEN }}
+#        # Enable linters
+#        black: true
+#        flake8: false
 #    - name: Lint with flake8
 #      run: |
 #        # stop the build if there are Python syntax errors or undefined names
