@@ -23,8 +23,8 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: wemake-python-styleguide
       uses: wemake-services/wemake-python-styleguide@0.14.1
-#      with:
-#        path: './your/custom/path'
+      with:
+        path: './vidlu'
 #    - name: Lint
 #      uses: wearerequired/lint-action@v1
 #      with:
