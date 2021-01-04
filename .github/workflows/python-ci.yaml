@@ -19,7 +19,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install flake8 wemake-python-styleguide pytest
+        pip install flake8 wemake-python-styleguide darglint isort pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: wemake-python-styleguide
       uses: wemake-services/wemake-python-styleguide@0.14.1
