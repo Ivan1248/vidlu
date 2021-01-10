@@ -1,15 +1,16 @@
 import typing as T
-from functools import partial
+from vidlu.utils.func import partial
 import dataclasses as dc
 from dataclasses import dataclass, InitVar
 import logging
-import warnings
+from warnings import warn
 
 from tqdm import tqdm
 import torch
 
 import vidlu.modules.utils as vmu
-from vidlu.data import Record, DataLoader, ZipDataLoader, BatchTuple
+from vidlu.data import Record, DataLoader, BatchTuple
+import vidlu.data.utils as data_utils
 from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
@@ -139,7 +140,7 @@ class Engine(object):
         with Stopwatch() as sw_total:
             self.started(self.state)
             if self.state.epoch >= max_epochs:
-                warnings.warn("All epochs are already completed.")
+                warn("All epochs are already completed.")
             while self.state.epoch < max_epochs and not self.should_terminate:
                 self.state.epoch += 1
                 self.epoch_started(self.state)
@@ -195,7 +196,8 @@ class Evaluator:
     model: T.Callable = Required
     loss: T.Callable = Required
     prepare_batch: T.Callable = default_prepare_batch
-    data_loader_f: T.Callable = partial(DataLoader, num_workers=2)
+    data_loader_f: data_utils.TMultiDataLoaderF = partial(
+        data_utils.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=2, shuffle=True)
     batch_size: int = 1
     metrics: dict = dc.field(default_factory=list)
     extend_output: T.Callable = extend_output
@@ -233,26 +235,6 @@ class Evaluator:
             self._reset_metrics()
         return metric_evals
 
-    @staticmethod
-    def _broadcast(obj, n):
-        if isinstance(obj, T.Sequence):
-            if len(obj) != n:
-                raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
-                                   f"not `n` = {n}. Check whether `batch_size` and"
-                                   f" `evaL_batch_size` are correctly set.")
-            return obj
-        return [obj] * n
-
-    def get_data_loader(self, *datasets, batch_size, shuffle, drop_last, **kwargs):
-        data_loader_fs = self._broadcast(self.data_loader_f, len(datasets))
-        batch_sizes = self._broadcast(batch_size, len(datasets))
-        data_loaders = [dl_f(ds, batch_size=bs, shuffle=shuffle, drop_last=drop_last, **kwargs)
-                        for ds, dl_f, bs in zip(datasets, data_loader_fs, batch_sizes)]
-        N = len(datasets[0])
-        if len(datasets) and any(len(d) < N for d in datasets[1:]):
-            warnings.warn(f"The primary dataset is smaller than a/the secondary.")
-        return data_loaders[0] if len(datasets) == 1 else ZipDataLoader(*data_loaders)
-
     def _run_step(self, step, batch):
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
@@ -264,8 +246,8 @@ class Evaluator:
         return output
 
     def eval(self, *datasets, batch_size=None):
-        data_loader = self.get_data_loader(*datasets, batch_size=batch_size or self.batch_size,
-                                           shuffle=True, drop_last=False)
+        data_loader = self.data_loader_f(
+            *datasets, drop_last=False, batch_size=batch_size or self.batch_size)
         return self.evaluation.run(tqdm(data_loader))
 
 
@@ -324,9 +306,9 @@ class Trainer(Evaluator):
         self._initialized = True
 
     def train(self, *datasets, restart=False):
-        datasets_jittered = [ds.map(self.jitter) if self.jitter else ds for ds in datasets]
-        data_loader = self.get_data_loader(*datasets_jittered, batch_size=self.batch_size,
-                                           shuffle=True, drop_last=True)
+        datasets_jittered = [ds.map(self.jitter) for ds in datasets] if self.jitter else datasets
+        data_loader = self.data_loader_f(
+            *datasets_jittered, drop_last=True, batch_size=self.batch_size)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None):
