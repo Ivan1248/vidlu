@@ -21,7 +21,6 @@ from vidlu.utils.func import partial
 from . import defaults
 
 # eval
-
 unsafe_eval = eval
 
 
@@ -207,6 +206,21 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
     raise NotImplementedError()
 
 
+def build_and_init_model(model, init_input, device):
+    if device is not None:
+        model.to(device)
+        init_input = init_input.to(device)
+    if hasattr(model, 'initialize'):
+        size = np.array(init_input.shape[-2:])
+        if size.min() > 128:  # for faster initialization
+            init_input = init_input[:, :, :128, :128]
+        model.initialize(init_input)
+    elif not vm.is_built(model, including_submodules=True):
+        breakpoint()
+        model(init_input)
+    model.eval()
+
+
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
     from torch import nn
@@ -216,13 +230,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     from fractions import Fraction as Frac
 
     if prep_dataset is None and (problem is None or init_input is None):
-        raise ValueError(
-            "If `prep_dataset` is `None`, `problem` and `init_input` need to be provided.")
+        raise ValueError("If `prep_dataset` is `None`, `problem` and `init_input` are required.")
 
-    if problem is None:
-        problem = defaults.get_problem_from_dataset(prep_dataset)
-    if init_input is None and prep_dataset is not None:
-        init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
+    problem = problem or defaults.get_problem_from_dataset(prep_dataset)
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
@@ -257,21 +267,10 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         _print_args_messages('Model', model_class, model_f, dict(), verbosity=verbosity)
 
     model = model_f()
-    model.eval()
 
-    if device is not None:
-        model.to(device)
-        init_input = init_input.to(device)
-    if hasattr(model, 'initialize'):
-        size = np.array(init_input.shape[-2:])
-        if size.min() > 128:  # for faster initialization
-            init_input = init_input[:, :, :128, :128]
-        model.initialize(init_input)
-    else:
-        warnings.warn("The model does not have an initialize method.")
-        model(init_input)
-    if device is not None:
-        model.to(device)
+    if init_input is None and prep_dataset is not None:
+        init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
+    build_and_init_model(model, init_input, device)
 
     if verbosity > 2:
         print(model)
@@ -341,7 +340,8 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 
 # Training and evaluation ##########################################################################
 
-def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
+# noinspection PyUnresolvedReferences
+def short_symbols_for_get_trainer():
     import math
     from torch import optim
     from torch.optim import lr_scheduler
@@ -353,12 +353,17 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     import vidlu.training.steps as ts
     from vidlu.training.robustness import attacks
     from vidlu.transforms import jitter
+    import vidlu.utils.func as vuf
+    tc = ct  # backward compatibility
     t = vuf.ArgTree
+    return locals()
 
-    config = unsafe_eval(f"tc.TrainerConfig({trainer_str})",
-                         dict(t=t, vd=vd, math=math, optim=optim, lr_scheduler=lr_scheduler,
-                              losses=losses, ta=ta, tc=ct, ct=ct, cr=cr, ts=ts, attacks=attacks, jitter=jitter,
-                              partial=partial))
+
+def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
+    import vidlu.configs.training as ct
+
+    ah = unsafe_eval(f"vuf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
+    config = ct.TrainerConfig(*ah.args, **ah.kwargs)
 
     default_config = ct.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     trainer_f = partial(Trainer, **ct.TrainerConfig(default_config, config).normalized())
