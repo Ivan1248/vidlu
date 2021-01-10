@@ -1,5 +1,5 @@
 from argparse import Namespace
-from functools import partial
+from vidlu.utils.func import partial
 
 import torch
 

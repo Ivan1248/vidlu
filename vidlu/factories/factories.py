@@ -7,8 +7,9 @@ import torch
 import numpy as np
 
 from vidlu import models, metrics
+import vidlu.modules as vm
 from vidlu.models import params
-from vidlu.data.extra import CachingDatasetFactory, dataset_ops
+from vidlu.data.utils import CachingDatasetFactory, dataset_ops
 from vidlu.data import DataLoader
 from vidlu.training import Trainer
 from vidlu.utils import tree

@@ -1,6 +1,6 @@
 import shutil
 from argparse import Namespace
-from functools import partial
+from vidlu.utils.func import partial
 from pathlib import Path
 import warnings
 

@@ -3,7 +3,7 @@ import typing as T
 
 import torch
 from torch import nn
-from functools import partial
+from vidlu.utils.func import partial
 
 from vidlu.utils.inspect import find_frame_in_call_stack
 from vidlu.utils.func import func_to_class

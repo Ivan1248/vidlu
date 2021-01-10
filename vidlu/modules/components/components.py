@@ -1,4 +1,5 @@
-from functools import partial, partialmethod
+from vidlu.utils.func import partial
+from functools import partialmethod
 from collections.abc import Sequence
 import typing as T
 import math
@@ -18,11 +19,11 @@ import vidlu.modules.utils as vmu
 
 from . import _default_factories as D
 
-
 # Constant functions
 
+
 class GaussianFilter2D(E.Module):
-    def __init__(self, sigma=2, ksize=None, ksize_sigma_ratio=4, padding_mode='reflect'):
+    def __init__(self, sigma=2, ksize=None, sigma_to_ksize_ratio=4, padding_mode='reflect'):
         # TODO: exploit separability of the kernel if it is large
         if ksize is None:
             ksize = int(sigma_to_ksize_ratio * sigma)
@@ -35,7 +36,7 @@ class GaussianFilter2D(E.Module):
 
         with torch.no_grad():
             g = torch.arange(ksize, dtype=torch.float).sub_((ksize - 1) / 2)
-            kernel = torch.exp(-g.pow_(2).div_(2 * sigma ** 2))
+            kernel = torch.exp(-g.pow_(2).div_(2 * sigma**2))
             self.register_buffer('kernel', kernel.div_(torch.sum(kernel)))  # normalize
             self.kernel.requires_grad_(False)
 
@@ -73,6 +74,7 @@ class Tent(E.Module):
 
 # ResNet/DenseNet root block #######################################################################
 
+
 class StandardRootBlock(E.Seq):
     """Standard ResNet/DenseNet root block.
 
@@ -83,22 +85,27 @@ class StandardRootBlock(E.Seq):
         norm_f: Normalization module factory.
         act_f: Activation module factory.
     """
-
-    def __init__(self, out_channels: int, small_input,
-                 conv_f=partial(E.Conv, kernel_size=Reserved, stride=Reserved, padding='half',
+    def __init__(self,
+                 out_channels: int,
+                 small_input,
+                 conv_f=partial(E.Conv,
+                                kernel_size=Reserved,
+                                stride=Reserved,
+                                padding='half',
                                 bias=Reserved),
-                 norm_f=D.norm_f, act_f=E.ReLU, pool_f=E.MaxPool):
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 pool_f=E.MaxPool):
         conv_args = dict(out_channels=out_channels, dilation=1)
         if small_input:  # CIFAR
             super().__init__(
                 conv=Reserved.call(conv_f, **conv_args, kernel_size=3, stride=1, bias=True))
         else:
-            super().__init__(conv=Reserved.call(conv_f, **conv_args, kernel_size=7, stride=2,
-                                                bias=norm_f is None))
+            super().__init__(conv=Reserved.call(
+                conv_f, **conv_args, kernel_size=7, stride=2, bias=norm_f is None))
             if norm_f is not None:
                 self.add(norm=norm_f())
-            self.add(act=act_f(),
-                     pool=pool_f(3, stride=2, padding='half'))
+            self.add(act=act_f(), pool=pool_f(3, stride=2, padding='half'))
 
 
 # Blocks ###########################################################################################
@@ -148,14 +155,25 @@ class PreactBlock(E.Seq):
         conv_f: Convolution module factory.
         noise_f: Noise module factory.
     """
-
-    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1, dilation=1,
-                 noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
-                 conv_f=partial(D.conv_f, kernel_size=Reserved, out_channels=Reserved,
-                                stride=Reserved, dilation=Reserved),
+    def __init__(self,
+                 *,
+                 kernel_sizes,
+                 base_width,
+                 width_factors,
+                 stride=1,
+                 dilation=1,
+                 noise_locations=(),
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 conv_f=partial(D.conv_f,
+                                kernel_size=Reserved,
+                                out_channels=Reserved,
+                                stride=Reserved,
+                                dilation=Reserved),
                  noise_f=None):
         super().__init__()
-        widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation)
+        widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
+                                                       stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
@@ -185,12 +203,21 @@ class PostactBlock(E.Seq):
         act_f: Activation module factory.
         noise_f: Noise module factory.
     """
-
-    def __init__(self, *, kernel_sizes, base_width, width_factors, stride=1, dilation=1,
-                 noise_locations=(), norm_f=D.norm_f, act_f=E.ReLU,
-                 conv_f=params(PreactBlock).conv_f, noise_f=None):
+    def __init__(self,
+                 *,
+                 kernel_sizes,
+                 base_width,
+                 width_factors,
+                 stride=1,
+                 dilation=1,
+                 noise_locations=(),
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 conv_f=params(PreactBlock).conv_f,
+                 noise_f=None):
         super().__init__()
-        widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation)
+        widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
+                                                       stride, dilation)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             self.add(f'conv{i}',
                      Reserved.call(conv_f, out_channels=w, kernel_size=k, stride=s, dilation=d))
@@ -320,8 +347,9 @@ class Baguette(E.Seq):
             # https://stackoverflow.com/questions/58857720/is-there-an-equivalent-pytorch-function-for-tf-nn-space-to-depth
             else:
                 super().__init__(
-                    resh1=E.BatchReshape(lambda c, h, w: (b, b, c // b ** 2, h, w)),
-                    perm1=E.Permute(0, 3, 4, 1, 5, 2),  # n b_1 b_2 c/b**2 h w -> n c/b**2 h b_1 w b_2
+                    resh1=E.BatchReshape(lambda c, h, w: (b, b, c // b**2, h, w)),
+                    perm1=E.Permute(0, 3, 4, 1, 5, 2),
+                    # n b_1 b_2 c/b**2 h w -> n c/b**2 h b_1 w b_2
                     resh2=E.BatchReshape(lambda c_b2, h, b_1, w, b_2: (c_b2, h * b_1, w * b_2)))
 
     def __repr__(self):
@@ -336,6 +364,7 @@ class Baguette(E.Seq):
     def __setstate__(self, state):
         self.__dict__.clear()
         self.__init__(state)
+
     # TODO: IMPROVING GLOW https://arogozhnikov.github.io/einops/pytorch-examples.html
 
 
@@ -395,19 +424,19 @@ class SqueezeExcitation(E.Module):
 
     def build(self, x):
         a = self.args
-        self.attention = E.Seq(
-            squeeze=a.squeeze_f(output_size=1),
-            lin0=E.Linear(x.shape[1] // a.reduction, bias=False),
-            act0=a.act_f(),
-            lin1=E.Linear(x.shape[1], bias=False),
-            act1=nn.Sigmoid(),
-            resh=E.BatchReshape(x.shape[1], 1, 1))
+        self.attention = E.Seq(squeeze=a.squeeze_f(output_size=1),
+                               lin0=E.Linear(x.shape[1] // a.reduction, bias=False),
+                               act0=a.act_f(),
+                               lin1=E.Linear(x.shape[1], bias=False),
+                               act1=nn.Sigmoid(),
+                               resh=E.BatchReshape(x.shape[1], 1, 1))
 
     def forward(self, x):
         return x * self.attention(x)
 
 
 # Resizing #########################################################################################
+
 
 class Resize(E.Module):
     """Down/up samples the input to either the given :attr:`size` or the given
@@ -425,14 +454,16 @@ class Resize(E.Module):
             those pixels. This only has effect when :attr:`mode` is `linear`,
             `bilinear`, or `trilinear`. Default: False
     """
-
     def __init__(self, size=None, scale_factor=None, mode='nearest', align_corners=False):
         super().__init__()
         self.store_args()
 
     def forward(self, x):
         a = self.args
-        return F.interpolate(x, size=a.size, scale_factor=a.scale_factor, mode=a.mode,
+        return F.interpolate(x,
+                             size=a.size,
+                             scale_factor=a.scale_factor,
+                             mode=a.mode,
                              align_corners=a.align_corners)
 
 
@@ -441,8 +472,14 @@ class Resize(E.Module):
 
 class DenseSPP(E.Module):
     # Spatial pyramid pooling for dense prediction
-    def __init__(self, bottleneck_size=512, level_size=128, out_size=128, grid_sizes=(8, 4, 2, 1),
-                 block_f=partial(PreactBlock, base_width=Reserved, kernel_sizes=[1],
+    def __init__(self,
+                 bottleneck_size=512,
+                 level_size=128,
+                 out_size=128,
+                 grid_sizes=(8, 4, 2, 1),
+                 block_f=partial(PreactBlock,
+                                 base_width=Reserved,
+                                 kernel_sizes=[1],
                                  width_factors=[1]),
                  upsample=partial(F.interpolate, mode='bilinear', align_corners=False),
                  square_grid=False):
@@ -451,7 +488,8 @@ class DenseSPP(E.Module):
         self.upsample = upsample
         self.input_block = block_f(base_width=bottleneck_size)  # reduces the number of channels
         self.pyramid = E.ModuleTable(
-            {f'block{i}': block_f(base_width=level_size) for i in range(len(grid_sizes))})
+            {f'block{i}': block_f(base_width=level_size)
+             for i in range(len(grid_sizes))})
         self.fuse_block = block_f(base_width=out_size)
         self.square_grid = square_grid
 
@@ -476,17 +514,16 @@ class DenseSPP(E.Module):
 
 class LadderUpsampleBlend(E.Module):
     """ For LadderDenseNet and SwiftNet. """
-    _pre_blendings = dict(
-        concat=E.Concat,
-        sum=E.Sum
-    )
+    _pre_blendings = dict(concat=E.Concat, sum=E.Sum)
 
-    def __init__(self, out_channels, pre_blending='concat',
+    def __init__(self,
+                 out_channels,
+                 pre_blending='concat',
                  blend_block_f=partial(PreactBlock, base_width=Reserved, width_factors=Reserved)):
         super().__init__()
         if pre_blending not in self._pre_blendings:
-            raise ValueError(f"Invalid pre-blending '{pre_blending}'. "
-                             + f"It should be one of {tuple(self._pre_blendings.keys())}.")
+            raise ValueError(f"Invalid pre-blending '{pre_blending}'. " +
+                             f"It should be one of {tuple(self._pre_blendings.keys())}.")
         self.block_f = Reserved.partial(blend_block_f, width_factors=[1])
 
         self.project = None
@@ -521,17 +558,28 @@ class KresoLadder(E.Module):
 
 
 class KresoContext(E.Seq):
-    def __init__(self, base_width=128,
-                 block_f=partial(PreactBlock, base_width=Reserved, kernel_sizes=Reserved,
-                                 width_factors=Reserved, dilation=Reserved)):
-        super().__init__(
-            context=Reserved.call(block_f, base_width=base_width, kernel_sizes=[1, 3],
-                                  width_factors=[4, 1], dilation=[1, 2]))
+    def __init__(self,
+                 base_width=128,
+                 block_f=partial(PreactBlock,
+                                 base_width=Reserved,
+                                 kernel_sizes=Reserved,
+                                 width_factors=Reserved,
+                                 dilation=Reserved)):
+        super().__init__(context=Reserved.call(block_f,
+                                               base_width=base_width,
+                                               kernel_sizes=[1, 3],
+                                               width_factors=[4, 1],
+                                               dilation=[1, 2]))
 
 
 class KresoLadderNet(E.Module):
-    def __init__(self, backbone_f, laterals: T.Sequence[str], ladder_width: int,
-                 context_f=DenseSPP, up_blend_f=LadderUpsampleBlend, post_activation=False,
+    def __init__(self,
+                 backbone_f,
+                 laterals: T.Sequence[str],
+                 ladder_width: int,
+                 context_f=DenseSPP,
+                 up_blend_f=LadderUpsampleBlend,
+                 post_activation=False,
                  lateral_preprocessing=lambda x: x):
         super().__init__()
         self.backbone = backbone_f()
@@ -554,13 +602,17 @@ class KresoLadderNet(E.Module):
 
 # ResNetV1 #########################################################################################
 
+
 def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, norm_f):
     if stride == 1 and in_width == out_width:
         return nn.Identity()
     if dim_change in ('proj', 'conv3'):
-        shortcut = E.Seq(
-            conv=conv_f(out_channels=out_width, kernel_size=3 if dim_change == 'conv3' else 1,
-                        stride=stride, padding='half', dilation=1, bias=False))
+        shortcut = E.Seq(conv=conv_f(out_channels=out_width,
+                                     kernel_size=3 if dim_change == 'conv3' else 1,
+                                     stride=stride,
+                                     padding='half',
+                                     dilation=1,
+                                     bias=False))
         if norm_f is not None:
             shortcut.add(norm=norm_f())
         return shortcut
@@ -584,10 +636,13 @@ class ResNetV1Unit(E.Seq):
 
     def build(self, x):
         block_args = default_args(self.block_f)
-        shortcut = _get_resnetv1_shortcut(
-            in_width=x.shape[1], out_width=block_args.base_width * block_args.width_factors[-1],
-            stride=block_args.stride, dim_change=self.dim_change, conv_f=block_args.conv_f,
-            norm_f=block_args.norm_f)
+        shortcut = _get_resnetv1_shortcut(in_width=x.shape[1],
+                                          out_width=block_args.base_width *
+                                          block_args.width_factors[-1],
+                                          stride=block_args.stride,
+                                          dim_change=self.dim_change,
+                                          conv_f=block_args.conv_f,
+                                          norm_f=block_args.norm_f)
         block = Reserved.call(self.block_f)[:-1]  # block without the last activation
         self.add(fork=E.Fork(shortcut=shortcut, block=block),
                  sum=E.Sum(),
@@ -595,15 +650,21 @@ class ResNetV1Unit(E.Seq):
 
 
 class ResNetV1Groups(E.Seq):
-    def __init__(self, group_lengths, base_width,
-                 block_f=partial(default_args(ResNetV1Unit).block_f, base_width=Reserved,
-                                 width_factors=(2, 2), stride=Reserved),
-                 dim_change=default_args(ResNetV1Unit).dim_change, unit_f=ResNetV1Unit):
+    def __init__(self,
+                 group_lengths,
+                 base_width,
+                 block_f=partial(default_args(ResNetV1Unit).block_f,
+                                 base_width=Reserved,
+                                 width_factors=(2, 2),
+                                 stride=Reserved),
+                 dim_change=default_args(ResNetV1Unit).dim_change,
+                 unit_f=ResNetV1Unit):
         super().__init__()
         _check_block_args(block_f)
         for i, l in enumerate(group_lengths):
             for j in range(l):
-                u = unit_f(block_f=Reserved.partial(block_f, base_width=base_width * 2 ** i,
+                u = unit_f(block_f=Reserved.partial(block_f,
+                                                    base_width=base_width * 2**i,
                                                     stride=1 + int(i > 0 and j == 0)),
                            dim_change=dim_change)
                 self.add(f'unit{i}_{j}', u)
@@ -622,27 +683,36 @@ class ResNetV1Backbone(E.Seq):
         block_f:
         dim_change:
     """
-
-    def __init__(self, base_width=64, small_input=True, group_lengths=(2,) * 4,
+    def __init__(self,
+                 base_width=64,
+                 small_input=True,
+                 group_lengths=(2, ) * 4,
                  block_f=default_args(ResNetV1Groups).block_f,
-                 dim_change=default_args(ResNetV1Groups).dim_change, groups_f=ResNetV1Groups):
+                 dim_change=default_args(ResNetV1Groups).dim_change,
+                 groups_f=ResNetV1Groups):
         _check_block_args(block_f)
         block_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f', 'conv_f']}
-        super().__init__(
-            root=StandardRootBlock(base_width, small_input, **block_args),
-            bulk=groups_f(group_lengths, base_width=base_width,
-                          block_f=block_f, dim_change=dim_change))
+        super().__init__(root=StandardRootBlock(base_width, small_input, **block_args),
+                         bulk=groups_f(group_lengths,
+                                       base_width=base_width,
+                                       block_f=block_f,
+                                       dim_change=dim_change))
 
 
 # ResNetV2 #########################################################################################
+
 
 def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change, conv_f):
     if stride == 1 and in_width == out_width:
         return nn.Identity()
     else:
         if dim_change in ('proj', 'conv3'):
-            return conv_f(out_channels=out_width, kernel_size=3 if dim_change == 'conv3' else 1,
-                          stride=stride, padding='half', dilation=1, bias=False)
+            return conv_f(out_channels=out_width,
+                          kernel_size=3 if dim_change == 'conv3' else 1,
+                          stride=stride,
+                          padding='half',
+                          dilation=1,
+                          bias=False)
         else:
             return _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, None)
 
@@ -664,18 +734,19 @@ class ResNetV2Unit(E.Seq):
         else:
             shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change,
                                               block_args.conv_f)
-            self.add(preact=block[:'conv0'],
-                     fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
+            self.add(preact=block[:'conv0'], fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
         self.add(sum=E.Sum())
 
 
 class ResNetV2Groups(ResNetV1Groups):
-    def __init__(self, group_lengths, base_width,
-                 block_f=partial(default_args(ResNetV2Unit).block_f, base_width=Reserved,
+    def __init__(self,
+                 group_lengths,
+                 base_width,
+                 block_f=partial(default_args(ResNetV2Unit).block_f,
+                                 base_width=Reserved,
                                  stride=Reserved),
                  dim_change=default_args(ResNetV2Unit).dim_change):
-        super().__init__(group_lengths, base_width, block_f, dim_change,
-                         unit_f=ResNetV2Unit)
+        super().__init__(group_lengths, base_width, block_f, dim_change, unit_f=ResNetV2Unit)
         norm_f = default_args(block_f).norm_f
         if norm_f is not None:
             self.add('post_norm', norm_f())
@@ -693,13 +764,17 @@ class ResNetV2Backbone(ResNetV1Backbone):
 
 # DenseNet #########################################################################################
 
+
 class DenseTransition(E.Seq):
-    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=E.ReLU,
-                 conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
+    def __init__(self,
+                 compression=0.5,
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 conv_f=partial(D.conv_f, kernel_size=1),
+                 noise_f=None,
                  pool_f=partial(E.AvgPool, kernel_size=2, stride=Reserved)):
         super().__init__()
-        self.add(norm=norm_f(),
-                 act=act_f())
+        self.add(norm=norm_f(), act=act_f())
         if noise_f is not None:
             self.add(noise=noise_f())
         self.args = NameDict(compression=compression, conv_f=conv_f, pool_f=pool_f)
@@ -711,7 +786,9 @@ class DenseTransition(E.Seq):
 
 class DenseUnit(E.Seq):
     def __init__(self,
-                 block_f=argtree_partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1),
+                 block_f=argtree_partial(PreactBlock,
+                                         kernel_sizes=(1, 3),
+                                         width_factors=(4, 1),
                                          act_f=ArgTree(inplace=True))):
         super().__init__(fork=E.Fork(skip=E.Identity(), block=block_f()), cat=E.Concat())
 
@@ -722,23 +799,26 @@ class DenseBlock(E.Seq):
 
 
 class DenseSequence(E.Seq):
-    def __init__(self, growth_rate, db_lengths,
+    def __init__(self,
+                 growth_rate,
+                 db_lengths,
                  compression=default_args(DenseTransition).compression,
                  block_f=partial(default_args(DenseBlock).block_f, base_width=Reserved)):
         super().__init__()
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
         for i, length in enumerate(db_lengths):
             self.add(f'db{i}',
-                     DenseBlock(length,
-                                block_f=Reserved.partial(block_f, base_width=growth_rate)))
+                     DenseBlock(length, block_f=Reserved.partial(block_f, base_width=growth_rate)))
             if i != len(db_lengths) - 1:
                 self.add(f'transition{i}', DenseTransition(compression, **norm_act_args))
-        self.add(norm=default_args(block_f).norm_f(),
-                 act=default_args(block_f).act_f())
+        self.add(norm=default_args(block_f).norm_f(), act=default_args(block_f).act_f())
 
 
 class DenseNetBackbone(E.Seq):
-    def __init__(self, growth_rate=12, small_input=True, db_lengths=(2,) * 4,
+    def __init__(self,
+                 growth_rate=12,
+                 small_input=True,
+                 db_lengths=(2, ) * 4,
                  compression=default_args(DenseSequence).compression,
                  block_f=default_args(DenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
@@ -748,9 +828,14 @@ class DenseNetBackbone(E.Seq):
 
 # MDenseNet ########################################################################################
 
+
 class MDenseTransition(E.Seq):
-    def __init__(self, compression=0.5, norm_f=D.norm_f, act_f=E.ReLU,
-                 conv_f=partial(D.conv_f, kernel_size=1), noise_f=None,
+    def __init__(self,
+                 compression=0.5,
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 conv_f=partial(D.conv_f, kernel_size=1),
+                 noise_f=None,
                  pool_f=params(DenseTransition).pool_f):
         super().__init__()
         self.store_args()
@@ -760,14 +845,11 @@ class MDenseTransition(E.Seq):
         out_channels = round(sum(y.shape[1] for y in x) * a.compression)
         starts = E.Parallel([E.Seq() for _ in range(len(x))])
         for s in starts:
-            s.add(norm=a.norm_f(),
-                  act=a.act_f())
+            s.add(norm=a.norm_f(), act=a.act_f())
             if a.noise_f is not None:
                 s.add(noise=a.noise_f())
             s.add(conv=a.conv_f(out_channels=out_channels))
-        self.add(starts=starts,
-                 sum=E.Sum(),
-                 pool=Reserved.call(a.pool_f, stride=2))
+        self.add(starts=starts, sum=E.Sum(), pool=Reserved.call(a.pool_f, stride=2))
 
 
 class MDenseUnit(E.Module):
@@ -790,7 +872,8 @@ class MDenseUnit(E.Module):
 class MDenseBlock(E.Seq):
     def __init__(self, length, block_f=default_args(MDenseUnit).block_f):
         super().__init__(to_list=E.Func(lambda x: [x]),
-                         **{f'unit{i}': MDenseUnit(block_f) for i in range(length)})
+                         **{f'unit{i}': MDenseUnit(block_f)
+                            for i in range(length)})
 
 
 def mf_dense_sequence_init(module, db_f, transition_f, growth_rate, db_lengths, compression,
@@ -801,12 +884,13 @@ def mf_dense_sequence_init(module, db_f, transition_f, growth_rate, db_lengths, 
             module.add(f'transition{i - 1}', transition_f(compression, **norm_act_args))
         module.add(f'db{i}', db_f(len_, block_f=Reserved.partial(block_f, base_width=growth_rate)))
     module.add('concat', E.Concat())
-    module.add(norm=default_args(block_f).norm_f(),
-               act=default_args(block_f).act_f())
+    module.add(norm=default_args(block_f).norm_f(), act=default_args(block_f).act_f())
 
 
 class MDenseSequence(E.Seq):
-    def __init__(self, growth_rate, db_lengths,
+    def __init__(self,
+                 growth_rate,
+                 db_lengths,
                  compression=default_args(MDenseTransition).compression,
                  block_f=partial(default_args(MDenseBlock).block_f, base_width=Reserved)):
         super().__init__()
@@ -815,7 +899,10 @@ class MDenseSequence(E.Seq):
 
 
 class MDenseNetBackbone(E.Seq):
-    def __init__(self, growth_rate=12, small_input=True, db_lengths=(2,) * 4,
+    def __init__(self,
+                 growth_rate=12,
+                 small_input=True,
+                 db_lengths=(2, ) * 4,
                  compression=default_args(MDenseSequence).compression,
                  block_f=default_args(MDenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
@@ -829,7 +916,8 @@ FDenseTransition = MDenseTransition
 
 
 class FDenseBlock(E.Module):
-    def __init__(self, length,
+    def __init__(self,
+                 length,
                  block_f=partial(PreactBlock, kernel_sizes=(1, 3), width_factors=(4, 1))):
         super().__init__()
         self.length = length
@@ -854,14 +942,18 @@ class FDenseBlock(E.Module):
         columns = []
         for i, (col, end) in enumerate(zip(self.block_start_columns, self.block_ends)):
             columns.append(col(inputs[-1]))
-            inputs.append(end(self.sum(
-                [columns[j].narrow(1, self.width * (i - j), self.width)
-                 for j in range(i + 1)])))
+            inputs.append(
+                end(
+                    self.sum([
+                        columns[j].narrow(1, self.width * (i - j), self.width) for j in range(i + 1)
+                    ])))
         return inputs
 
 
 class FDenseSequence(E.Seq):
-    def __init__(self, growth_rate, db_lengths,
+    def __init__(self,
+                 growth_rate,
+                 db_lengths,
                  compression=default_args(FDenseTransition).compression,
                  block_f=partial(default_args(FDenseBlock).block_f, base_width=Reserved)):
         super().__init__()
@@ -870,7 +962,10 @@ class FDenseSequence(E.Seq):
 
 
 class FDenseNetBackbone(E.Seq):
-    def __init__(self, growth_rate=12, small_input=True, db_lengths=(2,) * 4,
+    def __init__(self,
+                 growth_rate=12,
+                 small_input=True,
+                 db_lengths=(2, ) * 4,
                  compression=default_args(FDenseSequence).compression,
                  block_f=default_args(FDenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
@@ -880,17 +975,24 @@ class FDenseNetBackbone(E.Seq):
 
 # VGG ##############################################################################################
 
+
 class VGGBackbone(E.Seq):
-    def __init__(self, base_width=64, block_depths=(2, 2, 3, 3, 3),
-                 block_f=partial(PostactBlock, kernel_sizes=Reserved, base_width=Reserved,
-                                 width_factors=Reserved, norm_f=None),
+    def __init__(self,
+                 base_width=64,
+                 block_depths=(2, 2, 3, 3, 3),
+                 block_f=partial(PostactBlock,
+                                 kernel_sizes=Reserved,
+                                 base_width=Reserved,
+                                 width_factors=Reserved,
+                                 norm_f=None),
                  pool_f=partial(E.MaxPool, ceil_mode=True)):
         super().__init__()
         for i, d in enumerate(block_depths):
             self.add(
-                (f'block{i}', Reserved.call(block_f, kernel_sizes=[3] * d, base_width=base_width,
-                                            width_factors=[2 ** i] * d)),
-                (f'pool{i}', pool_f(kernel_size=2, stride=2)))
+                (f'block{i}',
+                 Reserved.call(
+                     block_f, kernel_sizes=[3] * d, base_width=base_width,
+                     width_factors=[2**i] * d)), (f'pool{i}', pool_f(kernel_size=2, stride=2)))
 
 
 class VGGClassifier(E.Seq):
@@ -898,8 +1000,7 @@ class VGGClassifier(E.Seq):
         super().__init__()
         widths = [fc_dim] * 2 + [class_count]
         for i, w in enumerate(widths):
-            self.add((f'linear{i}', E.Linear(w)),
-                     (f'act_fc{i}', act_f()))
+            self.add((f'linear{i}', E.Linear(w)), (f'act_fc{i}', act_f()))
             if noise_f:
                 self.add(f'noise_fc{i}', noise_f())
         self.add('probs', nn.Softmax(dim=1))
@@ -907,26 +1008,35 @@ class VGGClassifier(E.Seq):
 
 # FCN ##############################################################################################
 
+
 class FCNEncoder(E.Seq):
-    def __init__(self, block_f=default_args(VGGBackbone).block_f,
-                 pool_f=partial(E.MaxPool, ceil_mode=True), fc_dim=4096, noise_f=nn.Dropout2d):
+    def __init__(self,
+                 block_f=default_args(VGGBackbone).block_f,
+                 pool_f=partial(E.MaxPool, ceil_mode=True),
+                 fc_dim=4096,
+                 noise_f=nn.Dropout2d):
         # TODO: do something with pool_f
         super().__init__()
         self.add('vgg_backbone', VGGBackbone(block_f=block_f))
         conv_f = default_args(block_f).conv_f
         act_f = default_args(block_f).act_f
         for i in range(2):
-            self.add((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)),
-                     (f'act_fc{i}', act_f()),
+            self.add((f'conv_fc{i}', conv_f(fc_dim, kernel_size=7)), (f'act_fc{i}', act_f()),
                      (f'noise_fc{i}', noise_f()))
 
 
 # Adversarial autoencoder ##########################################################################
 # TODO: linear to batchnorm, output shape
 
+
 class AAEEncoder(E.Seq):
-    def __init__(self, kernel_sizes=(4,) * 3, widths=(64,) + (256,) * 2, z_dim=128,
-                 norm_f=D.norm_f, act_f=nn.LeakyReLU, conv_f=D.conv_f):
+    def __init__(self,
+                 kernel_sizes=(4, ) * 3,
+                 widths=(64, ) + (256, ) * 2,
+                 z_dim=128,
+                 norm_f=D.norm_f,
+                 act_f=nn.LeakyReLU,
+                 conv_f=D.conv_f):
         super().__init__()
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
             self.add(f'conv{i}', conv_f(out_channels=w, kernel_size=k, stride=2, bias=i == 0))
@@ -937,14 +1047,21 @@ class AAEEncoder(E.Seq):
 
 
 class AAEDecoder(E.Seq):
-    def __init__(self, h_dim=1024, kernel_sizes=(4,) * 3, widths=(256, 128, 1),
-                 norm_f=D.norm_f, act_f=E.ReLU, convt_f=D.convt_f):
+    def __init__(self,
+                 h_dim=1024,
+                 kernel_sizes=(4, ) * 3,
+                 widths=(256, 128, 1),
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 convt_f=D.convt_f):
         super().__init__()
         self.add('linear_h', E.Linear(h_dim))
         for i, (k, w) in enumerate(zip(kernel_sizes, widths)):
-            self.add({f'norm{i}': norm_f(),
-                      f'act{i}': act_f(),
-                      f'conv{i}': convt_f(out_channels=w, kernel_size=k, stride=2, padding=1)})
+            self.add({
+                f'norm{i}': norm_f(),
+                f'act{i}': act_f(),
+                f'conv{i}': convt_f(out_channels=w, kernel_size=k, stride=2, padding=1)
+            })
         self.add('tanh', nn.Tanh())
 
 
@@ -960,6 +1077,7 @@ class AAEDiscriminator(E.Seq):
 
 
 # iRevNet ##########################################################################################
+
 
 class CouplingBaseR(E.Module):
     def __init__(self, first=False, block_f=PreactBlock):
@@ -1014,7 +1132,10 @@ class AffineCouplingD(CouplingBaseR):
 
 
 class IRevNetUnit(E.Seq):
-    def __init__(self, first=False, block_f=PreactBlock, force_surjection=False,
+    def __init__(self,
+                 first=False,
+                 block_f=PreactBlock,
+                 force_surjection=False,
                  coupling_f=AdditiveCouplingR):
         super().__init__()
         self.store_args()
@@ -1024,16 +1145,17 @@ class IRevNetUnit(E.Seq):
         block_out_ch = round(ba.base_width * ba.width_factors[-1])
         padding = self._input_padding(x, block_out_ch, ba.stride, a.force_surjection)
         if padding > 0:
-            self.add(input_pad=E.Seq(concat=E.Concat(1),  # TODO: make more efficient
-                                     inj_pad=PadChannels(padding),
-                                     psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
+            self.add(input_pad=E.Seq(
+                concat=E.Concat(1),  # TODO: make more efficient
+                inj_pad=PadChannels(padding),
+                psplit=ProportionSplit(0.5, dim=1, rounding=math.floor)))
         # assert padding == 0, (padding, block_out_ch)
         self.add(transform=a.coupling_f(first=a.first, block_f=a.block_f))  # rename to coupling
 
     @staticmethod
     def _input_padding(x, block_out_ch, stride, force_surjection):
         in_ch = x[0].shape[1] + x[1].shape[1]
-        block_in_ch = in_ch * (stride ** 2)
+        block_in_ch = in_ch * (stride**2)
         input_padding = 2 * block_out_ch - block_in_ch
         if input_padding < 0:
             raise RuntimeError(f"The number of output channels of the inner block ({block_out_ch})"
@@ -1048,13 +1170,18 @@ class IRevNetUnit(E.Seq):
 
 
 class IRevNetGroups(E.Seq):
-    def __init__(self, group_lengths, base_width, first_stride=1,
-                 block_f=partial(default_args(IRevNetUnit).block_f, base_width=Reserved,
-                                 width_factors=(1,) * 2, stride=Reserved),
+    def __init__(self,
+                 group_lengths,
+                 base_width,
+                 first_stride=1,
+                 block_f=partial(default_args(IRevNetUnit).block_f,
+                                 base_width=Reserved,
+                                 width_factors=(1, ) * 2,
+                                 stride=Reserved),
                  unit_f=IRevNetUnit):
         super().__init__()
         for i, l in enumerate(group_lengths):
-            bw_i = base_width if i == 0 else base_width * 4 ** i
+            bw_i = base_width if i == 0 else base_width * 4**i
             for j in range(l):
                 stride = 1 if j > 0 else first_stride if i == 0 else 2
                 u = unit_f(first=(i, j) == (0, 0),
@@ -1063,9 +1190,13 @@ class IRevNetGroups(E.Seq):
 
 
 class IRevNetBackbone(E.Seq):
-    def __init__(self, init_stride=2, group_lengths=(2,) * 4,
-                 base_width=None, block_f=default_args(IRevNetGroups).block_f,
-                 groups_f=IRevNetGroups, no_final_postact=False):
+    def __init__(self,
+                 init_stride=2,
+                 group_lengths=(2, ) * 4,
+                 base_width=None,
+                 block_f=default_args(IRevNetGroups).block_f,
+                 groups_f=IRevNetGroups,
+                 no_final_postact=False):
         _check_block_args(block_f)
         super().__init__()
         self.store_args()
@@ -1074,7 +1205,7 @@ class IRevNetBackbone(E.Seq):
         a = self.args
         base_width = a.base_width  # half
         if base_width is None:
-            base_width, rem = divmod(x.shape[1] * a.init_stride ** 2, 2)
+            base_width, rem = divmod(x.shape[1] * a.init_stride**2, 2)
             if rem != 0:
                 raise RuntimeError(f"The number of channels after the first baguette with stride"
                                    f" {a.init_stride} is not even and cannot be split.")

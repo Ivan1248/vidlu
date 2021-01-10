@@ -1,5 +1,5 @@
 import typing as T
-from functools import partial
+from vidlu.utils.func import partial
 import inspect
 import copy
 import warnings

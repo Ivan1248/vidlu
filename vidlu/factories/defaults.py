@@ -1,6 +1,6 @@
 import inspect
 import warnings
-from functools import partial
+from vidlu.utils.func import partial
 import logging
 
 from vidlu.models import DiscriminativeModel, Autoencoder, MNISTNet

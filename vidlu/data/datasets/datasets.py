@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 import shutil
 import warnings
-from functools import partial
+from vidlu.utils.func import partial
 
 import PIL.Image as pimg
 import numpy as np

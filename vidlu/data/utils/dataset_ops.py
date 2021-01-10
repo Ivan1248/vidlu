@@ -1,4 +1,4 @@
-from functools import partial
+from vidlu.utils.func import partial
 
 from tqdm import tqdm, trange
 

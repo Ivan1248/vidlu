@@ -1,4 +1,4 @@
-from vidlu.utils.func import partial
+import copy
 
 import torch
 
@@ -9,6 +9,8 @@ from vidlu.modules import losses
 from vidlu.training.robustness import attacks
 from vidlu.training.robustness import perturbation as pert
 import vidlu.transforms.jitter as vtj
+import vidlu.utils.func as vuf
+from vidlu.utils.func import partial, ArgTree as t, argtree_partial, params
 
 # Adversarial attacks
 
@@ -42,13 +44,13 @@ pmodel_attack_1 = partial(attacks.PertModelAttack,
 #                       clip_bounds=None,
 #                       projection=1.)  # TODO: semantic segmentation
 
+
 smooth_warp_attack = partial(attacks.PertModelAttack,
-                             pert_model_f=vmi.SmoothWarp,
+                             pert_model_f=argtree_partial(vmi.SmoothWarp, smooth_f=t(sigma=5)),
                              initializer=lambda pmodel, x: torch.nn.init.normal_(
-                                 pmodel.unsmoothed_flow, mean=0, std=5),
-                             projection=10.,
-                             step_size=1,
-                             step_count=7,
+                                 pmodel.unsmoothed_flow, mean=0, std=40),
+                             projection=None,
+                             step_count=0,
                              clip_bounds=None)
 
 entmin_attack = partial(madry_cifar10_attack,
@@ -121,25 +123,21 @@ tps_warp_attack = partial(
 phtps_attack_20 = partial(
     tps_warp_attack,
     pert_model_f=pert.PhotoTPS20,
-    initializer=pert.CombinedInit(
-        dict(tps=pert.NormalInit({'offsets': (0, 0.1)}),
-             photometric=pert.UniformInit(
-                 {'module.add_v.addend': [-0.25, 0.25],
-                  'module.mul_s.factor': [0.25, 2.],
-                  'module.add_h.addend': [-0.1, 0.1],
-                  'module.mul_v.factor': [0.25, 2.]}))),
+    initializer=pert.MultiInit(
+        tps=pert.NormalInit({'offsets': (0, 0.1)}),
+        photometric=pert.UniformInit(
+            {'module.add_v.addend': [-0.25, 0.25],
+             'module.mul_s.factor': [0.25, 2.],
+             'module.add_h.addend': [-0.1, 0.1],
+             'module.mul_v.factor': [0.25, 2.]})),
     projection=None)
 
-phg_attack_21 = partial(
-    tps_warp_attack,
-    pert_model_f=pert.PhotoTPS20,
-    initializer=pert.CombinedInit(
-        dict(tps=pert.NormalInit({'offsets': (0, 0.1)}),
-             photometric=pert.UniformInit(
-                 {'module.add_v.addend': [-0.25, 0.25],
-                  'module.mul_s.factor': [0.25, 2.],
-                  'module.add_h.addend': [-0.1, 0.1],
-                  'module.mul_v.factor': [0.25, 2.]}))),
+phw_attack_1 = partial(
+    attacks.PertModelAttack,
+    pert_model_f=partial(pert.PhotoWarp1, sigma=5),
+    initializer=pert.MultiInit(
+        photometric=phtps_attack_20.initializer.photometric,
+        warp=pert.NormalInit({'unsmoothed_flow': (0, 25)})),
     projection=None)
 
 

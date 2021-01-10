@@ -1,4 +1,4 @@
-from functools import partial
+from vidlu.utils.func import partial
 from numbers import Number
 import typing as T
 
