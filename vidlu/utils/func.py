@@ -9,6 +9,7 @@ import warnings
 import typing as T
 import sys
 from reprlib import recursive_repr
+from collections import namedtuple
 
 from vidlu.utils import text
 from .collections import NameDict
@@ -22,15 +23,36 @@ def identity(x):
 # Partial ##########################################################################################
 
 class partial(functools.partial):
-    """ partial with a more informative error message
+    """ partial with a more informative error message and parameters accessible
+    using the dot operator.
+
+    Example::
+    >>> p = partial(lambda a=5, b=7: print(a, b), a=1)
+    >>> assert p.a == 1 and p.b == 7
+    >>> p()
+    1x
     """
+
+    # def __new__(cls, func, /, *args, **keywords):
+    #     if not callable(func):
+    #         raise TypeError("the first argument must be callable")
+    #
+    #     # partial.__new__ uses hasattr(func, "func) instead, which would break
+    #     if isinstance(func, partial):
+    #         if "sigma" in keywords:
+    #             breakpoint()
+    #         args = func.args + args
+    #         keywords = {**func.keywords, **keywords}
+    #         func = func.func
+    #
+    #     return super().__new__(cls, func, *args, **keywords)
 
     def __call__(self, *args, **kwargs):
         try:
             func = self.func
             sig = inspect.signature(func)
             sigparams = list(sig.parameters.items())
-            if len(sigparams) > 0 and sigparams[-1][1].kind is not inspect.Parameter.KEYWORD_ONLY:
+            if len(sigparams) > 0 and sigparams[-1][1].kind is not inspect.Parameter.VAR_KEYWORD:
                 params_ = set(params(func).keys())
                 provided = set({**self.keywords, **kwargs}.keys())
                 unexpected = provided.difference(params_)
@@ -40,6 +62,23 @@ class partial(functools.partial):
         except ValueError:
             pass
         return functools.partial.__call__(self, *args, **kwargs)
+
+    def __getitem__(self, item):
+        # Using `params(self)[item]` instead of the line below causes infinite recursion
+        return self.keywords[item] if item in self.keywords else params(self.func)[item]
+
+    def __getattr__(self, item):
+        """Returns keyword assigned or default arguments.
+
+        It does not work if some argument has the name "func", "args", or
+        "keywrods". The indexing operator should be used in these cases.
+        The "func" attribute returns the wrapped function, "args" returns the
+        args attribute of the object (assigned positional arguments), and
+        "keywords" returns asssigned keyword arguments."""
+        try:
+            return self[item]
+        except KeyError as e:
+            raise AttributeError(f"{e}") from e
 
 
 class frozen_partial(partial):
@@ -347,7 +386,22 @@ class EscapedFuncTree(_EscapedItem):
     pass
 
 
-# ArgTree, argtree_partial #########################################################################
+# ArgHolder, ArgTree, argtree_partial #########################################################################
+
+
+class ArgHolder:
+    __slots__ = "args", "kwargs"
+
+    def __init__(self, *args, **kwargs):
+        self.args, self.kwargs = args, kwargs
+
+    def __repr__(self):
+        rargs = ", ".join(repr(a) for a in self.args)
+        return f"ArgHolder({rargs}, kwargs={repr(self.kwargs)})"
+
+    def __str__(self):
+        return repr(self)
+
 
 class ArgTree(NameDict):
     FUNC = ''
