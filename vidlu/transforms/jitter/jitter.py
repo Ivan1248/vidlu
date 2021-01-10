@@ -2,7 +2,7 @@ import dataclasses as dc
 import warnings
 import typing as T
 import torch
-from functools import partial
+from vidlu.utils.func import partial
 
 from vidlu.transforms.image import RandomCrop, RandomHFlip, Pad, RandomScaleCrop, PadToShape
 from vidlu.utils.func import compose
@@ -27,7 +27,7 @@ class PhTPS20:
         from vidlu.training.robustness import attacks
         from vidlu.training.robustness import perturbation as pert
         self.pert_model = pert.PhotoTPS20()
-        self.init = pert.CombinedInit(
+        self.init = pert.MultiInit(
             dict(tps=pert.NormalInit({'offsets': (0, 0.1)}),
                  photometric=pert.UniformInit(
                      {'module.add_v.addend': [-0.25, 0.25],
