@@ -29,9 +29,9 @@ class NormalInit(Initializer):
             vm.get_submodule(pert_model, path).normal_(mean=mean, std=std)
 
 
-@dc.dataclass
-class CombinedInit(Initializer):
-    initializers: T.Union[T.List[Initializer], T.Mapping[str, Initializer]]
+class MultiInit(Initializer):
+    def __init__(self, *args, **kwargs):
+        self.initializers = dict(*args, **kwargs)
 
     def __call__(self, pert_model, x):
         if isinstance(self.initializers, T.Mapping):
@@ -40,3 +40,9 @@ class CombinedInit(Initializer):
         else:
             for init in self.initializers:
                 init(pert_model, x)
+
+    def __getitem__(self, item):
+        return self.initializers[item]
+
+    def __getattr__(self, item):
+        return self[item]
