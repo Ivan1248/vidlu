@@ -1,5 +1,5 @@
 import math
-from functools import partial
+from vidlu.utils.func import partial
 
 import torch
 from torch import nn
@@ -90,8 +90,19 @@ class ChannelMeanLogitsSplitter(E.Seq):
     def __init__(self, class_count):
         super().__init__(spl=E.Split([class_count, ...]),
                          par=E.Parallel(mean_split=vmc.ChannelMeanSplitter(), id=E.Identity()),
-                         restruct=E.Func(lambda x: (*x[0], x[1]),
-                                         inv=lambda y: (y[:2], y[2])))
+                         restruct=E.Restruct("(logits, zl), zr", "logits, zl, zr"))
+
+
+class ChannelMeanLogitsSplitter2(E.Seq):
+    def __init__(self, class_count):
+        super().__init__(spl=E.Split([class_count, ...]),
+                         par=E.Parallel(
+                             seq=E.Seq(
+                                 mean_split=vmc.ChannelMeanSplitter(),
+                                 par=E.Parallel(norm=E.BatchNorm(), id=E.Identity())),
+                             id=E.Identity()),
+                         restruct=E.Restruct("(logits, zl), zr", "logits, zl, zr"))
+
 
 class AdvChannelMeanLogitsSplitter(E.Seq):
     """Extracts logits as channel means of the first class_count channels.
@@ -105,7 +116,6 @@ class AdvChannelMeanLogitsSplitter(E.Seq):
     """
 
     def __init__(self, class_count):
-        super().__init__(cmls=E.Split([class_count, ...]),
+        super().__init__(spl=E.Split([class_count, ...]),
                          par=E.Parallel(mean_split=vmc.ChannelMeanSplitter(), id=E.Identity()),
-                         restruct=E.Func(lambda x: (*x[0], x[1]),
-                                         inv=lambda y: (y[:2], y[2])))
+                         restruct=E.Restruct("(logits, zl), zr", "logits, zl, zr"))
