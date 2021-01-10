@@ -1,4 +1,4 @@
-from functools import partial
+from vidlu.utils.func import partial
 from numpy import s_
 
 import vidlu.modules.inputwise as vmi
@@ -6,6 +6,9 @@ import vidlu.modules as vm
 from vidlu.modules.inputwise import PertModel
 import vidlu.ops.image as voi
 import vidlu.ops as vo
+import vidlu.utils.func as vmf
+
+t = vmf.ArgTree
 
 
 # Perturbation models
@@ -68,3 +71,9 @@ class PhotoTPS20(vm.Seq):
     def __init__(self, clamp=True, forward_arg_count=None):
         super().__init__(photometric=Photometric20(clamp, forward_arg_count),
                          tps=vmi.BackwardTPSWarp())
+
+
+class PhotoWarp1(vm.Seq):
+    def __init__(self, clamp=True, forward_arg_count=None, sigma=3):
+        super().__init__(warp=vmf.argtree_partial(vmi.SmoothWarp, smooth_f=t(sigma=sigma))(),
+                         photometric=Photometric20(clamp, forward_arg_count))
