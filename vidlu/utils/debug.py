@@ -8,17 +8,31 @@ import inspect
 from vidlu.utils.collections import FileDict
 
 
-def trace_calls():
-    def tracefunc(frame, event, arg, indent=(0,)):
-        if event == "call":
-            indent[0] += 2
-            print("-" * indent[0] + "> call function", frame.f_code.co_name)
-        elif event == "return":
-            print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
-            indent[0] -= 2
+def trace_calls(
+        depth=float('inf'),
+        filter=lambda **k: True,
+        enter_action=lambda indent, frame, **k: print(" " * indent, frame.f_code.co_name,
+                                                      frame.f_code.co_filename,
+                                                      frame.f_code.co_firstlineno)):
+    indent = 0
+
+    def tracefunc(frame, event, arg):
+        nonlocal indent
+        if filter(frame, event, arg) and indent < depth:
+            if event == "call":
+                indent += 2
+                if filter(frame=frame, event=event, arg=arg):
+                    enter_action(frame=frame, event=event, arg=arg, indent=indent)
+            elif event == "return":
+                # print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
+                indent -= 2
         return tracefunc
 
-    sys.settrace(tracefunc)
+    sys.setprofile(tracefunc)
+
+
+def stop_tracing_calls():
+    sys.setprofile(None)
 
 
 def crash_after(*args, format='%Y-%m-%d', message=None):
@@ -33,10 +47,9 @@ def crash_after(*args, format='%Y-%m-%d', message=None):
     message = "" if message is None else f" Message: {message}"
     if datetime.utcnow() > crashtime:
         raise AssertionError(
-            f"crash_after is crashing because the time {crashtime} has passed. {message}")
+            f"crash_after is crashing because the time {crashtime} has passed.{message}")
     else:
-        warnings.warn(
-            f"crash_after is not crashing because the time {crashtime} has not passed. {message}")
+        warnings.warn(f"This code will crash after {crashtime}.{message}")
 
 
 # Keeping a state associated with a line in code
