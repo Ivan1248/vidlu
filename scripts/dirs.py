@@ -20,16 +20,20 @@ def filter_valid(items):
     return [x for x in items if x is not None]
 
 
-# Directories for looking up datasets
+# Datasets
 DATASETS = filter_valid([os.environ.get("VIDLU_DATASETS", None), _find('data/datasets'),
                          _find('datasets'), Path('/tmp/')])
-# Directory with pre-trained parameters
+
+# Pre-trained parameters
 PRETRAINED = Path(os.environ.get("VIDLU_PRETRAINED", None) or _find('data/pretrained_parameters'))
-# Directory for storing cache and experimental results/states
+
+# Cache and experimental results/states
 EXPERIMENTS = Path(os.environ.get("VIDLU_EXPERIMENTS", None) or _find('data/experiments'))
-# Directory to store cache in
+
+# Cache
 CACHE = EXPERIMENTS / 'cache'
-# Directory to store experimental results/states
+
+# Experimental results/states
 SAVED_STATES = EXPERIMENTS / 'states'
 
 CACHE.mkdir(exist_ok=True)
