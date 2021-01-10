@@ -1,11 +1,9 @@
 import sys
-import warnings
 import argparse
 from time import time
 import random
 from datetime import datetime
 import fcntl
-import traceback
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -20,6 +18,7 @@ from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.indent_print import indent_print
 from vidlu.utils.misc import query_user
+from vidlu.utils import debug
 from vidlu.training.checkpoint_manager import Files as cpman_filenames
 import dirs
 
@@ -40,7 +39,12 @@ def log_run(status):
         traceback.print_exc()
         print(e)
 
+
 def train(args):
+    if args.debug:
+        debug.trace_calls(depth=122,
+            filter=lambda frame, *a: "vidlu" in frame.f_code.co_filename and not frame.f_code.co_name[0] in ["_", "<"])
+
     if args.restart and not query_user("Are you sure you want to restart the experiment?",
                                        timeout=30, default='y'):
         exit()
@@ -53,6 +57,9 @@ def train(args):
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
     exp.logger.log(f"RNG seed: {seed}")
+
+    if args.debug:
+        debug.stop_tracing_calls()
 
     if not args.no_init_test:
         print('Evaluating initially...')
@@ -130,7 +137,7 @@ def add_standard_arguments(parser, func):
                              + " with the same configuration.")
     parser.add_argument("-rb", "--resume_best", action='store_true',
                         help="Use the best checkpoint if --resume is provided.")
-    #if func is train:
+    # if func is train:
     parser.add_argument("-r", "--resume", action='store_true',
                         help="Resume training from a checkpoint of the same experiment.")
     parser.add_argument("--restart", action='store_true',
