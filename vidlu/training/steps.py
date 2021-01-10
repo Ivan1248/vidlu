@@ -1,9 +1,10 @@
 from contextlib import suppress as ctx_suppress
 import dataclasses as dc
-from functools import partial
+from vidlu.utils.func import partial
 import typing as T
 from torch import nn
 import copy
+import warnings
 
 import numpy as np
 import torch
@@ -13,8 +14,8 @@ from vidlu.data import BatchTuple
 from vidlu.utils.collections import NameDict
 from vidlu.torch_utils import (concatenate_tensors_trees, switch_training,
                                batchnorm_stats_tracking_off)
+import vidlu.modules as vm
 import vidlu.modules.losses as vml
-import vidlu.modules.elements as vme
 import vidlu.modules.utils as vmu
 
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
@@ -25,7 +26,8 @@ from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 @dc.dataclass
 class TrainerStep:  # TODO: use to reduce
     outputs: dict = dc.field(
-        default_factory=lambda: dict(zip(*[["x", "target", "output", "other_outputs", "loss"]] * 2)))
+        default_factory=lambda: dict(
+            zip(*[["x", "target", "output", "other_outputs", "loss"]] * 2)))
 
     def __call__(self, trainer, batch):
         output = self.run(trainer, batch)
@@ -81,15 +83,19 @@ def dequantize(x, bin_count, scale=1):
     return x + scale / bin_count * torch.rand_like(x)
 
 
-def call_flow(model, x, end=None):
-    Ladj.set(x, Ladj.zero(x))
+def call_flow(model, x, end: T.Union[str, T.Tuple[str, slice]] = None):
     # hooks = [m.register_forward_hook(vmu.hooks.check_propagates_log_abs_det_jac)
     #         for m in model.backbone.concat.modules()]
     assert end is not None
-    out = (model if end is None else vme.with_intermediate_outputs(model, end))(x)
+    end_name, z_slice = (end, None) if isinstance(end, str) else end
+    assert z_slice is None
+    Ladj.set(x, Ladj.zero(x))
+    out, z = (model if end is None else vm.with_intermediate_outputs(model, end_name))(x)
+    # if slice is not None:
+    #    z = z[z_slice]
     # for h in hooks:
     #    h.remove()
-    return out
+    return out, z
 
 
 @dc.dataclass
@@ -97,7 +103,7 @@ class DiscriminativeFlowSupervisedTrainStep:  # TODO: improve
     gen_weight: float = 1.  # bit/dim
     dis_weight: float = 1.
     bin_count: float = 256
-    flow_end: str = None
+    flow_end: T.Union[str, T.Tuple[str, slice]] = None
 
     def __call__(self, trainer, batch):
         trainer.model.train()
@@ -107,6 +113,9 @@ class DiscriminativeFlowSupervisedTrainStep:  # TODO: improve
 
         output, z = call_flow(trainer.model, x, end=self.flow_end)
         output, other_outputs = trainer.extend_output(output)
+
+        if not isinstance(z, torch.Tensor):
+            z = torch.cat([zi.view(x.shape[0], -1) for zi in vmu.extract_tensors(z)])
 
         loss_gen = vml.input_image_nll(x, z, self.bin_count).mean()
         loss_dis = trainer.loss(output, y).mean()
@@ -126,21 +135,182 @@ class DiscriminativeFlowSupervisedEvalStep:  # TODO: improve
     bin_count: float = 256
     flow_end: str = None
 
+    @torch.no_grad()
     def __call__(self, trainer, batch):
         trainer.model.eval()
 
         x, y = trainer.prepare_batch(batch)
-
         output, z = call_flow(trainer.model, x, end=self.flow_end)
         output, other_outputs = trainer.extend_output(output)
 
-        loss_gen = vml.input_image_nll(z, self.bin_count)
+        loss_gen = vml.input_image_nll(x, z, self.bin_count).mean()
         loss_dis = trainer.loss(output, y).mean()
         loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
 
         return NameDict(x=x, target=y, z=z, output=output, other_outputs=other_outputs,
                         loss=loss.item(), loss_dis=loss_dis.item(),
                         loss_gen_b=loss_gen.item() / np.log(2.))
+
+
+@dc.dataclass
+class AdversarialDiscriminativeFlowSupervisedTrainStep:  # TODO: improve
+    gen_weight: float = 1.  # bit/dim
+    dis_weight: float = 1.
+    adv_weight: float = 1.
+    bin_count: float = 256
+    flow_end: T.Union[str, T.Tuple[str, slice]] = None
+
+    def _adv_loss(self, output_adv):
+        return -output_adv.sigmoid().log()
+
+    def __call__(self, trainer, batch):
+        trainer.model.train()
+
+        d_temp = 1
+
+        x, y = trainer.prepare_batch(batch)
+        x = dequantize(x, 256)
+
+        output_full, z = call_flow(trainer.model, x, end=self.flow_end)
+        output, output_d = output_full[0][:, :-1], output_full[0][:, -1:]
+        output_cd, other_outputs = trainer.extend_output(output)
+        if not isinstance(z, torch.Tensor):
+            z_ = Ladj.add(torch.cat(z, dim=1), z, Ladj.zero(z[0]))
+
+        loss_gen = vml.input_image_nll(x, z_, self.bin_count).mean()
+        loss_dis = trainer.loss(output, y).mean()
+        loss_adv = self._adv_loss(output_d / d_temp).mean()
+        if loss_adv_inf := torch.isinf(loss_adv):
+            print(f"loss_adv={loss_adv.item()}, {loss_adv=}")
+            loss_adv = torch.full_like(loss_adv, 10000.)
+        loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen + self.adv_weight * loss_adv
+
+        do_optimization_step(trainer.optimizer, loss)
+
+        # adversarial step
+
+        if self.adv_weight != 0 and not loss_adv_inf:
+            with batchnorm_stats_tracking_off(trainer.model):
+                with torch.no_grad():
+                    output_adv = torch.roll(output, 1, dims=0)
+                    output_full_adv = (torch.cat([output_adv, output_d], dim=1).detach(),
+                                       *[x.detach() for x in output_full[1:]])
+                    x_adv = trainer.model.inverse(output_full_adv)
+                    x_adv_rg = x_adv  # vm.rev_grad(x_adv)
+                output_adv_, z = call_flow(trainer.model, x_adv_rg, end=self.flow_end)
+            output_adv_cd, output_adv_d = output_adv_[0][:, :-1], output_adv_[0][:, -1:]
+
+            loss_adv_ = self._adv_loss(-output_adv_d / d_temp).mean()
+
+            if torch.isinf(loss_adv_):
+                print(f"loss_adv_={loss_adv_.item()}")
+            else:
+                do_optimization_step(trainer.optimizer, self.adv_weight * loss_adv_)
+        else:
+            loss_adv_ = loss_adv * 0 - 1
+
+        # for h in hooks:
+        #     h.remove()
+
+        return NameDict(x=x, target=y, z=z, output=output, other_outputs=other_outputs,
+                        loss=loss.item(), loss_dis=loss_dis.item(),
+                        loss_gen_b=loss_gen.item() / np.log(2.), loss_adv=loss_adv.item(),
+                        loss_adv_=loss_adv_.item())
+
+
+@dc.dataclass
+class AdversarialDiscriminativeFlowSupervisedEvalStep:  # TODO: improve
+    gen_weight: float = 1.  # bit/dim
+    dis_weight: float = 1.
+    adv_weight: float = 1.
+    bin_count: float = 256
+    flow_end: T.Union[str, T.Tuple[str, slice]] = None
+
+    def _adv_loss(self, output_adv):
+        return -output_adv.sigmoid().log()
+
+    @torch.no_grad()
+    def __call__(self, trainer, batch):
+        trainer.model.eval()
+
+        x, y = trainer.prepare_batch(batch)
+        x = dequantize(x, 256)
+
+        output_cd, z = call_flow(trainer.model, x, end=self.flow_end)
+        output, output_d = output_cd[0][:, :-1], output_cd[0][:, -1:]
+        output_cd, other_outputs = trainer.extend_output(output)
+        if not isinstance(z, torch.Tensor):
+            z_ = Ladj.add(torch.cat(z, dim=1), z, Ladj.zero(z[0]))
+
+        loss_gen = vml.input_image_nll(x, z_, self.bin_count).mean()
+        loss_dis = trainer.loss(output, y).mean()
+        loss_adv = self._adv_loss(output_d).mean()
+        loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen + self.adv_weight * loss_adv
+
+        return NameDict(x=x, target=y, z=z, output=output, other_outputs=other_outputs,
+                        loss=loss.item(), loss_dis=loss_dis.item(),
+                        loss_gen_b=loss_gen.item() / np.log(2.), loss_adv=loss_adv.item())
+
+
+@dc.dataclass
+class AdversarialDiscriminativeFlowSupervisedTrainStep2:  # TODO: improve
+    gen_weight: float = 1.  # bit/dim
+    dis_weight: float = 1.
+    adv_weight: float = 1.
+    bin_count: float = 256
+    flow_end: T.Union[str, T.Tuple[str, slice]] = None
+    eval: bool = False
+
+    def _adv_loss(self, output_adv):
+        return -output_adv.sigmoid().log()
+
+    def __call__(self, trainer, batch):
+        trainer.model.train()
+
+        x, y = trainer.prepare_batch(batch)
+        x = dequantize(x, 256)
+
+        output_full, z = call_flow(trainer.model, x, end=self.flow_end)
+        logits = output_full[0]
+        logits, other_outputs = trainer.extend_output(logits)
+        if not isinstance(z, torch.Tensor):
+            z_ = Ladj.add(torch.cat(z, dim=1), z, Ladj.zero(z[0]))
+
+        loss_gen = vml.input_image_nll(x, z_, self.bin_count).mean()
+        loss_dis = trainer.loss(logits, y).mean()
+        loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
+
+        if not self.eval:
+            do_optimization_step(trainer.optimizer, loss)
+
+        # adversarial step
+
+        with batchnorm_stats_tracking_off(trainer.model):
+            with torch.no_grad():
+                logits_adv = torch.roll(logits, 1, dims=0)
+                output_full_adv = (logits_adv.detach(),
+                                   *[x.detach() for x in output_full[1:]])
+                x_adv = trainer.model.inverse(output_full_adv)
+            output_full_adv_, z = call_flow(trainer.model, x_adv.clamp(x.min(), x.max()),
+                                            end=self.flow_end)
+            logits_adv_ = output_full_adv_[0]
+
+        loss_adv = trainer.loss(logits_adv_, y).mean()
+
+        if not self.eval:
+            do_optimization_step(trainer.optimizer, self.adv_weight * loss_adv)
+
+        return NameDict(x=x, target=y, z=z, output=logits, other_outputs=other_outputs,
+                        loss=loss.item(), loss_dis=loss_dis.item(),
+                        loss_gen_b=loss_gen.item() / np.log(2.), loss_adv=loss_adv.item())
+
+
+@dc.dataclass
+class AdversarialDiscriminativeFlowSupervisedEvalStep2(
+    AdversarialDiscriminativeFlowSupervisedTrainStep2):
+    eval: bool = True
+
+    __call__ = torch.no_grad()(AdversarialDiscriminativeFlowSupervisedTrainStep2.__call__)
 
 
 # Supervised multistep
@@ -535,8 +705,10 @@ class PertConsistencyTrainStep:  # TODO
             do_optimization_step(trainer.optimizer, loss=loss)
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-                        x_p=x_p, target_p=target_p, output_p=output_p, other_outputs_p=other_outputs_p,
-                        loss_p=loss_p.item(), loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
+                        x_p=x_p, target_p=target_p, output_p=output_p,
+                        other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item(),
+                        loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
 
 
 @torch.no_grad()
@@ -704,7 +876,8 @@ class SemisupVATCorrEvalStep:
                         other_outputs_l=other_outs_l, loss_l=loss_l.item(), loss_p=loss_p.item(),
                         x_l=x_l, target=y_l, x_p=x_p, output_p=out_p, other_outputs_p=other_outs_p,
                         loss_ent=loss_ent.item(),
-                        corr_c=corr_c.item(), corr_p=corr_p.item(), corr_ucp=corr_ucp.item(), corr_dcp=corr_dcp.item())
+                        corr_c=corr_c.item(), corr_p=corr_p.item(), corr_ucp=corr_ucp.item(),
+                        corr_dcp=corr_dcp.item())
 
 
 @dc.dataclass
@@ -738,8 +911,10 @@ class OldMeanTeacherTrainStep:  # TODO
             do_optimization_step(trainer.optimizer, loss=loss)
 
         return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item(),
-                        x_p=x_p, target_p=target_p, output_p=output_p, other_outputs_p=other_outputs_p,
-                        loss_p=loss_p.item(), loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
+                        x_p=x_p, target_p=target_p, output_p=output_p,
+                        other_outputs_p=other_outputs_p,
+                        loss_p=loss_p.item(),
+                        loss_ent=loss_ent.item() if self.entropy_loss_coef else -1)
 
 
 @dc.dataclass
