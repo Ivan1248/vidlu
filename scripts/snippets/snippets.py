@@ -227,10 +227,9 @@ def show_adversarial_examples(trainer, state, **kwargs):
     import vidlu.modules.inputwise as vmi
 
     # trainer.eval_attack.pert_model_f = vmi.Warp
-    #
     # trainer.eval_attack.eps = 0.2
-    # trainer.eval_attack.step_size = 0.01
-    trainer.eval_attack.step_count = 1000
+    # trainer.eval_attack.step_size = 1
+    # trainer.eval_attack.step_count = 100
     # trainer.eval_attack.stop_on_success = True
 
     import torch
@@ -247,30 +246,30 @@ def show_adversarial_examples(trainer, state, **kwargs):
             plt.show()
 
         N = 16
-        #adv = trainer.eval_attack.perturb(trainer.model, state.output.x, state.output.target)
-        adv = state.output.x_p[:N]
-        clean = state.output.x[:N]
-        diff = 0.5 + (adv - clean) * 255 / 80
+        x_c = state.output.x[:N]
+        x_p = state.output.x_p[:N]
+        #x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.output.target[:N])
+        diff = 0.5 + (x_p - x_c) * 255 / 80
         pred = state.output.other_outputs_p.hard_prediction[:len(state.output.target)]
         target = state.output.target
 
         fooled = (pred != target)[:N]
-        fooled = fooled.reshape(-1, *[1] * (len(adv.shape) - 1))
-        fooled = fooled.float() * (adv * 0 + 1)
+        fooled = fooled.reshape(-1, *[1] * (len(x_p.shape) - 1))
+        fooled = fooled.float() * (x_p * 0 + 1)
 
         class_repr = [None] * 10
         for i, c in enumerate(target):
             if class_repr[c] is None:
                 class_repr[c] = state.output.x[i]
         for i, x in enumerate(class_repr):
-            if x is None:
-                x = 0 * adv[0]
+             if x is None:
+                 class_repr[c] = 0 * x_p[0]
 
         predicted_class_representatives = list(map(class_repr.__getitem__, pred[:N]))
 
     show(make_grid(
-        sum((list(x) for x in [clean, adv, diff, fooled, predicted_class_representatives]), []),
-        nrow=len(adv)))
+        sum((list(x) for x in [x_c, x_p, diff, fooled, predicted_class_representatives]), []),
+        nrow=len(x_p)))
 
 
 show_adversarial_examples(**locals())
