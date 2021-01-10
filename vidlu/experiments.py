@@ -1,6 +1,6 @@
 import warnings
 from argparse import Namespace
-from functools import partial
+from vidlu.utils.func import partial
 from dataclasses import dataclass
 from pathlib import Path
 import typing as T
@@ -161,57 +161,61 @@ class TrainingExperiment:
         _check_dirs(dirs)
         a = training_args
 
-        with indent_print("Setting device..."):
-            if a.device is None:
-                a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            elif a.device == "auto":
-                from vidlu import gpu_utils
-                a.device = torch.device(
-                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
-            print(f"device: {a.device}")
-
-        with indent_print('Initializing data...'):
-            print(a.data)
-            with Stopwatch() as t:
-                data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS, dirs.CACHE)
-            first_ds = next(iter(data.values()))
-            print(f"Data initialized in {t.time:.2f} s.")
-
-        with indent_print('Initializing model...'):
-            print(a.model)
-            with Stopwatch() as t:
-                model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
-                                            prep_dataset=first_ds, device=a.device,
-                                            verbosity=a.verbosity)
-            print(f"Model initialized in {t.time:.2f} s.")
-
-        with indent_print('Initializing trainer and evaluation...'):
-            print(a.trainer)
-            trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
-                                            verbosity=a.verbosity)
-            metrics, main_metrics = factories.get_metrics(a.metrics, trainer, dataset=first_ds)
-            for m in metrics:
-                trainer.metrics.append(m())
-
         with indent_print('Initializing checkpoint manager and logger...'):
             logger = Logger()
             logger.log("Resume command:\n"
                        + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
                        + f' -d "{a.device}" --metrics "{a.metrics}" -r')
 
-            def loading_handler(state, summary):
-                trainer.load_state_dict(state)
-                logger.load_state_dict(summary.get('logger', summary))  # TODO: remove backward compatibility
+            cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
+
+        try:
+            with indent_print("Setting device..."):
+                if a.device is None:
+                    a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+                elif a.device == "auto":
+                    from vidlu import gpu_utils
+                    a.device = torch.device(
+                        gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+                print(f"device: {a.device}")
+
+            with indent_print('Initializing data...'):
+                print(a.data)
+                with Stopwatch() as t:
+                    data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS,
+                                                                   dirs.CACHE)
+                first_ds = next(iter(data.values()))
+                print(f"Data initialized in {t.time:.2f} s.")
+
+            with indent_print('Initializing model...'):
+                print(a.model)
+                with Stopwatch() as t:
+                    model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
+                                                prep_dataset=first_ds, device=a.device,
+                                                verbosity=a.verbosity)
+                print(f"Model initialized in {t.time:.2f} s.")
+
+            with indent_print('Initializing trainer and evaluation...'):
+                print(a.trainer)
+                trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
+                                                verbosity=a.verbosity)
+                metrics, main_metrics = factories.get_metrics(a.metrics, trainer, dataset=first_ds)
+                for m in metrics:
+                    trainer.metrics.append(m())
+
+            define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
+        except Exception as e:
+            raise e
+        finally:
+            if a.resume:
+                state, summary = (cpman.load_best if a.resume_best else cpman.load_last)(
+                    map_location=a.device)
+                # TODO: remove backward compatibility
+                logger.load_state_dict(summary.get('logger', summary))
                 logger.print_all()
 
-            cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
-            define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
-
         if a.resume:
-            state, summary = (cpman.load_best if a.resume_best else cpman.load_last)(map_location=a.device)
             trainer.load_state_dict(state)
-            logger.load_state_dict(summary.get('logger', summary))  # TODO: remove backward compatibility
-            logger.print_all()
         elif a.params is not None:
             with indent_print("Loading parameters..."):
                 print(a.params)
