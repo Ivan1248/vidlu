@@ -129,16 +129,17 @@ def query_user(question, default=None, timeout=np.inf, options=None):
         sys.stdout.write(f'{question} [{options_str}]: ')
         sys.stdout.flush()
         sw = Stopwatch().start()
-        inp = sw
+        no_input = id(sw)
         while sw.time < timeout:
             time.sleep(0.1)
-            if (inp := try_input(sw)) is not sw:
+            if (inp := try_input(default=no_input)) is not no_input:
                 break
         if inp == "":
             return options[default]
         elif inp in options:
             return options[inp]
-        print(f"Please respond with either of {', '.join(options.keys())}.")
+        else:
+            print(f"Please respond with either of {', '.join(options.keys())}.")
 
 
 # Archive files ####################################################################################
