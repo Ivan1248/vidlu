@@ -180,6 +180,8 @@ def grid_2d_points_to_indices(grid_points, shape, grid_low=0., grid_high=1.):
     return torch.stack([indices[..., 1], indices[..., 0]], dim=-1)
 
 
+# Thin plate spline warp ###########################################################################
+
 def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     """Fits a 1D thin plate spline and supports batch inputs.
 
@@ -231,9 +233,11 @@ def tps_grid_from_points(c_src, c_dst, size, reduced=False):
 
 
 def backward_tps_grid_from_points(c_src, c_dst, size, reduced=False):
-    """Creates "backward" TPS grid for grid_sample."""
+    """Creates "backward" TPS sampling grid for grid_sample."""
     return tps_grid_from_points(c_dst, c_src, size, reduced=reduced)
 
+
+# Gaussian forward warp ############################################################################
 
 def gaussian_forward_warp_josa(features, flow, sigma=1., normalize=True):
     epsilon = 1e-6
