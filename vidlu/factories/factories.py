@@ -1,7 +1,7 @@
-import warnings
 import re
 from pathlib import Path
 from argparse import Namespace
+import typing as T
 
 import torch
 import numpy as np
@@ -9,8 +9,8 @@ import numpy as np
 from vidlu import models, metrics
 import vidlu.modules as vm
 from vidlu.models import params
-from vidlu.data.utils import CachingDatasetFactory, dataset_ops
-from vidlu.data import DataLoader
+import vidlu.data.utils as vdu
+from vidlu.data import DataLoader, Dataset
 from vidlu.training import Trainer
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
@@ -75,7 +75,8 @@ def parse_data_str(data_str):
     return name_options_subsets_tuples
 
 
-def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
+def get_data(data_str: str, datasets_dir, cache_dir=None) \
+        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
     """
 
     Args:
@@ -97,8 +98,8 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
 
     get_parted_dataset = data.DatasetFactory(datasets_dir)
     if cache_dir is not None:
-        get_parted_dataset = CachingDatasetFactory(get_parted_dataset, cache_dir,
-                                                   add_statistics=True)
+        add_stats = partial(vdu.add_image_statistics_to_info_lazily, cache_dir=cache_dir)
+        get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [add_stats])
     data = []
     for name, options_str, subsets in name_options_subsets_tuples:
         options = unsafe_eval(f'dict{options_str or "()"}')
@@ -108,9 +109,8 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) -> dict:
             data.append(((k, s), getattr(pds, s)))
 
     if transform_str is not None:  # TODO: improve names if necessary
-        values = unsafe_eval(transform_str, dict(d=[v for k, v in data],
-                                                 **{k: v for k, v in vars(dataset_ops).items()
-                                                    if not k.startswith('_')}))
+        transforms = {k: v for k, v in vars(vdu.dataset_ops).items() if not k.startswith('_')}
+        values = unsafe_eval(transform_str, dict(**transforms, d=[v for k, v in data]))
         data = [((f'data{i}', 'sub0'), v) for i, v in enumerate(values)]
     return data  # not dict since elements can repeat
 
@@ -302,7 +302,8 @@ def _parse_parameter_translation_string(params_str):
             + " <src> supports indexing nested dictionaries by putting commas between keys.")
     p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'file']})
     *src_dict, src = p1.src.split(",")
-    return Namespace(translator=p1.transl, src_dict=src_dict, src_module=src, dest_module=p1.dst, file=p1.file)
+    return Namespace(translator=p1.transl, src_dict=src_dict, src_module=src, dest_module=p1.dst,
+                     file=p1.file)
 
 
 def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):

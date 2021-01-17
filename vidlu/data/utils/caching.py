@@ -22,19 +22,20 @@ def compute_pixel_mean_std(dataset, scale01=False, progress_bar=False):
     mean = ws.dot(means)  # mean pixel
     var = vars_.mean(0) + ws.dot(means ** 2) - mean ** 2  # pixel variance
     std = np.sqrt(var)  # pixel standard deviation
-    return mean / 255, std / 255 if scale01 else mean, std
+    return (mean / 255, std / 255) if scale01 else (mean, std)
 
 
-# Cached dataset with normalized inputs ############################################################
+# Image statistics cache ###########################################################################
 
-
-def _get_standardization(_, ds_with_info):  # not local for picklability
+# not local for picklability, used only in add_image_statistics_to_info_lazily
+def _get_standardization(_, ds_with_info):
     return ds_with_info.info.cache['standardization']
 
 
-def _compute_pixel_mean_std_d(ds):  # not local for picklability
-    return Namespace(**dict(zip(['mean', 'std'],
-                                compute_pixel_mean_std(ds, scale01=True, progress_bar=True))))
+# not local for picklability, used only in add_image_statistics_to_info_lazily
+def _compute_pixel_mean_std_d(ds):
+    mean, std = compute_pixel_mean_std(ds, scale01=True, progress_bar=True)
+    return Namespace(mean=mean, std=std)
 
 
 def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
@@ -53,6 +54,8 @@ def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
 
     return parted_dataset.with_transform(cache_transform)
 
+
+# Caching ##########################################################################################
 
 def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
     elem_size = next(parted_dataset.items())[1].approx_example_size()
@@ -79,14 +82,14 @@ def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
 
 
 class CachingDatasetFactory(DatasetFactory):
-    def __init__(self, datasets_dir_or_factory, cache_dir, add_statistics=False):
+    def __init__(self, datasets_dir_or_factory, cache_dir, parted_ds_transforms=()):
         ddof = datasets_dir_or_factory
         super().__init__(ddof.datasets_dirs if isinstance(ddof, DatasetFactory) else ddof)
-        self.add_statistics = add_statistics
         self.cache_dir = cache_dir
+        self.parted_ds_transforms = parted_ds_transforms
 
     def __call__(self, ds_name, **kwargs):
         pds = super().__call__(ds_name, **kwargs)
-        if self.add_statistics:
-            pds = add_image_statistics_to_info_lazily(pds, self.cache_dir)
+        for transform in self.parted_ds_transforms:
+            pds = transform(pds)
         return cache_data_lazily(pds, self.cache_dir)

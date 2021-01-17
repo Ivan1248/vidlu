@@ -8,6 +8,7 @@ from vidlu.data.data_loader import ZipDataLoader, DataLoader
 from vidlu.data.dataset import Dataset
 from vidlu.data.record import Record
 import vidlu.data.utils.samplers as samplers
+from vidlu.utils.misc import broadcast
 
 
 def _1_or_more(type):
@@ -21,18 +22,6 @@ class TDataLoaderF(T.Protocol):
 class TMultiDataLoaderF(T.Protocol):
     def __call__(self, datasets: _1_or_more(T.Sequence), data_loader_f: _1_or_more(TDataLoaderF),
                  **kwargs) -> T.Iterable: ...
-
-
-def _broadcast(obj: T.Union[object, list], n: int) -> T.Sequence:
-    if isinstance(obj, list):
-        if len(obj) == 1:
-            return list(obj) * n
-        elif len(obj) != n:
-            raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
-                               f"not `n` = {n}. Check whether `batch_size` and"
-                               f" `evaL_batch_size` are correctly set.")
-        return obj
-    return [obj] * n
 
 
 def zip_data_loader(*datasets: T.Sequence,
@@ -55,8 +44,8 @@ def zip_data_loader(*datasets: T.Sequence,
         the value of `drop_last)`.
     """
     dataset_count = len(datasets)
-    data_loader_fs = _broadcast(data_loader_f, dataset_count)
-    kwargs = {k: _broadcast(v, dataset_count) for k, v in kwargs.items()}
+    data_loader_fs = broadcast(data_loader_f, dataset_count, seq_type=list)
+    kwargs = {k: broadcast(v, dataset_count, seq_type=list) for k, v in kwargs.items()}
     data_loaders = [dl_f(ds, **{k: kwargs[k][i] for k in kwargs})
                     for i, (ds, dl_f) in enumerate(zip(datasets, data_loader_fs))]
     return ZipDataLoader(*data_loaders, primary_index=primary_index)
@@ -67,7 +56,8 @@ def simple_or_zip_data_loader(*datasets,
                               primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = 0,
                               **kwargs):
     return data_loader_f(*datasets, **kwargs) if len(datasets) == 1 else \
-        zip_data_loader(*datasets, data_loader_f=data_loader_f, primary_index=primary_index, **kwargs)
+        zip_data_loader(*datasets, data_loader_f=data_loader_f, primary_index=primary_index,
+                        **kwargs)
 
 
 def simple_or_multi_data_loader(*datasets,
@@ -88,19 +78,25 @@ def mixed_data_loader(*datasets: T.Sequence[Dataset],
         dataset_weights = [len(ds) / N for ds in datasets]  # proportional to dataset size
     else:
         if len(dataset_weights) != len(datasets):
-            raise RuntimeError("The number of dataset weights does not match the number of datasets.")
+            raise RuntimeError(
+                "The number of dataset weights does not match the number of datasets.")
         dataset_weights = np.array(dataset_weights) / sum(dataset_weights)
-    if example_weights is not None and any(len(ew) != len(ds) for ew, ds in zip(example_weights, datasets)):
-        raise RuntimeError("Lengths of vectors of example weights do not match lengths of datasets.")
+    if example_weights is not None and any(
+            len(ew) != len(ds) for ew, ds in zip(example_weights, datasets)):
+        raise RuntimeError(
+            "Lengths of vectors of example weights do not match lengths of datasets.")
 
     datasets = [ds.map(lambda r: Record(r, ds_index=i)) for i, ds in enumerate(datasets)]
     ds_all = datasets[0].join(*datasets[1:])
     if example_weights is not None:
         example_weights = list(map(np.array, example_weights))
-        weights = sum([list(wd / we.sum() * we) for wd, we in zip(dataset_weights, example_weights)], [])
-    else:
-        weights = sum([[wd / len(ds)] * len(ds) for ds, wd in zip(datasets, dataset_weights)], [])
-    sampler = tud.WeightedRandomSampler(weights=weights, num_samples=sum(len(ds) for ds in datasets), replacement=False)
+        weights = sum(
+            [list(wd / we.sum() * we) for wd, we in zip(dataset_weights, example_weights)], [])
+    else: 
+        weights =  sum([[wd / len(ds)] * len(ds) for ds, wd in zip(datasets, dataset_weights)], [])
+    sampler = tud.WeightedRandomSampler(weights=weights,
+                                        num_samples=sum(len(ds) for ds in datasets),
+                                        replacement=False)
     return data_loader_f(ds_all, sampler=sampler, **kwargs)
 
 
@@ -118,7 +114,8 @@ def mixed_data_loader(*datasets: T.Sequence[Dataset],
 def morsic_semisup_data_loader(
         ds_l: Dataset, ds_u: Dataset,
         data_loader_f: TDataLoaderF,
-        labeled_multiplier: T.Union[Real, T.Callable[[int, int], Real]] = lambda l, u: max(1, u / l),
+        labeled_multiplier: T.Union[Real, T.Callable[[int, int], Real]] = \
+            lambda l, u: max(1, u / l),
         **kwargs):
     nl, nu = len(ds_l), len(ds_u)
     if callable(labeled_multiplier):
