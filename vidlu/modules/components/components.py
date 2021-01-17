@@ -73,42 +73,6 @@ class Tent(E.Module):
         return F.relu(delta - x.abs())
 
 
-# ResNet/DenseNet root block #######################################################################
-
-
-class StandardRootBlock(E.Seq):
-    """Standard ResNet/DenseNet root block.
-
-    Args:
-        out_channels (int): number of output channels.
-        small_input (bool): If True, the root block doesn't reduce spatial dimensions. E.g. it
-            should be `True` for CIFAR-10, but `False` for ImageNet.
-        norm_f: Normalization module factory.
-        act_f: Activation module factory.
-    """
-    def __init__(self,
-                 out_channels: int,
-                 small_input,
-                 conv_f=partial(E.Conv,
-                                kernel_size=Reserved,
-                                stride=Reserved,
-                                padding='half',
-                                bias=Reserved),
-                 norm_f=D.norm_f,
-                 act_f=E.ReLU,
-                 pool_f=E.MaxPool):
-        conv_args = dict(out_channels=out_channels, dilation=1)
-        if small_input:  # CIFAR
-            super().__init__(
-                conv=Reserved.call(conv_f, **conv_args, kernel_size=3, stride=1, bias=True))
-        else:
-            super().__init__(conv=Reserved.call(
-                conv_f, **conv_args, kernel_size=7, stride=2, bias=norm_f is None))
-            if norm_f is not None:
-                self.add(norm=norm_f())
-            self.add(act=act_f(), pool=pool_f(3, stride=2, padding='half'))
-
-
 # Blocks ###########################################################################################
 
 
@@ -233,6 +197,68 @@ def _check_block_args(block_f):
     args = params(block_f)
     if 'kernel_sizes' in args and args['kernel_sizes'] is Empty:
         raise ValueError("Argument kernel_sizes missing in block_f.")
+
+
+# Stem blocks ######################################################################################
+
+
+class StandardRootBlock(E.Seq):
+    """Standard ResNet/DenseNet root block.
+
+    Args:
+        out_channels (int): number of output channels.
+        small_input (bool): If True, the root block doesn't reduce spatial dimensions. E.g. it
+            should be `True` for CIFAR-10, but `False` for ImageNet.
+        norm_f: Normalization module factory.
+        act_f: Activation module factory.
+    """
+
+    def __init__(self,
+                 out_channels: int,
+                 small_input,
+                 conv_f=partial(E.Conv,
+                                kernel_size=Reserved,
+                                stride=Reserved,
+                                padding='half',
+                                bias=Reserved),
+                 norm_f=D.norm_f,
+                 act_f=E.ReLU,
+                 pool_f=E.MaxPool):
+        conv_args = dict(out_channels=out_channels, dilation=1)
+        if small_input:  # CIFAR
+            super().__init__(
+                conv=Reserved.call(conv_f, **conv_args, kernel_size=3, stride=1, bias=True))
+        else:
+            super().__init__(conv=Reserved.call(
+                conv_f, **conv_args, kernel_size=7, stride=2, bias=norm_f is None))
+            if norm_f is not None:
+                self.add(norm=norm_f())
+            self.add(act=act_f(),
+                     pool=pool_f(3, stride=2, padding='half'))
+
+
+class ImprovedRootBlock(E.Seq):
+    """Standard Inception-v2 root block.
+
+    This is also used in ResNet-C, SENet, PSPNet, DeepLabV3 and ShuffleNetV2.
+
+    Args:
+        out_channels (int): number of output channels.
+    """
+
+    def __init__(self,
+                 out_channels: int,
+                 init_channels=32,
+                 block_f=partial(PreactBlock,
+                                 kernel_sizes=[3, 3, 3],
+                                 stride=[2, 2, 1],
+                                 width_factors=Reserved),
+                 pool_f=E.MaxPool):
+        super().__init__(
+            block=Reserved.call(block_f,
+                                base_width=out_channels,
+                                width_factors=[min(1, init_channels / out_channels)] * 2 + [1]),
+            pool=pool_f(3, stride=2, padding='half'))
 
 
 # Bijective or injective ###########################################################################
