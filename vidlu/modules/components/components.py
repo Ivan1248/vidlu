@@ -610,13 +610,16 @@ class KresoLadderNet(E.Module):
 def _get_resnetv1_shortcut(in_width, out_width, stride, dim_change, conv_f, norm_f):
     if stride == 1 and in_width == out_width:
         return nn.Identity()
-    if dim_change in ('proj', 'conv3'):
-        shortcut = E.Seq(conv=conv_f(out_channels=out_width,
-                                     kernel_size=3 if dim_change == 'conv3' else 1,
-                                     stride=stride,
-                                     padding='half',
-                                     dilation=1,
-                                     bias=False))
+    if dim_change in ('proj', 'pool_proj', 'conv3'):
+        shortcut = E.Seq()
+        if dim_change == 'pool_proj' and stride == 2:  # ResNet-D
+            shortcut.add(pool_f=E.AvgPool(2, stride=2, ))
+        shortcut.add(conv=conv_f(out_channels=out_width,
+                                 kernel_size=3 if dim_change == 'conv3' else 1,
+                                 stride=1 if dim_change == 'pool_proj' else stride,
+                                 padding='half',
+                                 dilation=1,
+                                 bias=False))
         if norm_f is not None:
             shortcut.add(norm=norm_f())
         return shortcut
