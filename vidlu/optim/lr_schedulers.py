@@ -1,8 +1,7 @@
 from torch.optim import lr_scheduler
 
 from vidlu.utils.func import default_args
-
-import warnings
+from vidlu.utils.misc import broadcast
 
 
 class LRScheduler(lr_scheduler._LRScheduler):
@@ -53,13 +52,20 @@ class ConstLR(LRScheduler):
         return self.base_lrs
 
 
-class ScalableLambdaLR(lr_scheduler.LambdaLR):
+class CosineLR(lr_scheduler.CosineAnnealingLR):
+    def __init__(self, optimizer, epoch_count, eta_min=0,
+                 last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
+        super().__init__(optimizer=optimizer, T_max=epoch_count, eta_min=eta_min,
+                         last_epoch=last_epoch)
+
+
+class ScalableLR(lr_scheduler.LambdaLR):
     """Sets the learning rate of each parameter group to the initial lr
     times a given function. When last_epoch=-1, sets initial lr as lr.
 
     Args:
         optimizer (Optimizer): Wrapped optimizer.
-        lr_lambda (function or list): A function which computes a multiplicative
+        func (function or list): A function which computes a multiplicative
             factor from the epoch index divided by the total number of epochs (a
             number between 0 and 1), or a list of such functions, one for each
             group in optimizer.param_groups.
@@ -69,25 +75,18 @@ class ScalableLambdaLR(lr_scheduler.LambdaLR):
     Example:
         >>> # Assuming optimizer has two groups.
         >>> epoch_count = 100
-        >>> lambda1 = lambda progress: 1/30 * progress
-        >>> lambda2 = lambda progress: 0.95 ** progress
-        >>> scheduler = LambdaLR(optimizer, lr_lambda=[lambda1, lambda2], epoch_count=epoch_count)
+        >>> f1 = lambda progress: 1/30 * progress  # 0 <= progress < 1
+        >>> f2 = lambda progress: 0.95 ** progress
+        >>> scheduler = LambdaLR(optimizer, lr_lambda=[f1, f2], epoch_count=epoch_count)
         >>> for epoch in range(epoch_count):
         >>>     scheduler.step()
         >>>     train(...)
         >>>     validate(...)
     """
 
-    def __init__(self, optimizer, lr_lambda, epoch_count,
+    def __init__(self, optimizer, func, epoch_count, scaling=1., min=0.,
                  last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
-        if not isinstance(lr_lambda, (list, tuple)):
-            lr_lambda = [lr_lambda] * len(optimizer.param_groups)
-        lr_lambda = [lambda e: ll(e / epoch_count) for ll in lr_lambda]
-        super().__init__(optimizer=optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
-
-
-class CosineLR(lr_scheduler.CosineAnnealingLR):
-    def __init__(self, optimizer, epoch_count, eta_min=0,
-                 last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
-        super().__init__(optimizer=optimizer, T_max=epoch_count, eta_min=eta_min,
-                         last_epoch=last_epoch)
+        func, scaling, min = [broadcast(x, len(optimizer.param_groups))
+                              for x in (func, scaling, min)]
+        func = [lambda e: ll(e / epoch_count) * s + m for ll, s, m in zip(func, scaling, min)]
+        super().__init__(optimizer=optimizer, lr_lambda=func, last_epoch=last_epoch)
