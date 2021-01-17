@@ -2,6 +2,7 @@ from datetime import datetime
 
 
 class Logger:
+    # TODO: replace with something better
     def __init__(self, lines=None, line_verbosities=None, printing_threshold=0):
         if lines is not None and line_verbosities is None:
             line_verbosities = [1] * len(lines)
