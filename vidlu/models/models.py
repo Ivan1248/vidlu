@@ -1,4 +1,5 @@
 from functools import partial, partialmethod
+import functools
 from fractions import Fraction as Frac
 import typing as T
 import warnings
@@ -46,9 +47,14 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
             164: ([18] * 3, bottleneck),  # [1] bw 16
             200: ([3, 24, 36, 3], bottleneck),  # [2] bw 64
         }[depth]
-    return backbone_f(base_width=base_width, small_input=small_input, group_lengths=group_lengths,
-                      block_f=partial(block_f, kernel_sizes=ksizes, width_factors=width_factors),
-                      dim_change=dim_change)
+    kwargs = dict(base_width=base_width, small_input=small_input, group_lengths=group_lengths,
+                  block_f=partial(block_f, kernel_sizes=ksizes, width_factors=width_factors),
+                  dim_change=dim_change)
+    if isinstance(backbone_f, functools.partial) \
+            and not len(inters := set(backbone_f.keywords).intersection(kwargs)) == 0:
+        raise RuntimeError(f"Arguments {inters} should be given directly to the factory instead of "
+                           f"being bound to backbone_f.")
+    return backbone_f(**kwargs)
 
 
 resnet_v2_backbone = partial(resnet_v1_backbone,
