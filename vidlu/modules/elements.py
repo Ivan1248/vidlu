@@ -183,7 +183,8 @@ class InvertibleMixin:
         except ModuleInverseError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
             # AttributeError saying that this module has no `inverse` attribute
-            raise ModuleInverseError(f"The inverse for the module `{type(self)}` is not defined. Error: {e}")
+            raise ModuleInverseError(
+                f"The inverse for the module `{type(self)}` is not defined. Error: {e}")
 
     def inverse_module(self) -> nn.Module:
         if type(self).inverse_forward is not InvertibleMixin.inverse_forward:
@@ -1425,7 +1426,8 @@ def get_submodule(root_module, path: T.Union[str, T.Sequence]) -> T.Union[Module
     for name in path:
         if not hasattr(root_module, name):
             built_message = ("is not fully initialized (built) and"
-                             if isinstance(root_module, Module) and not root_module.is_built() else "")
+                             if isinstance(root_module, Module) and not root_module.is_built()
+                             else "")
             raise AttributeError(
                 f"The '{type(root_module).__name__}' instance {built_message}"
                 + f" has no submodule '{name}'. It has"
