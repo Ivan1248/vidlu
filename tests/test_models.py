@@ -16,6 +16,7 @@ from vidlu.modules.tensor_extra import LogAbsDetJac
 
 @torch.no_grad()
 def compare_with_torchvision(mymodelname, tvmodelname):
+    torch.random.manual_seed(53)
     x = torch.randn(2, 3, 224, 224)  # TODO: investigate: 64x64 doesn't work on linux
     vidlu_model = factories.get_model(
         mymodelname, problem=problem.Classification(class_count=8), init_input=x, verbosity=2)
