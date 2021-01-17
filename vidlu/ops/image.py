@@ -11,7 +11,7 @@ def _rgb_to_hcmm(im):
     M, m = im.max(-3)[0], im.min(-3)[0]
     C = M - m  # chroma
 
-    C_div = torch.where(C == 0, torch.tensor(1., device=C.device, dtype=C.dtype), C)
+    C_div = torch.where(C == 0, C.new_tensor(1.), C)
     maxg, maxb = (x == M for x in (G, B))
 
     H = (G - B).div_(C_div)
@@ -36,7 +36,7 @@ def rgb_to_hsv(im):
     """
 
     H, C, M, m = _rgb_to_hcmm(im)
-    S = C / torch.where(M == 0, torch.tensor(1., device=M.device, dtype=M.dtype), M)
+    S = C / torch.where(M == 0, M.new_tensor(1.), M)
     return torch.stack([H, S, M], dim=-3)
 
 
@@ -54,7 +54,7 @@ def rgb_to_hsl(im):
 
     H, C, M, m = _rgb_to_hcmm(im)
     L2 = M.add_(m)  # del M
-    S = C.div_(torch.where((L2 == 0) | (L2 == 2), torch.tensor(1.), 1 - (L2 - 1).abs_()))
+    S = C.div_(torch.where((L2 == 0) | (L2 == 2), C.new_tensor(1.), 1 - (L2 - 1).abs_()))
     L = L2.mul_(0.5)  # del L2
     return torch.stack([H, S, L], dim=1)
 
@@ -73,7 +73,7 @@ def rgb_to_hsi(im):
 
     H, C, M, m = _rgb_to_hcmm(im)
     I = im.mean(1)
-    S = torch.where(I == 0, torch.tensor(0.), 1 - m.div_(I))
+    S = torch.where(I == 0, I.new_tensor(0.), 1 - m.div_(I))
     return torch.stack([H, S, I], dim=1)
 
 
@@ -91,11 +91,11 @@ def _hcm_to_rgb(h, c, m):
     # https://en.wikipedia.org/wiki/HSL_and_HSV
     H6 = 6 * h
     min_ = lambda a, b: torch.min(a, b)  # , out=a)
-    one = torch.tensor(1., dtype=c.dtype, device=c.device)
+    one = c.new_tensor(1.)
 
     def f(shift):
         Hs = (H6 + shift) % 6
-        # Autograd error if mul_ used isntead of mul
+        # Autograd error if mul_ used instead of mul
         return m - F.relu(min_(min_(Hs, 4 - Hs), one), inplace=True).mul(c)
 
     return torch.stack([f(5), f(3), f(1)], dim=1)
