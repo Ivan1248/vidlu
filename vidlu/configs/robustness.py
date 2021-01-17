@@ -21,7 +21,7 @@ madry_cifar10_attack = partial(attacks.PGDAttack,
                                clip_bounds=(0, 1))
 
 channelwise_pgd_attack = partial(attacks.PertModelAttack,
-                                 pert_model_f=partial(vmi.Additive, ()),
+                                 pert_model_f=partial(vmi.Add, ()),
                                  initializer=None,
                                  step_size=2 / 255,
                                  step_count=10,  # TODO: change

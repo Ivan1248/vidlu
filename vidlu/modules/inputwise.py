@@ -3,16 +3,17 @@ from vidlu.utils.func import partial
 import inspect
 import copy
 import warnings
+import contextlib as ctx
 
 import torch
 import torch.nn.functional as F
-
+from numpy import s_
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
 from vidlu.modules.utils import sole_tuple_to_varargs
 import vidlu.modules.components as vmc
-import einops
+import vidlu.ops.image as voi
 
 
 class BatchParameter(torch.nn.Parameter):
@@ -33,10 +34,11 @@ class BatchParameter(torch.nn.Parameter):
         return param
 
 
-def _get_param(x, factory_or_value):
+def _get_param(pmodel, x, factory_or_value):
     factory = (factory_or_value if callable(factory_or_value)
+                                   and not isinstance(factory_or_value, torch.Tensor)
                else partial(torch.full, fill_value=factory_or_value))
-    return factory(x.shape, device=x.device)
+    return factory(pmodel, x.shape, device=x.device)
 
 
 def _complete_shape(shape_tail, input_shape):
@@ -156,7 +158,9 @@ class PertModelBase(E.Module):
         for (name, data), (name_, def_value) in zip(self.named_parameters(),
                                                     self.named_default_parameters(True)):
             assert name == name_
-            data.set_(def_value)
+            data.set_(def_value if not callable(def_value)
+                                   and not isinstance(def_value, torch.Tensor) else
+                      def_value())
 
     def ensure_output_within_bounds(self, x, bounds, computed_output=None):
         warnings.warn(f"ensure_output_within_bounds is called"
@@ -177,6 +181,10 @@ def reset_parameters(pert_model):
 
 # TODO: redesign perturbation models using vidlu.modules.Parallel (remove forward_arg_count)
 
+def _blend(x1, x2, ratio):
+    return (ratio * x1).add_((1.0 - ratio) * x2)
+
+
 class PertModel(PertModelBase):
     def __init__(self, module, forward_arg_count=None):
         super().__init__(forward_arg_count=forward_arg_count)
@@ -186,7 +194,7 @@ class PertModel(PertModelBase):
         return self.module(*args, **kwargs)
 
 
-class SimplePertModel(PertModelBase):
+class EquivariantPertModel(PertModelBase):
     param_defaults = dict()
 
     def __init__(self, equivariant_dims: T.Sequence):
@@ -198,11 +206,11 @@ class SimplePertModel(PertModelBase):
         for d in self.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
         dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
-        return {k: _get_param(dummy, self.param_defaults[k]['value'])
+        return {k: _get_param(self, dummy, self.param_defaults[k]['value'])
                 for k, v in self.param_defaults.items()}
 
 
-class SliceSimplePertModel(PertModelBase):
+class SliceEquivariantPertModel(PertModelBase):
     """Can modify only a slice, e.g. a channel."""
     param_defaults = dict()
 
@@ -212,17 +220,36 @@ class SliceSimplePertModel(PertModelBase):
         self.slice = slice if slice is None or isinstance(slice, tuple) else (slice,)
 
     def create_default_params(self, x):
-        if self.slice is not None:
-            x = x.__getitem__(self.slice)
+        if slice is not None:
+            x = x.__getitem__(slice)
         shape = list(x.shape)
         for d in self.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
         dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
-        return {k: _get_param(dummy, self.param_defaults[k]['value'])
+        return {k: _get_param(self, dummy, self.param_defaults[k]['value'])
                 for k, v in self.param_defaults.items()}
 
 
-class AlterGamma(SimplePertModel):
+def apply_batch_slice(pmodel, slice_):
+    orig_params = dict(pmodel._parameters)
+    pmodel.orig_params = orig_params
+    for k, p in orig_params.items():
+        pmodel[k] = p[slice_]
+
+
+def undo_batch_slice(pmodel):
+    pmodel._parameters.update(pmodel._orig_params)
+    del pmodel.orig_params
+
+
+def call_on_batch_slice(pmodel, x, slice_):
+    apply_batch_slice(pmodel, slice_)
+    y = pmodel(x[slice_])
+    undo_batch_slice(pmodel)
+    return y
+
+
+class AlterGamma(EquivariantPertModel):
     param_defaults = dict(gamma=dict(value=1., bounds=[0, 500]))
     eps = 1e-8
 
@@ -230,7 +257,7 @@ class AlterGamma(SimplePertModel):
         return x.mul_(1 - 2 * self.eps).add_(self.eps).pow(self.gamma)
 
 
-class AlterLogGamma(SimplePertModel):
+class AlterLogGamma(EquivariantPertModel):
     # Gradients are more stable than for AlterGamma
     param_defaults = dict(log_gamma=dict(value=0., bounds=[-6, 6]))
 
@@ -238,53 +265,161 @@ class AlterLogGamma(SimplePertModel):
         return x.pow(self.log_gamma.exp())
 
 
-class AlterContrast(SimplePertModel):
-    param_defaults = dict(contrast=dict(value=1., bounds=[0, 500]))
+def _get_center(center_arg, x, equivariant_dims):
+    return (x.mean(equivariant_dims, keepdim=True) if center_arg == 'mean' else
+            center_arg(x) if callable(center_arg) else center_arg)
+
+
+class Contrast(EquivariantPertModel):
+    """ Linearly interpolates between inputs and centers.
+
+    The interpolation factor (contrast) can be any positive number.
+
+    To make it work like adjust_contrast in Torchvision, center should be set to
+    the average luma value across the whole image according to CCIR 601:
+
+    >>> from vidlu.ops.image import rgb_to_luma
+    >>> center = lambda x: rgb_to_luma(x, 601).unsquezze(-3).mean((-2, -1), keepdim=True)
+    >>> torchvision_contrast = Contrast(center=center)
+    """
+    param_defaults = dict(factor=dict(value=1., bounds=[0, float('inf')]))
+
+    def __init__(self, equivariant_dims=(-2, -1),
+                 center: T.Union[float, T.Callable, T.Literal['mean']] = 0.5):
+        super().__init__(equivariant_dims)
+        self.center = center
 
     def forward(self, x):
-        return (x - 0.5).mul_(self.contrast).add_(0.5)
+        center = _get_center(self.center, x, equivariant_dims=self.equivariant_dims)
+        return _blend(x, center, self.factor)
 
 
-class Additive(SliceSimplePertModel):
+class TorchvisionSaturation(Contrast):
+    param_defaults = dict(factor=dict(value=1., bounds=[0, float('inf')]))
+
+    def __init__(self, greyscale_f=partial(voi.rgb_to_luma, rev=601)):
+        super().__init__(equivariant_dims=())
+        self.greyscale_f = greyscale_f
+
+    def forward(self, x):
+        grey = self.greyscale_f(x)
+        if len(grey.shape) < len(x.shape):
+            grey = grey.unsqueeze(-3)
+        return _blend(x, grey, self.factor)
+
+
+class Add(SliceEquivariantPertModel):
     param_defaults = dict(addend=dict(value=0., bounds=[-1, 1]))
 
     def forward(self, x):
         if self.slice is None:
             return x + self.addend
         y = x.clone()
-        y.__getitem__(self.slice).__iadd__(self.addend)
+        y[self.slice] += self.addend
         return y
 
     def ensure_output_within_bounds(self, x, bounds, computed_output=None):
-        self.addend.add_(x).clamp_(*bounds).sub_(x)
+        if len(self.equivariant_dims) == 0:
+            self.addend.add_(x).clamp_(*bounds).sub_(x)
+        else:
+            raise NotImplementedError
 
 
-class Multiplicative(SliceSimplePertModel):
-    param_defaults = dict(factor=dict(value=1., bounds=[0, 500]))
+class Multiply(SliceEquivariantPertModel):
+    param_defaults = dict(factor=dict(value=1., bounds=[0, float('inf')]))
 
     def forward(self, x):
         if self.slice is None:
             return x * self.factor
         y = x.clone()
-        y.__getitem__(self.slice).__imul__(self.factor)
+        y[self.slice] *= self.addend
+        return y
+
+    def ensure_output_within_bounds(self, x, bounds, computed_output=None):
+        if len(self.equivariant_dims) == 0:
+            self.factor.mul_(x).clamp_(*bounds).div_(x)
+        else:
+            raise NotImplementedError
+
+
+class Modulo(SliceEquivariantPertModel):
+    param_defaults = dict(period=dict(value=1., bounds=[0, float('inf')]))
+
+    def forward(self, x):
+        if self.slice is None:
+            return x % self.factor
+        y = x.clone()
+        y[self.slice] %= self.period
         return y
 
 
-class Whiten(SimplePertModel):
+class Whiten(EquivariantPertModel):
     """Interpolates pixel values between the original ones and 1."""
     param_defaults = dict(weight=dict(value=0., bounds=[0, 1]))
 
     def forward(self, x):
-        return (1 - x).mul_(self.weight).add_(x)
+        return ((1 - self.weight) * x).add_(self.weight)
+
+
+class AlterColor(PertModel):
+    """ Applies a transformation similar to ColorJitter in Torchvision.
+    """
+    param_defaults = dict(
+        order=dict(value=lambda **k: torch.arange(len(k['x']), len(k['self'].module)),
+                   bounds=[0, 1]))
+
+    def __init__(self, brightness=(0.5, 1.5), contrast=(0.5, 1.5), saturation=(0.5, 1.5),
+                 hue=(-0.5, 0.5)):
+        modules = dict(brightness=Multiply(equivariant_dims=(-1, -2)),
+                       contrast=Contrast(center='mean'),
+                       saturation=TorchvisionSaturation(),
+                       hue=E.Seq(to_hsv=PertModel(voi.rgb_to_hsv, forward_arg_count=1),
+                                 add_h=Add((2, 3), slice=s_[:, 0:, ...]),  # no need for modulo
+                                 to_rgb=PertModel(voi.hsv_to_rgb, forward_arg_count=1)))
+        super().__init__(
+            E.ModuleTable({k: v for k, v in modules.items() if locals()[k] is not None}))
+        self.order = None
+
+    def build(self, x):
+        super().build(x)
+        for m in self.module:
+            m(x)
+
+    def initialize(self, brightness=lambda x: x.uniform_(0.5, 1.5),
+                   contrast=lambda x: x.uniform_(0.5, 1.5),
+                   saturation=lambda x: x.uniform_(0.5, 1.5), hue=lambda x: x.uniform_(-0.5, 0.5)):
+        for k, m in self.module.named_children():
+            if k != 'hue':
+                locals()[k](m.factor)
+        if 'hue' in self.module:
+            hue(self.module.hue.add_h.addend)
+        self.order = torch.stack(torch.randperm(len(self.module)))
+
+    def forward(self, x):
+        n = len(self.module)
+        modules = list(self.module)
+        for i in range(n):
+            r = x.new_empty()
+            for j, m in enumerate(modules):
+                slice_ = self.order[:, i] == j
+                r[slice_] = call_on_batch_slice(m, x, slice_)
+            x = r
+        return x
+
+
+# Warps ############################################################################################
 
 
 class Warp(PertModelBase):
     param_defaults = dict(flow=dict(value=0., bounds=[-1, 1]))
+
     def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
         super().__init__()
         self.args = dict(mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+
     def create_default_params(self, x):
         return dict(flow=x.new_zeros((x.shape[0], 2, *x.shape[2:])))
+
     def forward(self, x):
         return vmf.warp(x, self.flow, **self.args)
 
@@ -317,14 +452,16 @@ def _grid_sample_p(x, grid, mode, padding_mode, align_corners):
 
 
 def _forward_warp(x, grid, mode, padding_mode, align_corners):
-    from vidlu.libs.softmax_splatting import softsplat  # https://github.com/sniklaus/softmax-splatting
+    # https://github.com/sniklaus/softmax-splatting
+    from vidlu.libs.softmax_splatting import softsplat
     pv = 0 if padding_mode in (0, 0., "zeros") else padding_mode
     warnings.warn("align_corners and mode not used in _forward_warp")
     H, W = grid.shape[-3:-1]
     base_grid = vmf.uniform_grid_2d((H, W), low=-1., high=1., device=grid.device, dtype=grid.dtype)
     offsets = grid - base_grid
     flow = offsets.permute(0, 3, 1, 2).mul_(offsets.new([W / 2, H / 2]).view(1, 2, 1, 1))
-    result = softsplat.FunctionSoftsplat(x if pv == 0 else x - pv, flow.contiguous(), tenMetric=None, strType="average")
+    result = softsplat.FunctionSoftsplat(x if pv == 0 else x - pv, flow.contiguous(),
+                                         tenMetric=None, strType="average")
     return result if pv == 0 else result.add_(pv)
 
 
@@ -344,7 +481,8 @@ def _warp(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
         y_p = (y if 'float' in f'{y.dtype}' else y.to(grid.dtype))
         single_channel = y.dim() == 3
         y_p = _warp_func(y_p[:, None, ...] if single_channel else y_p, grid,
-                         mode=label_interpolation_mode, padding_mode=lpm, align_corners=align_corners)
+                         mode=label_interpolation_mode, padding_mode=lpm,
+                         align_corners=align_corners)
         if single_channel:
             y_p.squeeze_(1)
         if y_p.dtype is not y.dtype:
@@ -382,8 +520,8 @@ class MorsicTPSWarp(PertModelBase):
 class TPSWarp(PertModelBase):
     param_defaults = dict(offsets=dict(value=0., bounds=[-0.2, 0.2]))
 
-    def __init__(self, *, forward: bool, control_grid_shape=(2, 2), 
-                 control_grid_align_corners=False, align_corners=True, padding_mode='zeros', 
+    def __init__(self, *, forward: bool, control_grid_shape=(2, 2),
+                 control_grid_align_corners=False, align_corners=True, padding_mode='zeros',
                  interpolation_mode='bilinear', label_interpolation_mode='nearest',
                  label_padding_mode=-1, swap_src_dst=False):
         super().__init__()

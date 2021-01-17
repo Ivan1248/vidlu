@@ -115,7 +115,7 @@ class AttackState:
 @torch.no_grad()
 def _pert_to_pert_model(pert_or_x_adv, x=None):
     pert = pert_or_x_adv - x if x is not None else pert_or_x_adv
-    pert_model = vmi.Additive(())
+    pert_model = vmi.Add(())
     pert_model(pert)
     pert_model.addend.set_(pert)
     return pert_model
@@ -403,7 +403,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
 
 def _init_pert_model(pert_model, x, initializer=None, projection=None):
     if pert_model is None:
-        pert_model = vmi.Additive(())
+        pert_model = vmi.Add(())
     if not vm.is_built(pert_model, including_submodules=True):
         pert_model(x)  # parameter shapes have to be inferred from x
     with torch.no_grad():
@@ -666,7 +666,7 @@ class PGDAttackOld(OptimizingAttack, EarlyStoppingMixin):
 
 @dataclass
 class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
-    pert_model_f: vmi.PertModelBase = partial(vmi.Additive, ())
+    pert_model_f: vmi.PertModelBase = partial(vmi.Add, ())
     initializer: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = Required
     projection: T.Union[float, T.Callable[[vmi.PertModelBase, torch.Tensor], None]] = Required
     project_init: bool = True
@@ -755,12 +755,12 @@ class PGDAttack(OptimizingAttack, EarlyStoppingMixin):
         fields = (f.name for f in dc.fields(PertModelAttack) if f.init)
         base_attack = PertModelAttack(
             **{k: getattr(self, k) for k in fields if hasattr(self, k)},
-            pert_model_f=partial(vmi.Additive, ()), initializer=self._initializer,
+            pert_model_f=partial(vmi.Add, ()), initializer=self._initializer,
             projection=self._project_params)
         get_pert = partial(base_attack._get_perturbation, model, x, y,
                            backward_callback=backward_callback)
         if initial_pert is not None:
-            pert_model = vmi.Additive(())
+            pert_model = vmi.Add(())
             pert_model.addend.data = initial_pert
             return get_pert(pert_model)
         return get_pert()
