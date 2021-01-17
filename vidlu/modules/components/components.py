@@ -19,6 +19,7 @@ import vidlu.modules.utils as vmu
 
 from . import _default_factories as D
 
+
 # Constant functions
 
 
@@ -29,14 +30,14 @@ class GaussianFilter2D(E.Module):
             ksize = int(sigma_to_ksize_ratio * sigma)
             ksize += int(ksize % 2 == 0)
         elif ksize % 2 == 0:
-            ValueError("`ksize` is required to be odd.")
+            raise ValueError("`ksize` is required to be odd.")
         super().__init__()
         self.padding = [ksize // 2] * 4
         self.padding_mode = padding_mode
 
         with torch.no_grad():
             g = torch.arange(ksize, dtype=torch.float).sub_((ksize - 1) / 2)
-            kernel = torch.exp(-g.pow_(2).div_(2 * sigma**2))
+            kernel = torch.exp(-g.pow_(2).div_(2 * sigma ** 2))
             self.register_buffer('kernel', kernel.div_(torch.sum(kernel)))  # normalize
             self.kernel.requires_grad_(False)
 
@@ -155,6 +156,7 @@ class PreactBlock(E.Seq):
         conv_f: Convolution module factory.
         noise_f: Noise module factory.
     """
+
     def __init__(self,
                  *,
                  kernel_sizes,
@@ -203,6 +205,7 @@ class PostactBlock(E.Seq):
         act_f: Activation module factory.
         noise_f: Noise module factory.
     """
+
     def __init__(self,
                  *,
                  kernel_sizes,
@@ -347,7 +350,7 @@ class Baguette(E.Seq):
             # https://stackoverflow.com/questions/58857720/is-there-an-equivalent-pytorch-function-for-tf-nn-space-to-depth
             else:
                 super().__init__(
-                    resh1=E.BatchReshape(lambda c, h, w: (b, b, c // b**2, h, w)),
+                    resh1=E.BatchReshape(lambda c, h, w: (b, b, c // b ** 2, h, w)),
                     perm1=E.Permute(0, 3, 4, 1, 5, 2),
                     # n b_1 b_2 c/b**2 h w -> n c/b**2 h b_1 w b_2
                     resh2=E.BatchReshape(lambda c_b2, h, b_1, w, b_2: (c_b2, h * b_1, w * b_2)))
@@ -454,6 +457,7 @@ class Resize(E.Module):
             those pixels. This only has effect when :attr:`mode` is `linear`,
             `bilinear`, or `trilinear`. Default: False
     """
+
     def __init__(self, size=None, scale_factor=None, mode='nearest', align_corners=False):
         super().__init__()
         self.store_args()
@@ -638,7 +642,7 @@ class ResNetV1Unit(E.Seq):
         block_args = default_args(self.block_f)
         shortcut = _get_resnetv1_shortcut(in_width=x.shape[1],
                                           out_width=block_args.base_width *
-                                          block_args.width_factors[-1],
+                                                    block_args.width_factors[-1],
                                           stride=block_args.stride,
                                           dim_change=self.dim_change,
                                           conv_f=block_args.conv_f,
@@ -664,7 +668,7 @@ class ResNetV1Groups(E.Seq):
         for i, l in enumerate(group_lengths):
             for j in range(l):
                 u = unit_f(block_f=Reserved.partial(block_f,
-                                                    base_width=base_width * 2**i,
+                                                    base_width=base_width * 2 ** i,
                                                     stride=1 + int(i > 0 and j == 0)),
                            dim_change=dim_change)
                 self.add(f'unit{i}_{j}', u)
@@ -683,10 +687,11 @@ class ResNetV1Backbone(E.Seq):
         block_f:
         dim_change:
     """
+
     def __init__(self,
                  base_width=64,
                  small_input=True,
-                 group_lengths=(2, ) * 4,
+ł                group_lengths=(2,) * 4,
                  block_f=default_args(ResNetV1Groups).block_f,
                  dim_change=default_args(ResNetV1Groups).dim_change,
                  groups_f=ResNetV1Groups):
@@ -747,8 +752,7 @@ class ResNetV2Groups(ResNetV1Groups):
                                  stride=Reserved),
                  dim_change=default_args(ResNetV2Unit).dim_change):
         super().__init__(group_lengths, base_width, block_f, dim_change, unit_f=ResNetV2Unit)
-        norm_f = default_args(block_f).norm_f
-        if norm_f is not None:
+        if (norm_f := default_args(block_f).norm_f) is not None:
             self.add('post_norm', norm_f())
         self.add('post_act', default_args(block_f).act_f())
 
@@ -818,7 +822,7 @@ class DenseNetBackbone(E.Seq):
     def __init__(self,
                  growth_rate=12,
                  small_input=True,
-                 db_lengths=(2, ) * 4,
+                 db_lengths=(2,) * 4,
                  compression=default_args(DenseSequence).compression,
                  block_f=default_args(DenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
@@ -902,7 +906,7 @@ class MDenseNetBackbone(E.Seq):
     def __init__(self,
                  growth_rate=12,
                  small_input=True,
-                 db_lengths=(2, ) * 4,
+                 db_lengths=(2,) * 4,
                  compression=default_args(MDenseSequence).compression,
                  block_f=default_args(MDenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
@@ -965,7 +969,7 @@ class FDenseNetBackbone(E.Seq):
     def __init__(self,
                  growth_rate=12,
                  small_input=True,
-                 db_lengths=(2, ) * 4,
+                 db_lengths=(2,) * 4,
                  compression=default_args(FDenseSequence).compression,
                  block_f=default_args(FDenseSequence).block_f):
         norm_act_args = {k: default_args(block_f)[k] for k in ['norm_f', 'act_f']}
@@ -992,7 +996,7 @@ class VGGBackbone(E.Seq):
                 (f'block{i}',
                  Reserved.call(
                      block_f, kernel_sizes=[3] * d, base_width=base_width,
-                     width_factors=[2**i] * d)), (f'pool{i}', pool_f(kernel_size=2, stride=2)))
+                     width_factors=[2 ** i] * d)), (f'pool{i}', pool_f(kernel_size=2, stride=2)))
 
 
 class VGGClassifier(E.Seq):
@@ -1031,8 +1035,8 @@ class FCNEncoder(E.Seq):
 
 class AAEEncoder(E.Seq):
     def __init__(self,
-                 kernel_sizes=(4, ) * 3,
-                 widths=(64, ) + (256, ) * 2,
+                 kernel_sizes=(4,) * 3,
+                 widths=(64,) + (256,) * 2,
                  z_dim=128,
                  norm_f=D.norm_f,
                  act_f=nn.LeakyReLU,
@@ -1049,7 +1053,7 @@ class AAEEncoder(E.Seq):
 class AAEDecoder(E.Seq):
     def __init__(self,
                  h_dim=1024,
-                 kernel_sizes=(4, ) * 3,
+                 kernel_sizes=(4,) * 3,
                  widths=(256, 128, 1),
                  norm_f=D.norm_f,
                  act_f=E.ReLU,
@@ -1155,7 +1159,7 @@ class IRevNetUnit(E.Seq):
     @staticmethod
     def _input_padding(x, block_out_ch, stride, force_surjection):
         in_ch = x[0].shape[1] + x[1].shape[1]
-        block_in_ch = in_ch * (stride**2)
+        block_in_ch = in_ch * (stride ** 2)
         input_padding = 2 * block_out_ch - block_in_ch
         if input_padding < 0:
             raise RuntimeError(f"The number of output channels of the inner block ({block_out_ch})"
@@ -1176,12 +1180,12 @@ class IRevNetGroups(E.Seq):
                  first_stride=1,
                  block_f=partial(default_args(IRevNetUnit).block_f,
                                  base_width=Reserved,
-                                 width_factors=(1, ) * 2,
+                                 width_factors=(1,) * 2,
                                  stride=Reserved),
                  unit_f=IRevNetUnit):
         super().__init__()
         for i, l in enumerate(group_lengths):
-            bw_i = base_width if i == 0 else base_width * 4**i
+            bw_i = base_width if i == 0 else base_width * 4 ** i
             for j in range(l):
                 stride = 1 if j > 0 else first_stride if i == 0 else 2
                 u = unit_f(first=(i, j) == (0, 0),
@@ -1192,7 +1196,7 @@ class IRevNetGroups(E.Seq):
 class IRevNetBackbone(E.Seq):
     def __init__(self,
                  init_stride=2,
-                 group_lengths=(2, ) * 4,
+                 group_lengths=(2,) * 4,
                  base_width=None,
                  block_f=default_args(IRevNetGroups).block_f,
                  groups_f=IRevNetGroups,
@@ -1205,7 +1209,7 @@ class IRevNetBackbone(E.Seq):
         a = self.args
         base_width = a.base_width  # half
         if base_width is None:
-            base_width, rem = divmod(x.shape[1] * a.init_stride**2, 2)
+            base_width, rem = divmod(x.shape[1] * a.init_stride ** 2, 2)
             if rem != 0:
                 raise RuntimeError(f"The number of channels after the first baguette with stride"
                                    f" {a.init_stride} is not even and cannot be split.")
