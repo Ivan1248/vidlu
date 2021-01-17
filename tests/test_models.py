@@ -22,6 +22,9 @@ def compare_with_torchvision(mymodelname, tvmodelname):
         mymodelname, problem=problem.Classification(class_count=8), init_input=x, verbosity=2)
     tv_model = torchvision.models.__dict__[tvmodelname](num_classes=8)
 
+    vidlu_model.eval()
+    tv_model.eval()
+
     tsd = tv_model.state_dict()
 
     translator_name = text.scan(r"{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a']

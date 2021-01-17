@@ -216,10 +216,7 @@ def build_and_init_model(model, init_input, device):
             init_input = init_input[:, :, :128, :128]
         model.initialize(init_input)
     elif not vm.is_built(model, including_submodules=True):
-        breakpoint()
         model(init_input)
-    model.eval()
-
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
@@ -267,10 +264,10 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         _print_args_messages('Model', model_class, model_f, dict(), verbosity=verbosity)
 
     model = model_f()
-
     if init_input is None and prep_dataset is not None:
         init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
     build_and_init_model(model, init_input, device)
+    model.eval()
 
     if verbosity > 2:
         print(model)
