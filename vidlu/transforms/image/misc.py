@@ -2,11 +2,12 @@ import cv2
 import numpy as np
 
 from vidlu.utils.func import vectorize
+import torch
 
 
 # NumPy ############################################################################################
 
-def numpy_segmentation_edge_distance_transform(segmentation, class_count=None):
+def numpy_segmentation_distance_transform_single(segmentation, class_count=None):
     present_classes = np.unique(segmentation)
     if class_count is None:
         class_count = present_classes[-1]
@@ -39,3 +40,7 @@ class CHWToHWC:
     __call__ = staticmethod(chw_to_hwc)  # keywords: call, copy, ...
 
 
+def segmentation_distance_transform(segmentations, class_count=None, dtype=None):
+    dts = [numpy_segmentation_distance_transform_single(seg.cpu().numpy(), class_count)
+           for seg in segmentations]
+    return torch.tensor(dts, device=segmentations.device, dtype=dtype)
