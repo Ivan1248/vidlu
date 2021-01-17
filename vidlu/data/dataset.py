@@ -5,6 +5,7 @@ Dataset objects should be considered immutable.
 """
 
 import itertools
+import logging
 import os
 import pickle
 import typing as T
@@ -184,7 +185,7 @@ class Dataset(abc.Sequence):
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
 
     def info_cache_hdd(self, name_to_func, directory, **kwargs):
-        """Caches the dataset on the hard disk.
+        """Computes, adds, adn caches and caches dataset.info.cache attributes. .
 
         It can be useful to automatically
         cache preprocessed data without modifying the original dataset and make
@@ -378,13 +379,15 @@ class MapDataset(Dataset):
 class EnumeratedDataset(Dataset):
     __slots__ = ("offset",)
 
-    def __init__(self, dataset, offset=0, **kwargs):
+    def __init__(self, dataset, offset=0, field_name="id", **kwargs):
         super().__init__(modifiers=f'enumerated({offset})', data=dataset, **kwargs)
         self.offset = offset
+        self.field_name = field_name
 
     def get_example(self, idx):
         r = self.data[idx]
-        return type(r)(r, id=idx) if isinstance(r, T.Mapping) else r + type(r)((idx,))
+        return type(r)(r, **{self.field_name: idx}) if isinstance(r, T.Mapping) \
+            else r + type(r)((idx,))
 
 
 class ZipDataset(Dataset):
@@ -555,7 +558,8 @@ class InfoCacheDataset(Dataset):  # TODO
         self._info = None
         super().__init__(modifiers=modifier, data=dataset, info=info, **kwargs)
         self.name_to_func = name_to_func
-        self.verbose = verbose
+        self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+        self._logger.addHandler(logging.NullHandler())
 
     @property
     def info(self):
@@ -566,13 +570,12 @@ class InfoCacheDataset(Dataset):  # TODO
     @info.setter
     def info(self, value):
         """This is called by the base initializer and (unnecessarily) by pickle
-        if sharing the object among processes."""
+        if sharing the object between processes."""
         self._info = value
 
     def _get_info_cache(self):
-        if self.verbose:
-            print(f"{type(self).__name__}: computing/loading {self.names_str}"
-                  + f" for {self.data.identifier}")
+        self._logger.info(f"{type(self).__name__}: computing/loading {self.names_str} for"
+                          + f" {self.data.identifier}")
         info_cache = dict()
         for n, f in self.name_to_func.items():
             info_cache[n] = f(self.data)
