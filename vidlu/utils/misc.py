@@ -11,6 +11,7 @@ import weakref
 import zipfile
 import gzip
 import warnings
+import typing as T
 
 from tqdm import tqdm
 import numpy as np
@@ -22,6 +23,20 @@ def slice_len(s, sequence_length):
     # stackoverflow.components/questions/36188429/retrieve-length-of-slice-from-slice-object-in-python
     start, stop, step = s.indices(sequence_length)
     return max(0, (stop - start + (step - (1 if step > 0 else -1))) // step)
+
+
+# Argument broadcasting ############################################################################
+
+def broadcast(obj: T.Union[object, T.Sequence], n: int, seq_type=T.Sequence) -> list:
+    if isinstance(obj, seq_type):
+        if len(obj) == 1:
+            return list(obj) * n
+        elif len(obj) != n:
+            raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
+                               f"not `n` = {n}. Check whether `batch_size` and"
+                               f" `evaL_batch_size` are correctly set.")
+        return obj
+    return [obj] * n
 
 
 # Event ############################################################################################
