@@ -82,7 +82,8 @@ def _add_norm_act(seq, suffix, norm_f, act_f):
     seq.add(f'act{suffix}', act_f())
 
 
-def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation):
+def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilation,
+                        stride_after_1x1):
     if not len(kernel_sizes) == len(width_factors):
         raise ValueError(f"{len(kernel_sizes)=} does not match {len(width_factors)=}.")
     widths = [base_width * wf for wf in width_factors]
@@ -94,6 +95,9 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
     conv_defaults = default_args(D.conv_f)
     if not isinstance(stride, Sequence):
         stride = [stride] + [conv_defaults.stride] * (len(widths) - 1)
+        if stride_after_1x1 and kernel_sizes[0] == 1:
+            # if the first convolution is 1x1, it is not strided
+            stride[0], stride[1] = stride[1], stride[0]
     if not isinstance(dilation, Sequence):
         dilation = [dilation] + [conv_defaults.dilation] * (len(widths) - 1)
     return widths, stride, dilation
@@ -136,10 +140,11 @@ class PreactBlock(E.Seq):
                                 out_channels=Reserved,
                                 stride=Reserved,
                                 dilation=Reserved),
-                 noise_f=None):
+                 noise_f=None,
+                 stride_after_1x1=False):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
-                                                       stride, dilation)
+                                                       stride, dilation, stride_after_1x1)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             _add_norm_act(self, f'{i}', norm_f, act_f)
             if i in noise_locations:
@@ -181,10 +186,11 @@ class PostactBlock(E.Seq):
                  norm_f=D.norm_f,
                  act_f=E.ReLU,
                  conv_f=params(PreactBlock).conv_f,
-                 noise_f=None):
+                 noise_f=None,
+                 stride_after_1x1=False):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
-                                                       stride, dilation)
+                                                       stride, dilation, stride_after_1x1)
         for i, (k, w, s, d) in enumerate(zip(kernel_sizes, widths, stride, dilation)):
             self.add(f'conv{i}',
                      Reserved.call(conv_f, out_channels=w, kernel_size=k, stride=s, dilation=d))
@@ -720,7 +726,7 @@ class ResNetV1Backbone(E.Seq):
     def __init__(self,
                  base_width=64,
                  small_input=True,
-ł                group_lengths=(2,) * 4,
+                 group_lengths=(2,) * 4,
                  block_f=default_args(ResNetV1Groups).block_f,
                  dim_change=default_args(ResNetV1Groups).dim_change,
                  groups_f=ResNetV1Groups):
