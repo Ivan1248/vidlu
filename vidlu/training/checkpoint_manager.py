@@ -4,14 +4,10 @@ import shutil
 import warnings
 import typing as T
 import logging
-import os
-
-import torch
-
-import json
 
 from vidlu.utils.path import create_file_atomic
 from vidlu.utils.func import params
+from vidlu.utils.loadsave import TorchLoadSave, JsonLoadSave, TextLoadSave
 
 
 class _Smallest(float):  # float inheritance needed storing as JSON
@@ -28,49 +24,14 @@ class _Smallest(float):  # float inheritance needed storing as JSON
 smallest = _Smallest()
 
 
-class FileInterface:
-    @staticmethod
-    def save(obj, file):
-        raise NotImplemented
-
-    @staticmethod
-    def load(obj, file):
-        raise NotImplemented
-
-
-class BinaryFileInterface(FileInterface):
-    read_mode = "rb"
-    write_mode = "wb"
-
-
-class BaseTextFileInterface(FileInterface):
-    read_mode = "r"
-    write_mode = "w"
-
-
-class TorchFileInterface(BinaryFileInterface):
-    save = torch.save
-    load = torch.load
-
-
-class JsonFileInterface(BaseTextFileInterface):
-    save = json.dump
-    load = json.load
-
-
-class TextFileInterface(BaseTextFileInterface):
-    save = lambda o, f: (Path(f).write_text if isinstance(f, os.PathLike) else f.write)(o)
-    load = lambda o, f: Path(f).read_text() if isinstance(f, os.PathLike) else f.read()
-
-
 class Files:
-    extracted_state = (None, TorchFileInterface)
-    state = ('training_state.pth', TorchFileInterface)
-    progress_info = ('progress.info', TorchFileInterface)
-    info = ('experiment.info', TorchFileInterface)
-    summary = ('summary.p', TorchFileInterface)
-    perf = ('perf.json', JsonFileInterface)
-    log = ('log.txt', TextFileInterface)
+    extracted_state = (None, TorchLoadSave)
+    state = ('training_state.pth', TorchLoadSave)
+    progress_info = ('progress.info', TorchLoadSave)
+    info = ('experiment.info', TorchLoadSave)
+    summary = ('summary.p', TorchLoadSave)
+    perf = ('perf.json', JsonLoadSave)
+    log = ('log.txt', TextLoadSave)
 
 
 @dc.dataclass
@@ -91,7 +52,7 @@ class Checkpoint:  # TODO
                         'state': other_state}, **extracted_state_parts)
         try:
             for k, v in stuff.items():
-                name, file_interface = getattr(Files, k, None) or (f"{k}.pth", TorchFileInterface)
+                name, file_interface = getattr(Files, k, None) or (f"{k}.pth", TorchLoadSave)
                 create_file_atomic(path=path / name, mode=file_interface.write_mode,
                                    write_action=lambda f: file_interface.save(v, f))
         except Exception as e:
@@ -110,7 +71,7 @@ class Checkpoint:  # TODO
 
     @staticmethod
     def _load(path, k, map_location=None):
-        name, fi = getattr(Files, k, None) or (f"{k}.pth", TorchFileInterface)
+        name, fi = getattr(Files, k, None) or (f"{k}.pth", TorchLoadSave)
         path = path / name
         return fi.load(path, map_location=map_location) if "map_location" in params(fi.load) \
             else fi.load(path)
@@ -203,7 +164,8 @@ class CheckpointManager(object):
         self.id_to_perf = dict()
         for id in list(self.saved):
             try:
-                self.id_to_perf[id] = self.perf_func(Checkpoint.load(self.experiment_dir / id).summary)
+                self.id_to_perf[id] = self.perf_func(
+                    Checkpoint.load(self.experiment_dir / id).summary)
             except EOFError as e:
                 warnings.warn(f"Checkpoint loading error:\n{e}")
                 self.saved.remove(id)
@@ -221,7 +183,8 @@ class CheckpointManager(object):
                         info=dict(info=self.info,
                                   separately_saved_state_parts=self.separately_saved_state_parts),
                         perf=self.perf_func(summary), log=self.log_func(summary))
-        name = f"{self.index}" + ("" if (suff := self.name_suffix_func(summary)) == "" else f"_{suff}")
+        name = f"{self.index}" + (
+            "" if (suff := self.name_suffix_func(summary)) == "" else f"_{suff}")
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
         self._logger.info(f"Saving checkpoint {name} in {self.experiment_dir}.")
