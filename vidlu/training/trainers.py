@@ -199,7 +199,7 @@ class Evaluator:
     data_loader_f: data_utils.TMultiDataLoaderF = partial(
         data_utils.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=2, shuffle=True)
     batch_size: int = 1
-    metrics: dict = dc.field(default_factory=list)
+    metrics: list = dc.field(default_factory=list)
     extend_output: T.Callable = extend_output
     eval_step: T.Callable = Required
 
