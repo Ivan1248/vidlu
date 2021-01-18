@@ -10,8 +10,7 @@ import torch
 import _context  # vidlu, dirs
 
 from vidlu import factories, models, modules
-from vidlu.experiments import (TrainingExperiment, TrainingExperimentFactoryArgs,
-                               define_training_loop_actions)
+from vidlu.experiments import TrainingExperiment, define_training_loop_actions
 import vidlu.data as vd
 from vidlu.utils.misc import indent_print
 from vidlu.utils.logger import Logger
