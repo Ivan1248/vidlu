@@ -3,7 +3,6 @@ import argparse
 from time import time
 import random
 from datetime import datetime
-import fcntl
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -23,6 +22,12 @@ import dirs
 
 
 def log_run(status):
+    try:
+        import fcntl
+    except ImportError as ex:
+        from unittest.mock import Mock
+        fcntl = Mock()
+
     if (d := len('start') - len(status)) > 0:
         status += ' ' * d
     try:
