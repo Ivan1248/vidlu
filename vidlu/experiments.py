@@ -161,6 +161,15 @@ class TrainingExperiment:
         _check_dirs(dirs)
         a = training_args
 
+        with indent_print("Setting device..."):
+            if a.device is None:
+                a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            elif a.device == "auto":
+                from vidlu import gpu_utils
+                a.device = torch.device(
+                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+            print(f"device: {a.device}")
+
         with indent_print('Initializing checkpoint manager and logger...'):
             logger = Logger()
             logger.log("Resume command:\n"
@@ -170,22 +179,13 @@ class TrainingExperiment:
             cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
 
         try:
-            with indent_print("Setting device..."):
-                if a.device is None:
-                    a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-                elif a.device == "auto":
-                    from vidlu import gpu_utils
-                    a.device = torch.device(
-                        gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
-                print(f"device: {a.device}")
-
             with indent_print('Initializing data...'):
                 print(a.data)
                 with Stopwatch() as t:
                     data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS,
                                                                    dirs.CACHE)
-                first_ds = next(iter(data.values()))
                 print(f"Data initialized in {t.time:.2f} s.")
+            first_ds = next(iter(data.values()))
 
             with indent_print('Initializing model...'):
                 print(a.model)
