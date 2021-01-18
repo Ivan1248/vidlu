@@ -90,7 +90,7 @@ def read_lines(path):
 
 
 def write_text(path, text, append=False):
-    Path(path).open("w+" if append else "w").write(text)
+    return Path(path).open("w+" if append else "w").write(text)
 
 
 def write_lines(path, lines, append=False):
@@ -99,6 +99,7 @@ def write_lines(path, lines, append=False):
 
 
 def disk_partition(path):
+    # https://stackoverflow.com/questions/25283882/determining-the-filesystem-type-from-a-path-in-python
     import psutil
     best_match = ""
     partition = None
@@ -108,6 +109,8 @@ def disk_partition(path):
     return partition
 
 
-def get_fs_type(path):
-    # https://stackoverflow.com/questions/25283882/determining-the-filesystem-type-from-a-path-in-python
+def fs_type(path):
     return disk_partition(path).fstype
+
+
+#
