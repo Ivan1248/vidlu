@@ -2,11 +2,16 @@ import warnings
 import traceback
 import sys
 from datetime import datetime
-from vidlu.utils.state import state
 import inspect
+from argparse import Namespace
 
 from vidlu.utils.collections import FileDict
 
+# STATE - any state should be kept here#############################################################
+state = Namespace()
+
+
+# ##################################################################################################
 
 def trace_calls(
         depth=float('inf'),

@@ -6,14 +6,11 @@ import functools
 import itertools
 import typing
 import warnings
-import typing as T
 import sys
-from reprlib import recursive_repr
-from collections import namedtuple
 
 from vidlu.utils import text
-from .collections import NameDict
-from vidlu.utils import tree, misc
+from vidlu.utils import tree
+from vidlu.utils.collections import NameDict
 
 
 def identity(x):

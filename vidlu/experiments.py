@@ -12,7 +12,7 @@ import torch.nn as nn
 from vidlu import factories
 import vidlu.modules as vm
 from vidlu.training import Trainer, CheckpointManager
-from vidlu.utils.indent_print import indent_print
+from vidlu.utils.misc import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils.misc import try_input, Stopwatch

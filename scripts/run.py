@@ -16,7 +16,7 @@ import _context  # vidlu, dirs
 from vidlu import factories
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
-from vidlu.utils.indent_print import indent_print
+from vidlu.utils.misc import indent_print
 from vidlu.utils.misc import query_user
 from vidlu.utils import debug
 from vidlu.training.checkpoint_manager import Files as cpman_filenames

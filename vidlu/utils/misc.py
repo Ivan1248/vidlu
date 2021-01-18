@@ -12,6 +12,7 @@ import zipfile
 import gzip
 import warnings
 import typing as T
+import builtins
 
 from tqdm import tqdm
 import numpy as np
@@ -37,6 +38,16 @@ def broadcast(obj: T.Union[object, T.Sequence], n: int, seq_type=T.Sequence) -> 
                                f" `evaL_batch_size` are correctly set.")
         return obj
     return [obj] * n
+
+
+# Import module ####################################################################################
+
+def import_module(path):  # from morsic
+    import importlib
+    spec = importlib.util.spec_from_file_location("module", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # Event ############################################################################################
@@ -211,8 +222,7 @@ def download(url, output_path, md5=None):
         urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
 
 
-# Mappings
-
+# Mappings #########################################################################################
 
 def fuse(*dicts, overriding=None, ignore_if_equal=True, factory=None):
     factory = factory or type(dicts[0])
@@ -244,7 +254,7 @@ def update_existing_items(dest, src, copy=False):
     return dest
 
 
-# context manager timer
+# Context managet timer ############################################################################
 
 class Stopwatch:
     """A stopwatch that can be used as a context manager.
@@ -304,7 +314,7 @@ class Stopwatch:
         return self._time
 
 
-# shared array
+# Shared arrays ####################################################################################
 
 def to_shared_array(x):
     x_shared = RawArray(np.ctypeslib.as_ctypes_type(x.dtype), x.size)
@@ -313,7 +323,7 @@ def to_shared_array(x):
     return x_shared
 
 
-# progress bar
+# Progresss bar ####################################################################################
 
 def item_pbar(seq, transform=str):
     tseq = tqdm(seq)
@@ -325,3 +335,33 @@ def item_pbar(seq, transform=str):
 
 def key_pbar(seq):
     return item_pbar(seq, lambda x: str(x[0]))
+
+
+# Indent print #####################################################################################
+
+
+@contextlib.contextmanager
+def indent_print(*args, indent="   "):
+    if len(args) > 0:
+        print(*args)
+    orig_print = builtins.print
+
+    def ind_print(*args, **kwargs):
+        orig_print(indent[:-1], *args, **kwargs)
+
+    builtins.print = ind_print
+    yield
+    builtins.print = orig_print
+
+
+# Checks ###########################################################################################
+
+def check_arg_type(name, value, type_):
+    if not isinstance(value, type_):
+        raise TypeError(f"The type of the argument {name} is {type(value).__qualname__}, but should"
+                        f"be {getattr(type_, '__qualname__', type_)}.")
+
+
+def check_value_in(name, value, values: T.Collection):
+    if value not in values:
+        raise TypeError(f"{name} should have a value from {values}, not {value}.")
