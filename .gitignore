@@ -192,4 +192,5 @@ venv.bak/
 # other
 vidlu/libs/
 libs/
+semseg_cascade/
 *.ini
