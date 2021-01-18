@@ -27,7 +27,7 @@ t = vuf.ArgTree  # used for propagating arguments into nested functions
 data_str = "Cifar10{trainval,test}"  # "Cifar10{train,val}"
 model_class = models.ResNetV1  # models.ResNetV2
 model_config = dict(backbone_f=t(depth=18, small_input=True,
-                                 # block_f=t(norm_f=None)  # no BatchNorm
+                                 # block_f=t(norm_f=None),  # no BatchNorm
                                  ))
 trainer_config = vct.TrainerConfig(vct.resnet_cifar,
                                    # lr_scheduler_f=ConstLR,
