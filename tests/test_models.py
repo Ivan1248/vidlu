@@ -41,7 +41,10 @@ def compare_with_torchvision(mymodelname, tvmodelname):
 class TestResNet:
     @torch.no_grad()
     def test_resnet(self):
+        # basic block
         compare_with_torchvision("ResNetV1,backbone_f=t(depth=18,small_input=False)", "resnet18")
+        # bottleneck block
+        compare_with_torchvision("ResNetV1,backbone_f=t(depth=50,small_input=False)", "resnet50")
 
 
 class TestDenseNet:
