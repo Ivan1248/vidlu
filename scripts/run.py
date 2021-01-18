@@ -19,7 +19,6 @@ from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.misc import indent_print
 from vidlu.utils.misc import query_user
 from vidlu.utils import debug
-from vidlu.training.checkpoint_manager import Files as cpman_filenames
 import dirs
 
 
@@ -43,7 +42,8 @@ def log_run(status):
 def train(args):
     if args.debug:
         debug.trace_calls(depth=122,
-            filter=lambda frame, *a: "vidlu" in frame.f_code.co_filename and not frame.f_code.co_name[0] in ["_", "<"])
+                          filter=lambda frame, *a: "vidlu" in frame.f_code.co_filename
+                                                   and not frame.f_code.co_name[0] in ["_", "<"])
 
     if args.restart and not query_user("Are you sure you want to restart the experiment?",
                                        timeout=30, default='y'):
@@ -154,43 +154,44 @@ def add_standard_arguments(parser, func):
     parser.set_defaults(func=func)
 
 
-parser = argparse.ArgumentParser(description='Experiment running script')
-subparsers = parser.add_subparsers()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Experiment running script')
+    subparsers = parser.add_subparsers()
 
-parser_train = subparsers.add_parser("train")
-add_standard_arguments(parser_train, train)
+    parser_train = subparsers.add_parser("train")
+    add_standard_arguments(parser_train, train)
 
-parser_train = subparsers.add_parser("path")
-add_standard_arguments(parser_train, path)
+    parser_train = subparsers.add_parser("path")
+    add_standard_arguments(parser_train, path)
 
-parser_test = subparsers.add_parser("test")
-add_standard_arguments(parser_test, test)
+    parser_test = subparsers.add_parser("test")
+    add_standard_arguments(parser_test, test)
 
-parser_test_trained = subparsers.add_parser("test_trained")
-add_standard_arguments(parser_test_trained, test_trained)
+    parser_test_trained = subparsers.add_parser("test_trained")
+    add_standard_arguments(parser_test_trained, test_trained)
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-with indent_print("Arguments:"):
-    print(args)
+    with indent_print("Arguments:"):
+        print(args)
 
-if args.debug:
-    print("Debug: Autograd anomaly detection on.")
-    torch.autograd.set_detect_anomaly(True)
+    if args.debug:
+        print("Debug: Autograd anomaly detection on.")
+        torch.autograd.set_detect_anomaly(True)
 
-if args.warnings_as_errors:
-    import traceback
-    import warnings
-    import sys
-
-
-    def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
-        log = file if hasattr(file, 'write') else sys.stderr
-        traceback.print_stack(file=log)
-        log.write(warnings.formatwarning(message, category, filename, lineno, line))
+    if args.warnings_as_errors:
+        import traceback
+        import warnings
+        import sys
 
 
-    warnings.showwarning = warn_with_traceback
-    # warnings.simplefilter("always")
+        def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
+            log = file if hasattr(file, 'write') else sys.stderr
+            traceback.print_stack(file=log)
+            log.write(warnings.formatwarning(message, category, filename, lineno, line))
 
-args.func(args)
+
+        warnings.showwarning = warn_with_traceback
+        # warnings.simplefilter("always")
+
+    args.func(args)
