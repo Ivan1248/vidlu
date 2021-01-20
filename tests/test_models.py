@@ -43,7 +43,9 @@ class TestResNet:
     def test_resnet(self):
         # basic block
         compare_with_torchvision("ResNetV1,backbone_f=t(depth=18,small_input=False)", "resnet18")
-        # bottleneck block
+
+    @torch.no_grad()
+    def test_resnet_bottleneck(self):
         compare_with_torchvision("ResNetV1,backbone_f=t(depth=50,small_input=False)", "resnet50")
 
 

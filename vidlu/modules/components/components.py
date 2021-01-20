@@ -86,6 +86,8 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
                         stride_after_1x1):
     if not len(kernel_sizes) == len(width_factors):
         raise ValueError(f"{len(kernel_sizes)=} does not match {len(width_factors)=}.")
+    if stride_after_1x1 is None and kernel_sizes[0] == 1:
+        raise ValueError("stride_after_1x1 should be a boolean value, none None.")
     widths = [base_width * wf for wf in width_factors]
     round_widths = list(map(round, widths))  # fractions to ints
     if widths != round_widths:
@@ -141,7 +143,7 @@ class PreactBlock(E.Seq):
                                 stride=Reserved,
                                 dilation=Reserved),
                  noise_f=None,
-                 stride_after_1x1=False):
+                 stride_after_1x1=True):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
                                                        stride, dilation, stride_after_1x1)
@@ -187,7 +189,7 @@ class PostactBlock(E.Seq):
                  act_f=E.ReLU,
                  conv_f=params(PreactBlock).conv_f,
                  noise_f=None,
-                 stride_after_1x1=False):
+                 stride_after_1x1=None):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
                                                        stride, dilation, stride_after_1x1)
@@ -668,7 +670,7 @@ def _check_resnet_unit_args(block_f, dim_change):
 
 
 class ResNetV1Unit(E.Seq):
-    def __init__(self, block_f=PostactBlock, dim_change='proj'):
+    def __init__(self, block_f=partial(PostactBlock, stride_after_1x1=True), dim_change='proj'):
         _check_resnet_unit_args(block_f, dim_change)
         super().__init__()
         self.block_f, self.dim_change = block_f, dim_change

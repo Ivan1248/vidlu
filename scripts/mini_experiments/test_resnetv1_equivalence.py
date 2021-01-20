@@ -12,17 +12,17 @@ from vidlu.factories import problem
 
 # data = data.datasets.HBlobs(example_shape=(32, 32, 3))
 
-dataset = factories.get_data("TinyImagenet{val}", dirs.DATASETS)['TinyImagenet']['val']
+ds_id, dataset = factories.get_data("TinyImageNet{val}", dirs.DATASETS)[0]
 dataset = factories.get_data_preparation(dataset)(dataset)
 inp = next(iter(data.DataLoader(dataset, batch_size=1)))[0]
 
 resnet_my = factories.get_model(
-    model_str='ResNetV1,backbone_f=t(depth=18,small_input=False,block_f=t(act_f=t(inplace=True)))',
+    model_str='ResNetV1,backbone_f=t(depth=50,small_input=False,block_f=t(act_f=t(inplace=True)))',
     input_adapter_str='id', problem=problem.Classification(dataset.info.class_count),
     init_input=inp)
 resnet_my.eval()
 
-resnet_tv = torchvision.models.resnet18(num_classes=dataset.info.class_count)
+resnet_tv = torchvision.models.resnet50(num_classes=dataset.info.class_count)
 state, _ = factories.get_translated_parameters("resnet", state_dict=resnet_tv.state_dict())
 resnet_tv.eval()
 
@@ -37,12 +37,18 @@ layer_pairs = {
         'backbone.root.act',
     'maxpool':
         'backbone.root.pool',
-    'layer1.0':
-        'backbone.bulk.unit0_0',
     'layer1.0.conv1':
         'backbone.bulk.unit0_0.fork.block.conv0',
     'layer1.0.bn1':
         'backbone.bulk.unit0_0.fork.block.norm0',
+    'layer1.0':
+        'backbone.bulk.unit0_0',
+    'layer1.1':
+        'backbone.bulk.unit0_1',
+    'layer2.0.conv1':
+        'backbone.bulk.unit1_0.fork.block.conv0',  # stride 2 after 1x1 conv.
+    'layer2.0':
+        'backbone.bulk.unit1_0',
     'layer4':
         'backbone.bulk',
     'avgpool':
@@ -78,7 +84,7 @@ with torch.no_grad():
             print(f'[]={k}')
 
         # err = (my - tv).abs() / (torch.min(my.abs() + tv.abs()) + 1e-16)
-        err = 1 - torch.all(my == tv)
+        err = torch.any(my != tv).float()
         max_ = err.max().item()
         if max_ == 0:
             print('OK', k)
@@ -118,7 +124,7 @@ with torch.no_grad():
             print(f'[]={k}')
 
         # err = (my - tv).abs() / (torch.min(my.abs() + tv.abs()) + 1e-16)
-        err = 1 - torch.logical_not(torch.all(my == tv))
+        err = torch.any(my != tv).float()
         max_ = err.max().item()
         if max_ == 0:
             print('OK', k)
