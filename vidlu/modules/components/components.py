@@ -96,10 +96,11 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
     widths = round_widths
     conv_defaults = default_args(D.conv_f)
     if not isinstance(stride, Sequence):
-        stride = [stride] + [conv_defaults.stride] * (len(widths) - 1)
-        if stride_after_1x1 and kernel_sizes[0] == 1:
+        if stride_after_1x1 and kernel_sizes[0] == 1 and stride > 1:
             # if the first convolution is 1x1, it is not strided
-            stride[0], stride[1] = stride[1], stride[0]
+            stride = [1, stride] + [1] * (len(widths) - 2)
+        else:
+            stride = [stride] + [1] * (len(widths) - 1)
     if not isinstance(dilation, Sequence):
         dilation = [dilation] + [conv_defaults.dilation] * (len(widths) - 1)
     return widths, stride, dilation
