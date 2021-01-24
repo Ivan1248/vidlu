@@ -26,10 +26,9 @@ def compare_with_torchvision(mymodelname, tvmodelname):
     tv_model.eval()
 
     tsd = tv_model.state_dict()
-
     translator_name = text.scan(r"{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a']
-
     params = models.params.translate(translator_name, tsd)
+
     vidlu_model.load_state_dict(params)
 
     if platform.system() == 'Windows':
