@@ -47,8 +47,8 @@ def log_run(status):
 def train(args):
     if args.debug:
         debug.trace_calls(depth=122,
-                          filter=lambda frame, *a: "vidlu" in frame.f_code.co_filename
-                                                   and not frame.f_code.co_name[0] in ["_", "<"])
+                          filter_=lambda frame, *a: "vidlu" in frame.f_code.co_filename
+                                                    and not frame.f_code.co_name[0] in ["_", "<"])
 
     if args.restart and not query_user("Are you sure you want to restart the experiment?",
                                        timeout=30, default='y'):
