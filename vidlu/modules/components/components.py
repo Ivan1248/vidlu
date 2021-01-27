@@ -521,7 +521,7 @@ class DenseSPP(E.Module):
                                  kernel_sizes=[1],
                                  width_factors=[1]),
                  upsample=partial(F.interpolate, mode='bilinear', align_corners=False),
-                 square_grid=False):
+                 square_output=False):
         super().__init__()
         self.grid_sizes = grid_sizes
         self.upsample = upsample
@@ -530,17 +530,19 @@ class DenseSPP(E.Module):
             {f'block{i}': block_f(base_width=level_size)
              for i in range(len(grid_sizes))})
         self.fuse_block = block_f(base_width=out_size)
-        self.square_grid = square_grid
+        self.square_output = square_output
 
     def forward(self, x):
         target_size = x.size()[2:4]
-        if not self.square_grid:
+        if not self.square_output:
             ar = target_size[1] / target_size[0]
+            if ar == 0:
+                warnings.warn("SPP input height is greater than its width.")
 
         x = self.input_block(x)
         levels = [x]
         for pyr_block, grid_size in zip(self.pyramid, self.grid_sizes):
-            if not self.square_grid:  # keep aspect ratio
+            if not self.square_output:  # keep aspect ratio
                 grid_size = (grid_size, max(1, round(ar * grid_size)))
             x_pooled = F.adaptive_avg_pool2d(x, grid_size)  # TODO: x vs levels[-1]
             level = pyr_block(x_pooled)
@@ -622,12 +624,14 @@ class KresoLadderNet(E.Module):
                  lateral_preprocessing=lambda x: x):
         super().__init__()
         self.backbone = backbone_f()
-        self.laterals = laterals
         self.context = context_f()
         self.ladder = KresoLadder(ladder_width, up_blend_f)
-        defaults = default_args(default_args(up_blend_f).blend_block_f)
+
+        self.laterals = laterals
+
         self.post_activation = post_activation
         if post_activation:
+            defaults = default_args(default_args(up_blend_f).blend_block_f)
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
         self.lateral_preprocessing = lateral_preprocessing
 
