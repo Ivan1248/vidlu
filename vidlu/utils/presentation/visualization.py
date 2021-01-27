@@ -41,29 +41,11 @@ def composef(images, fmt):
 
 
 def compose(images_array):
+    import torch  # np.concatenate somtimes gets stuck for some reason
     if not isinstance(images_array[0], list):
         images_array = [images_array]
-
-    rows = [np.concatenate(row, axis=1) for row in images_array]
-    return np.concatenate(rows, axis=0)
-
-
-def compose_old(images, fmt='0,0;1,0-1'):
-    if fmt is None:
-        return np.concatenate(
-            [np.concatenate([im for im in row], 1) for row in images], 0)
-
-    def get_image(frc):
-        inds = [int(i) for i in frc.split('-')]
-        assert (len(inds) <= 2)
-        ims = [images[i] for i in inds]
-        return ims[0] if len(ims) == 1 else fuse_images(ims[0], ims[1], 0.5)
-
-    fmt = fmt.split(';')
-    fmt = [f.split(',') for f in fmt]
-    return np.concatenate([
-        np.concatenate([get_image(frc) for frc in frow], 1) for frow in fmt
-    ], 0)
+    rows = [torch.cat(list(map(torch.from_numpy, row)), dim=1) for row in images_array]
+    return torch.cat(rows, axis=0).numpy()
 
 
 class Viewer:
@@ -215,7 +197,7 @@ def view_predictions(dataset, infer=None, save_dir=None):
 
         comp = compose(comp_arr)
 
-        bar_width, bar_height = comp.shape[1] // 10, comp.shape[0]
+        bar_width, bar_height = comp.shape[1] // 20, comp.shape[0]
         step = bar_height // len(colors)
         bar = np.zeros((bar_height, bar_width), dtype=np.int8)
         for i in range(len(colors)):
