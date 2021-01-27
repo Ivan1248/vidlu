@@ -23,7 +23,7 @@ parser.add_argument('--jitter', type=str, default=None)
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-ds = get_prepared_data(args.ds + '{' + args.part + '}', datasets_dir=dirs.DATASETS,
+ds = get_prepared_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.DATASETS,
                        cache_dir=dirs.CACHE)[0]
 
 print("Name:", ds.name)
@@ -43,4 +43,4 @@ if args.permute:
     ds = ds.permute()
 
 ds = ds.map(lambda r: (image.torch_to_numpy(r[0].permute(1, 2, 0)), r[1].numpy()))
-view_predictions(ds, infer=lambda x: ds[0][1])
+view_predictions(ds, infer=None)
