@@ -10,7 +10,7 @@ import torch
 
 import vidlu.modules.utils as vmu
 from vidlu.data import Record, DataLoader, BatchTuple
-import vidlu.data.utils as data_utils
+import vidlu.data.utils as vdu
 from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
@@ -196,8 +196,8 @@ class Evaluator:
     model: T.Callable = Required
     loss: T.Callable = Required
     prepare_batch: T.Callable = default_prepare_batch
-    data_loader_f: data_utils.TMultiDataLoaderF = partial(
-        data_utils.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=2, shuffle=True)
+    data_loader_f: vdu.TMultiDataLoaderF = partial(
+        vdu.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=2, shuffle=True)
     batch_size: int = 1
     metrics: list = dc.field(default_factory=list)
     extend_output: T.Callable = extend_output
