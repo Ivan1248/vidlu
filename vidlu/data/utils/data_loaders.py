@@ -92,8 +92,8 @@ def mixed_data_loader(*datasets: T.Sequence[Dataset],
         example_weights = list(map(np.array, example_weights))
         weights = sum(
             [list(wd / we.sum() * we) for wd, we in zip(dataset_weights, example_weights)], [])
-    else: 
-        weights =  sum([[wd / len(ds)] * len(ds) for ds, wd in zip(datasets, dataset_weights)], [])
+    else:
+        weights = sum([[wd / len(ds)] * len(ds) for ds, wd in zip(datasets, dataset_weights)], [])
     sampler = tud.WeightedRandomSampler(weights=weights,
                                         num_samples=sum(len(ds) for ds in datasets),
                                         replacement=False)
@@ -114,12 +114,12 @@ def mixed_data_loader(*datasets: T.Sequence[Dataset],
 def morsic_semisup_data_loader(
         ds_l: Dataset, ds_u: Dataset,
         data_loader_f: TDataLoaderF,
-        labeled_multiplier: T.Union[Real, T.Callable[[int, int], Real]] = \
-            lambda l, u: max(1, u / l),
+        labeled_multiplier: T.Union[int, T.Callable[[int, int], int]] = \
+                lambda l, u: max(1, int(u / l)),
         **kwargs):
     nl, nu = len(ds_l), len(ds_u)
     if callable(labeled_multiplier):
-        labeled_multiplier = int(labeled_multiplier(nl, nu))
+        labeled_multiplier = labeled_multiplier(nl, nu)
     ds_all = ds_l.join(ds_u)
     indices_l = list(range(nl)) * labeled_multiplier
     indices_u = list(range(nl, nl + nu))
