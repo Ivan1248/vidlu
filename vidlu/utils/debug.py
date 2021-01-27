@@ -15,7 +15,7 @@ state = Namespace()
 
 def trace_calls(
         depth=float('inf'),
-        filter=lambda **k: True,
+        filter_=lambda **k: True,
         enter_action=lambda indent, frame, **k: print(" " * indent, frame.f_code.co_name,
                                                       frame.f_code.co_filename,
                                                       frame.f_code.co_firstlineno)):
@@ -23,10 +23,10 @@ def trace_calls(
 
     def tracefunc(frame, event, arg):
         nonlocal indent
-        if filter(frame, event, arg) and indent < depth:
+        if filter_(frame=frame, event=event, arg=arg) and indent < depth:
             if event == "call":
                 indent += 2
-                if filter(frame=frame, event=event, arg=arg):
+                if filter_(frame=frame, event=event, arg=arg):
                     enter_action(frame=frame, event=event, arg=arg, indent=indent)
             elif event == "return":
                 # print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
