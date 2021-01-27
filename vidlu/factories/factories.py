@@ -122,24 +122,20 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
-def get_data_preparation(*datasets):
+def get_data_preparation(dataset):
     from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
-    if len(datasets) == 1:
-        fields = tuple(datasets[0][0].keys())
-        if set('xy').issubset(fields):
-            return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
-                                            func_name='prepare')
-        elif fields == ('x',):
-            return lambda ds: ds.map_fields(dict(x=prepare_input_image), func_name='prepare_x')
-        raise ValueError(f"Unknown record format: {fields}.")
-    else:
-        return [get_data_preparation(ds) for ds in datasets]
+    fields = tuple(dataset[0].keys())
+    if set('xy').issubset(fields):
+        return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
+                                        func_name='prepare')
+    elif fields == ('x',):
+        return lambda ds: ds.map_fields(dict(x=prepare_input_image), func_name='prepare_x')
+    raise ValueError(f"Unknown record format: {fields}.")
 
 
 def prepare_data(data, datasets_dir, cache_dir):
     datasets = [ds for _, ds in data]
-    # datasets = dict(tree.flatten(data)).values()
-    preparers = get_data_preparation(*datasets)
+    preparers = [get_data_preparation(ds) for ds in datasets]
     return tuple(prepare(ds) for prepare, ds in zip(preparers, datasets))
 
 
@@ -218,6 +214,7 @@ def build_and_init_model(model, init_input, device):
     elif not vm.is_built(model, including_submodules=True):
         model(init_input)
 
+
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
     from torch import nn
@@ -233,6 +230,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
+
+    if model_name[0] in "'\"":  # torch.hub
+        return unsafe_eval(f"torch.hub.load({model_str})")
 
     model_class = getattr(models, model_name)
     argtree = defaults.get_model_argtree_for_problem(model_class, problem)
