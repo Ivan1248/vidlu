@@ -1,1 +1,1 @@
-from . training import *
+from ._training import *

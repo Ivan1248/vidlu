@@ -8,8 +8,8 @@ import vidlu.training.extensions as te
 import vidlu.data as vd
 import vidlu.data.utils as vdu
 from vidlu.configs.robustness import *
-from vidlu.configs.training.trainer_config import TrainerConfig, OptimizerMaker
-from vidlu.configs.training.classification import classification_extend_output
+from .trainer_config import TrainerConfig, OptimizerMaker
+from .classification import classification_extend_output
 
 # Basic (train_step, eval_step, extend_output)
 
@@ -163,7 +163,6 @@ semisup_cons_phtps20_seg = TrainerConfig(
         multi_data_loader_f=partial(vdu.morsic_semisup_data_loader,
                                     labeled_multiplier=lambda l, u: int(max(1, u / l))),
         num_workers=2,
-        shuffle=True,
     ),
 )
 
