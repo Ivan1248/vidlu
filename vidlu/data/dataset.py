@@ -291,9 +291,11 @@ class Dataset(abc.Sequence):
         """
         return RepeatDataset(self, number_of_repeats, **kwargs)
 
-    def split(self, *, ratio: float = None, index: int = None):
+    def split(self, ratio: float = None, index: int = None):
         if (ratio is None) == (index is None):
             raise ValueError("Either ratio or position needs to be specified.")
+        if isinstance(ratio, int):
+            raise ValueError("ratio should be a float. Did you intend `index={ratio}`?")
         index = index or round(ratio * len(self))
         return self[:index], self[index:]
 
