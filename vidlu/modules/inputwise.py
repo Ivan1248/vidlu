@@ -34,11 +34,11 @@ class BatchParameter(torch.nn.Parameter):
         return param
 
 
-def _get_param(pmodel, x, factory_or_value):
+def _get_param(x, factory_or_value):
     factory = (factory_or_value if callable(factory_or_value)
                                    and not isinstance(factory_or_value, torch.Tensor)
                else partial(torch.full, fill_value=factory_or_value))
-    return factory(pmodel, x.shape, device=x.device)
+    return factory(x.shape, device=x.device)
 
 
 def _complete_shape(shape_tail, input_shape):
@@ -206,7 +206,7 @@ class EquivariantPertModel(PertModelBase):
         for d in self.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
         dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
-        return {k: _get_param(self, dummy, self.param_defaults[k]['value'])
+        return {k: _get_param(dummy, self.param_defaults[k]['value'])
                 for k, v in self.param_defaults.items()}
 
 
@@ -220,13 +220,13 @@ class SliceEquivariantPertModel(PertModelBase):
         self.slice = slice if slice is None or isinstance(slice, tuple) else (slice,)
 
     def create_default_params(self, x):
-        if slice is not None:
-            x = x.__getitem__(slice)
+        if self.slice is not None:
+            x = x[self.slice]
         shape = list(x.shape)
         for d in self.equivariant_dims:
             shape[d if d >= 0 else len(x.shape) - d] = 1
         dummy = x.new_zeros(()).expand(shape)  # contains shape, dtype, and device
-        return {k: _get_param(self, dummy, self.param_defaults[k]['value'])
+        return {k: _get_param(dummy, self.param_defaults[k]['value'])
                 for k, v in self.param_defaults.items()}
 
 
@@ -280,7 +280,7 @@ class Contrast(EquivariantPertModel):
 
     >>> from vidlu.ops.image import rgb_to_luma
     >>> center = lambda x: rgb_to_luma(x, 601).unsquezze(-3).mean((-2, -1), keepdim=True)
-    >>> torchvision_contrast = Contrast(center=center)
+    >>> torchvision_contrast = Contrast(cente[r=center)
     """
     param_defaults = dict(factor=dict(value=1., bounds=[0, float('inf')]))
 
@@ -332,7 +332,7 @@ class Multiply(SliceEquivariantPertModel):
         if self.slice is None:
             return x * self.factor
         y = x.clone()
-        y[self.slice] *= self.addend
+        y[self.slice] *= self.factor
         return y
 
     def ensure_output_within_bounds(self, x, bounds, computed_output=None):
