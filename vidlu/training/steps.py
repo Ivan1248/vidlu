@@ -45,7 +45,7 @@ def do_optimization_step(optimizer, loss):
 @torch.no_grad()
 def supervised_eval_step(trainer, batch):
     trainer.model.eval()
-    x, y = trainer.prepare_batch(batch)
+    x, y = batch
     output, other_outputs = trainer.extend_output(trainer.model(x))
     loss = trainer.loss(output, y).mean()
     return NameDict(x=x, target=y, output=output, other_outputs=other_outputs, loss=loss.item())
@@ -60,7 +60,7 @@ def _supervised_train_step_x_y(trainer, x, y):
 
 
 def supervised_train_step(trainer, batch):
-    return _supervised_train_step_x_y(trainer, *trainer.prepare_batch(batch))
+    return _supervised_train_step_x_y(trainer, *batch)
 
 
 @dc.dataclass
@@ -70,7 +70,7 @@ class ClassifierEnsembleEvalStep:
 
     def __call__(self, trainer, batch):
         trainer.model.eval()
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
         output = self.combine(model(x) for model in self.model_iter(trainer.model))
         _, other_outputs = trainer.extend_output(output)
         loss = trainer.loss(output, y).mean()
@@ -107,10 +107,9 @@ class DiscriminativeFlowSupervisedTrainStep:  # TODO: improve
 
     def __call__(self, trainer, batch):
         trainer.model.train()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         x = dequantize(x, 256)
-
         output, z = call_flow(trainer.model, x, end=self.flow_end)
         output, other_outputs = trainer.extend_output(output)
 
@@ -138,8 +137,8 @@ class DiscriminativeFlowSupervisedEvalStep:  # TODO: improve
     @torch.no_grad()
     def __call__(self, trainer, batch):
         trainer.model.eval()
-
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
+        
         output, z = call_flow(trainer.model, x, end=self.flow_end)
         output, other_outputs = trainer.extend_output(output)
 
@@ -164,11 +163,10 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep:  # TODO: improve
         return -output_adv.sigmoid().log()
 
     def __call__(self, trainer, batch):
-        trainer.model.train()
-
         d_temp = 1
+        trainer.model.train()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         x = dequantize(x, 256)
 
         output_full, z = call_flow(trainer.model, x, end=self.flow_end)
@@ -232,10 +230,9 @@ class AdversarialDiscriminativeFlowSupervisedEvalStep:  # TODO: improve
     @torch.no_grad()
     def __call__(self, trainer, batch):
         trainer.model.eval()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         x = dequantize(x, 256)
-
         output_cd, z = call_flow(trainer.model, x, end=self.flow_end)
         output, output_d = output_cd[0][:, :-1], output_cd[0][:, -1:]
         output_cd, other_outputs = trainer.extend_output(output)
@@ -266,10 +263,9 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep2:  # TODO: improve
 
     def __call__(self, trainer, batch):
         trainer.model.train()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         x = dequantize(x, 256)
-
         output_full, z = call_flow(trainer.model, x, end=self.flow_end)
         logits = output_full[0]
         logits, other_outputs = trainer.extend_output(logits)
@@ -327,9 +323,9 @@ class SupervisedTrainMultiStep:
 
     def __call__(self, trainer, batch):
         trainer.model.train()
+        x, y = batch
         for i in range(self.repeat_count):
             with batchnorm_stats_tracking_off(trainer.model) if i == 0 else ctx_suppress():
-                x, y = trainer.prepare_batch(batch)
                 output, other_outputs = trainer.extend_output(trainer.model(x))
                 loss = trainer.loss(output, y).mean()
                 do_optimization_step(trainer.optimizer, loss)
@@ -375,9 +371,9 @@ class SupervisedSlidingBatchTrainStep:
 
     def __call__(self, trainer, batch):
         trainer.model.train()
-        n = len(batch[0])
+        x_y = batch
+        n = len(x_y[0])
         stride = self.stride or n // self.steps_per_batch
-        x_y = trainer.prepare_batch(batch)
 
         if self.prev_x_y is None:  # the first batch
             self.prev_x_y = x_y
@@ -420,8 +416,8 @@ class SupervisedTrainAcumulatedBatchStep:
             raise RuntimeError(f"Batch size ({batch.shape(0)}) is not a multiple"
                                + f" of batch_split_factor ({self.batch_split_factor}).")
         trainer.model.train()
+        x, y = batch
         trainer.optimizer.zero_grad()
-        x, y = trainer.prepare_batch(batch)
         xs, ys = [b.split(len(x) // self.batch_split_factor, dim=0) for b in [x, y]]
         outputs, other_outputses = [], []
         total_loss = None
@@ -482,7 +478,7 @@ class AdversarialTrainStep:
     def __call__(self, trainer, batch):
         """
         When clean_proportion = 0, the step reduces to
-        >>> x, y = trainer.prepare_batch(batch)
+        >>> x, y = batch
         >>>
         >>> trainer.model.eval()
         >>> crc = CleanResultCallback(trainer.extend_output)
@@ -499,7 +495,7 @@ class AdversarialTrainStep:
         >>>                 x_p=x_p, target_p=y, output_p=output,
         >>>                 other_outputs_p=other_outputs, loss_p=loss_p.item())
         """
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
         cln_count = round(self.clean_proportion * len(x))
         cln_proportion = cln_count / len(x)
         split = lambda a: (a[:cln_count], a[cln_count:])
@@ -553,7 +549,7 @@ class AdversarialCombinedLossTrainStep:
             self.adv_weight = 1 - self.clean_weight
 
     def __call__(self, trainer, batch):
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
         x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
@@ -585,7 +581,7 @@ class AdversarialTrainBiStep:
     virtual: bool = False
 
     def __call__(self, trainer, batch):
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
         clean_result = _supervised_train_step_x_y(trainer, x, y)
         trainer.model.eval()  # adversarial examples are generated in eval mode
         x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
@@ -612,7 +608,7 @@ class AdversarialTrainMultiStep:
 
     def __call__(self, trainer, batch):
         # assert trainer.attack.loss == trainer.loss
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
         clean_result = None
 
         def step(r):
@@ -653,8 +649,8 @@ class VATTrainStep:
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
         model.train()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         output, other_outputs = trainer.extend_output(model(x))
         loss = trainer.loss(output, y).mean()
         with torch.no_grad() if self.block_grad_for_clean else ctx_suppress():
@@ -687,8 +683,8 @@ class PertConsistencyTrainStep:  # TODO
     def __call__(self, trainer, batch):
         model = trainer.model
         model.train()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         output, other_outputs = trainer.extend_output(trainer.model(x))
         loss = trainer.loss(output, y).mean()
         with batchnorm_stats_tracking_off(model) if not self.track_pert_bn_stats \
@@ -715,9 +711,9 @@ class PertConsistencyTrainStep:  # TODO
 def _prepare_semisupervised_input(trainer, batch):
     x_u = None
     if isinstance(batch, BatchTuple):
-        (x_l, y_l), (x_u, *_) = [trainer.prepare_batch(b) for b in batch]
+        (x_l, y_l), (x_u, *_) = batch
     else:
-        x_l, y_l = trainer.prepare_batch(batch)
+        x_l, y_l = batch
     return x_l, y_l, x_u
 
 
@@ -891,8 +887,8 @@ class OldMeanTeacherTrainStep:  # TODO
         m_student = trainer.model.student
         m_teacher = trainer.model.teacher  # teacher
         m_student.train()
+        x, y = batch
 
-        x, y = trainer.prepare_batch(batch)
         with torch.no_grad():
             output, other_outputs = trainer.extend_output(m_teacher(x))
         output, other_outputs = trainer.extend_output(trainer.m_student(x))
@@ -984,8 +980,7 @@ class AdversarialEvalStep:
     def __call__(self, trainer, batch):
         trainer.model.eval()
         attack = trainer.eval_attack
-
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
 
         with torch.no_grad():
             output, other_outputs = trainer.extend_output(trainer.model(x))
@@ -1011,8 +1006,7 @@ class AdversarialTargetedEvalStep:
 
     def __call__(self, trainer, batch):
         trainer.model.eval()
-
-        x, y = trainer.prepare_batch(batch)
+        x, y = batch
 
         with torch.no_grad():
             output, other_outputs = trainer.extend_output(trainer.model(x))
@@ -1037,7 +1031,7 @@ class AdversarialTargetedEvalStep:
 
 def autoencoder_train_step(trainer, batch):
     trainer.model.train()
-    x = trainer.prepare_batch(batch)[0]
+    x = batch[0]
     x_r = trainer.model(x)
     loss = trainer.loss(x_r, x).mean()
     do_optimization_step(trainer.optimizer, loss)
@@ -1059,7 +1053,7 @@ class GANTrainStep:
     def __call__(self, trainer, batch):
         """ Copied from ignite/examples/gan/dcgan and modified"""
         trainer.model.train()
-        real = trainer.prepare_batch(batch)[0]
+        real = batch[0]
         batch_size = real.shape[0]
         real_labels = self._get_real_labels(batch_size)
 

@@ -166,7 +166,7 @@ class Engine(object):
 
 # Batch preparation ################################################################################
 
-def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=False):
+def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=True):
     """ A function for putting feature batches on the relevant device"""
 
     def _prepare(x):
@@ -236,6 +236,7 @@ class Evaluator:
         return metric_evals
 
     def _run_step(self, step, batch):
+        batch = self.prepare_batch(batch)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         with Stopwatch() as t:
