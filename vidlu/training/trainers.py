@@ -166,7 +166,7 @@ class Engine(object):
 
 # Batch preparation ################################################################################
 
-def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=True):
+def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=False):
     """ A function for putting feature batches on the relevant device"""
 
     def _prepare(x):
