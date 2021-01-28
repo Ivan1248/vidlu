@@ -58,4 +58,5 @@ class DatasetFactory:
         else:
             load = lambda s: ds_info.cls(*path_args, s, **{**ds_info.kwargs, **kwargs})
         splits = getattr(ds_info.cls, 'splits', self.default_splits)
+        # TODO: dict/Record instead of PartedDataset?
         return PartedDataset({s: load(s) for s in subsets}, splits)

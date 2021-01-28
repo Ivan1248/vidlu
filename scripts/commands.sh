@@ -72,7 +72,7 @@ python run.py train "mnist{trainval,test}" id "MNISTNet,backbone_f=t(act_f=C.Ten
 python show_summary.py /home/igrubisic/data/states/Cifar10\{trainval\,test\}/ResNetV2\,backbone_f\=t\(depth\=18\,small_input\=True\)/Trainer\,++\{++tc.resnet_cifar\,++dict\(train_step\=tc.SupervisedTrainMultiStep\(8\)\,epoch_count\=200/8\)\}/train_eval_after_multistep/25/summary.p
 
 
-# Semisupervised VAT
+# Semi-supervised VAT
 python run.py train "train,train_u,test:camvid{val,train,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
 python run.py train "train,train_u,test:Cifar10{trainval,test}:(*uniform_labels(d[0]).split(index=4000),d[1])" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
 
@@ -80,5 +80,8 @@ python run.py train "train,train_u,test:Cifar10{trainval,test}:(*uniform_labels(
 rsync -avzhe ssh --progress pretrained_parameters/ igrubisic@treebeard:/home/igrubisic/data/pretrained_parameters/
 
 
+# Semi-supervised consistency
 
+python run.py train "train,train_u,test:Cifar10{trainval,test}:(rotating_labels(d[0])[:4000],d[0],d[1])" id "WRN,backbone_f=t(depth=28,width_factor=2,small_input=True)" "tc.wrn_cifar,tc.semisup_cons_phtps20,batch_size=[128,512],eval_batch_size=640,epoch_count=1000,train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False)"
 
+python run.py train "train,train_u,test:Cityscapes{train,val}:(*d[0].split(1/8),d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,batch_size=12,eval_batch_size=12,epoch_count=200" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"

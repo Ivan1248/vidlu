@@ -125,7 +125,9 @@ def morsic_semisup_data_loader(
     indices_u = list(range(nl, nl + nu))
     indices = indices_l * labeled_multiplier + indices_u
     sampler = tud.SubsetRandomSampler(indices=indices)
-    return data_loader_f(ds_all, sampler=sampler, **kwargs)
+    if kwargs.get("shuffle", False):
+        raise ValueError("The shuffle argument should be False.")
+    return data_loader_f(ds_all, sampler=sampler, shuffle=False, **kwargs)
 
 
 # def multiset_data_loader_2(

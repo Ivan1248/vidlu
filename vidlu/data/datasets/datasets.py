@@ -126,7 +126,8 @@ _max_int32 = 2 ** 31 - 1
 class WhiteNoise(Dataset):
     subsets = []
 
-    def __init__(self, distribution='normal', mean=0, std=1, example_shape=(32, 32, 3), size=50000, seed=53):
+    def __init__(self, distribution='normal', mean=0, std=1, example_shape=(32, 32, 3), size=50000,
+                 seed=53):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
@@ -135,8 +136,8 @@ class WhiteNoise(Dataset):
         self._distribution = distribution
         self.mean = mean
         self.std = std
-        super().__init__(name=f'WhiteNoise-{distribution}({mean},{std},{example_shape})', subset=f'{seed}{size}',
-                         data=self._seeds)
+        super().__init__(name=f'WhiteNoise-{distribution}({mean},{std},{example_shape})',
+                         subset=f'{seed}{size}', data=self._seeds)
 
     def get_example(self, idx):
         self._rand.seed(self._seeds[idx])
@@ -892,10 +893,6 @@ class Cityscapes(Dataset):
 
         _check_size(self._images, self._labels, size=self.subset_to_size[subset])
 
-        info = dict(problem='semantic_segmentation', class_count=19,
-                    class_names=[l.name for l in cslabels if l.trainId >= 0],
-                    class_colors=[l.color for l in cslabels if l.trainId >= 0],
-                    in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
         modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
         super().__init__(subset=subset, modifiers=modifiers, info=self.info)
 
