@@ -113,9 +113,10 @@ class SegRandScaleCropPadHFlip(SegmentationJitter):
                              min_scale=self.min_scale, overflow=self.overflow,
                              is_segmentation=(False, True),
                              align_corners=self.align_corners)(tuple(xy))
-        x, y = RandomHFlip()(xy)
-        return (PadToShape(self.shape, value=self.image_pad_value)(x),
-                PadToShape(self.shape, value=self.label_pad_value)(y))
+        xy = RandomHFlip()(xy)
+        x = PadToShape(self.shape, value=self.image_pad_value)(xy[0])
+        return (x,) if len(xy) == 1 else \
+            (x, PadToShape(self.shape, value=self.label_pad_value)(xy[1]))
 
 
 class RandAugment(ClassificationJitter):
