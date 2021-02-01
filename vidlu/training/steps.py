@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from vidlu.data import BatchTuple
+from vidlu.data import BatchTuple, Record
 from vidlu.utils.collections import NameDict
 from vidlu.torch_utils import (concatenate_tensors_trees, switch_training,
                                batchnorm_stats_tracking_off)
@@ -138,7 +138,7 @@ class DiscriminativeFlowSupervisedEvalStep:  # TODO: improve
     def __call__(self, trainer, batch):
         trainer.model.eval()
         x, y = batch
-        
+
         output, z = call_flow(trainer.model, x, end=self.flow_end)
         output, other_outputs = trainer.extend_output(output)
 
@@ -708,10 +708,12 @@ class PertConsistencyTrainStep:  # TODO
 
 
 @torch.no_grad()
-def _prepare_semisupervised_input(trainer, batch):
+def _prepare_semisupervised_input(batch):
     x_u = None
     if isinstance(batch, BatchTuple):
         (x_l, y_l), (x_u, *_) = batch
+    elif isinstance(batch, Record) and 'x_u' in batch:
+        x_l, x_u, y_l = batch.x_l, batch.x_u, batch.y_l
     else:
         x_l, y_l = batch
     return x_l, y_l, x_u
@@ -734,7 +736,7 @@ class SemisupVATEvalStep:
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
         if x_u is None:
             x_c = x_all = x_l
             uns_start = 0
@@ -777,7 +779,7 @@ class SemisupVATTrainStep:
         model, attack = trainer.model, trainer.attack
         model.train()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
         x = torch.cat([x_l, x_u])
         x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
 
@@ -820,7 +822,7 @@ class SemisupVATCorrEvalStep:
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
         assert x_u is None
         x = x_l
         x_c, uns_start = (x, 0)
@@ -934,7 +936,7 @@ class MeanTeacherTrainStep:
         model.train()
         teacher.train()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(trainer, batch)
+        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
         x = torch.cat([x_l, x_u])
         x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
 

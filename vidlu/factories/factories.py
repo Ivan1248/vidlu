@@ -88,6 +88,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     """
     from vidlu import data
+    from vidlu.data import Record
 
     if ':' in data_str:
         data_str, transform_str = data_str.split(':', 1)
@@ -102,7 +103,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
         get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [add_stats])
     data = []
     for name, options_str, subsets in name_options_subsets_tuples:
-        options = unsafe_eval(f'dict{options_str or "()"}')
+        options = unsafe_eval(f'dict{options_str or "()"}', dict(Record=Record))
         pds = get_parted_dataset(name, **options)
         k = f"{name}{options_str or ''}"
         for s in subsets:
@@ -110,7 +111,8 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     if transform_str is not None:  # TODO: improve names if necessary
         transforms = {k: v for k, v in vars(vdu.dataset_ops).items() if not k.startswith('_')}
-        values = unsafe_eval(transform_str, dict(**transforms, d=[v for k, v in data]))
+        values = unsafe_eval(transform_str, dict(**transforms, d=[v for k, v in data],
+                                                 Record=Record))
         data = [((f'data{i}', 'sub0'), v) for i, v in enumerate(values)]
     return data  # not dict since elements can repeat
 
@@ -223,10 +225,15 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     import torchvision.models as tvmodels
     from fractions import Fraction as Frac
 
-    if prep_dataset is None and (problem is None or init_input is None):
-        raise ValueError("If `prep_dataset` is `None`, `problem` and `init_input` are required.")
+    if prep_dataset is None:
+        if problem is None or init_input is None:
+            raise ValueError(
+                "If `prep_dataset` is `None`, `problem` and `init_input` are required.")
+    else:
+        problem = problem or defaults.get_problem_from_dataset(prep_dataset)
 
-    problem = problem or defaults.get_problem_from_dataset(prep_dataset)
+    if init_input is None and prep_dataset is not None:
+        init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
@@ -264,8 +271,6 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         _print_args_messages('Model', model_class, model_f, dict(), verbosity=verbosity)
 
     model = model_f()
-    if init_input is None and prep_dataset is not None:
-        init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
     build_and_init_model(model, init_input, device)
     model.eval()
 

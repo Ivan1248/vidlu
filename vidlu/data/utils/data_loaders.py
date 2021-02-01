@@ -9,6 +9,7 @@ from vidlu.data.dataset import Dataset
 from vidlu.data.record import Record
 import vidlu.data.utils.samplers as samplers
 from vidlu.utils.misc import broadcast
+from vidlu.utils.func import params, partial
 
 
 def _1_or_more(type):
@@ -110,6 +111,13 @@ def mixed_data_loader(*datasets: T.Sequence[Dataset],
 #
 #     return data_loader_f()
 
+def mixed_semisup_collate(batch, collate):
+    labeled = collate([r.labeled for r in batch])
+    y_l = collate([r.y for lab, r in zip(labeled, batch) if lab])
+    x = collate([r.x for lab, r in zip(labeled, batch) if lab]
+                + [r.x for lab, r in zip(labeled, batch) if not lab])
+    return Record(x_l=x[:len(y_l)], x_u=x[len(y_l):], y_l=y_l)
+
 
 def morsic_semisup_data_loader(
         ds_l: Dataset, ds_u: Dataset,
@@ -117,16 +125,21 @@ def morsic_semisup_data_loader(
         labeled_multiplier: T.Union[int, T.Callable[[int, int], int]] = \
                 lambda l, u: max(1, int(u / l)),
         **kwargs):
+    if kwargs.get("shuffle", False):
+        raise ValueError("The shuffle argument should be False.")
     nl, nu = len(ds_l), len(ds_u)
     if callable(labeled_multiplier):
         labeled_multiplier = labeled_multiplier(nl, nu)
+    ds_l = ds_l.map(lambda r: Record(x=r[0], y=r[1], labeled=True))
+    ds_u = ds_u.map(lambda r: Record(x=r[0], y=None, labeled=False))
     ds_all = ds_l.join(ds_u)
     indices_l = list(range(nl)) * labeled_multiplier
     indices_u = list(range(nl, nl + nu))
     indices = indices_l * labeled_multiplier + indices_u
     sampler = tud.SubsetRandomSampler(indices=indices)
-    if kwargs.get("shuffle", False):
-        raise ValueError("The shuffle argument should be False.")
+    kwargs['collate_fn'] = partial(
+        mixed_semisup_collate,
+        collate=(kwargs if 'collate_fn' in kwargs else params(data_loader_f))['collate_fn'])
     return data_loader_f(ds_all, sampler=sampler, shuffle=False, **kwargs)
 
 

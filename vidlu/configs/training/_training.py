@@ -151,18 +151,18 @@ semisup_cons_phtps20_entmin_l = TrainerConfig(
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True, entropy_loss_coef=1),
 )
 
-semisup_cons_phtps20_seg = TrainerConfig(
+semisup_cons_phtps20_l_seg = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True),
     data_loader_f=partial(
         vdu.simple_or_multi_data_loader,
         data_loader_f=vd.DataLoader,
         multi_data_loader_f=partial(vdu.morsic_semisup_data_loader,
                                     labeled_multiplier=lambda l, u: int(max(1, u / l))),
-        num_workers=2,
+        num_workers=6,
     ),
 )
 
@@ -180,7 +180,8 @@ mean_teacher_custom_tps_weaker = TrainerConfig(
     partial(
         te.SemisupVAT,
         attack_f=partial(tps_warp_attack, initializer=pert.NormalInit({'offsets':
-                                                                       (0, 0.05)}), projection=None,
+                                                                           (0, 0.05)}),
+                         projection=None,
                          step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
@@ -266,7 +267,7 @@ ladder_densenet = TrainerConfig(
     classification,
     optimizer_f=OptimizerMaker(optim.SGD, [dict(params='backbone.backbone', lr=1e-4)], lr=5e-4,
                                momentum=0.9, weight_decay=1e-4),
-    lr_scheduler_f=partial(ScalableLR, lr_lambda=lambda p: (1 - p)**1.5),
+    lr_scheduler_f=partial(ScalableLR, lr_lambda=lambda p: (1 - p) ** 1.5),
     epoch_count=40,
     batch_size=4,
     jitter=jitter.SegRandHFlip(),
