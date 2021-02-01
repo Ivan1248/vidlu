@@ -14,7 +14,7 @@ import vidlu.data.utils as vdu
 from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
-from vidlu.utils.misc import Event, Stopwatch
+from vidlu.utils.misc import Event, Stopwatch, broadcast
 import vidlu.configs.training as vct
 
 
@@ -307,9 +307,13 @@ class Trainer(Evaluator):
         self._initialized = True
 
     def train(self, *datasets, restart=False):
-        datasets_jittered = [ds.map(self.jitter) for ds in datasets] if self.jitter else datasets
-        data_loader = self.data_loader_f(
-            *datasets_jittered, drop_last=True, batch_size=self.batch_size)
+        if self.jitter is not None:
+            jitters = broadcast(self.jitter, len(datasets))
+            datasets_jitt = [ds.map(self.jitter, func_name='jitter')
+                             for jitter, ds in zip(jitters, datasets)]
+        else:
+            datasets_jitt = datasets
+        data_loader = self.data_loader_f(*datasets_jitt, drop_last=True, batch_size=self.batch_size)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None):
