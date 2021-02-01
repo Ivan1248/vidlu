@@ -100,7 +100,7 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
                 cmd = "breakpoint()"
             else:
                 cmd = optional_input
-            print(f"Variables: " + ",".join(locals().keys()))
+            print(f"Variables: " + ", ".join(locals().keys()))
             exec(cmd)
         except Exception as e:
             print(f'Cannot execute "{optional_input}". Error:\n{e}.')

@@ -21,8 +21,8 @@ def filter_valid(items):
 
 
 # Datasets
-DATASETS = filter_valid([os.environ.get("VIDLU_DATASETS", None), _find('data/datasets'),
-                         _find('datasets'), Path('/tmp/')])
+DATASETS = filter_valid([Path(p) if (p := os.environ.get("VIDLU_DATASETS", None)) else None,
+                         _find('data/datasets'), _find('datasets'), Path('/tmp/')])
 
 # Pre-trained parameters
 PRETRAINED = Path(os.environ.get("VIDLU_PRETRAINED", None) or _find('data/pretrained_parameters'))
