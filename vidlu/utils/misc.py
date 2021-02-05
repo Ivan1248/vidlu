@@ -109,9 +109,8 @@ class Event:
         return RemovableHandle(self, handler)  # can be used as context manager or decorator
 
     def handler(self, handler: callable):
-        """A method that adds an event handler (callback) and returns it. It
-        should only be used as a decorator. `add_handler` should be used
-        otherwise."""
+        """Adds an event handler (callback) and returns it. It should only be
+        used as a decorator. `add_handler` should be used otherwise."""
         self.handlers.append(handler)
         return handler
 

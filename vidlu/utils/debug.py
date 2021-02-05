@@ -7,7 +7,7 @@ from argparse import Namespace
 
 from vidlu.utils.collections import FileDict
 
-# STATE - any state should be kept here#############################################################
+# STATE - any state should be kept here ############################################################
 state = Namespace()
 
 
