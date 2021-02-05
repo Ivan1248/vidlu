@@ -1,14 +1,14 @@
 from functools import partialmethod
 from .misc import default_collate
-from warnings import warn
 import typing as T
 
 import torch.utils.data as tud
+import numpy as np
 
 
 class DataLoader(tud.DataLoader):
     """DataLoader class with support for `Record`-typed examples."""
-    __init__ = partialmethod(tud.DataLoader.__init__, collate_fn=default_collate)
+    __init__ = partialmethod(tud.DataLoader.__init__, collate_fn=default_collate, drop_last=True)
 
 
 class BatchTuple(tuple):
@@ -16,30 +16,36 @@ class BatchTuple(tuple):
     pass
 
 
-def _check_zip_data_loader_sizes(data_loaders, primary_index):
-    N = len(data_loaders[primary_index if primary_index != 'equal' else 0])
-    if primary_index != 'equal':
-        if any(len(dl) < N for dl in data_loaders):
-            warn(f"The primary dataset is smaller than a/the secondary.")
-    else:
-        if any(len(dl) != N for dl in data_loaders):
-            warn(f"The argument {primary_index=} does not allow different numbers of batches"
-                 + f" per dataset, {[len(d) for d in data_loaders]=}")
+def _repeat(iterable, n):
+    for _ in range(n):
+        yield from iterable
 
 
 class ZipDataLoader:
     """A data loader that produces tuples of batches from multiple data loaders"""
-    __slots__ = '_data_loaders', '_len'
 
     def __init__(self, *data_loaders,
-                 primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = None):
+                 primary_index: T.Optional[
+                     T.Union[int, T.Literal['longest', 'shortest', 'equal']]] = 'shortest'):
         self._data_loaders = data_loaders
-        self._len = min(len(d) for d in self._data_loaders)
-        if primary_index is not None:
-            _check_zip_data_loader_sizes(data_loaders, primary_index)
+        lengths = np.array([len(d) for d in self._data_loaders])
+        if primary_index == 'equal':
+            if np.any(lengths != lengths[0]):
+                raise RuntimeError(f"Data loaders are of the same length. Lengths={lengths}.")
+            primary_index = 0
+        elif not isinstance(primary_index, int):
+            primary_index = (np.argmin(lengths) if primary_index == 'shortest' else
+                             np.argmax(lengths) if primary_index == 'longest' else
+                             0)
+        self._len = lengths[primary_index]
+        self._repeats = None if self._len == min(lengths) else \
+            [1 if l == self._len else int(self._len / l + 1) for l in lengths]
+        self._primary_index = primary_index
 
     def __iter__(self):
-        return map(BatchTuple, zip(*self._data_loaders))
+        iterators = self._data_loaders if self._repeats is None else \
+            [_repeat(d, r) for d, r in zip(self._data_loaders, self._repeats)]
+        return map(BatchTuple, zip(*iterators))
 
     def __len__(self):
         return self._len

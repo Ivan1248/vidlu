@@ -1,10 +1,9 @@
 import typing as T
-from numbers import Real
 
 import numpy as np
 import torch.utils.data as tud
 
-from vidlu.data.data_loader import ZipDataLoader, DataLoader
+from vidlu.data import ZipDataLoader, DataLoader
 from vidlu.data.dataset import Dataset
 from vidlu.data.record import Record
 import vidlu.data.utils.samplers as samplers
@@ -26,8 +25,9 @@ class TMultiDataLoaderF(T.Protocol):
 
 
 def zip_data_loader(*datasets: T.Sequence,
-                    data_loader_f: TDataLoaderF,
-                    primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = 0,
+                    data_loader_f: TDataLoaderF = DataLoader,
+                    primary_index: T.Optional[
+                        T.Union[int, T.Literal['longest', 'shortest', 'equal']]] = 0,
                     **kwargs):
     """Creates a ZipDataLoader instance with `D = len(datasets)` datasets.
 
@@ -49,11 +49,13 @@ def zip_data_loader(*datasets: T.Sequence,
     kwargs = {k: broadcast(v, dataset_count, seq_type=list) for k, v in kwargs.items()}
     data_loaders = [dl_f(ds, **{k: kwargs[k][i] for k in kwargs})
                     for i, (ds, dl_f) in enumerate(zip(datasets, data_loader_fs))]
+    if not all([dl.drop_last for dl in data_loaders]):
+        raise ValueError("drop_last should be True.")
     return ZipDataLoader(*data_loaders, primary_index=primary_index)
 
 
 def simple_or_zip_data_loader(*datasets,
-                              data_loader_f: TDataLoaderF,
+                              data_loader_f: TDataLoaderF = DataLoader,
                               primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = 0,
                               **kwargs):
     return data_loader_f(*datasets, **kwargs) if len(datasets) == 1 else \
@@ -62,7 +64,7 @@ def simple_or_zip_data_loader(*datasets,
 
 
 def simple_or_multi_data_loader(*datasets,
-                                data_loader_f: TDataLoaderF,
+                                data_loader_f: TDataLoaderF = DataLoader,
                                 multi_data_loader_f: TMultiDataLoaderF,
                                 **kwargs):
     return data_loader_f(*datasets, **kwargs) if len(datasets) == 1 else \
@@ -70,7 +72,7 @@ def simple_or_multi_data_loader(*datasets,
 
 
 def mixed_data_loader(*datasets: T.Sequence[Dataset],
-                      data_loader_f: TDataLoaderF,
+                      data_loader_f: TDataLoaderF = DataLoader,
                       dataset_weights: T.Sequence[int] = None,
                       example_weights: T.Sequence[T.Sequence[float]] = None,
                       **kwargs):
@@ -121,7 +123,7 @@ def mixed_semisup_collate(batch, collate):
 
 def morsic_semisup_data_loader(
         ds_l: Dataset, ds_u: Dataset,
-        data_loader_f: TDataLoaderF,
+        data_loader_f: TDataLoaderF = DataLoader,
         labeled_multiplier: T.Union[int, T.Callable[[int, int], int]] = \
                 lambda l, u: max(1, int(u / l)),
         **kwargs):
@@ -161,7 +163,8 @@ def morsic_semisup_data_loader(
 
 
 def multiset_data_loader(
-        dataset: T.Tuple[Dataset], data_loader_f: TDataLoaderF,
+        dataset: T.Tuple[Dataset],
+        data_loader_f: TDataLoaderF = DataLoader,
         multiplicities: T.Sequence[T.Sequence[int]] = None,
         **kwargs):
     sampler = samplers.multiset_sampler(multiplicities, dataset)
