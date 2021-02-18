@@ -73,7 +73,7 @@ def load_image(path, downsampling):
         raise ValueError("`downsampling` must be an `int`.")
     img = _load_image(path)
     if downsampling > 1:
-        img = tvtf.resize(img, np.flip(img.size) // downsampling, pimg.BILINEAR)
+        img = tvtf.resize(img, tuple(np.flip(img.size) // downsampling), pimg.BILINEAR)
     return img
 
 
@@ -98,7 +98,7 @@ def load_segmentation_with_downsampling(path, downsampling, id_to_label=None,
 
     lab = _load_image(path, force_rgb=False)
     if downsampling > 1:
-        lab = tvtf.resize(lab, np.flip(lab.size) // downsampling, pimg.NEAREST)
+        lab = tvtf.resize(lab, tuple(np.flip(lab.size) // downsampling), pimg.NEAREST)
 
     if len(lab.getbands()) != 1:  # for rgb labels
         lab = np.array(lab)
