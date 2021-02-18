@@ -75,9 +75,10 @@ def train(args):
     training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
     exp.trainer.train(*training_datasets.values(), restart=False)
 
-    print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
-    for name, ds in training_datasets.items():
-        exp.trainer.eval(ds)
+    if not args.no_train_evaluation:
+        print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
+        for name, ds in training_datasets.items():
+            exp.trainer.eval(ds)
     log_run('done')
 
     print(f"RNG seed: {seed}")
@@ -135,7 +136,7 @@ def add_standard_arguments(parser, func):
                         help='A comma-separated list of metrics.')
     # device
     parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.",
-                        default="cuda:0")
+                        default=None)
     # experiment result saving, state checkpoints
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
@@ -149,6 +150,8 @@ def add_standard_arguments(parser, func):
                         help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_test", action='store_true',
                         help="Skip testing before training.")
+    parser.add_argument("--no_train_evaluation", action='store_true',
+                        help="No evaluation on the training set.")
     parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: `int(time()) % 100`.")
     # reporting, debugging
