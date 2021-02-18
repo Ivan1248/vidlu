@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 import typing as T
 
+
 class Problem(Enum):
     CLASSIFICATION = 'classification'
     SEMANTIC_SEGMENTATION = 'semantic_segmentation'
@@ -16,7 +17,7 @@ class ProblemInfo:
 
 @dataclass
 class Supervised(ProblemInfo):
-    class_count: int
+    pass
 
 
 @dataclass

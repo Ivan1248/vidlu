@@ -1026,7 +1026,7 @@ class PrintAround(Module):
 
 class Breakpoint(Module):
     def forward(self, x):
-        breakpoint()
+        (breakpoint)()
         return x
 
     def inverse_module(self) -> nn.Module:

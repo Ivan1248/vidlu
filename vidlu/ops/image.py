@@ -8,16 +8,17 @@ def _rgb_to_hcmm(im):
     # https://en.wikipedia.org/wiki/HSL_and_HSV
     R, G, B = (im[..., i, :, :] for i in range(3))
 
-    M, m = im.max(-3)[0], im.min(-3)[0]
+    M, m = im.max(-3).values, im.min(-3).values
     C = M - m  # chroma
+    C_zero = C == 0
 
-    C_div = torch.where(C == 0, C.new_tensor(1.), C)
-    maxg, maxb = (x == M for x in (G, B))
+    C_div = torch.where(C_zero, C.new_tensor(1.), C)
+    maxg, maxb = (G == M, B == M)
 
     H = (G - B).div_(C_div)
     H[maxg] = (B - R).div_(C_div)[maxg].add_(2.)
     H[maxb] = (R - G).div_(C_div)[maxb].add_(4.)
-    H[m == M] = 0.0
+    H[C_zero] = 0.
     H = (H / 6.0) % 1.0
 
     return H, C, M, m
@@ -34,7 +35,6 @@ def rgb_to_hsv(im):
     Returns:
         torch.Tensor: HSV image.
     """
-
     H, C, M, m = _rgb_to_hcmm(im)
     S = C / torch.where(M == 0, M.new_tensor(1.), M)
     return torch.stack([H, S, M], dim=-3)
