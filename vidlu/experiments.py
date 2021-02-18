@@ -15,7 +15,7 @@ from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.misc import indent_print
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
-from vidlu.utils.misc import try_input, Stopwatch
+from vidlu.utils.misc import try_input, Stopwatch, query_user
 
 
 # TODO: logger instead of verbosity
@@ -40,7 +40,7 @@ class TrainingExperimentFactoryArgs:
 
 
 def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, data, logger,
-                                 main_metrics: T.Sequence[str]):
+                                 main_metrics: T.Sequence[str], training_report_freq=4):
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
@@ -58,18 +58,26 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
                                     log="\n".join(logger.lines),
                                     epoch=es.epoch))
 
-    def report_metrics(es, is_validation=False):
+    def report_metrics(es, is_validation=False, line_width=120,
+                       special_format: T.Mapping[str, T.Callable[[str], str]] = None):
+        special_format = special_format or {}
+
         def eval_str(metrics):
             def fmt(v):
-                return (f"{v:.4f}".lstrip('0') if isinstance(v, float) else
-                        (f"\n{v}" if v.ndim > 1 else v) if isinstance(v, np.ndarray) else
-                        str(v))
+                with np.printoptions(precision=2, threshold=20 if is_validation else 4,
+                                     linewidth=120, floatmode='maxprec_equal', suppress=True):
+                    return (f"{v:.4f}".lstrip('0') if isinstance(v, float) else
+                            f"\n{v}" if isinstance(v, np.ndarray) and v.ndim > 1 else
+                            str(v).replace('0.', '.'))
 
-            with np.printoptions(precision=2, threshold=20 if is_validation else 4, linewidth=120,
-                                 floatmode='maxprec_equal', suppress=True):
-                return ', '.join([f"{fmt(v)}MiB" if k == 'mem' else
-                                  f"{fmt(v)[:-2]}/s" if k == 'freq' else
-                                  f"{k}={fmt(v)}" for k, v in metrics.items()])
+            parts, line_len = [], 0
+            for k, v in metrics.items():
+                parts.append(special_format[k](fmt(v)) if k in special_format else f"{k}={fmt(v)}")
+                if len(lines := parts[-1].splitlines()) > 1 or \
+                        line_len + len(parts[-1]) > line_width:
+                    line_len = len(lines[-1])
+                    parts[-1] = f"\n{parts[-1]}"
+            return ', '.join(parts)
 
         metrics = trainer.get_metric_values(reset=True)
 
@@ -96,8 +104,7 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
             if optional_input == 'i':
                 cmd = "embed()"
             elif optional_input == 'd':
-                # For some other debugger, you can set e.g. PYTHONBREAKPOINT=pudb.set_trace.
-                cmd = "breakpoint()"
+                cmd = "breakpoint()"  # For some other debugger, change PYTHONBREAKPOINT
             else:
                 cmd = optional_input
             print(f"Variables: " + ", ".join(locals().keys()))
@@ -107,10 +114,11 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
-        if es.iteration % es.batch_count % (max(1, es.batch_count // 5)) == 0:
+        if es.iteration % es.batch_count % (max(1, es.batch_count // training_report_freq)) == 0:
             remaining = es.batch_count - es.iteration % es.batch_count
             if remaining >= es.batch_count // 5 or remaining == 0:
-                report_metrics(es)
+                report_metrics(es, special_format={'mem': lambda v: f'{v}MiB',
+                                                   'freq': lambda v: f'{v}/s'})
 
         interact(es)
 
@@ -163,7 +171,11 @@ class TrainingExperiment:
 
         with indent_print("Setting device..."):
             if a.device is None:
-                a.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+                if torch.cuda.device_count() == 0 \
+                        and not query_user("No GPU found. Are you sure you want to continue?",
+                                           timeout=10, default='y'):
+                    raise RuntimeError("No GPU available.")
+                a.device = torch.device("cuda:0" if torch.cuda.device_count() > 0 else "cpu")
             elif a.device == "auto":
                 from vidlu import gpu_utils
                 a.device = torch.device(
