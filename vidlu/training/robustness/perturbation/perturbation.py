@@ -53,7 +53,7 @@ class ChannelGammaHsv(PertModel):
 
 
 class Photometric20(PertModel):
-    def __init__(self, clamp=True, forward_arg_count=None):
+    def __init__(self, clamp, forward_arg_count=None):
         module = vm.Seq(to_hsv=PertModel(voi.rgb_to_hsv, forward_arg_count=1),
                         add_v=vmi.Add((2, 3), slice=s_[:, 2:, ...]),
                         mul_s=vmi.Multiply((2, 3), slice=s_[:, 1:2, ...]),
@@ -68,12 +68,12 @@ class Photometric20(PertModel):
 
 
 class PhotoTPS20(vm.Seq):
-    def __init__(self, clamp=True, forward_arg_count=None):
+    def __init__(self, clamp, forward_arg_count=None):
         super().__init__(photometric=Photometric20(clamp, forward_arg_count=forward_arg_count),
                          tps=vmi.BackwardTPSWarp())
 
 
 class PhotoWarp1(vm.Seq):
-    def __init__(self, clamp=True, forward_arg_count=None, sigma=3):
+    def __init__(self, clamp, forward_arg_count=None, sigma=3):
         super().__init__(warp=vmf.argtree_partial(vmi.SmoothWarp, smooth_f=t(sigma=sigma))(),
                          photometric=Photometric20(clamp, forward_arg_count))
