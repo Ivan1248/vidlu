@@ -44,7 +44,7 @@ def broadcast(obj: T.Union[object, T.Sequence], n: int, seq_type=T.Sequence) -> 
 
 def import_module(path):  # from morsic
     import importlib
-    spec = importlib.util.spec_from_file_location("module", path)
+    spec = importlib.util.spec_from_file_location(Path(path).stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -145,21 +145,22 @@ def try_input(default=None):
 
 
 def query_user(question, default=None, timeout=np.inf, options=None):
-    if timeout is not np.inf and default is None:
-        raise ValueError("`default` should be defined if `timeout` is finite.")
-
     options = options or dict(y=True, n=False)
+    if timeout is not np.inf and default not in options:
+        raise ValueError(f"`default` should have a value from {set(options.keys())} when `timeout`"
+                         + " is finite.")
+
     options_str = "/".join(f"{{{c}}}" if c == default else c for c in options)
     while True:
         sys.stdout.write(f'{question} [{options_str}]: ')
         sys.stdout.flush()
         sw = Stopwatch().start()
-        no_input = id(sw)
+        inp = no_input = id(sw)
         while sw.time < timeout:
             time.sleep(0.1)
             if (inp := try_input(default=no_input)) is not no_input:
                 break
-        if inp == "":
+        if inp in [no_input, ""]:
             return options[default]
         elif inp in options:
             return options[inp]
