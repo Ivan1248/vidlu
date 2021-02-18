@@ -151,18 +151,22 @@ semisup_cons_phtps20_entmin_l = TrainerConfig(
     train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True, entropy_loss_coef=1),
 )
 
-semisup_cons_phtps20_l_seg = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
-                                        output_to_target=lambda x: x)),
+semisup_cons_phtps20_seg = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
+                             output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+)
+
+semisup_cons_phtps20_seg_morsic = TrainerConfig(
+    semisup_cons_phtps20_seg,
     data_loader_f=partial(
         vdu.simple_or_multi_data_loader,
         data_loader_f=vd.DataLoader,
         multi_data_loader_f=partial(vdu.morsic_semisup_data_loader,
                                     labeled_multiplier=lambda l, u: int(max(1, u / l))),
-        num_workers=6,
+        num_workers=2,
     ),
 )
 
@@ -287,6 +291,11 @@ swiftnet_cityscapes = TrainerConfig(
     eval_batch_size=4,  # 6
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
 )
+
+swiftnet_cityscapes_halfres = TrainerConfig(
+    swiftnet_cityscapes,
+    batch_size=16,
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(480, 480), max_scale=1.5, overflow=0))
 
 swiftnet_irevnet_hybrid_cityscapes = TrainerConfig(
     swiftnet_cityscapes,
