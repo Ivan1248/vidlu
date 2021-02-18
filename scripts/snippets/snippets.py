@@ -248,7 +248,7 @@ def show_adversarial_examples(trainer, state, **kwargs):
         N = 16
         x_c = state.output.x[:N]
         x_p = state.output.x_p[:N]
-        #x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.output.target[:N])
+        # x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.output.target[:N])
         diff = 0.5 + (x_p - x_c) * 255 / 80
         pred = state.output.other_outputs_p.hard_prediction[:len(state.output.target)]
         target = state.output.target
@@ -262,8 +262,8 @@ def show_adversarial_examples(trainer, state, **kwargs):
             if class_repr[c] is None:
                 class_repr[c] = state.output.x[i]
         for i, x in enumerate(class_repr):
-             if x is None:
-                 class_repr[c] = 0 * x_p[0]
+            if x is None:
+                class_repr[c] = 0 * x_p[0]
 
         predicted_class_representatives = list(map(class_repr.__getitem__, pred[:N]))
 
@@ -402,7 +402,8 @@ def visualize_inverse_adv_examples(trainer, state, **kwargs):
     xs_adv = xs_adv[:n]
     deltas = xs_adv - xs + 0.5
 
-    images = [to_pil_image(x.cpu().clamp(-0.999, 0.999)) for x in chain(xs, xs_adv, deltas, xs_adv2[:n])]
+    images = [to_pil_image(x.cpu().clamp(-0.999, 0.999)) for x in
+              chain(xs, xs_adv, deltas, xs_adv2[:n])]
 
     h = 4  # len(images) // w
     w = len(images) // h  # int(len(images) ** 0.5 + 0.5)
@@ -594,8 +595,9 @@ def noisy_batchnorm_stats(trainer: "vidlu.training.Trainer", state, data, **kwar
     for n in ns:
         bs = min(n, trainer.batch_size)
 
-        data_train = trainer.simple_or_zip_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
-                                                       batch_size=bs, shuffle=False, drop_last=True)
+        data_train = trainer.simple_or_zip_data_loader(
+            data.train.map(trainer.jitter) if jitter else data.train,
+            batch_size=bs, shuffle=False, drop_last=True)
         for m in [m for m in model.modules() if isinstance(m, nn.BatchNorm2d)]:
             m.momentum = None
             m.reset_running_stats()
@@ -642,8 +644,9 @@ def batchnorm_ensemble(trainer, state, data, **kwargs):
 
     @torch.no_grad()
     def model_iter(model, n=3, batch_count=16):
-        data_train = trainer.simple_or_zip_data_loader(data.train.map(trainer.jitter) if jitter else data.train,
-                                                       batch_size=trainer.batch_size, shuffle=True, drop_last=True)
+        data_train = trainer.simple_or_zip_data_loader(
+            data.train.map(trainer.jitter) if jitter else data.train,
+            batch_size=trainer.batch_size, shuffle=True, drop_last=True)
         for i in range(n):
             for m in [m for m in model.modules() if isinstance(m, nn.BatchNorm2d)]:
                 m.momentum = None
@@ -667,7 +670,8 @@ def batchnorm_ensemble(trainer, state, data, **kwargs):
         return s
 
     for n in ns:
-        trainer.eval_step = ClassifierEnsembleEvalStep(model_iter=partial(model_iter, n=n), combine=combine)
+        trainer.eval_step = ClassifierEnsembleEvalStep(model_iter=partial(model_iter, n=n),
+                                                       combine=combine)
         print(f"\nN = {n}")
         with torch.no_grad():
             s = trainer.eval(data.test)
@@ -689,4 +693,20 @@ def batchnorm_ensemble(trainer, state, data, **kwargs):
 
 batchnorm_ensemble(**locals())
 
+
 # 8e-6
+
+def view_perturbed_inputs(state, **kwargs):
+    import matplotlib.pyplot as plt
+    from torchvision.utils import make_grid
+    print(list(state.output.keys()))
+    for x in [state.output.x_p, state.output.output_p]:
+        plt.figure()
+        x = x[:, :3, :, :]
+        x = make_grid(x, int(len(x) ** 0.5 + 0.5))
+        x = x.clamp(0, 1)
+        plt.imshow(x.detach().cpu().permute(1, 2, 0).numpy())
+        plt.show()
+
+
+view_perturbed_inputs(**locals())

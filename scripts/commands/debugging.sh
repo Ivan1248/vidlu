@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(*d[0].split(1/8),d[1])" id "BackbonelessSegmentator" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,optimizer_f=optim.Adam,batch_size=12,eval_batch_size=4,epoch_count=300"
