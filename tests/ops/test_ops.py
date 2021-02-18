@@ -5,8 +5,7 @@ from vidlu.torch_utils import save_grads
 
 class TestSaveGrads:
     def test_save_grads(self):
-        x = torch.tensor([1.])
-        x.requires_grad_()
+        x = torch.tensor([2.], requires_grad=True)
         (x ** 2).backward()
 
         pre_grad = x.grad.detach().clone()
