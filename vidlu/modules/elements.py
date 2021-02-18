@@ -328,7 +328,9 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
                 result = self._check_call(*input, **kwargs)
             else:
                 result = super().__call__(*input, **kwargs)
-            return TeName.add(result, vmu.try_get_module_name_from_call_stack(self))
+            # try_get_module_name_from_call_stack is slow
+            # return TeName.add(result, vmu.try_get_module_name_from_call_stack(self))
+            return result
         except Exception as e:
             name = vmu.try_get_module_name_from_call_stack(self)
             error_message = f"Error in {name}, {type(self).__name__}"
@@ -1425,13 +1427,13 @@ def get_submodule(root_module, path: T.Union[str, T.Sequence]) -> T.Union[Module
         path = [] if path == '' else path.split('.')
     for name in path:
         if not hasattr(root_module, name):
-            built_message = ("is not fully initialized (built) and"
+            built_message = (" is not fully initialized (built) and"
                              if isinstance(root_module, Module) and not root_module.is_built()
                              else "")
             raise AttributeError(
-                f"The '{type(root_module).__name__}' instance {built_message}"
-                + f" has no submodule '{name}'. It has"
-                + f" children: {', '.join(list(k for k, v in root_module.named_children()))}.")
+                f"The '{type(root_module).__name__}' instance{built_message}"
+                + f" has no submodule '{name}'. It has children"
+                + f" {', '.join(list(k for k, v in root_module.named_children()))}.")
         root_module = getattr(root_module, name)
     return root_module
 
