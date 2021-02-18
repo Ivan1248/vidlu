@@ -75,7 +75,8 @@ mnistnet_tent_eval_attack = partial(attacks.PGDAttack,
 morsic_tps_warp_attack = partial(attacks.PertModelAttack,
                                  # pert_model_f=partial(vmi.MorsicTPSWarp, grid_shape=(2, 2),
                                  #                      label_padding_mode='zeros'),
-                                 pert_model_f=partial(pert.PhotoTPS20, forward_arg_count=1),
+                                 pert_model_f=partial(pert.PhotoTPS20, clamp=False,
+                                                      forward_arg_count=1),
                                  # initializer=lambda pmodel: pmodel.theta.uniform_(-.1, .1),
                                  initializer=lambda pmodel: vmi.reset_parameters(pmodel),
                                  step_size=0.01,
@@ -121,8 +122,8 @@ tps_warp_attack = partial(
     projection=pert.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
 
 phtps_attack_20 = partial(
-    tps_warp_attack,
-    pert_model_f=pert.PhotoTPS20,
+    attacks.PertModelAttack,
+    pert_model_f=partial(pert.PhotoTPS20, clamp=False),
     initializer=pert.MultiInit(
         tps=pert.NormalInit({'offsets': (0, 0.1)}),
         photometric=pert.UniformInit(
@@ -130,7 +131,10 @@ phtps_attack_20 = partial(
              'module.mul_s.factor': [0.25, 2.],
              'module.add_h.addend': [-0.1, 0.1],
              'module.mul_v.factor': [0.25, 2.]})),
-    projection=None)
+    projection=None,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    step_size=0.01,  # 0.01 the image height/width
+)
 
 phw_attack_1 = partial(
     attacks.PertModelAttack,
