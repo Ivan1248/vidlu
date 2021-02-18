@@ -141,7 +141,7 @@ class Model(M.Module):
     def initialize(self, input=None):
         if input is not None:
             self(input)
-        self._init(module=self)
+        self._init(self)
 
 
 class SeqModel(M.Seq):
@@ -173,13 +173,13 @@ class ClassificationModel(DiscriminativeModel):
 class LogisticRegression(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=partial(M.Reshape, (-1, 1, 1)),
-                             init=partial(initialization.kaiming_resnet, module=Reserved))
+                             init=initialization.kaiming_resnet)
 
 
 class SegmentationModel(DiscriminativeModel):
     def forward(self, x, shape=None):
-        with self.head.register_forward_pre_hook(
-                lambda m, h: (h[0], x.shape[-2:] if shape is None else shape)):
+        inject_shape = lambda m, h: (h[0], x.shape[-2:] if shape is None else shape)
+        with self.head.register_forward_pre_hook(inject_shape):
             return super().forward(x)
 
 
@@ -219,7 +219,7 @@ class DenseNet(ClassificationModel):
 
 class IRevNet(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__, backbone_f=irevnet_backbone,
-                             init=partial(initialization.kaiming_resnet, module=Reserved))
+                             init=initialization.kaiming_resnet)
 
     def post_build(self, *args, **kwargs):
         super().post_build()
@@ -231,7 +231,7 @@ class IRevNet(ClassificationModel):
 class MNISTNet(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=mnistnet.MNISTNetBackbone,
-                             init=partial(initialization.kaiming_mnistnet, module=Reserved))
+                             init=initialization.kaiming_mnistnet)
 
 
 class SwiftNetBase(SegmentationModel):
@@ -240,7 +240,7 @@ class SwiftNetBase(SegmentationModel):
                  ladder_width=128,
                  head_f=vmc.heads.SegmentationHead,
                  input_adapter=None,
-                 init=partial(initialization.kaiming_resnet, module=Reserved),
+                 init=initialization.kaiming_resnet,
                  laterals=None,  # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  mem_efficiency=1):
@@ -282,7 +282,6 @@ class SwiftNet(SwiftNetBase):
         super().post_build()
 
         set_inplace(self, self.mem_efficiency >= 1)
-
         if self.lateral_suffix == 'sum':
             for lb in self.laterals:
                 vm.get_submodule(self.backbone.backbone, f"{lb}.act").inplace = False
@@ -326,7 +325,15 @@ class LadderDensenet(DiscriminativeModel):
                                             laterals=laterals,
                                             ladder_width=ladder_width),
                          head_f=head_f,
-                         init=partial(initialization.kaiming_resnet, module=Reserved),
+                         init=initialization.kaiming_resnet,
+                         input_adapter=input_adapter)
+
+
+class BackbonelessSegmentator(DiscriminativeModel):
+    def __init__(self, head_f=Empty, input_adapter=None):
+        super().__init__(backbone_f=vm.Identity,
+                         head_f=head_f,
+                         init=lambda m: m,
                          input_adapter=input_adapter)
 
 

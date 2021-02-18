@@ -217,6 +217,17 @@ def build_and_init_model(model, init_input, device):
         model(init_input)
 
 
+def get_additional_namespaces(env_var_name):
+    import os
+    paths = os.environ.get(env_var_name, None)
+    result = []
+    if paths is not None:
+        from vidlu.utils.misc import import_module
+        for path in paths.split(':'):
+            result.append(import_module(path))
+    return result
+
+
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
     from torch import nn
@@ -224,6 +235,11 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     import vidlu.modules.components as vmc
     import torchvision.models as tvmodels
     from fractions import Fraction as Frac
+
+    additional_namespaces = get_additional_namespaces("VIDLU_GET_MODEL_NAMESPACES")
+    namespace = dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
+                     partial=partial, Reserved=Reserved, Frac=Frac,
+                     **{ans.__name__: ans for ans in additional_namespaces})
 
     if prep_dataset is None:
         if problem is None or init_input is None:
@@ -240,19 +256,24 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
     if model_name[0] in "'\"":  # torch.hub
         return unsafe_eval(f"torch.hub.load({model_str})")
+    elif hasattr(models, model_name):
+        model_class = getattr(models, model_name)
+    else:
+        for ns in additional_namespaces:
+            if model_name in vars(ns):
+                model_class = getattr(ns, model_name)
+                break
+        else:
+            model_class = unsafe_eval(model_name, namespace)
 
-    model_class = getattr(models, model_name)
     argtree = defaults.get_model_argtree_for_problem(model_class, problem)
     input_adapter = get_input_adapter(
         input_adapter_str, problem=problem,
         data_statistics=(None if prep_dataset is None
                          else prep_dataset.info.cache['standardization']))
     if argtree is not None:
-        argtree_arg = (
-            unsafe_eval(f"t({argtree_arg[0]})",
-                        dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
-                             partial=partial, Reserved=Reserved, Frac=Frac))
-            if len(argtree_arg) == 1 else vuf.ArgTree())
+        argtree_arg = (unsafe_eval(f"t({argtree_arg[0]})", namespace)
+                       if len(argtree_arg) == 1 else vuf.ArgTree())
         argtree.update(argtree_arg)
 
         model_f = vuf.argtree_partial(
@@ -357,6 +378,7 @@ def short_symbols_for_get_trainer():
     from vidlu.training.robustness import attacks
     from vidlu.transforms import jitter
     import vidlu.utils.func as vuf
+    from vidlu.utils.func import partial
     tc = ct  # backward compatibility
     t = vuf.ArgTree
     return locals()
@@ -371,9 +393,9 @@ def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
     default_config = ct.TrainerConfig(**defaults.get_trainer_args(config.extension_fs, dataset))
     trainer_f = partial(Trainer, **ct.TrainerConfig(default_config, config).normalized())
 
+    trainer = trainer_f(model=model)
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
-
-    return trainer_f(model=model)
+    return trainer
 
 
 get_trainer.help = \
