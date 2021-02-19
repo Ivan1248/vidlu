@@ -214,7 +214,7 @@ WRN = WideResNet
 class DenseNet(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=densenet_backbone,
-                             init=partial(initialization.kaiming_densenet, module=Reserved))
+                             init=initialization.kaiming_densenet)
 
 
 class IRevNet(ClassificationModel):

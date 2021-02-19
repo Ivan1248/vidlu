@@ -24,6 +24,22 @@ from . import defaults
 unsafe_eval = eval
 
 
+# additional namespaces
+
+def get_extensions():
+    import os
+    paths = os.environ.get("VIDLU_EXTENSIONS", None)
+    result = []
+    if paths is not None:
+        from vidlu.utils.misc import import_module
+        for path in paths.split(':'):
+            result.append(import_module(path))
+    return result
+
+
+extensions = get_extensions()
+
+
 # Factory messages #################################################################################
 
 def _print_all_args_message(func):
@@ -217,17 +233,6 @@ def build_and_init_model(model, init_input, device):
         model(init_input)
 
 
-def get_additional_namespaces(env_var_name):
-    import os
-    paths = os.environ.get(env_var_name, None)
-    result = []
-    if paths is not None:
-        from vidlu.utils.misc import import_module
-        for path in paths.split(':'):
-            result.append(import_module(path))
-    return result
-
-
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
               prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
     from torch import nn
@@ -236,15 +241,13 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     import torchvision.models as tvmodels
     from fractions import Fraction as Frac
 
-    additional_namespaces = get_additional_namespaces("VIDLU_GET_MODEL_NAMESPACES")
     namespace = dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
                      partial=partial, Reserved=Reserved, Frac=Frac,
-                     **{ans.__name__: ans for ans in additional_namespaces})
+                     **{ans.__name__: ans for ans in extensions})
 
     if prep_dataset is None:
         if problem is None or init_input is None:
-            raise ValueError(
-                "If `prep_dataset` is `None`, `problem` and `init_input` are required.")
+            raise ValueError("`problem` and `init_input` are required if `prep_dataset` is `None`.")
     else:
         problem = problem or defaults.get_problem_from_dataset(prep_dataset)
 
@@ -257,41 +260,34 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     if model_name[0] in "'\"":  # torch.hub
         return unsafe_eval(f"torch.hub.load({model_str})")
     elif hasattr(models, model_name):
-        model_class = getattr(models, model_name)
+        model_f = getattr(models, model_name)
     else:
-        for ns in additional_namespaces:
+        for ns in extensions:
             if model_name in vars(ns):
-                model_class = getattr(ns, model_name)
+                model_f = getattr(ns, model_name)
                 break
         else:
-            model_class = unsafe_eval(model_name, namespace)
+            model_f = unsafe_eval(model_name, namespace)
+    model_class = model_f
 
-    argtree = defaults.get_model_argtree_for_problem(model_class, problem)
+    argtree = defaults.get_model_argtree_for_problem(model_f, problem)
     input_adapter = get_input_adapter(
         input_adapter_str, problem=problem,
         data_statistics=(None if prep_dataset is None
                          else prep_dataset.info.cache['standardization']))
-    if argtree is not None:
-        argtree_arg = (unsafe_eval(f"t({argtree_arg[0]})", namespace)
-                       if len(argtree_arg) == 1 else vuf.ArgTree())
-        argtree.update(argtree_arg)
-
-        model_f = vuf.argtree_partial(
-            model_class,
-            **argtree,
-            input_adapter=input_adapter)
-        _print_args_messages('Model', model_class, model_f, argtree, verbosity=verbosity)
+    if len(argtree) > 0:
+        if len(argtree_arg) != 0:
+            argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
+        model_f = vuf.argtree_partial(model_f, **argtree)
+    _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
+                         verbosity=verbosity)
+    if "input_adapter" in vuf.params(model_f):
+        model = model_f(input_adapter=input_adapter)
     else:
-        if "input_adapter" not in vuf.params(model_class):
-            if input_adapter_str != "id":
-                raise RuntimeError(f'The model does not support an input adapter.'
-                                   + f' Only "id" is supported, not "{input_adapter_str}".')
-            model_f = model_class
-        else:
-            model_f = partial(model_class, input_adapter=input_adapter)
-        _print_args_messages('Model', model_class, model_f, dict(), verbosity=verbosity)
+        model = model_f()
+        if input_adapter_str != 'id':
+            model.register_forward_pre_hook(lambda m, x: input_adapter(x))
 
-    model = model_f()
     build_and_init_model(model, init_input, device)
     model.eval()
 

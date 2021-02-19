@@ -53,9 +53,8 @@ def get_model_argtree_for_problem(model_class, problem):
     elif model_class.__module__.startswith('torchvision.models'):
         if isinstance(problem, Classification):
             return ArgTree(num_classes=problem.class_count)
-    else:
-        return None
-        warnings.warn(f"get_model_argtree: Unknown model type {model_class}")
+    warnings.warn(f"get_model_argtree: Unknown model type {model_class}")
+    return ArgTree()
 
 
 # Trainer/Evaluator ################################################################################
