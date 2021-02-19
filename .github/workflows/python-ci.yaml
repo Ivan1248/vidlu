@@ -29,5 +29,5 @@ jobs:
       run: |
         pip install pytest
         pip install pytest-cov
-#         python -m pytest tests/ --cov=com --cov-report=xml --cov-report=html --ignore scripts/
-          python -m pytest tests/ --ignore scripts/
+          # python -m pytest tests/ --cov=com --cov-report=xml --cov-report=html --ignore scripts/
+          python -m pytest tests/ --cov=com --cov-report=xml --cov-report=html --ignore scripts/
