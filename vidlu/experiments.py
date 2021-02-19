@@ -40,7 +40,11 @@ class TrainingExperimentFactoryArgs:
 
 
 def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, data, logger,
-                                 main_metrics: T.Sequence[str], training_report_freq=4):
+                                 main_metrics: T.Sequence[str], min_eval_count=100,
+                                 min_train_eval_count=1000):
+    special_format = {'mem': lambda v: f'{v}MiB',
+                      'freq': lambda v: f'{v}/s'}
+
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
         logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
@@ -49,7 +53,8 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
 
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
-        if es.epoch % max(1, len(data.test) // len(data.train)) == 0 \
+        eval_period = max(1, int(trainer.epoch_count // min_eval_count))
+        if es.epoch % eval_period == 0 \
                 or es.epoch == es.max_epochs - 1:
             es_val = trainer.eval(data.test)
             cpman.save(trainer.state_dict(),
@@ -114,15 +119,17 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
-        if es.iteration % es.batch_count % (max(1, es.batch_count // training_report_freq)) == 0:
+        iter = es.iteration % es.batch_count
+        report_period = max(1, int(trainer.epoch_count * es.batch_count // min_train_eval_count))
+        if iter % report_period == 0:
             remaining = es.batch_count - es.iteration % es.batch_count
             if remaining >= es.batch_count // 5 or remaining == 0:
-                report_metrics(es, special_format={'mem': lambda v: f'{v}MiB',
-                                                   'freq': lambda v: f'{v}/s'})
+                report_metrics(es, special_format=special_format)
 
         interact(es)
 
-    trainer.evaluation.epoch_completed.add_handler(partial(report_metrics, is_validation=True))
+    trainer.evaluation.epoch_completed.add_handler(
+        partial(report_metrics, special_format=special_format, is_validation=True))
 
 
 def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
