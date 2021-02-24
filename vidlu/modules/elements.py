@@ -343,8 +343,8 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     def __getattr__(self, name: str) -> T.Union[torch.Tensor, nn.Module]:
         try:
             return super().__getattr__(name)
-        except nn.modules.module.ModuleAttributeError as e:
-            raise nn.modules.module.ModuleAttributeError(
+        except AttributeError as e:
+            raise AttributeError(
                 f"{type(self).__name__} object has no attribute '{name}'."
                 + "".join(f"\nAvaliable {k[1:]}: {', '.join(names)}."
                           if (names := getattr(self, k, None)) else ""
