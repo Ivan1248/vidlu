@@ -1,7 +1,9 @@
+import os
 import re
 from pathlib import Path
 from argparse import Namespace
 import typing as T
+from warnings import warn
 
 import torch
 import numpy as np
@@ -17,6 +19,7 @@ from vidlu.utils.collections import NameDict
 import vidlu.utils.func as vuf
 from vidlu.utils.func import Reserved
 from vidlu.utils.func import partial
+from vidlu.utils.misc import import_module
 
 from . import defaults
 
@@ -24,20 +27,20 @@ from . import defaults
 unsafe_eval = eval
 
 
-# additional namespaces
+# Extensions #######################################################################################
 
 def get_extensions():
-    import os
     paths = os.environ.get("VIDLU_EXTENSIONS", None)
-    result = []
-    if paths is not None:
-        from vidlu.utils.misc import import_module
-        for path in paths.split(':'):
-            result.append(import_module(path))
-    return result
+    if paths is None:
+        return []
+    paths = [Path(p) for p in paths.split(os.path.sep)]  # split on ':' (Linux)
+    for p in paths:
+        if not p.exists():
+            warn(f"Extension path {p} does not exist.")
+    return map(import_module, paths)
 
 
-extensions = get_extensions()
+extensions = {e.__name__: e for e in get_extensions()}
 
 
 # Factory messages #################################################################################
@@ -201,13 +204,15 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
     import vidlu.modules as M
     from vidlu.factories.problem import Supervised
     from vidlu.transforms import image as imt
+    import vidlu.configs.data.stats as cds
     if isinstance(problem, Supervised):
         if input_adapter_str.startswith("standardize"):
             if input_adapter_str == "standardize":
                 stats = dict(mean=torch.from_numpy(data_statistics.mean),
                              std=torch.from_numpy(data_statistics.std))
             else:
-                stats = unsafe_eval("dict(" + input_adapter_str[len("standardize("):])
+                stats = unsafe_eval("dict(" + input_adapter_str[len("standardize("):],
+                                    {**vars(cds), **extensions})
                 stats = {k: torch.tensor(v) for k, v in stats.items()}
             return M.Func(imt.Standardize(**stats), imt.Destandardize(**stats))
         elif input_adapter_str == "id":  # min 0, max 1 is expected for images
@@ -242,8 +247,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     from fractions import Fraction as Frac
 
     namespace = dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
-                     partial=partial, Reserved=Reserved, Frac=Frac,
-                     **{ans.__name__: ans for ans in extensions})
+                     partial=partial, Reserved=Reserved, Frac=Frac, **extensions)
 
     if prep_dataset is None:
         if problem is None or init_input is None:
@@ -262,9 +266,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     elif hasattr(models, model_name):
         model_f = getattr(models, model_name)
     else:
-        for ns in extensions:
-            if model_name in vars(ns):
-                model_f = getattr(ns, model_name)
+        for ext in extensions.values():
+            if model_name in vars(ext):
+                model_f = getattr(ext, model_name)
                 break
         else:
             model_f = unsafe_eval(model_name, namespace)
