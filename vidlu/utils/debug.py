@@ -5,8 +5,6 @@ from datetime import datetime
 import inspect
 from argparse import Namespace
 
-from vidlu.utils.collections import FileDict
-
 # STATE - any state should be kept here ############################################################
 state = Namespace()
 
@@ -87,6 +85,3 @@ def here_state(id=None, new_value=old_value):
     if new_value is not old_value:
         state[(here_state, id)] = new_value
     return value
-
-
-FileDict = FileDict
