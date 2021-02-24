@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import typing as T
 import numpy as np
+import time
+import os
 
 import torch
 import torch.nn as nn
@@ -39,23 +41,35 @@ class TrainingExperimentFactoryArgs:
 # Component factories (or factory wrappers) ########################################################
 
 
-def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, data, logger,
-                                 main_metrics: T.Sequence[str], min_eval_count=100,
-                                 min_train_eval_count=1000):
-    special_format = {'mem': lambda v: f'{v}MiB',
-                      'freq': lambda v: f'{v}/s'}
+def get_eval_iters(eval_count, iter_count):
+    """Evenly distributes 0-based iteration indices."""
+    if eval_count > iter_count:
+        return set(range(eval_count))
+    return set(np.linspace(0.5, iter_count + 0.5, eval_count + 1, dtype=int)[1:] - 1)
+
+
+def define_training_loop_actions(trainer: Trainer,
+                                 cpman: CheckpointManager,
+                                 data, logger,
+                                 main_metrics: T.Sequence[str],
+                                 eval_count=200,
+                                 min_train_eval_count=800,
+                                 interact_shortcuts=dict(i='embed()'),
+                                 special_format={'mem': lambda v: f'{v}MiB',
+                                                 'freq': lambda v: f'{v:.1f}/s'},
+                                 line_width=120):
+    sleepiness = 0
+    eval_epochs = get_eval_iters(eval_count, trainer.epoch_count)
 
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
-        logger.log(f"Starting epoch {es.epoch}/{es.max_epochs}"
+        logger.log(f"Epoch {es.epoch + 1}/{es.max_epochs}"
                    + f" ({es.batch_count} batches,"
                    + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
 
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
-        eval_period = max(1, int(trainer.epoch_count // min_eval_count))
-        if es.epoch % eval_period == 0 \
-                or es.epoch == es.max_epochs - 1:
+        if es.epoch in eval_epochs:
             es_val = trainer.eval(data.test)
             cpman.save(trainer.state_dict(),
                        summary=dict(logger=logger.state_dict(),
@@ -63,21 +77,22 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
                                     log="\n".join(logger.lines),
                                     epoch=es.epoch))
 
-    def report_metrics(es, is_validation=False, line_width=120,
+    def report_metrics(es, is_validation=False, line_width=line_width,
                        special_format: T.Mapping[str, T.Callable[[str], str]] = None):
         special_format = special_format or {}
 
         def eval_str(metrics):
             def fmt(v):
                 with np.printoptions(precision=2, threshold=20 if is_validation else 4,
-                                     linewidth=120, floatmode='maxprec_equal', suppress=True):
+                                     linewidth=line_width, floatmode='maxprec_equal',
+                                     suppress=True):
                     return (f"{v:.4f}".lstrip('0') if isinstance(v, float) else
                             f"\n{v}" if isinstance(v, np.ndarray) and v.ndim > 1 else
                             str(v).replace('0.', '.'))
 
             parts, line_len = [], 0
             for k, v in metrics.items():
-                parts.append(special_format[k](fmt(v)) if k in special_format else f"{k}={fmt(v)}")
+                parts.append(special_format[k](v) if k in special_format else f"{k}={fmt(v)}")
                 if len(lines := parts[-1].splitlines()) > 1 or \
                         line_len + len(parts[-1]) > line_width:
                     line_len = len(lines[-1])
@@ -90,10 +105,14 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
             epoch_fmt, iter_fmt = f'{len(str(es.max_epochs))}d', f'{len(str(es.batch_count))}d'
             iter_ = es.iteration % es.batch_count
             prefix = ('val' if is_validation
-                      else f'{format(es.epoch, epoch_fmt)}.'
-                           + f'{format((iter_ - 1) % es.batch_count + 1, iter_fmt)}')
+                      else f'{format(es.epoch + 1, epoch_fmt)}.'
+                           + f'{format(iter_ % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
             # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
+
+    def set_sleepiness(x):
+        nonlocal sleepiness
+        sleepiness = x
 
     # noinspection PyUnresolvedReferences
     @trainer.evaluation.started.handler
@@ -104,14 +123,9 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
 
         from IPython import embed
         from vidlu.utils.presentation import visualization
-        nonlocal trainer, data
+        nonlocal trainer, data, set_sleepiness, sleepiness
         try:
-            if optional_input == 'i':
-                cmd = "embed()"
-            elif optional_input == 'd':
-                cmd = "breakpoint()"  # For some other debugger, change PYTHONBREAKPOINT
-            else:
-                cmd = optional_input
+            cmd = interact_shortcuts.get(optional_input, optional_input)
             print(f"Variables: " + ", ".join(locals().keys()))
             exec(cmd)
         except Exception as e:
@@ -119,14 +133,15 @@ def define_training_loop_actions(trainer: Trainer, cpman: CheckpointManager, dat
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
+        eval_iters = get_eval_iters(max(1, min_train_eval_count // trainer.epoch_count),
+                                    es.batch_count)
         iter = es.iteration % es.batch_count
-        report_period = max(1, int(trainer.epoch_count * es.batch_count // min_train_eval_count))
-        if iter % report_period == 0:
-            remaining = es.batch_count - es.iteration % es.batch_count
-            if remaining >= es.batch_count // 5 or remaining == 0:
-                report_metrics(es, special_format=special_format)
+        if iter in eval_iters:
+            report_metrics(es, special_format=special_format)
 
         interact(es)
+        if sleepiness > 0:
+            time.sleep(sleepiness)
 
     trainer.evaluation.epoch_completed.add_handler(
         partial(report_metrics, special_format=special_format, is_validation=True))
