@@ -33,7 +33,7 @@ val_evals = []
 r"""
 scanner_action = [
     (FormatScanner(
-        "[([:\d]+)] Starting epoch {epoch:(\d+)}/(\d+) (\(){batches:(\d+)} batches(\)), lr=[([^\]])]",
+        "[([:\d]+)] Epoch {epoch:(\d+)}/(\d+) (\(){batches:(\d+)} batches(\)), lr=[([^\]])]",
         full_match=False),
      lambda batches: batches_per_epoch.append(batches)),
     (FormatScanner("[([:\d]+)] {epoch:(\d+)}.{last_batch(\d+)}: {evaluation:(.*)}",
@@ -48,7 +48,7 @@ scanner_action = [
 
 scanner_action = [
     # batches_per_epoch, epoch_lr
-    (lambda x: parse.parse("{} Starting epoch {epoch:d}/{:d} ({batches:d} batches, lr={lr:e}{}",
+    (lambda x: parse.parse("{} Epoch {epoch:d}/{:d} ({batches:d} batches, lr={lr:e}{}",
                            x).named,
      lambda epoch, batches, lr: (print(batches), (batches_per_epoch.append(batches),
                                                   epoch_lr.append(NameDict(epoch=epoch, lr=lr))))),

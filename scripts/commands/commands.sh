@@ -82,10 +82,30 @@ rsync -avzhe ssh --progress pretrained_parameters/ igrubisic@treebeard:/home/igr
 
 # Semi-supervised consistency
 
+#  CIFAR
 python run.py train "train,train_u,test:Cifar10{trainval,test}:(rotating_labels(d[0])[:4000],d[0],d[1])" id "WRN,backbone_f=t(depth=28,width_factor=2,small_input=True)" "tc.wrn_cifar,tc.semisup_cons_phtps20,batch_size=[128,512],eval_batch_size=640,epoch_count=1000,train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False)"
 
+# CS
 python run.py train "train,train_u,test:Cityscapes{train,val}:(*d[0].split(1/8),d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,batch_size=8,eval_batch_size=4,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 python run.py train "train,train_u,test:Cityscapes{train,val}:(d[0],d[0],d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,batch_size=8,eval_batch_size=4,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
+# CS halfres
 python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(d[0],d[0],d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,tc.semisup_cons_phtps20_seg,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+# Swiftnet CS halfres sup
+CUDA_VISIBLE_DEVICES=0 python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0][:1448],d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*2" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0][:744],d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*4" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0][:372],d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0][:100],d[1])" "standardize(mean=[73.15/255,82.9/255,72.3/255],std=[47.67/255,48.49/255,47.73/255])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=9000" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0][:100],d[1])" "standardize(imagenet_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=9000" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0][:100],d[1])" "standatdize(imagenet_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=9000" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"

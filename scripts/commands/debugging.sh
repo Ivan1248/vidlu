@@ -1,1 +1,3 @@
 CUDA_VISIBLE_DEVICES=1 python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(*d[0].split(1/8),d[1])" id "BackbonelessSegmentator" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,optimizer_f=optim.Adam,batch_size=12,eval_batch_size=4,epoch_count=300"
+
+VIDLU_EXTENSIONS=/home/igrubisic/projects/vidlu/libs/hardnet/models/FChardnet.py CUDA_VISIBLE_DEVICES=0 python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(d[0],d[0],d[1])" id "FChardnet.FChardnet" "tc.swiftnet_cityscapes_halfres,tc.semisup_cons_phtps20_seg,optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=5e-4),epoch_count=200,batch_size=8"
