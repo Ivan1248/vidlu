@@ -404,8 +404,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
 def _init_pert_model(pert_model, x, initializer=None, projection=None):
     if pert_model is None:
         pert_model = vmi.Add(())
-    if not vm.is_built(pert_model, including_submodules=True):
-        pert_model(x)  # parameter shapes have to be inferred from x
+    vm.call_if_not_built(pert_model, x)  # parameter shapes have to be inferred from x
     with torch.no_grad():
         if initializer is not None:
             initializer(pert_model, x)

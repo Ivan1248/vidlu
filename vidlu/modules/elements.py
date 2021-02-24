@@ -241,11 +241,6 @@ class InitializableMixin:
 
 # Core Modules #####################################################################################
 
-def is_built(module, including_submodules=False):
-    return all(not hasattr(m, "is_built") or m.is_built(False)
-               for m in itertools.chain([module], module.modules() if including_submodules else []))
-
-
 @_replaces('Module')
 class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     """ An abstract module class that supports shape inference and checks
@@ -257,7 +252,7 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
 
     def __init__(self):
         super().__init__()
-        self._built = False
+        self._built = False if self._defines_build_or_post_build() else None
         self._check = None
         self._mode = dict()
         self._forward_check_pre_hooks = dict()
@@ -381,9 +376,13 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         else:
             setattr(self, attribute_name, NameDict(args))
 
-    def is_built(self, including_submodules=False):
-        if including_submodules:
-            return all(not hasattr(m, "is_built") or m.is_built(False) for m in self.modules())
+    @classmethod
+    def _defines_build_or_post_build(cls):
+        return cls.build != Module.build or cls.post_build != Module.post_build
+
+    def is_built(self, thorough=False):
+        if thorough:
+            return is_built(self, thorough=True)
         return self._built
 
     def build(self, *args, **kwargs):
@@ -425,6 +424,18 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         handle = hooks.RemovableHandle(self._forward_pre_hooks)
         self._forward_check_pre_hooks[handle.id] = hook
         return handle
+
+
+def is_built(module: T.Union[nn.Module, Module], thorough=False):
+    if hasattr(module, "is_built"):
+        b = module.is_built()
+        if not (thorough and b) and b is not None:
+            return module.is_built()
+    return all(is_built(m, thorough) for m in module.children())
+
+
+def call_if_not_built(module: T.Union[nn.Module, Module], *args, **kwargs):
+    return module(*args, **kwargs) if not is_built(module) else None
 
 
 @_replaces('Identity')

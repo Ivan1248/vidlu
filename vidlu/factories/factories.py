@@ -229,8 +229,8 @@ def build_and_init_model(model, init_input, device):
         if size.min() > 128:  # for faster initialization
             init_input = init_input[:, :, :128, :128]
         model.initialize(init_input)
-    elif not vm.is_built(model, including_submodules=True):
-        model(init_input)
+    else:
+        vm.call_if_not_built(model, init_input)
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,

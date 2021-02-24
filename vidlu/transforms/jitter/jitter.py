@@ -39,7 +39,7 @@ class PhTPS20:
         x, y = x
         x_ = x.unsqueeze(0)
         with torch.no_grad():
-            if not vm.is_built(self.pert_model, including_submodules=True):
+            if not vm.is_built(self.pert_model):
                 self.pert_model(x_)
                 for p in self.pert_model.parameters():
                     p.requires_grad = False
