@@ -44,13 +44,15 @@ class State(NameDict):
 
 
 class Engine(object):
-    """Runs a given process_function over each batch of a dataset, emitting events as it goes.
+    """Runs a given process_function over each batch of a dataset, emitting
+     events as it goes.
 
     Taken from Ignite (https://pytorch.org/ignite) and modified.
 
     Args:
-        process_function (Callable): A function receiving a handle to the engine and the current batch
-            in each iteration, and returns data to be stored in the engine's state
+        iter_procedure (Callable): A procedure receiving a handle to the engine
+            and the current batch in each iteration, and returns data to be
+            stored in the engine's state.
 
     Example usage:
 
@@ -72,10 +74,10 @@ class Engine(object):
 
     """
 
-    def __init__(self, process_function):
-        self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-        self._logger.addHandler(logging.NullHandler())
-        self._process_function = process_function
+    def __init__(self, iter_procedure):
+        self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+        self.logger.addHandler(logging.NullHandler())
+        self.iter_procedure = iter_procedure
         self.should_terminate = False
         self.should_terminate_epoch = False
         self.state = State()
@@ -88,14 +90,14 @@ class Engine(object):
         self.iter_started = Event()
         self.iter_completed = Event()
 
-        if self._process_function is None:
+        if self.iter_procedure is None:
             raise ValueError("Engine must be given a processing function in order to run.")
 
     def terminate(self):
         """Sends terminate signal to the engine, so that it terminates completely the run after the
         current iteration
         """
-        self._logger.info(
+        self.logger.info(
             "Terminate signaled. Engine will stop after current iteration is finished.")
         self.should_terminate = True
 
@@ -103,21 +105,21 @@ class Engine(object):
         """Sends terminate signal to the engine, so that it terminates the current epoch after the
         current iteration
         """
-        self._logger.info("Terminate current epoch is signaled. Current epoch iteration will stop"
+        self.logger.info("Terminate current epoch is signaled. Current epoch iteration will stop"
                           + " after current iteration is finished.")
         self.should_terminate_epoch = True
 
     def _run_once_on_dataset(self):
         for batch in self.state.data_loader:
-            self.state.iteration += 1
             self.state.batch = batch
             self.iter_started(self.state)
-            self.state.output = self._process_function(self, batch)
+            self.state.output = self.iter_procedure(self, batch)
             self.iter_completed(self.state)
             del self.state.batch, self.state.output
             if self.should_terminate or self.should_terminate_epoch:
                 self.should_terminate_epoch = False
                 break
+            self.state.iteration += 1
 
     def run(self, data, max_epochs=1, restart=True):
         """Runs the `process_function` over the passed data.
@@ -136,25 +138,23 @@ class Engine(object):
 
         self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
 
-        self._logger.info(f"Engine run starting with max_epochs={max_epochs}.")
+        self.logger.info(f"Engine run starting with max_epochs={max_epochs}.")
         with Stopwatch() as sw_total:
             self.started(self.state)
             if self.state.epoch >= max_epochs:
                 warn("All epochs are already completed.")
             while self.state.epoch < max_epochs and not self.should_terminate:
-                self.state.epoch += 1
                 self.epoch_started(self.state)
                 with Stopwatch() as sw_epoch:
                     self._run_once_on_dataset()
                 hours, mins, secs = _to_hours_mins_secs(sw_epoch.time)
-                self._logger.info(
+                self.logger.info(
                     f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}.")
-                if self.should_terminate:
-                    break
                 self.epoch_completed(self.state)
+                self.state.epoch += 1
             self.completed(self.state)
         hours, mins, secs = _to_hours_mins_secs(sw_total.time)
-        self._logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}.")
+        self.logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}.")
         return self.state
 
     def state_dict(self):
