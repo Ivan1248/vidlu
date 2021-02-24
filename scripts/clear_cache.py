@@ -4,6 +4,7 @@ from functools import partial
 # noinspection PyUnresolvedReferences
 import _context
 import vidlu.data.utils as vdu
+from vidlu.data import clear_hdd_cache
 
 import dirs
 
@@ -17,4 +18,4 @@ get_data = vdu.CachingDatasetFactory(
 pds = get_data(args.ds)
 
 for k, ds in pds.items():
-    ds.clear_hdd_cache()
+    clear_hdd_cache(ds)

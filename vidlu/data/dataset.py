@@ -67,30 +67,24 @@ class Dataset(abc.Sequence):
     dataset, and ``__getitem__`` for supporting integer indexing with indexes
     from {0 .. len(self)-1}.
     """
-    __slots__ = ("name", "subset", "modifiers", "info", "data")
-    _instance_count = 0
 
     def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
                  info: T.Mapping = None, data=None):
-        self.name = name or getattr(data, 'name', None)
-        if self.name is None:
-            if type(self) is Dataset:
-                self.name = 'Dataset' + str(Dataset._instance_count)
-                Dataset._instance_count += 1
-            cname = type(self).__name__
-            self.name = cname[:-len('Dataset')] if cname.endswith('Dataset') else cname
+        self.name = name or getattr(data, 'name', None) or type(self).__name__
         self.subset = subset or getattr(data, 'subset', None)
-        self.modifiers = list(getattr(data, 'modifiers', []))
-        if modifiers:
-            self.modifiers += [modifiers] if isinstance(modifiers, str) else modifiers
+        self.modifiers = list(getattr(data, 'modifiers', [])) \
+                         + [modifiers] if isinstance(modifiers, str) else (modifiers or [])
         self.info = NameDict(info or getattr(data, 'info', dict()))
         self.data = data
 
     def download_if_necessary(self, data_dir):
-        if not data_dir.exists():
+        if not self.is_available(data_dir):
             if not query_user(f'Dataset not found in {data_dir}. Would you like to download it?'):
                 raise FileNotFoundError(f"The dataset doesn't exist in {data_dir}.")
             self.download(data_dir)
+
+    def files_available(self, data_dir):
+        return data_dir.exists()
 
     def download(self, data_dir):
         raise TypeError(f"Dataset downloading not available for {type(self).__name__}.")
@@ -149,16 +143,8 @@ class Dataset(abc.Sequence):
     def approx_example_size(self, sample_count=4):
         return pickle_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
 
-    def batch(self, batch_size, **kwargs):  # Element type is tuple
-        """
-        Creates a dataset where elements are grouped in `batch_size`-tuples. The
-        last tuple may be smaller.
-        """
-        return BatchDataset(self, batch_size, **kwargs)
-
     def sample(self, length, replace=False, seed=53, **kwargs):
-        """
-        Creates a dataset with randomly chosen elements with or without
+        """Creates a dataset with randomly chosen elements with or without
         replacement.
         """
         return SampleDataset(self, length=length, replace=replace, seed=seed, **kwargs)
@@ -184,6 +170,20 @@ class Dataset(abc.Sequence):
         """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
 
+    def info_cache(self, name_to_func, **kwargs):
+        """Caches the dataset in RAM.
+
+        It can be useful to automatically
+        cache preprocessed data without modifying the original dataset and make
+        data loading faster.
+
+        Args:
+            name_to_func (Mapping): a mapping from cache field names to
+                procedures that are to be called to lazily evaluate the fields.
+            **kwargs: additional arguments for the Dataset initializer.
+        """
+        return InfoCacheDataset(self, name_to_func, **kwargs)
+
     def info_cache_hdd(self, name_to_func, directory, **kwargs):
         """Computes, adds, adn caches and caches dataset.info.cache attributes. .
 
@@ -200,60 +200,27 @@ class Dataset(abc.Sequence):
         """
         return HDDInfoCacheDataset(self, name_to_func, directory, **kwargs)
 
-    def info_cache(self, name_to_func, **kwargs):
-        """Caches the dataset in RAM.
-
-        It can be useful to automatically
-        cache preprocessed data without modifying the original dataset and make
-        data loading faster.
-
-        Args:
-            name_to_func (Mapping): a mapping from cache field names to
-                procedures that are to be called to lazily evaluate the fields.
-            **kwargs: additional arguments for the Dataset initializer.
-        """
-        return InfoCacheDataset(self, name_to_func, **kwargs)
-
-    def collate(self, collate_func=None, func_name=None, **kwargs):
-        """ Collates examples of a batch dataset or a zip dataset. """
-        return CollateDataset(self, collate_func, func_name=func_name, **kwargs)
-
-    def filter(self, predicate, *, func_name=None, progress_bar=None, **kwargs):
-        """
-        Creates a dataset containing only the elements for which `func` evaluates
-        to True.
-        """
-        indices = np.array(list(self.filter_indices(predicate, progress_bar=progress_bar)))
-        func_name = func_name or f'{_subset_hash(indices):x}'
-        return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
-
-    def filter_indices(self, predicate, progress_bar=None):
-        """
-        Returns the indices of elements matching the predicate.
-        """
+    def matching_indices(self, predicate, progress_bar=None):
+        """Returns the indices of elements matching the predicate."""
+        if not callable(predicate) and isinstance(predicate, T.Sequence):
+            return self._multi_matching_indices(predicate, progress_bar)
         if progress_bar:
             return (i for i, d in enumerate(progress_bar(self)) if predicate(d))
         return (i for i, d in enumerate(self) if predicate(d))
 
-    def filter_split_indices(self, predicates, progress_bar=None):
+    def filter(self, predicate, *, func_name=None, progress_bar=None, **kwargs):
+        """Creates a dataset containing only the elements for which `func`
+        evaluates to True.
         """
-        Splits the dataset indices into disjoint subsets matching predicates.
-        """
-        progress_bar = progress_bar or (lambda x: x)
-        indiceses = [[] for _ in range(len(predicates) + 1)]
-        for i, d in enumerate(progress_bar(self)):
-            for j, p in enumerate(predicates):
-                if p(d):
-                    indiceses[j].append(i)
-                    break
-                indiceses[-1].append(i)
-        return indiceses
+        indices = np.array(list(self.matching_indices(predicate, progress_bar=progress_bar)))
+        func_name = func_name or f'{_subset_hash(indices):x}'
+        return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
 
     def filter_split(self, predicates, *, func_names=None, **kwargs):
         """
         Splits the dataset indices into disjoint subsets matching predicates.
         """
-        indiceses = self.filter_split_indices(predicates)
+        indiceses = self._multi_matching_indices(predicates)
         func_names = func_names or [f'{_subset_hash(indices):x}' for indices in indiceses]
         if isinstance(func_names, str):
             func_names = [f"{func_names}_{i}" for i in range(len(predicates) + 1)]
@@ -261,11 +228,11 @@ class Dataset(abc.Sequence):
                 for indices, func_name in zip(indiceses, func_names)]
 
     def map(self, func, *, func_name=None, **kwargs):
-        """ Creates a dataset with elements transformed with `func`. """
+        """Creates a dataset with elements transformed with `func`."""
         return MapDataset(self, func, func_name=func_name, **kwargs)
 
     def map_fields(self, field_to_func, *, func_name=None, **kwargs):
-        """ Creates a dataset with each element transformed with its function.
+        """Creates a dataset with each element transformed with its function.
 
         ds.map_fields(dict(x1=func1, ..., xn=funcn)) does the same as
         ds.map(lambda r: Record(x1=func1(r.x_1), ..., xn=funcn(r.xn), x(n+1)=identity, ...))
@@ -279,13 +246,12 @@ class Dataset(abc.Sequence):
         return EnumeratedDataset(self, offset=offset)
 
     def permute(self, seed=53, **kwargs):
-        """ Creates a permutation of the dataset. """
+        """Creates a permutation of the dataset."""
         indices = np.random.RandomState(seed=seed).permutation(len(self))
-        return SubDataset(self, indices, modifiers="permute({seed})", **kwargs)
+        return SubDataset(self, indices, modifiers=F"permute({seed})", **kwargs)
 
     def repeat(self, number_of_repeats, **kwargs):
-        """
-        Creates a dataset with `number_of_repeats` times the length of the
+        """Creates a dataset with `number_of_repeats` times the length of the
         original dataset so that every `number_of_repeats` an element is
         repeated.
         """
@@ -306,33 +272,8 @@ class Dataset(abc.Sequence):
         name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
 
-    def random(self, length=None, seed=53, **kwargs):
-        """
-        A modified dataset where the indexing operator returns a randomly chosen
-        element which doesn't depend on the index.
-        It is not clear why this would be used instead of a sampler.
-        """
-        return RandomDataset(self, length=length, seed=seed, **kwargs)
-
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
-
-    def clear_hdd_cache(self):
-        import inspect
-        if hasattr(self, 'cache_dir'):
-            shutil.rmtree(self.cache_dir)
-            print(f"Deleted {self.cache_dir}")
-        elif isinstance(self, MapDataset):  # lazyNormalizer
-            cache_path = inspect.getclosurevars(self.func).nonlocals['f'].__self__.cache_path
-            if os.path.exists(cache_path):
-                os.remove(cache_path)
-                print(f"Deleted {cache_path}")
-        if isinstance(self.data, Dataset):
-            self.data.clear_hdd_cache()
-        elif isinstance(self.data, T.Sequence):
-            for ds in self.data:
-                if isinstance(ds, Dataset):
-                    ds.clear_hdd_cache()
 
     @staticmethod
     def from_getitem_func(func, len, **kwargs):
@@ -345,8 +286,39 @@ class Dataset(abc.Sequence):
 
         return Dataset(data=_Data(), **kwargs)
 
+    def _multi_matching_indices(self, predicates, progress_bar=None):
+        """Splits the dataset indices into disjoint subsets matching predicates.
+        """
+        progress_bar = progress_bar or (lambda x: x)
+        indiceses = [[] for _ in range(len(predicates) + 1)]
+        for i, d in enumerate(progress_bar(self)):
+            for j, p in enumerate(predicates):
+                if p(d):
+                    indiceses[j].append(i)
+                    break
+                indiceses[-1].append(i)
+        return indiceses
+
     def _print(self, *args, **kwargs):
         print(*args, f"({self.identifier})", **kwargs)
+
+
+def clear_hdd_cache(ds):
+    import inspect
+    if hasattr(ds, 'cache_dir'):
+        shutil.rmtree(ds.cache_dir)
+        print(f"Deleted {ds.cache_dir}")
+    elif isinstance(ds, MapDataset):  # lazyNormalizer
+        cache_path = inspect.getclosurevars(ds.func).nonlocals['f'].__ds__.cache_path
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
+            print(f"Deleted {cache_path}")
+    if isinstance(ds.data, Dataset):
+        ds.data.clear_hdd_cache()
+    elif isinstance(ds.data, T.Sequence):
+        for ds in ds.data:
+            if isinstance(ds, Dataset):
+                ds.clear_hdd_cache()
 
 
 class FieldsMap:
@@ -404,28 +376,6 @@ class ZipDataset(Dataset):
 
     def __len__(self):
         return len(self.data[0])
-
-
-class CollateDataset(Dataset):
-    def __init__(self, zip_dataset, collate_func=None, func_name=None, **kwargs):
-        if isinstance(collate_func, str):
-            array_type = collate_func  # to avoid lambda self-reference
-            collate_func = lambda b: default_collate(b, array_type)
-        self._collate = collate_func or default_collate
-        batch = zip_dataset[0]
-        if not all(isinstance(e, type(batch[0])) for e in batch[1:]):
-            raise ValueError("All datasets must have the same element type.")
-        if isinstance(zip_dataset, ZipDataset):
-            info = dict(zip_dataset.data[0].info)
-            for ds in zip_dataset.data[1:]:
-                info.update(ds.info)
-        else:
-            info = zip_dataset.info
-        modifier = 'collate' + ('_' + func_name if func_name else '')
-        super().__init__(modifiers=modifier, info=info, data=zip_dataset, **kwargs)
-
-    def get_example(self, idx):
-        return self._collate(self.data[idx])
 
 
 class CacheDataset(Dataset):
@@ -572,7 +522,7 @@ class InfoCacheDataset(Dataset):  # TODO
     @info.setter
     def info(self, value):
         """This is called by the base initializer and (unnecessarily) by pickle
-        if sharing the object between processes."""
+        if the object is shared between processes."""
         self._info = value
 
     def _get_info_cache(self):
@@ -702,41 +652,3 @@ class SampleDataset(Dataset):
 
     def __len__(self):
         return self._len
-
-
-class RandomDataset(Dataset):
-    __slots__ = ("_rand", "_length")
-
-    def __init__(self, dataset, length=None, seed=53, **kwargs):
-        self._rand = np.random.RandomState(seed=seed)
-        args = f"{seed}"
-        if length is not None:
-            args += f",{length}"
-        super().__init__(modifiers=f"random({args})", data=dataset, **kwargs)
-        self._length = length or len(dataset)
-
-    def get_example(self, idx):
-        return self.data[self._rand.randint(0, len(self.data))]
-
-    def __len__(self):
-        return self._length
-
-
-class BatchDataset(Dataset):
-    __slots__ = ("_length", "_batch_size", "_last_batch_size")
-
-    def __init__(self, dataset, batch_size, **kwargs):
-        super().__init__(modifiers=f"batch({batch_size})", data=dataset, **kwargs)
-        self._length = len(self.data) // batch_size
-        self._batch_size = batch_size
-        if len(self.data) > self._length * batch_size:
-            self._length += 1
-        self._last_batch_size = self._batch_size - (self._length * batch_size - len(self.data))
-
-    def get_example(self, idx):
-        batch_size = self._last_batch_size if idx == self._length - 1 else self._batch_size
-        i_start = idx * self._batch_size
-        return tuple(self.data[i] for i in range(i_start, i_start + batch_size))
-
-    def __len__(self):
-        return self._length

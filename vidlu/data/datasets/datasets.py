@@ -282,7 +282,7 @@ class MNIST(Dataset):
         return len(self.y)
 
 
-class SVHNDataset(Dataset):
+class SVHN(Dataset):
     subsets = ['trainval', 'test']
     default_dir = 'SVHN'
 
@@ -372,7 +372,7 @@ class Cifar100(Dataset):
         return len(self.x)
 
 
-class DescribableTexturesDataset(Dataset):
+class DescribableTextures(Dataset):
     subsets = ['trainval', 'test']
 
     def __init__(self, data_dir, subset='trainval'):

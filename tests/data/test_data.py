@@ -101,34 +101,12 @@ class TestDataset:
         assert all(a == b for a, b in zip(ds1 + ds2, ds1.join(ds2)))
         assert all(a == b for a, b in zip(ds1 + ds2, ds[:3]))
 
-    def test_dataset_zip_collate(self):
-        dsa = Dataset(name="Numbers", data=list(range(10)))
-        dsb = dsa.map(lambda x: -x, func_name="neg")
-        dsab = dsa.zip(dsb, dsb)
-        assert len(dsab) == len(dsa)
-        assert type(dsab[0]) is tuple
-        assert all(x[0] == -x[1] == -x[2] for x in dsab)
-        for name, t in [("numpy", np.ndarray), ("torch", torch.Tensor)]:
-            dsab_coll = dsab.collate(name)
-            assert type(dsab_coll[0]) is t and dsab_coll[0].shape == (3,)
-            dsab_coll2 = dsab.zip(dsab).collate(name)
-            assert isinstance(dsab_coll2[0], Sequence) and type(dsab_coll2[0][0]) is t
-            elem = (np.stack if "numpy" else torch.stack)(dsab_coll2[0])
-            assert elem.shape == (3, 2)
-
     def test_dataset_zip_record_join(self):
         dsa = Dataset(name="ds", data=[Record(a=i, b=2 * i) for i in range(8)])
         dsb = Dataset(name="ds", data=[Record(c=4 * i) for i in range(8)])
         dsab = dsa.zip(dsb).map(lambda x: x[0].join(*x[1:]))
         assert len(dsab[0]) == len(dsa[0]) + len(dsb[0])
         assert all(x['c'] == 2 * x['b'] == 4 * x['a'] for x in dsab)
-
-    def test_dataset_batch(self):
-        ds = Dataset(name="Pairs", data=[Record(x=i, y=2 * i) for i in range(10)])
-        ds_b = ds.batch(3)
-        assert len(ds_b) == len(ds_b[:])
-        assert len(ds_b) == (len(ds) + 3 - 1) // 3
-        assert all(len(b) == 3 for b in ds_b[:-1]) and len(ds_b[-1]) == 1
 
     def test_dataset_iter_slice(self):
         ds = Dataset(name="Pairs", data=[Record(x=i, y='y') for i in range(10)])

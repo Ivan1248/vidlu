@@ -30,6 +30,7 @@ class DatasetFactory:
             default_splits = {'all': (('trainval', 'test'), 0.8),
                               'trainval': (('train', 'val'), 0.8)}
         self.default_parts, self.default_splits = default_parts, default_splits
+
         self.ds_to_info = {
             k: _DatasetInfo(v, path=getattr(v, 'default_dir', None))
             for k, v in itertools.chain(*(vars(dm).items() for dm in datasets_modules))
@@ -44,6 +45,7 @@ class DatasetFactory:
             raise KeyError(f'No dataset has the name "{name}".'
                            + f' Available datasets: {", ".join(self.ds_to_info.keys())}.')
         ds_info = self.ds_to_info[name]
+
         subsets = ds_info.cls.subsets
         try:
             path_args = [vup.find_in_directories(self.datasets_dirs, ds_info.path)] \

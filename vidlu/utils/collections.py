@@ -157,9 +157,6 @@ class FileDict(MutableMapping):
         self._dict = state
         self.save()
 
-    def _get_kwargs(self):
-        return self._dict.items()
-
     def keys(self):
         return self._dict.keys()
 
