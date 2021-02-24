@@ -2,7 +2,7 @@ from functools import partial, partialmethod
 import functools
 from fractions import Fraction as Frac
 import typing as T
-import warnings
+from warnings import warn
 import logging
 
 import torch
@@ -243,6 +243,7 @@ class SwiftNetBase(SegmentationModel):
                  init=initialization.kaiming_resnet,
                  laterals=None,  # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
+                 stage_count=None,
                  mem_efficiency=1):
         if lateral_suffix not in ('sum', 'act', ''):
             raise ValueError("lateral_suffix should be either 'sum' or 'act'.")
@@ -255,14 +256,21 @@ class SwiftNetBase(SegmentationModel):
         self.lateral_suffix = lateral_suffix
         self.mem_efficiency = mem_efficiency
         self.ladder_width = ladder_width
+        self.stage_count = stage_count
 
     def build(self, x):
-        backbone = self.backbone
+        should_check = self.laterals is not None
         if self.laterals is None or callable(self.laterals):
-            backbone(x)
-            self.laterals = self.laterals(backbone) if callable(self.laterals) else \
-                ladder_input_names(backbone)
-        self.backbone = vmc.KresoLadderNet(
+            vm.call_if_not_built(self.backbone, x)
+            self.laterals = self.laterals(self.backbone) if callable(self.laterals) else \
+                ladder_input_names(self.backbone)
+        if self.stage_count is not None:
+            self.laterals = self.laterals[-self.stage_count:]
+        if should_check and self.stage_count not in [None, len(self.laterals)]:
+            warn(f"{self.stage_count=} is different from {len(self.laterals)=}.")
+
+        backbone = self.backbone
+        self.backbone = vmc.KresoLadderModel(
             backbone_f=lambda: backbone,
             laterals=[f"{p}.{self.lateral_suffix}" if self.lateral_suffix else
                       p for p in self.laterals],
@@ -320,7 +328,7 @@ class LadderDensenet(DiscriminativeModel):
         if laterals is None:
             laterals = tuple(f"bulk.db{i}.unit{j}.sum" for i, j in zip(range(3), [1] * 3))
             # TODO: automatic based on backbone, split DB3
-        super().__init__(backbone_f=partial(vmc.KresoLadderNet,
+        super().__init__(backbone_f=partial(vmc.KresoLadderModel,
                                             backbone_f=backbone_f,
                                             laterals=laterals,
                                             ladder_width=ladder_width),

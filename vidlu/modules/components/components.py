@@ -588,8 +588,11 @@ class KresoLadder(E.Module):
         self.width, self.up_blend_f = width, up_blend_f
         self.up_blends = None
 
+    def _build(self, stage_count):
+        self.up_blends = nn.ModuleList([self.up_blend_f(self.width) for _ in range(stage_count)])
+
     def build(self, x, skips):
-        self.up_blends = nn.ModuleList([self.up_blend_f(self.width) for _ in range(len(skips))])
+        self._build(len(skips))
 
     def forward(self, x, skips):
         ups = [x]
@@ -613,7 +616,7 @@ class KresoContext(E.Seq):
                                                dilation=[1, 2]))
 
 
-class KresoLadderNet(E.Module):
+class KresoLadderModel(E.Module):
     def __init__(self,
                  backbone_f,
                  laterals: T.Sequence[str],
@@ -625,10 +628,8 @@ class KresoLadderNet(E.Module):
         super().__init__()
         self.backbone = backbone_f()
         self.context = context_f()
-        self.ladder = KresoLadder(ladder_width, up_blend_f)
-
+        self.ladder = KresoLadder(ladder_width, up_blend_f)  # initialized when called
         self.laterals = laterals
-
         self.post_activation = post_activation
         if post_activation:
             defaults = default_args(default_args(up_blend_f).blend_block_f)
