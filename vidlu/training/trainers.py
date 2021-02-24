@@ -106,7 +106,7 @@ class Engine(object):
         current iteration
         """
         self.logger.info("Terminate current epoch is signaled. Current epoch iteration will stop"
-                          + " after current iteration is finished.")
+                         + " after current iteration is finished.")
         self.should_terminate_epoch = True
 
     def _run_once_on_dataset(self):
@@ -211,7 +211,7 @@ class Evaluator:
             self.evaluation.state.metrics = self.get_metric_values()
 
         def evaluation(engine, batch):
-            return self._run_step(self.eval_step, batch)
+            return self._run_step(self.eval_step, batch, synchronize=torch.cuda.is_available())
 
         self.evaluation = Engine(evaluation)
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
@@ -238,12 +238,16 @@ class Evaluator:
             self._reset_metrics()
         return metric_evals
 
-    def _run_step(self, step, batch):
+    def _run_step(self, step, batch, synchronize=False):
         batch = self.prepare_batch(batch)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
+        if synchronize:
+            torch.cuda.synchronize()
         with Stopwatch() as t:
             output = step(self, batch)
+            if synchronize:
+                torch.cuda.synchronize()
         output['freq'] = len(batch) / t.time
         if isinstance(output, T.MutableMapping) and torch.cuda.is_available():
             output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
