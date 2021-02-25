@@ -101,13 +101,16 @@ class Record(Sequence):  # Sized, Iterable len, iter
     def __setstate__(self, state):
         self._dict = state
 
-    def __str__(self):
-        fields = ", ".join([f"{k}={self[k]}" if self.is_evaluated(k) else f"{k}=<unevaluated>"
+    def _to_string(self, to_string_func=repr):
+        fields = ", ".join([f"{k}={to_string_func(self[k])}" if self.is_evaluated(k) else f"{k}=<unevaluated>"
                             for k in self.keys()])
         return f"Record({fields})"
 
+    def __str__(self):
+        return self._to_string(str)
+
     def __repr__(self):
-        return str(self)
+        return self._to_string(repr)
 
     def evaluate(self):
         for k in self.keys():
