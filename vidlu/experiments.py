@@ -6,7 +6,6 @@ from pathlib import Path
 import typing as T
 import numpy as np
 import time
-import os
 
 import torch
 import torch.nn as nn
@@ -41,11 +40,11 @@ class TrainingExperimentFactoryArgs:
 # Component factories (or factory wrappers) ########################################################
 
 
-def get_eval_iters(eval_count, iter_count):
+def get_report_iters(eval_count, iter_count, type_=set):
     """Evenly distributes 0-based iteration indices."""
     if eval_count > iter_count:
-        return set(range(eval_count))
-    return set(np.linspace(0.5, iter_count + 0.5, eval_count + 1, dtype=int)[1:] - 1)
+        return type_(range(eval_count))
+    return type_(np.unique(np.linspace(0.5, iter_count + 0.5, eval_count + 1, dtype=int)[1:] - 1))
 
 
 def define_training_loop_actions(trainer: Trainer,
@@ -53,19 +52,21 @@ def define_training_loop_actions(trainer: Trainer,
                                  data, logger,
                                  main_metrics: T.Sequence[str],
                                  eval_count=200,
-                                 min_train_eval_count=800,
+                                 min_train_report_count=800,
                                  interact_shortcuts=dict(i='embed()'),
                                  special_format={'mem': lambda v: f'{v}MiB',
                                                  'freq': lambda v: f'{v:.1f}/s'},
                                  line_width=120):
     sleepiness = 0
-    eval_epochs = get_eval_iters(eval_count, trainer.epoch_count)
+    eval_epochs = get_report_iters(eval_count, trainer.epoch_count)
 
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
-        logger.log(f"Epoch {es.epoch + 1}/{es.max_epochs}"
-                   + f" ({es.batch_count} batches,"
-                   + f" lr={', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
+        if sleepiness > 0:
+            print(f"Warning: {sleepiness}s of sleep per epoch.")
+        logger.log(f"Epoch {es.epoch + 1}/{es.max_epochs}:"
+                   + f" {es.batch_count} batches,"
+                   + f" lr=({', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
 
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
@@ -134,15 +135,16 @@ def define_training_loop_actions(trainer: Trainer,
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
-        eval_iters = get_eval_iters(max(1, min_train_eval_count // trainer.epoch_count),
-                                    es.batch_count)
+        report_iters = get_report_iters(max(1, min_train_report_count // trainer.epoch_count),
+                                        es.batch_count)
         iter = es.iteration % es.batch_count
-        if iter in eval_iters:
+        if iter in report_iters:
             report_metrics(es, special_format=special_format)
 
         interact(es)
+
         if sleepiness > 0:
-            time.sleep(sleepiness)
+            time.sleep(sleepiness / es.batch_count)
 
     trainer.evaluation.epoch_completed.add_handler(
         partial(report_metrics, special_format=special_format, is_validation=True))
