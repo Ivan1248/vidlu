@@ -55,18 +55,18 @@ vat = TrainerConfig(
 
 semisup_vat = TrainerConfig(
     partial(te.SemisupVAT, attack_f=attacks.VATAttack),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(),
 )
 
 semisup_vat_2way = TrainerConfig(
     semisup_vat,
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False),
+    train_step=ts.SemisupVATTrainStep(block_grad_on_clean=False),
 )
 
 semisup_vat_2way_entmin = TrainerConfig(
     semisup_vat,
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False,
+    train_step=ts.SemisupVATTrainStep(block_grad_on_clean=False,
                                       entropy_loss_coef=1),
 )
 
@@ -83,39 +83,39 @@ semisup_vat_l_2way = TrainerConfig(
 
 semisup_vat_entmin = TrainerConfig(
     semisup_vat,
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, entropy_loss_coef=1),
+    train_step=ts.SemisupVATTrainStep(entropy_loss_coef=1),
 )
 
 semisup_cons_phtps20 = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(),
 )
 
 semisup_cons_warp1 = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(smooth_warp_attack, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(),
 )
 
 semisup_cons_phw2 = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phw_attack_1, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(),
 )
 
 semisup_cons_noise = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(),
 )
 
 semisup_cons_phtps20_r1w = TrainerConfig(
@@ -123,21 +123,21 @@ semisup_cons_phtps20_r1w = TrainerConfig(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,
                                         loss=lambda p, c: losses.kl_div_ll(p.detach(), c),
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(block_grad_on_clean=False),
 )
 semisup_cons_phtps20_1wa = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,
                                         loss=lambda p, c: losses.kl_div_ll(p, c.detach()),
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, block_grad_on_clean=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(block_grad_on_clean=False),
 )
 
 semisup_cons_phtps20_entmin = TrainerConfig(
     semisup_cons_phtps20,
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False, entropy_loss_coef=1),
+    train_step=ts.SemisupVATTrainStep(entropy_loss_coef=1),
 )
 
 semisup_cons_phtps20_l = TrainerConfig(
@@ -155,8 +155,8 @@ semisup_cons_phtps20_seg = TrainerConfig(
     partial(te.SemisupVAT,
             attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                              output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
-    train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
+    train_step=ts.SemisupVATTrainStep(),
 )
 
 semisup_cons_phtps20_seg_morsic = TrainerConfig(
@@ -176,7 +176,7 @@ mean_teacher_custom_tps = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(tps_warp_attack, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
 )
 
@@ -187,7 +187,7 @@ mean_teacher_custom_tps_weaker = TrainerConfig(
                                                                            (0, 0.05)}),
                          projection=None,
                          step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
 )
 
@@ -197,7 +197,7 @@ mean_teacher_custom_tps_more_weaker = TrainerConfig(
         attack_f=partial(tps_warp_attack, initializer=pert.NormalInit({'offsets': (0, 0.02)}),
                          projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
                          loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
 )
 
@@ -207,7 +207,7 @@ mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
         attack_f=partial(tps_warp_attack, initializer=pert.NormalInit({'offsets': (0, 0.02)}),
                          projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
                          loss=losses.kl_div_ll, output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=False),
+    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False, clean_teacher_input=True),
 )
 
