@@ -4,6 +4,7 @@ from argparse import Namespace
 import os
 import time
 
+import torch
 import numpy as np
 
 
@@ -19,10 +20,6 @@ def set_cuda_visible_devices(arg):
 
 
 def get_gpu_statuses(measurement_count=1, measuring_interval=1.0):
-    if "CUDA_DEVICE_ORDER" not in os.environ or os.environ["CUDA_DEVICE_ORDER"] != "PCI_BUS_ID":
-        raise RuntimeError('The environment variable "CUDA_DEVICE_ORDER" should correspond to '
-                           'nvidia-smi\'s device order, "PCI_BUS_ID".')
-
     def get_processes(gpu):
         if gpu['processes'] is None:
             return []
@@ -57,7 +54,22 @@ def get_gpu_statuses(measurement_count=1, measuring_interval=1.0):
             for gpu in gpus]
 
 
+def check_device_order():
+    if "CUDA_DEVICE_ORDER" not in os.environ or os.environ["CUDA_DEVICE_ORDER"] != "PCI_BUS_ID":
+        raise RuntimeError('The environment variable "CUDA_DEVICE_ORDER" should correspond to '
+                           'nvidia-smi\'s device order, "PCI_BUS_ID".')
+
+
+def get_available_gpu_indices():
+    check_device_order()
+    if 'CUDA_VISIBLE_DEVICES' in os.environ:
+        return list(map(int, os.environ['CUDA_VISIBLE_DEVICES'].split(',')))
+    else:
+        return list(range(torch.cuda.device_count()))
+
+
 def get_first_available_cuda_gpu(max_gpu_util, min_mem_free, no_processes=True):
+    check_device_order()
     statuses = get_gpu_statuses()
 
     def availability_score(mem_free, gpu_util, process_count):
