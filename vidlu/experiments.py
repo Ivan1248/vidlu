@@ -102,10 +102,11 @@ def define_training_loop_actions(trainer: Trainer,
         metrics = trainer.get_metric_values(reset=True)
 
         with indent_print():
-            epoch_fmt, iter_fmt = f'{len(str(es.max_epochs))}d', f'{len(str(es.batch_count))}d'
+            epoch_fmt, iter_fmt = f'{len(str(trainer.epoch_count))}d', f'{len(str(es.batch_count))}d'
+            epoch = trainer.training.state.epoch
             iter_ = es.iteration % es.batch_count
-            prefix = ('val' if is_validation
-                      else f'{format(es.epoch + 1, epoch_fmt)}.'
+            prefix = (f'{format(epoch + 1, epoch_fmt)} val' if is_validation
+                      else f'{format(epoch + 1, epoch_fmt)}.'
                            + f'{format(iter_ % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
             # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
