@@ -35,17 +35,16 @@ class State(NameDict):
         self.reset(**kwargs)
 
     def reset(self, **kwargs):
-        self.iteration = 0
-        self.epoch = 0
-        self.output = None
+        self.iteration = -1
+        self.epoch = -1
+        self.result = None
         self.batch = None
         self.batch_count = None
         self.update(**kwargs)
 
 
 class Engine(object):
-    """Runs a given process_function over each batch of a dataset, emitting
-     events as it goes.
+    """Runs a given process_function over each batch and emits events..
 
     Taken from Ignite (https://pytorch.org/ignite) and modified.
 
@@ -69,9 +68,6 @@ class Engine(object):
 
         engine = Engine(train_and_store_loss)
         engine.run(data_loader)
-
-        # Loss value is now stored in `engine.state.output`.
-
     """
 
     def __init__(self, iter_procedure):
@@ -94,32 +90,29 @@ class Engine(object):
             raise ValueError("Engine must be given a processing function in order to run.")
 
     def terminate(self):
-        """Sends terminate signal to the engine, so that it terminates completely the run after the
-        current iteration
+        """Sends a signal for comletely terminating the engine after the current iteration.
         """
         self.logger.info(
             "Terminate signaled. Engine will stop after current iteration is finished.")
         self.should_terminate = True
 
     def terminate_epoch(self):
-        """Sends terminate signal to the engine, so that it terminates the current epoch after the
-        current iteration
+        """Sends a signal for terminating the current epoch after the current iteration.
         """
         self.logger.info("Terminate current epoch is signaled. Current epoch iteration will stop"
                          + " after current iteration is finished.")
         self.should_terminate_epoch = True
 
     def _run_once_on_dataset(self):
-        for batch in self.state.data_loader:
+        for self.state.iteration, batch in enumerate(self.state.data_loader):
             self.state.batch = batch
             self.iter_started(self.state)
-            self.state.output = self.iter_procedure(self, batch)
+            self.state.result = self.iter_procedure(self, batch)
             self.iter_completed(self.state)
-            del self.state.batch, self.state.output
+            del self.state.batch, self.state.result
             if self.should_terminate or self.should_terminate_epoch:
                 self.should_terminate_epoch = False
-                break
-            self.state.iteration += 1
+                return True
 
     def run(self, data, max_epochs=1, restart=True):
         """Runs the `process_function` over the passed data.
@@ -141,9 +134,10 @@ class Engine(object):
         self.logger.info(f"Engine run starting with max_epochs={max_epochs}.")
         with Stopwatch() as sw_total:
             self.started(self.state)
-            if self.state.epoch >= max_epochs:
+            if self.state.epoch + 1 >= max_epochs:
                 warn("All epochs are already completed.")
-            while self.state.epoch < max_epochs and not self.should_terminate:
+            while self.state.epoch + 1 < max_epochs and not self.should_terminate:
+                self.state.epoch += 1
                 self.epoch_started(self.state)
                 with Stopwatch() as sw_epoch:
                     self._run_once_on_dataset()
@@ -151,7 +145,6 @@ class Engine(object):
                 self.logger.info(
                     f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}.")
                 self.epoch_completed(self.state)
-                self.state.epoch += 1
             self.completed(self.state)
         hours, mins, secs = _to_hours_mins_secs(sw_total.time)
         self.logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}.")
@@ -226,7 +219,7 @@ class Evaluator:
     @torch.no_grad()
     def _update_metrics(self, state):
         for m in self.metrics:
-            m.update(state.output)
+            m.update(state.result)
 
     @torch.no_grad()
     def get_metric_values(self, *, reset=False):
