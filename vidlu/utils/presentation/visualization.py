@@ -49,8 +49,10 @@ def compose(images_array):
 
 
 class Viewer:
-s{4}"""        Press "q" to close the window. Press anything else to change the displayed
-        composite image. Press "a" to return to the previous image.
+    """Datasset viewer.
+
+    Press "q" to close the window. Press anything else to change the displayed
+    composite image. Press "a" to return to the previous image.
     """
 
     def __init__(self, name='Viewer'):
