@@ -47,16 +47,11 @@ def get_report_iters(eval_count, iter_count, type_=set):
     return type_(np.unique(np.linspace(0.5, iter_count + 0.5, eval_count + 1, dtype=int)[1:] - 1))
 
 
-def define_training_loop_actions(trainer: Trainer,
-                                 cpman: CheckpointManager,
-                                 data, logger,
-                                 main_metrics: T.Sequence[str],
-                                 eval_count=200,
-                                 min_train_report_count=800,
-                                 interact_shortcuts=dict(i='embed()'),
-                                 special_format={'mem': lambda v: f'{v}MiB',
-                                                 'freq': lambda v: f'{v:.1f}/s'},
-                                 line_width=120):
+def define_training_loop_actions(
+        trainer: Trainer, cpman: CheckpointManager, data, logger, main_metrics: T.Sequence[str],
+        eval_count=200, min_train_report_count=800, interact_shortcuts=dict(i='embed()'),
+        special_format={'mem': lambda v: f'{v}MiB', 'freq': lambda v: f'{v:.1f}/s'},
+        line_width=120):
     sleepiness = 0
     eval_epochs = get_report_iters(eval_count, trainer.epoch_count)
 
@@ -150,6 +145,9 @@ def define_training_loop_actions(trainer: Trainer,
         partial(report_metrics, special_format=special_format, is_validation=True))
 
 
+# Experiment #######################################################################################
+
+
 def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
     a = training_args
     learner_name = to_valid_path(f"{a.model}/{a.trainer}"
@@ -167,8 +165,6 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
                               name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
     return cpman
 
-
-# Experiment #######################################################################################
 
 def _check_dirs(dirs):
     for name in ['DATASETS', 'CACHE', 'SAVED_STATES', 'PRETRAINED']:
