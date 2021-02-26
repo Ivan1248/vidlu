@@ -83,7 +83,7 @@ class Record(Sequence):  # Sized, Iterable len, iter
             return val
 
     def __contains__(self, item):
-        """ This might not be a good design. Both keys and values are compared. """
+        """This might not be a good design. Both keys and values are compared. """
         return (item in self._dict) or super().__contains__(item)
 
     def __iter__(self):  # returns values, Iterable

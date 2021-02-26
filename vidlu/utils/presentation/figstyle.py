@@ -11,14 +11,16 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     r"""
     Configures Matplotlib so saved figures can be used in LaTeX documents.
     Uses the sans-serif TeX Gyre Heros font (Helvetica), also for math.
+
     Arguments:
-    - document_fontsize: Font size in points (use "\the\fontdimen6\font" in
-      your LaTeX document to get the current value). The default is for a
-      LaTeX Beamer document at 14pt ("\documentclass[14pt]{beamer}") which
-      for some reason is slightly more than 14pt.
-    - available_width: The available width in your LaTeX document, usually
-      the value of "\textwidth". The default is for a LaTeX Beamer document
-      with the default theme.
+      document_fontsize: Font size in points (use "\the\fontdimen6\font" in
+        your LaTeX document to get the current value). The default is for a
+        LaTeX Beamer document at 14pt ("\documentclass[14pt]{beamer}") which
+        for some reason is slightly more than 14pt.
+      available_width: The available width in your LaTeX document, usually
+        the value of "\textwidth". The default is for a LaTeX Beamer document
+        with the default theme.
+
     Returns a function that calculates figure size given a fraction of the
     available width for the figure to occupy.
     Figures can be saved as PDF:

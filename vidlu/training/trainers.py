@@ -160,7 +160,7 @@ class Engine(object):
 # Batch preparation ################################################################################
 
 def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=False):
-    """ A function for putting feature batches on the relevant device"""
+    """A function for putting feature batches on the relevant device"""
 
     def _prepare(x):
         return x.to(device=device, non_blocking=non_blocking)
@@ -257,7 +257,7 @@ class Evaluator:
 
 @dataclass
 class Trainer(Evaluator):
-    """ A class encapsulating all machine learning algorithm components.
+    """A class encapsulating all machine learning algorithm components.
 
     Additional state should be stored in in the `trainer.training.state`
     dictionary or in a training extension from `trainer.extensions`.

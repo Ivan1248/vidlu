@@ -200,8 +200,7 @@ class VATLoss(nn.Module):
 
 
 class CarliniWagnerLoss(nn.Module):
-    """
-    Carlini-Wagner
+    """Carlini-Wagner
     Loss: objective function #6.
     Paper: https://arxiv.org/pdf/1608.04644.pdf
     """

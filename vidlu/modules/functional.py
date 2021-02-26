@@ -34,7 +34,7 @@ def grid_2d_like(x):
 
 
 def warp(x, flow, mode='bilinear', padding_mode='zeros', align_corners=True):
-    """ Warps images in an input batch individually with optical flow.
+    """Warps images in an input batch individually with optical flow.
 
     Args:
         x: a batch of images with shape (N, C, H, W).

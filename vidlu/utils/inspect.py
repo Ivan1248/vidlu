@@ -2,8 +2,7 @@ import inspect
 
 
 def class_initializer_locals_c():
-    """
-    Returns arguments of the initializer of a subclass (and variables defined
+    """Returns arguments of the initializer of a subclass (and variables defined
     before `super().__init__()` calls) in the initializer of the object's class.
     Based on `magnet.utils.misc.caller_locals`.
     """
@@ -29,7 +28,7 @@ def class_initializer_locals_c():
 
 
 def locals_c(exclusions=('self', '__class__')):
-    """ Locals without `self` and `__class__`. """
+    """Locals without `self` and `__class__`. """
     frame = inspect.currentframe().f_back
     try:
         locals_ = frame.f_locals

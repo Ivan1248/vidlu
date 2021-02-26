@@ -31,7 +31,7 @@ def _get_iter_output(iter_output, name):
 
 
 def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False):
-    """ Computes a multi-class confusion matrix.
+    """Computes a multi-class confusion matrix.
 
     Args:
         true (Tensor): a vector of integers representing true classes.
@@ -48,7 +48,7 @@ def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False
 
 
 def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
-    """ Computes a soft multi-class confusion matrix from probabilities.
+    """Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
         true (Tensor): a vector of integers representing true classes.
@@ -80,7 +80,7 @@ def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
 
 
 def all_soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
-    """ Computes a soft multi-class confusion matrix from probabilities.
+    """Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
         true (Tensor): an array consisting of vectors representing true class
@@ -98,7 +98,7 @@ def all_soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
 
 
 def classification_metrics_np(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
-    """ Computes macro-averaged classification evaluation metrics based on the
+    """Computes macro-averaged classification evaluation metrics based on the
         accumulated confusion matrix and clears the confusion matrix.
 
     Args:

@@ -59,8 +59,7 @@ def remove_dir_trees_with_no_files(path: Path, verbose=False):
 
 
 def create_file_atomic(path, write_action, mode="w+b"):
-    """
-    Performs `write_action` on a temporary file and, if successful, moves the
+    """Performs `write_action` on a temporary file and, if successful, moves the
     temporary file to `path`. This avoids creation of incomplete files if an
     error during writing occurs.
 

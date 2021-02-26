@@ -1,4 +1,4 @@
-""" This code is copied from https://github.com/ankurtaly/Integrated-Gradients
+"""This code is copied from https://github.com/ankurtaly/Integrated-Gradients
 and modified.
 """
 

@@ -455,7 +455,7 @@ class CleanResultCallback:
 
 @dc.dataclass
 class AdversarialTrainStep:
-    """ Adversarial training step with the option to keep a the batch partially
+    """Adversarial training step with the option to keep a the batch partially
     clean.
 
     It calls `trainer.model.eval()`, `trainer.attack.perturb` with
@@ -1053,7 +1053,7 @@ class GANTrainStep:
         return torch.zeros(batch_size, device=self.model.device)
 
     def __call__(self, trainer, batch):
-        """ Copied from ignite/examples/gan/dcgan and modified"""
+        """Copied from ignite/examples/gan/dcgan and modified"""
         trainer.model.train()
         real = batch[0]
         batch_size = real.shape[0]

@@ -334,6 +334,7 @@ class ResNet(nn.Module):
 
 def resnet18(pretrained=True, **kwargs):
     """Constructs a ResNet-18 model.
+
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
@@ -345,6 +346,7 @@ def resnet18(pretrained=True, **kwargs):
 
 def resnet34(pretrained=True, **kwargs):
     """Constructs a ResNet-34 model.
+
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
@@ -356,6 +358,7 @@ def resnet34(pretrained=True, **kwargs):
 
 def resnet50(pretrained=True, **kwargs):
     """Constructs a ResNet-50 model.
+
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
@@ -367,6 +370,7 @@ def resnet50(pretrained=True, **kwargs):
 
 def resnet101(pretrained=True, **kwargs):
     """Constructs a ResNet-101 model.
+
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """

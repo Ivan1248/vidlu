@@ -256,8 +256,7 @@ class DummyAttack(OptimizingAttack):
 
 @dataclass
 class GradientSignAttack(OptimizingAttack):
-    """
-    One step fast gradient sign method (Goodfellow et al, 2014).
+    """One step fast gradient sign method (Goodfellow et al, 2014).
     Paper: https://arxiv.org/abs/1412.6572
     """
     eps: float = 8 / 255
@@ -598,6 +597,7 @@ def _extract_nonadv(pmodel, adv_mask, masking_mode, pm_params_all, index, y, x, 
 @dataclass
 class PGDUpdate(AttackStepUpdate):
     """PGD step update
+
     Args:
         step_size: attack step size per iteration.
         eps: maximum distortion.

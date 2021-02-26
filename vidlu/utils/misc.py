@@ -125,9 +125,8 @@ class Event:
 # Console ##########################################################################################
 
 def try_input(default=None):
-    """
-    Returns `None` if the standard input is empty. Otherwise it returns a line
-    like `input` does.
+    """Returns `None` if the standard input is empty. Otherwise it returns a
+    line like `input` does.
     """
 
     def input_available():

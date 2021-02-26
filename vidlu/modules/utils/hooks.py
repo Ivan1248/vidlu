@@ -22,7 +22,8 @@ def register_self_removing(register_proc, hook):
 # Hooks  ###########################################################################################
 
 def check_no_inf_nan(module, input, output):
-    """
+    """Invokes the debugger if it finds a NaN or inf in the output.
+
     Example:
         >>> for m in module.modules:
         >>>      m.register_forward_hook(check_no_inf_nan)

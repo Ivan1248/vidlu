@@ -79,7 +79,7 @@ def load_image(path, downsampling):
 
 def load_segmentation_with_downsampling(path, downsampling, id_to_label=None,
                                         dtype=np.int8):
-    """ Loads and optionally translates segmentation labels.
+    """Loads and optionally translates segmentation labels.
 
     Args:
         path: (path-like) label file path.
@@ -628,6 +628,7 @@ class ImageClassificationFolderDataset(ClassificationFolderDataset):
         root/cat/123.png
         root/cat/nsdf3.png
         root/cat/asd932_.png
+
     Args:
         root (string): Root directory path.
         transform (callable, optional): A function/transform that  takes in an PIL image

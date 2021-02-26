@@ -78,7 +78,7 @@ class Checkpoint:  # TODO
 
 
 class CheckpointManager(object):
-    """ Checkpoint manager can be used to periodically save objects to disk.
+    """Checkpoint manager can be used to periodically save objects to disk.
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
 
     Args:

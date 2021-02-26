@@ -554,7 +554,7 @@ class DenseSPP(E.Module):
 
 
 class LadderUpsampleBlend(E.Module):
-    """ For LadderDenseNet and SwiftNet. """
+    """For LadderDenseNet and SwiftNet. """
     _pre_blendings = dict(concat=E.Concat, sum=E.Sum)
 
     def __init__(self,
@@ -718,7 +718,7 @@ class ResNetV1Groups(E.Seq):
 
 
 class ResNetV1Backbone(E.Seq):
-    """ Resnet (V1) backbone.
+    """Resnet (V1) backbone.
 
     Args:
         base_width (int): number of channels in the output of the root block and the base width of
@@ -801,7 +801,7 @@ class ResNetV2Groups(ResNetV1Groups):
 
 
 class ResNetV2Backbone(ResNetV1Backbone):
-    """ Pre-activation resnet backbone."""
+    """Pre-activation resnet backbone."""
 
     __init__ = partialmethod(ResNetV1Backbone.__init__,
                              block_f=default_args(ResNetV2Groups).block_f,

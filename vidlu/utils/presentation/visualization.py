@@ -27,7 +27,7 @@ def colorize_segmentation(seg, colors):
 ####
 
 def composef(images, fmt):
-    """
+    """Composes images into a grid according to the format.
 
     Args:
         images:
@@ -49,8 +49,7 @@ def compose(images_array):
 
 
 class Viewer:
-    """
-        Press "q" to close the window. Press anything else to change the displayed
+s{4}"""        Press "q" to close the window. Press anything else to change the displayed
         composite image. Press "a" to return to the previous image.
     """
 

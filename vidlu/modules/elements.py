@@ -243,7 +243,7 @@ class InitializableMixin:
 
 @_replaces('Module')
 class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
-    """ An abstract module class that supports shape inference and checks
+    """An abstract module class that supports shape inference and checks
     whether the input is in-place modified in an undesired way.
 
     The shape inference mechanism is based on
@@ -908,7 +908,7 @@ class Restruct(Module):
 
     The module is invertible.
 
-    Arguments:
+    Args:
         in_expr (str): A string representing the structure of the input.
         out_expr (str) A string representing the structure of the output.
 
@@ -1052,7 +1052,7 @@ def mark_modified(x, mark=True):
     """Adds a `modified=True` attribute to the input tensor and returns a new
     tensor, a view on the same array without the attribute.
 
-    Arguments:
+    Args:
         x (Tensor): input tensor.
         mark (bool): whether to set the modified attribute or just return the
             input. This optional argument is for convenience so that it can be
@@ -1426,10 +1426,10 @@ def parameter_count(module) -> Namespace:
 
 
 def get_submodule(root_module, path: T.Union[str, T.Sequence]) -> T.Union[Module, torch.Tensor]:
-    """
-    Returns a submodule of `root_module` that corresponds to `path`. It works
+    """Returns a submodule of `root_module` that corresponds to `path`. It works
     for other attributes (e.g. Parameters) too.
-    Arguments:
+
+    Args:
         root_module (Module): a module.
         path (Tensor): a string with the name of the module relative to
             `root_module`.
@@ -1472,7 +1472,7 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List
     output of `module.forward` as well as a list of intermediate outputs as
     defined by `submodule_paths`.
 
-    Arguments:
+    Args:
         module (Module): a module.
         submodule_paths (List[str]): a list of names (relative to `root`)
             of modules the outputs of which you want to get.
@@ -1542,7 +1542,7 @@ def with_intermediate_outputs_tree(
     output of `module.forward` as well as a tree of intermediate outputs as
     defined by `submodule_paths`.
 
-    Arguments:
+    Args:
         module (Module): a module.
         submodule_paths (optional, List[str]): a list of names (relative to
             `root`) of modules the outputs of which you want to get. When the
@@ -1579,7 +1579,7 @@ class IntermediateOutputsModuleWrapper(Module):
         `module.__call__` as well as a list of intermediate outputs as defined
         by `submodule_paths`.
 
-        Arguments:
+        Args:
             module (Module): a module.
             submodule_paths (List[str]): a list of names (relative to `root`)
                 of modules the outputs of which you want to get.

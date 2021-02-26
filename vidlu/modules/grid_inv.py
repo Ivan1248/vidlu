@@ -1,6 +1,6 @@
  # from https://github.com/seung-lab/torchfields/blob/master/torchfields/inversion.py
 
-""" 
+"""
 MIT License
 
 Copyright (c) 2019 Barak Nehoran

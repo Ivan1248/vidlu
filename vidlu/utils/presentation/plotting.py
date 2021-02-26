@@ -3,11 +3,10 @@ import matplotlib.pyplot as plt
 
 
 def plot_surface(function, rect, offsets=(0.5,), center=0.5, width=256, height=256, axis=None):
-    """
-    Creates a surface plot (visualize with plt.show)
+    """Creates a surface plot (visualize with plt.show)
     From http://www.zemris.fer.hr/~ssegvic/du/
 
-    Arguments:
+    Args:
         function: surface to be plotted
         rect:function domain provided as ([x_min,y_min], [x_max,y_max])
         offsets: the level plotted as a contour plot

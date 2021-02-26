@@ -6,7 +6,7 @@ from vidlu.data import Dataset
 
 
 def rotating_labels(ds: Dataset) -> Dataset:
-    """ Orders examples so that in each length C slice of the dataset all C
+    """Orders examples so that in each length C slice of the dataset all C
     classes are present.
 
     In each slice classes start from 1 to C

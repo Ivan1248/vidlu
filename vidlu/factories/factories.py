@@ -187,7 +187,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
 # Model ############################################################################################
 
 def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
-    """ Returns a bijective module to be inserted before the model to scale
+    """Returns a bijective module to be inserted before the model to scale
     inputs.
 
     For images, it is assumed that the input elements are in range 0 to 1.

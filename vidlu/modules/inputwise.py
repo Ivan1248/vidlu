@@ -19,7 +19,8 @@ import vidlu.ops.image as voi
 class BatchParameter(torch.nn.Parameter):
     r"""A kind of Tensor that is to be considered a batch of parameters, i.e.
     each input example has its own parameter.
-    Arguments:
+
+    Args:
         data (Tensor): parameter tensor.
         requires_grad (bool, optional): if the parameter requires gradient. See
             :ref:`excluding-subgraphs` for more details. Default: `True`
@@ -271,7 +272,7 @@ def _get_center(center_arg, x, equivariant_dims):
 
 
 class Contrast(EquivariantPertModel):
-    """ Linearly interpolates between inputs and centers.
+    """Linearly interpolates between inputs and centers.
 
     The interpolation factor (contrast) can be any positive number.
 
@@ -362,7 +363,7 @@ class Whiten(EquivariantPertModel):
 
 
 class AlterColor(PertModel):
-    """ Applies a transformation similar to ColorJitter in Torchvision.
+    """Applies a transformation similar to ColorJitter in Torchvision.
     """
     param_defaults = dict(
         order=dict(value=lambda **k: torch.arange(len(k['x']), len(k['self'].module)),
