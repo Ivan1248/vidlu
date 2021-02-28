@@ -554,7 +554,7 @@ class Seq(ModuleTable, nn.Sequential):
         return Seq
 
     def forward(self, x):
-        modules = [x for x in self._modules.values()]
+        modules = [m for m in self._modules.values()]
         cp_iter = iter(self._checkpoints or ())
         cp_range = next(cp_iter, None)
         i = 0

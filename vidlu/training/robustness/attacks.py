@@ -123,6 +123,11 @@ def _pert_to_pert_model(pert_or_x_adv, x=None):
 
 @dataclass
 class Attack:
+    """Adversarial attack.
+
+    __call__ merthod returns a perturbation model, while perturb returns an
+    adversarial example. A subclass should override one or both of them.
+    """
     output_to_target: T.Union[T.Callable, str] = logits_to_argmax
     compute_model_grads: bool = False  # TODO: use
 
@@ -134,6 +139,8 @@ class Attack:
 
     def __call__(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial perturbation model.
+
+        __call__ or perturb should be overridden by subclasses.
 
         `attack(model, x, y)(x)` should give the same result as
         `attack.perturb(model, x, y)`.
@@ -153,16 +160,17 @@ class Attack:
         """
         if y is None:
             y = self._get_target(model, x, output)
-        pert = self._get_perturbation(model, x, y=y, **kwargs)
-        if pert is not NotImplemented:
+
+        if NotImplemented is not (pert := self._get_perturbation(model, x, y=y, **kwargs)):
             return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
-        x_adv = self._perturb(model, x, y=y, **kwargs)
-        if x_adv is not NotImplemented:
+        elif NotImplemented is not (x_adv := self._perturb(model, x, y=y, **kwargs)):
             return _pert_to_pert_model(x_adv, x)
         raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
 
     def perturb(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial example.
+
+        __call__ or perturb should be overridden by subclasses.
 
         Args:
             model (Module): model.
@@ -408,7 +416,7 @@ def _init_pert_model(pert_model, x, initializer=None, projection=None):
         if initializer is not None:
             initializer(pert_model, x)
         if projection is not None:
-            projection(pert_model, x)  # was commented when semi-supervised experiments were performed
+            projection(pert_model, x)
     pert_model.train()
 
 
@@ -509,8 +517,7 @@ def perturb_iterative_with_perturbation_model(
     backward_callback = backward_callback or (lambda _: None)
     optim = optim_f(pert_model.parameters()) if step_count > 0 else None  # init
     if stop_on_success:  # support for early stopping (example-wise and location-wise)
-        with torch.no_grad():
-            index = torch.arange(len(x))
+        index = torch.arange(len(x), requires_grad=False)
         masking_mode = masking_mode or 'loss'
     nonadv_mask = None
     x_all = x

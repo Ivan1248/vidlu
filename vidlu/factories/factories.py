@@ -229,10 +229,9 @@ def build_and_init_model(model, init_input, device):
     if device is not None:
         model.to(device)
         init_input = init_input.to(device)
+    if np.array(init_input.shape[-2:]).min() > 128:  # smaller input for faster initialization
+        init_input = init_input[:, :, :128, :128]
     if hasattr(model, 'initialize'):
-        size = np.array(init_input.shape[-2:])
-        if size.min() > 128:  # for faster initialization
-            init_input = init_input[:, :, :128, :128]
         model.initialize(init_input)
     else:
         vm.call_if_not_built(model, init_input)
