@@ -66,7 +66,7 @@ def train(args):
     if args.debug:
         debug.stop_tracing_calls()
 
-    if not args.no_init_test:
+    if not args.no_init_eval:
         print('Evaluating initially...')
         exp.trainer.eval(exp.data.test)
     log_run('cont.' if args.resume else 'start')
@@ -148,7 +148,7 @@ def add_standard_arguments(parser, func):
                         help="Resume training from a checkpoint of the same experiment.")
     parser.add_argument("--restart", action='store_true',
                         help="Delete the data of an experiment with the same name.")
-    parser.add_argument("--no_init_test", action='store_true',
+    parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
     parser.add_argument("--no_train_evaluation", action='store_true',
                         help="No evaluation on the training set.")
