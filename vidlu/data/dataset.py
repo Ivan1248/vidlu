@@ -73,7 +73,7 @@ class Dataset(abc.Sequence):
         self.name = name or getattr(data, 'name', None) or type(self).__name__
         self.subset = subset or getattr(data, 'subset', None)
         self.modifiers = list(getattr(data, 'modifiers', [])) \
-                         + [modifiers] if isinstance(modifiers, str) else (modifiers or [])
+                         + ([modifiers] if isinstance(modifiers, str) else (modifiers or []))
         self.info = NameDict(info or getattr(data, 'info', dict()))
         self.data = data
 
