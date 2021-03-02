@@ -50,6 +50,7 @@ def get_experiment(resume=True, restart=False):
 
     with indent_print('Initializing data...'):
         data = factories.get_prepared_data_for_trainer(data_str, dirs.DATASETS, dirs.CACHE)
+
     first_ds = next(iter(data.values()))
 
     with indent_print('Initializing model...'):
