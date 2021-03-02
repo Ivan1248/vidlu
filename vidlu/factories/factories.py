@@ -27,6 +27,10 @@ from . import defaults
 unsafe_eval = eval
 
 
+def module_to_dict(module):
+    return {k: v for k, v in vars(module).items() if not k.startswith("_")}
+
+
 # Extensions #######################################################################################
 
 def get_extensions():
@@ -108,6 +112,9 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
     """
     from vidlu import data
     from vidlu.data import Record
+    import vidlu.transforms as vt
+    import torchvision.transforms.functional_tensor as tvt
+    import vidlu.modules.functional as vmf
 
     if ':' in data_str:
         data_str, transform_str = data_str.split(':', 1)
@@ -129,10 +136,11 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
             data.append(((k, s), getattr(pds, s)))
 
     if transform_str is not None:  # TODO: improve names if necessary
-        transforms = {k: v for k, v in vars(vdu.dataset_ops).items() if not k.startswith('_')}
-        values = unsafe_eval(transform_str, dict(**transforms, d=[v for k, v in data],
-                                                 Record=Record))
-        data = [((f'data{i}', 'sub0'), v) for i, v in enumerate(values)]
+        namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
+                     **module_to_dict(vdu.dataset_ops)}
+        namespace.update(vt=vt, Record=Record, d=[v for k, v in data])
+        values = unsafe_eval(transform_str, namespace)
+        data = [((getattr(v, 'identifier', f'dataset{i}'), ''), v) for i, v in enumerate(values)]
     return data  # not dict since elements can repeat
 
 
@@ -154,19 +162,18 @@ def get_data_preparation(dataset):
     raise ValueError(f"Unknown record format: {fields}.")
 
 
-def prepare_data(data, datasets_dir, cache_dir):
+def prepare_data(data):
     datasets = [ds for _, ds in data]
     preparers = [get_data_preparation(ds) for ds in datasets]
     return tuple(prepare(ds) for prepare, ds in zip(preparers, datasets))
 
 
 def get_prepared_data(data_str: str, datasets_dir, cache_dir):
-    data = get_data(data_str, datasets_dir, cache_dir)
-    return prepare_data(data, datasets_dir, cache_dir)
+    return prepare_data(get_data(data_str, datasets_dir, cache_dir))
 
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
-    if ':' in data_str:
+    if ':' in data_str:  # TODO: remove names
         names, data_str = [x.strip() for x in data_str.split(':', 1)]
         names = [x.strip() for x in names.split(',')]
         if not all(x.startswith('train') or x.startswith('test') for x in names):
@@ -175,13 +182,11 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     else:
         names = ['train', 'test']
 
-    data = get_data(data_str, datasets_dir, cache_dir)
-    datasets = prepare_data(data, datasets_dir, cache_dir)
-
-    names_iter = iter(names)
-    print("Datasets: " + ", ".join(f"{name}.{k}({len(ds)}) as {next(names_iter)}"
-                                   for (name, k), ds in data))
-    return NameDict(**dict(zip(names, datasets)))
+    datasets = get_prepared_data(data_str, datasets_dir, cache_dir)
+    named_datasets = NameDict(dict(zip(names, datasets)))
+    print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
+                                       for name, ds in named_datasets.items()))
+    return named_datasets
 
 
 # Model ############################################################################################
@@ -320,7 +325,7 @@ def _parse_parameter_translation_string(params_str):
     m = regex.fullmatch(params_str.strip())
     if m is None:
         raise ValueError(
-            '`params_str` does not match the pattern "translator[[<src>]][-><dst>][!][:file]".'
+            f'{params_str=} does not match the pattern "translator[[<src>]][-><dst>][!][:file]".'
             + " <src> supports indexing nested dictionaries by putting commas between keys.")
     p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'file']})
     *src_dict, src = p1.src.split(",")
