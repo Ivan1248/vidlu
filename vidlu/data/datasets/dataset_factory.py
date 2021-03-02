@@ -41,7 +41,7 @@ class DatasetFactory:
         name = name
         if name not in self.ds_to_info:
             if (name_fixed := self.ds_name_lower_to_normal.get(name.lower(), None)) is not None:
-                raise KeyError(f'No dataset has the name "{name}". Did you mean "{name_fixed}".')
+                raise KeyError(f'No dataset has the name "{name}". Did you mean "{name_fixed}"?')
             raise KeyError(f'No dataset has the name "{name}".'
                            + f' Available datasets: {", ".join(self.ds_to_info.keys())}.')
         ds_info = self.ds_to_info[name]
