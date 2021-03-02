@@ -135,7 +135,7 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
     # device
-    parser.add_argument("-d", "--device", type=torch.device, help="PyTorch device.",
+    parser.add_argument("-d", "--device", type=str, help="PyTorch device.",
                         default=None)
     # experiment result saving, state checkpoints
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,

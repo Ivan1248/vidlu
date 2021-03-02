@@ -147,6 +147,18 @@ def define_training_loop_actions(
 
 # Experiment #######################################################################################
 
+def get_device(device_str):
+    if device_str is None:
+        if torch.cuda.device_count() == 0 \
+                and not query_user("No GPU found. Are you sure you want to continue?",
+                                   timeout=10, default='y'):
+            raise RuntimeError("No GPU available.")
+        return torch.device("cuda:0" if torch.cuda.device_count() > 0 else "cpu")
+    elif device_str == "auto":
+        from vidlu import gpu_utils
+        return torch.device(
+            gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+
 
 def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
     a = training_args
@@ -191,16 +203,7 @@ class TrainingExperiment:
         a = training_args
 
         with indent_print("Setting device..."):
-            if a.device is None:
-                if torch.cuda.device_count() == 0 \
-                        and not query_user("No GPU found. Are you sure you want to continue?",
-                                           timeout=10, default='y'):
-                    raise RuntimeError("No GPU available.")
-                a.device = torch.device("cuda:0" if torch.cuda.device_count() > 0 else "cpu")
-            elif a.device == "auto":
-                from vidlu import gpu_utils
-                a.device = torch.device(
-                    gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+            a.device = get_device(a.device)
             print(f"device: {a.device}")
 
         with indent_print('Initializing checkpoint manager and logger...'):
