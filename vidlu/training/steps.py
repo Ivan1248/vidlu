@@ -708,7 +708,7 @@ class PertConsistencyTrainStep:  # TODO
 
 
 @torch.no_grad()
-def _prepare_semisupervised_input(batch):
+def _prepare_semisup_input(batch):
     x_u = None
     if isinstance(batch, BatchTuple):
         (x_l, y_l), (x_u, *_) = batch
@@ -719,7 +719,7 @@ def _prepare_semisupervised_input(batch):
     return x_l, y_l, x_u
 
 
-def _get_unsupervised_vat_outputs(out, uns_start, block_grad_for_clean, output_to_target):
+def _get_unsup_vat_outputs(out, uns_start, block_grad_for_clean, output_to_target):
     out_uns = out[uns_start:]  # _get_unsupervised_vat_outputs(out, other_outs, uns_start)
     with torch.no_grad() if block_grad_for_clean else ctx_suppress():
         target_uns = output_to_target(out_uns)
@@ -736,7 +736,7 @@ class SemisupVATEvalStep:
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
+        x_l, y_l, x_u = _prepare_semisup_input(batch)
         if x_u is None:
             x_c = x_all = x_l
             uns_start = 0
@@ -747,7 +747,7 @@ class SemisupVATEvalStep:
 
         with torch.no_grad():
             out, other_outs = trainer.extend_output(model(x_all))
-            out_uns, target_uns = _get_unsupervised_vat_outputs(
+            out_uns, target_uns = _get_unsup_vat_outputs(
                 out, uns_start, True, attack.output_to_target)
 
         x_p = attack.perturb(model, x_c, target_uns)
@@ -779,12 +779,12 @@ class SemisupVATTrainStep:
         model, attack = trainer.model, trainer.attack
         model.train()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
+        x_l, y_l, x_u = _prepare_semisup_input(batch)
         x = torch.cat([x_l, x_u])
         x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
 
         out, other_outs = trainer.extend_output(model(x))
-        out_uns, target_uns = _get_unsupervised_vat_outputs(
+        out_uns, target_uns = _get_unsup_vat_outputs(
             out, uns_start, self.block_grad_on_clean, attack.output_to_target)
 
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
@@ -822,13 +822,13 @@ class SemisupVATCorrEvalStep:
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
+        x_l, y_l, x_u = _prepare_semisup_input(batch)
         assert x_u is None
         x = x_l
         x_c, uns_start = (x, 0)
 
         out, other_outs = trainer.extend_output(model(x))
-        out_uns, target_uns = _get_unsupervised_vat_outputs(
+        out_uns, target_uns = _get_unsup_vat_outputs(
             out, uns_start, self.block_grad_on_clean, attack.output_to_target)
 
         x_p = attack.perturb(model, x_c, target_uns)
@@ -936,7 +936,7 @@ class MeanTeacherTrainStep:
         model.train()
         teacher.train()
 
-        x_l, y_l, x_u = _prepare_semisupervised_input(batch)
+        x_l, y_l, x_u = _prepare_semisup_input(batch)
         x = torch.cat([x_l, x_u])
         x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
 
