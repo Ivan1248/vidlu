@@ -16,18 +16,17 @@ class AccumulatingMetric:
     def reset(self):
         raise NotImplementedError()
 
-    def update(self, iter_output):
+    def update(self, iter_result):
         raise NotImplementedError()
 
     def compute(self):
         raise NotImplementedError()
 
 
-def _get_iter_output(iter_output, name):
-    path = name.split('.')
-    for part in path:
-        iter_output = iter_output[part]
-    return iter_output
+def _get_iter_result(iter_result, name):
+    for path_part in name.split('.'):
+        iter_result = iter_result[path_part]
+    return iter_result
 
 
 def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False):
@@ -192,9 +191,9 @@ class ClassificationMetrics(AccumulatingMetric):
         self.cm.fill_(0)
 
     @torch.no_grad()
-    def update(self, iter_output):
-        true = _get_iter_output(iter_output, self.target_name).flatten()
-        pred = _get_iter_output(iter_output, self.hard_prediction_name).flatten()
+    def update(self, iter_result):
+        true = _get_iter_result(iter_result, self.target_name).flatten()
+        pred = _get_iter_result(iter_result, self.hard_prediction_name).flatten()
         cm = multiclass_confusion_matrix(true, pred, self.class_count)
         if self.cm.device != cm.device:
             self.cm = self.cm.to(cm.device)
@@ -218,8 +217,8 @@ class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
 
 
 class AverageMetric(_MeanMetric):
-    def update(self, iter_output):
-        self._sum += self.value_extractor(iter_output)
+    def update(self, iter_result):
+        self._sum += self.value_extractor(iter_result)
         self._n += 1
 
     def compute(self):
@@ -227,8 +226,8 @@ class AverageMetric(_MeanMetric):
 
 
 class HarmonicMeanMetric(_MeanMetric):
-    def update(self, iter_output):
-        self._sum += 1 / self.value_extractor(iter_output)
+    def update(self, iter_result):
+        self._sum += 1 / self.value_extractor(iter_result)
         self._n += 1
 
     def compute(self):
@@ -246,8 +245,8 @@ class _ExtremumMetric(AccumulatingMetric):
         self._ext = None
 
     @torch.no_grad()
-    def update(self, iter_output):
-        val = self.extract_func(iter_output)
+    def update(self, iter_result):
+        val = self.extract_func(iter_result)
         self._ext = self.extremum_func(self._ext or val, val)
 
     @torch.no_grad()
@@ -275,11 +274,11 @@ class _MultiMetric(AccumulatingMetric):
         self.metrics = None
 
     @torch.no_grad()
-    def update(self, iter_output):
+    def update(self, iter_result):
         if self.metrics is None:
-            self.metrics = [self.metric_f(k) for k, v in iter_output.items() if self.filter(k, v)]
+            self.metrics = [self.metric_f(k) for k, v in iter_result.items() if self.filter(k, v)]
         for m in self.metrics:
-            m.update(iter_output)
+            m.update(iter_result)
 
     @torch.no_grad()
     def compute(self):
@@ -324,9 +323,9 @@ class SoftClassificationMetrics(AccumulatingMetric):
         self.cm.fill_(0)
 
     @torch.no_grad()
-    def update(self, iter_output):
-        true = _get_iter_output(iter_output, self.target_name).flatten()
-        pred = _get_iter_output(iter_output, self.probs_name).permute(0, 2, 3, 1)
+    def update(self, iter_result):
+        true = _get_iter_result(iter_result, self.target_name).flatten()
+        pred = _get_iter_result(iter_result, self.probs_name).permute(0, 2, 3, 1)
         pred = pred.flatten().view(-1, pred.shape[-1])
         self.cm += soft_pred_multiclass_confusion_matrix(true, pred, self.class_count)
 
