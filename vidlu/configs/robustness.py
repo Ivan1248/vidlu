@@ -123,14 +123,14 @@ tps_warp_attack = partial(
 
 phtps_attack_20 = partial(
     attacks.PertModelAttack,
-    pert_model_f=partial(pert.PhotoTPS20, clamp=False),
+    pert_model_f=partial(pert.PhotoTPS20, clamp=False, forward_arg_count=3),
     initializer=pert.MultiInit(
         tps=pert.NormalInit({'offsets': (0, 0.1)}),
         photometric=pert.UniformInit(
-            {'module.add_v.addend': [-0.25, 0.25],
-             'module.mul_s.factor': [0.25, 2.],
-             'module.add_h.addend': [-0.1, 0.1],
-             'module.mul_v.factor': [0.25, 2.]})),
+            {'add_v.addend': [-0.25, 0.25],
+             'mul_s.factor': [0.25, 2.],
+             'add_h.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
     projection=None,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     step_size=0.01,  # 0.01 the image height/width

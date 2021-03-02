@@ -47,23 +47,41 @@ def _complete_shape(shape_tail, input_shape):
         b if a is None else a for a, b in zip(shape_tail, input_shape[-len(shape_tail):]))
 
 
+def pert_model_init(self, forward_arg_count):
+    if forward_arg_count is None:
+        self.forward_arg_count = 0
+        unlimited_param_kinds = (
+            inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+        for p in inspect.signature(self.forward).parameters.values():
+            self.forward_arg_count += 1
+            if p.kind in unlimited_param_kinds:
+                self.forward_arg_count = -1
+                break
+    else:
+        self.forward_arg_count = forward_arg_count
+
+
+def pert_model_forward(forward_arg_count, module, *args, **kwargs):
+    args = sole_tuple_to_varargs(args)
+    n = forward_arg_count
+    if len(args) + len(kwargs) == 1 or n == -1:  # everything fits
+        result = module(*args, **kwargs)
+    elif len(args) >= n:  # args don't fit
+        result = (module(args[0]),) if n == 1 else module(*args[:n])
+        result += (*args[n:], *tuple(kwargs.values()))
+    else:  # kwargs don't fit
+        r = n - len(args)
+        kw, unchanged = dict(tuple(kwargs.items())[:r]), tuple(kwargs.values())[r:]
+        result = module(*args, **kw) + unchanged
+    return result
+
+
 class PertModelBase(E.Module):
     param_defaults = dict()
 
     def __init__(self, forward_arg_count=None):
         super().__init__()
-        if forward_arg_count is None:
-            self.forward_arg_count = 0
-            unlimited_param_kinds = (
-                inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
-            for p in inspect.signature(self.forward).parameters.values():
-                self.forward_arg_count += 1
-                if p.kind in unlimited_param_kinds:
-                    self.forward_arg_count = -1
-                    break
-        else:
-            self.forward_arg_count = forward_arg_count
-        # self.init = init
+        pert_model_init(self, forward_arg_count)
 
     # def initialize(self, input=None):  # TODO: make initialize?
     #     if input is not None:
@@ -81,18 +99,7 @@ class PertModelBase(E.Module):
             setattr(self, k, BatchParameter(v, requires_grad=True))
 
     def __call__(self, *args, **kwargs):
-        args = sole_tuple_to_varargs(args)
-        n = self.forward_arg_count
-        if len(args) + len(kwargs) == 1 or n == -1:  # everything fits
-            result = super().__call__(*args, **kwargs)
-        elif len(args) >= n:  # args don't fit
-            result = (super().__call__(args[0]),) if n == 1 else super().__call__(*args[:n])
-            result += (*args[n:], *tuple(kwargs.values()))
-        else:  # kwargs don't fit
-            r = n - len(args)
-            kw, unchanged = dict(tuple(kwargs.items())[:r]), tuple(kwargs.values())[r:]
-            result = super().__call__(*args, **kw) + unchanged
-        return result
+        return pert_model_forward(self.forward_arg_count, super().__call__, *args, **kwargs)
 
     def create_default_params(self, x):
         return dict()
@@ -193,6 +200,22 @@ class PertModel(PertModelBase):
 
     def forward(self, *args, **kwargs):
         return self.module(*args, **kwargs)
+
+
+class SeqPertModel(PertModelBase, E.ModuleTable):
+    def __init__(self, *args, forward_arg_count=None, **kwargs):
+        E.ModuleTable.__init__(self, *args, **kwargs)
+        pert_model_init(self, forward_arg_count)
+
+    def forward(self, *args):
+        if len(args) == 1:
+            for m in self._modules.values():
+                args = (m(*args),)
+            return args[0]
+        else:
+            for m in self._modules.values():
+                args = m(*args)
+            return args
 
 
 class EquivariantPertModel(PertModelBase):
@@ -466,29 +489,37 @@ def _forward_warp(x, grid, mode, padding_mode, align_corners):
     return result if pv == 0 else result.add_(pv)
 
 
-def _warp(x, grid, y=None, interpolation_mode='bilinear', padding_mode='zeros',
+def _warp(x, grid, y=None, mask=None, interpolation_mode='bilinear', padding_mode='zeros',
           align_corners=True, label_interpolation_mode='nearest',
           label_padding_mode=-1, forward=False):
+    assert not(y is None and mask is not None)
     pm, lpm = ['zeros' if m == 0 else m for m in [padding_mode, label_padding_mode]]
     _warp_func = _forward_warp if forward else _grid_sample_p
 
     x_p = None if x is None else _warp_func(x, grid, mode=interpolation_mode, padding_mode=pm,
                                             align_corners=align_corners)
+
     if y is None:
         return x_p
-    if y.dim() < 3:
-        y_p = y
-    else:
-        y_p = (y if 'float' in f'{y.dtype}' else y.to(grid.dtype))
-        single_channel = y.dim() == 3
-        y_p = _warp_func(y_p[:, None, ...] if single_channel else y_p, grid,
-                         mode=label_interpolation_mode, padding_mode=lpm,
-                         align_corners=align_corners)
-        if single_channel:
-            y_p.squeeze_(1)
-        if y_p.dtype is not y.dtype:
-            y_p = round_float_to_int(y_p, y.dtype)
-    return x_p, y_p
+
+    result = [x_p]
+    for z in [y, mask]:
+        if z.dim() < 3:
+            result.append(z)
+        else:
+            continous = 'float' in f'{z.dtype}'
+            z_p = (z if continous else z.to(grid.dtype))
+            single_channel = z.dim() == 3
+            z_p = _warp_func(z_p[:, None, ...] if single_channel else z_p, grid,
+                             mode=interpolation_mode if continous else label_interpolation_mode,
+                             padding_mode=padding_mode if continous else lpm,
+                             align_corners=align_corners)
+            if single_channel:
+                z_p.squeeze_(1)
+            if z_p.dtype is not z.dtype:
+                z_p = round_float_to_int(z_p, z.dtype)
+            result.append(z_p)
+    return tuple(result)
 
 
 class MorsicTPSWarp(PertModelBase):
@@ -523,8 +554,8 @@ class TPSWarp(PertModelBase):
 
     def __init__(self, *, forward: bool, control_grid_shape=(2, 2),
                  control_grid_align_corners=False, align_corners=True, padding_mode='zeros',
-                 interpolation_mode='bilinear', label_interpolation_mode='nearest',
-                 label_padding_mode=-1, swap_src_dst=False):
+                 interpolation_mode='bilinear', label_interpolation_mode=None,
+                 label_padding_mode=None, swap_src_dst=False):
         super().__init__()
         self.store_args()
 
@@ -541,7 +572,11 @@ class TPSWarp(PertModelBase):
     def create_default_params(self, x):
         return dict(offsets=x.new_zeros((x.shape[0], *self.c_src.shape)))
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, mask=None):
+        if y is not None and None in [self.args['label_interpolation_mode'],
+                                      self.args['label_padding_mode']]:
+            raise RuntimeError(f"label_interpolation_mode and label_padding_mode should be defined")
+
         c_src = self.c_src.unsqueeze(0).expand_as(self.offsets)
         c_dst = c_src + self.offsets
         if self.args.swap_src_dst:
@@ -549,7 +584,7 @@ class TPSWarp(PertModelBase):
 
         grid = (vmf.tps_grid_from_points if self.args.forward else
                 vmf.backward_tps_grid_from_points)(c_src, c_dst, size=x.shape)
-        return _warp(x, y=y, grid=grid,
+        return _warp(x, y=y, mask=mask, grid=grid,
                      **{k: self.args[k]
                         for k in ['interpolation_mode', 'padding_mode',
                                   'label_interpolation_mode', 'label_padding_mode',
@@ -564,3 +599,19 @@ class TPSWarp(PertModelBase):
 
 
 BackwardTPSWarp = partial(TPSWarp, forward=False)
+
+
+def pert_model_class(cls):
+    breakpoint()
+
+    class PertModelClass(cls, PertModelBase):
+        def __init__(self, *args, forward_arg_count=None, **kwargs):
+            PertModelBase.__init__(self, forward_arg_count=forward_arg_count)
+            cls.__init__(self, *args, **kwargs)
+
+        def forward(self, *args, **kwargs):
+            return cls.forward(self, *args, **kwargs)
+
+    PertModelClass.__name__ = f"{cls.__name__}PertModel"
+    PertModelClass.__qualname__ = f"pert_model_class{PertModelClass.__name__}"
+    return PertModelClass
