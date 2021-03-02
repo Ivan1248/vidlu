@@ -178,6 +178,17 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     return cpman
 
 
+def load_parameters(model, params_str, params_dir):
+    parameters, dest = factories.get_translated_parameters(params_str=params_str,
+                                                           params_dir=params_dir)
+    module = vm.get_submodule(model, dest)
+    try:
+        module.load_state_dict(parameters, strict=True)
+    except RuntimeError as e:
+        warnings.warn(str(e))
+        module.load_state_dict(parameters, strict=False)
+
+
 def _check_dirs(dirs):
     for name in ['DATASETS', 'CACHE', 'SAVED_STATES', 'PRETRAINED']:
         dirs_ = getattr(dirs, name)
@@ -255,12 +266,6 @@ class TrainingExperiment:
         elif a.params is not None:
             with indent_print("Loading parameters..."):
                 print(a.params)
-                parameters, dest = factories.get_translated_parameters(params_str=a.params,
-                                                                       params_dir=dirs.PRETRAINED)
-                module = vm.get_submodule(model, dest)
-                try:
-                    module.load_state_dict(parameters, strict=True)
-                except RuntimeError as e:
-                    warnings.warn(str(e))
-                    module.load_state_dict(parameters, strict=False)
+                load_parameters(model, a.params, dirs.PRETRAINED)
+
         return TrainingExperiment(model, trainer, data, logger, cpman)
