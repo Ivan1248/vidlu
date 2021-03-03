@@ -729,46 +729,8 @@ def _get_unsup_vat_outputs(out, uns_start, block_grad_for_clean, output_to_targe
 
 
 @dc.dataclass
-class SemisupVATEvalStep:
-    consistency_loss_on_labeled: bool = True
-
-    def __call__(self, trainer, batch):
-        model, attack = trainer.model, trainer.attack
-        model.eval()
-
-        x_l, y_l, x_u = _prepare_semisup_input(batch)
-        if x_u is None:
-            x_c = x_all = x_l
-            uns_start = 0
-        else:
-            x_all = torch.cat([x_l, x_u])
-            x_c = x_all if self.consistency_loss_on_labeled else x_u
-            uns_start = len(x_l) if self.consistency_loss_on_labeled else 0
-
-        with torch.no_grad():
-            out, other_outs = trainer.extend_output(model(x_all))
-            out_uns, target_uns = _get_unsup_vat_outputs(
-                out, uns_start, True, attack.output_to_target)
-
-        x_p = attack.perturb(model, x_c, target_uns)
-
-        with torch.no_grad():
-            out_p, other_outs_p = trainer.extend_output(model(x_p))
-            loss_p = attack.loss(out_p, attack.output_to_target(out_uns)).mean()
-            loss_ent_p = vml.entropy_l(out_p).mean()
-
-            out_l = out[:len(x_l)]
-            loss_l = trainer.loss(out_l, y_l).mean()
-
-        other_outs_l = type(other_outs)({k: v[:len(x_l)] for k, v in other_outs.items()})
-        return NameDict(x=x_all, output=out, other_outputs=other_outs, output_l=out_l,
-                        other_outputs_l=other_outs_l, loss_l=loss_l.item(), x_p=x_p,
-                        loss_p=loss_p.item(), x_l=x_l, target=y_l, output_p=out_p,
-                        other_outputs_p=other_outs_p, loss_ent_adv=loss_ent_p.item())
-
-
-@dc.dataclass
-class SemisupVATTrainStep:
+class SemisupVATStep:
+    eval = False
     alpha: float = 1
     attack_eval_model: bool = False
     consistency_loss_on_labeled: bool = False
@@ -777,37 +739,49 @@ class SemisupVATTrainStep:
 
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
-        model.train()
+        model.eval() if self.eval else model.train()
 
         x_l, y_l, x_u = _prepare_semisup_input(batch)
-        x = torch.cat([x_l, x_u])
-        x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
+        if self.eval and x_u is None:
+            x_c = x = x_l
+            uns_start = 0
+        else:
+            x = torch.cat([x_l, x_u])
+            x_c, uns_start = (x, 0) if self.consistency_loss_on_labeled else (x_u, len(x_l))
 
-        out, other_outs = trainer.extend_output(model(x))
-        out_uns, target_uns = _get_unsup_vat_outputs(
-            out, uns_start, self.block_grad_on_clean, attack.output_to_target)
+        with torch.no_grad() if self.eval else ctx_suppress():
+            out, other_outs = trainer.extend_output(model(x))
+            out_uns, target_uns = _get_unsup_vat_outputs(
+                out, uns_start, self.block_grad_on_clean, attack.output_to_target)
 
         with switch_training(model, False) if self.attack_eval_model else ctx_suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx_suppress():
                 x_p = attack.perturb(model, x_c, target_uns)
                 # NOTE: putting this outside of batchnorm_stats_tracking_off harms learning:
-                out_p, other_outs_p = trainer.extend_output(model(x_p))
+                with torch.no_grad() if self.eval else ctx_suppress():
+                    out_p, other_outs_p = trainer.extend_output(model(x_p))
 
-        loss_p = attack.loss(out_p, target_uns).mean()
-        loss_l = trainer.loss(out_l := out[:len(x_l)], y_l).mean()
-        loss = loss_l + self.alpha * loss_p
-        loss_ent = vml.entropy_l(out_p).mean()
-        if self.entropy_loss_coef:
-            loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
+        with torch.no_grad() if self.eval else ctx_suppress():
+            loss_p = attack.loss(out_p, target_uns)[mask >= 1 - 1e-6].mean()
+            loss_l = trainer.loss(out_l := out[:len(x_l)], y_l).mean()
+            loss = loss_l + self.alpha * loss_p
+            loss_ent = vml.entropy_l(out_p).mean()
+            if self.entropy_loss_coef:
+                loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
 
-        do_optimization_step(trainer.optimizer, loss=loss)
+            if not self.eval:
+                do_optimization_step(trainer.optimizer, loss=loss)
 
         other_outs_l = type(other_outs)({k: v[:len(x_l)] for k, v in other_outs.items()})
-
         return NameDict(x=x, output=out, other_outputs=other_outs, output_l=out_l,
                         other_outputs_l=other_outs_l, loss_l=loss_l.item(), loss_p=loss_p.item(),
                         x_l=x_l, target=y_l, x_p=x_p, output_p=out_p, other_outputs_p=other_outs_p,
                         loss_ent=loss_ent.item())
+
+
+@dc.dataclass
+class SemisupVATEvalStep(SemisupVATStep):
+    eval = True
 
 
 @dc.dataclass
