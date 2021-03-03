@@ -26,7 +26,8 @@ class TestData:
         assert torch.max(torch.abs(imtt_chw_f - imtt_chw_f_st_dst)) < 1e-5
         assert torch.all(imtt_chw == (imtt_chw_f + 0.5).to(torch.uint8))
 
-        imtp_cc = F.center_crop(imtp, (40, 10))
-        imtn_cc = numpy.center_crop(imtn, (40, 10))
+        imtp_cc = F.center_crop(imtp, (10, 5))
+        imtn_cc = numpy.center_crop(imtn, (10, 5))
+        assert np.all(image.to_numpy(imtp_cc).shape == imtn_cc.shape)
         assert np.all(image.to_numpy(imtp_cc) == imtn_cc)
         assert imtp_cc == image.to_pil(imtn_cc)
