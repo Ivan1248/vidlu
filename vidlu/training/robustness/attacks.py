@@ -161,11 +161,12 @@ class Attack:
         if y is None:
             y = self._get_target(model, x, output)
 
-        if NotImplemented is not (pert := self._get_perturbation(model, x, y=y, **kwargs)):
-            return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
-        elif NotImplemented is not (x_adv := self._perturb(model, x, y=y, **kwargs)):
-            return _pert_to_pert_model(x_adv, x)
-        raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
+        with torch.enable_grad():
+            if NotImplemented is not (pert := self._get_perturbation(model, x, y=y, **kwargs)):
+                return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
+            elif NotImplemented is not (x_adv := self._perturb(model, x, y=y, **kwargs)):
+                return _pert_to_pert_model(x_adv, x)
+            raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
 
     def perturb(self, model: nn.Module, x, y=None, output=None, **kwargs):
         """Generates an adversarial example.
