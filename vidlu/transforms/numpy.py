@@ -9,13 +9,13 @@ def center_crop(img, shape, fill=0, padding_mode='constant'):
     negative = dims_delta < 0
     if np.any(negative):
         crop = -dims_delta * negative
-        ca = np.round(crop / 2).astype(np.int)
+        ca = np.round(crop / 2).astype(int)
         cb = crop - ca
         img = img[ca[0]:(-cb[0] or img.shape[0]), ca[1]:(-cb[1] or img.shape[1])]
     positive = dims_delta > 0
     if np.any(positive):
         padding = dims_delta * positive
-        pa = np.round(padding / 2).astype(np.int)
+        pa = np.round(padding / 2).astype(int)
         pb = padding - pa
         pad_width = [(pa[0], pb[0]), (pa[1], pb[1])] + [(0, 0) for _ in range(len(img.shape) - 2)]
         img = np.pad(img, pad_width, mode=padding_mode,
