@@ -83,7 +83,7 @@ class Dataset(abc.Sequence):
                 raise FileNotFoundError(f"The dataset doesn't exist in {data_dir}.")
             self.download(data_dir)
 
-    def files_available(self, data_dir):
+    def is_available(self, data_dir):
         return data_dir.exists()
 
     def download(self, data_dir):
