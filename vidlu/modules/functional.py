@@ -77,7 +77,7 @@ def warp_ones(flow, mode='bilinear', align_corners=True, binarization_threshold=
 
 
 def tps(theta, ctrl, grid):
-    """Evaluates the thin-plate-spline (TPS) surface at locations arranged in a
+    r"""Evaluates the thin-plate-spline (TPS) surface at locations arranged in a
     grid.
 
     The TPS surface is a minimum bend interpolation surface defined by a set of
