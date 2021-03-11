@@ -5,7 +5,7 @@ import torchvision.transforms.functional as F
 from vidlu.transforms import image, numpy
 
 
-class TestData:
+class TestTransforms:
     def test_transforms(self):
         imtn = np.random.randint(0, 255, (30, 20, 3), dtype=np.uint8)
         imtp = image.to_pil(imtn)
@@ -26,8 +26,8 @@ class TestData:
         assert torch.max(torch.abs(imtt_chw_f - imtt_chw_f_st_dst)) < 1e-5
         assert torch.all(imtt_chw == (imtt_chw_f + 0.5).to(torch.uint8))
 
-        imtp_cc = F.center_crop(imtp, (10, 5))
-        imtn_cc = numpy.center_crop(imtn, (10, 5))
-        assert np.all(image.to_numpy(imtp_cc).shape == imtn_cc.shape)
-        assert np.all(image.to_numpy(imtp_cc) == imtn_cc)
-        assert imtp_cc == image.to_pil(imtn_cc)
+        imtn_c = np.clip(imtn, 1, np.inf)
+        imtn_c_cc = numpy.center_crop(imtn_c, (40, 10))
+        padding = np.round((imtn_c_cc.shape[0] - imtn_c.shape[0]) / 2).astype(int)
+        assert np.all(imtn_c_cc[:padding] == 0)
+        assert np.all(imtn_c_cc[-padding:] == 0)
