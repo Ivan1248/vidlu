@@ -67,18 +67,18 @@ semisup_vat_2way = TrainerConfig(
 semisup_vat_2way_entmin = TrainerConfig(
     semisup_vat,
     train_step=ts.SemisupVATStep(block_grad_on_clean=False,
-                                      entropy_loss_coef=1),
+                                 entropy_loss_coef=1),
 )
 
 semisup_vat_l = TrainerConfig(
     semisup_vat,
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
-    train_step=ts.SemisupVATStep(consistency_loss_on_labeled=True),
+    train_step=ts.SemisupVATStep(uns_loss_on_all=True),
+    eval_step=ts.SemisupVATEvalStep(uns_loss_on_all=True),
 )
 
 semisup_vat_l_2way = TrainerConfig(
     semisup_vat_l,
-    train_step=ts.SemisupVATStep(consistency_loss_on_labeled=True, block_grad_on_clean=False),
+    train_step=ts.SemisupVATStep(uns_loss_on_all=True, block_grad_on_clean=False),
 )
 
 semisup_vat_entmin = TrainerConfig(
@@ -142,13 +142,13 @@ semisup_cons_phtps20_entmin = TrainerConfig(
 
 semisup_cons_phtps20_l = TrainerConfig(
     semisup_cons_phtps20,
-    eval_step=ts.SemisupVATEvalStep(consistency_loss_on_labeled=True),
-    train_step=ts.SemisupVATStep(consistency_loss_on_labeled=True),
+    eval_step=ts.SemisupVATEvalStep(uns_loss_on_all=True),
+    train_step=ts.SemisupVATStep(uns_loss_on_all=True),
 )
 
 semisup_cons_phtps20_entmin_l = TrainerConfig(
     semisup_cons_phtps20_l,
-    train_step=ts.SemisupVATStep(consistency_loss_on_labeled=True, entropy_loss_coef=1),
+    train_step=ts.SemisupVATStep(uns_loss_on_all=True, entropy_loss_coef=1),
 )
 
 semisup_cons_phtps20_seg = TrainerConfig(
@@ -177,7 +177,7 @@ mean_teacher_custom_tps = TrainerConfig(
         te.SemisupVAT, attack_f=partial(tps_warp_attack, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(),
-    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherStep(),
 )
 
 mean_teacher_custom_tps_weaker = TrainerConfig(
@@ -188,7 +188,7 @@ mean_teacher_custom_tps_weaker = TrainerConfig(
                          projection=None,
                          step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(),
-    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherStep(),
 )
 
 mean_teacher_custom_tps_more_weaker = TrainerConfig(
@@ -198,7 +198,7 @@ mean_teacher_custom_tps_more_weaker = TrainerConfig(
                          projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
                          loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(),
-    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False),
+    train_step=ts.MeanTeacherStep(),
 )
 
 mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
@@ -208,7 +208,7 @@ mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
                          projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
                          loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(),
-    train_step=ts.MeanTeacherTrainStep(consistency_loss_on_labeled=False, clean_teacher_input=True),
+    train_step=ts.MeanTeacherStep(clean_teacher_input=True),
 )
 
 # Classification, CIFAR
@@ -295,7 +295,7 @@ swiftnet_cityscapes = TrainerConfig(
 swiftnet_cityscapes_halfres = TrainerConfig(
     swiftnet_cityscapes,
     batch_size=16,
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(480, 480), max_scale=1.5, overflow=0))
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=1.5, overflow=0))
 
 swiftnet_irevnet_hybrid_cityscapes = TrainerConfig(
     swiftnet_cityscapes,
