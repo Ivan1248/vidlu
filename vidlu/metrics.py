@@ -23,12 +23,6 @@ class AccumulatingMetric:
         raise NotImplementedError()
 
 
-def _get_iter_result(iter_result, name):
-    for path_part in name.split('.'):
-        iter_result = iter_result[path_part]
-    return iter_result
-
-
 def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False):
     """Computes a multi-class confusion matrix.
 
@@ -66,7 +60,7 @@ def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
         assert torch.all(non_ignored)
     return all_soft_multiclass_confusion_matrix(
         one_hot(true[non_ignored], class_count, dtype=dtype),
-                                                pred[non_ignored].to(dtype), batch=batch)
+        pred[non_ignored].to(dtype), batch=batch)
 
     # 3 - 4 times faster than
     # cm = torch.empty(list(true.shape[:int(batch)]) + [class_count] * 2,
@@ -178,14 +172,14 @@ def mIoU(cm, eps=1e-8):
 
 
 class ClassificationMetrics(AccumulatingMetric):
-    def __init__(self, class_count, target_name="target",
-                 hard_prediction_name="other_outputs.hard_prediction",
+    def __init__(self, class_count, get_target=lambda r: r.target,
+                 get_hard_prediction=lambda r: r.output.argmax(1),
                  metrics=('A', 'mP', 'mR', 'mIoU'), device=None):
         self.class_count = class_count
         self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False,
                               device=device)
-        self.target_name = target_name
-        self.hard_prediction_name = hard_prediction_name
+        self.get_target = get_target
+        self.get_hard_prediction = get_hard_prediction
         self.metrics = metrics
 
     @torch.no_grad()
@@ -194,8 +188,8 @@ class ClassificationMetrics(AccumulatingMetric):
 
     @torch.no_grad()
     def update(self, iter_result):
-        true = _get_iter_result(iter_result, self.target_name).flatten()
-        pred = _get_iter_result(iter_result, self.hard_prediction_name).flatten()
+        true = self.get_target(iter_result).flatten()
+        pred = self.get_hard_prediction(iter_result).flatten()
         cm = multiclass_confusion_matrix(true, pred, self.class_count)
         if self.cm.device != cm.device:
             self.cm = self.cm.to(cm.device)
@@ -311,13 +305,14 @@ class MinMultiMetric(_MultiMetric):
 
 
 class SoftClassificationMetrics(AccumulatingMetric):
-    def __init__(self, class_count, target_name="target", probs_name="other_outputs.probs",
+    def __init__(self, class_count, get_target=lambda r: r.target,
+                 get_probs=lambda r: r.output.softmax(1),
                  metrics=('A', 'mP', 'mR', 'mIoU')):
         super().__init__()
         self.class_count = class_count
         self.cm = torch.zeros([class_count] * 2, dtype=torch.float64, requires_grad=False)
-        self.target_name = target_name
-        self.probs_name = probs_name
+        self.get_target = get_target
+        self.get_probs = get_probs
         self.metrics = metrics
 
     @torch.no_grad()
@@ -326,8 +321,8 @@ class SoftClassificationMetrics(AccumulatingMetric):
 
     @torch.no_grad()
     def update(self, iter_result):
-        true = _get_iter_result(iter_result, self.target_name).flatten()
-        pred = _get_iter_result(iter_result, self.probs_name).permute(0, 2, 3, 1)
+        true = self.get_target(iter_result).flatten()
+        pred = self.get_probs(iter_result).permute(0, 2, 3, 1)
         pred = pred.flatten().view(-1, pred.shape[-1])
         self.cm += soft_pred_multiclass_confusion_matrix(true, pred, self.class_count)
 

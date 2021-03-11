@@ -81,23 +81,26 @@ def get_metrics(trainer, problem):  # TODO: move to configs
            partial(metrics.AverageMultiMetric, filter=lambda k, v: k.startswith('loss'))]
 
     if isinstance(problem, (Classification, SemanticSegmentation)):
-        clf_metric_names = ('A', 'mIoU', 'IoU') if isinstance(problem, SemanticSegmentation) else ('A',)
-        hard_prediction_name = "other_outputs.hard_prediction"
+        clf_metric_names = ('A', 'mIoU', 'IoU') if isinstance(problem, SemanticSegmentation) else (
+            'A',)
+        get_hard_prediction = lambda r: r.output.argmax(1)
         ret.append(partial(metrics.AverageMultiMetric,
                            filter=lambda k, v: isinstance(v, (int, float))
-                                               and not (any(k.startswith(c) for c in common_names))))
+                                               and not (
+                               any(k.startswith(c) for c in common_names))))
         if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
             ret.append(partial(metrics.with_suffix(metrics.ClassificationMetrics, 'adv'),
-                               hard_prediction_name="other_outputs_p.hard_prediction",
+                               get_hard_prediction=get_hard_prediction,
                                class_count=problem.class_count, metrics=clf_metric_names))
         elif any(isinstance(e, t.SemisupVAT) for e in trainer.extensions):
-            hard_prediction_name = "other_outputs_l.hard_prediction"
-        ret.append(partial(metrics.ClassificationMetrics, hard_prediction_name=hard_prediction_name,
+            get_hard_prediction = lambda r: r.output.argmax(1)
+        ret.append(partial(metrics.ClassificationMetrics, get_hard_prediction=get_hard_prediction,
                            class_count=problem.class_count, metrics=clf_metric_names))
         main_metrics = ("mIoU",) if isinstance(problem, SemanticSegmentation) else ("A",)
     elif isinstance(problem, DepthRegression):
         raise NotImplementedError()
         # ret = [metrics.MeanSquaredError, metrics.MeanAbsoluteError]
     else:
-        raise RuntimeError(f"get_metrics: There are no default metrics for problem {type(problem)}.")
+        raise RuntimeError(
+            f"get_metrics: There are no default metrics for problem {type(problem)}.")
     return ret, main_metrics
