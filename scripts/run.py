@@ -73,6 +73,7 @@ def train(args):
 
     print(('Continuing' if args.resume else 'Starting') + ' training...')
     training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
+
     exp.trainer.train(*training_datasets.values(), restart=False)
 
     if not args.no_train_evaluation:

@@ -41,7 +41,8 @@ def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False
     Returns:
         A confusion matrix with shape (class_count, class_count).
     """
-    return soft_pred_multiclass_confusion_matrix(true, one_hot(pred, class_count, dtype=torch.float64),
+    return soft_pred_multiclass_confusion_matrix(true,
+                                                 one_hot(pred, class_count, dtype=torch.float64),
                                                  batch=batch) \
         .to(dtype or torch.int64)
 
@@ -63,7 +64,8 @@ def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     non_ignored = true != -1
     if batch:
         assert torch.all(non_ignored)
-    return all_soft_multiclass_confusion_matrix(one_hot(true[non_ignored], class_count, dtype=dtype),
+    return all_soft_multiclass_confusion_matrix(
+        one_hot(true[non_ignored], class_count, dtype=dtype),
                                                 pred[non_ignored].to(dtype), batch=batch)
 
     # 3 - 4 times faster than
