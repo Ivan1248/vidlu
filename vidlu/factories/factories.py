@@ -260,7 +260,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         problem = problem or defaults.get_problem_from_dataset(prep_dataset)
 
     if init_input is None and prep_dataset is not None:
-        init_input = next(iter(DataLoader(prep_dataset, batch_size=1)))[0]
+        init_input = next(iter(DataLoader(prep_dataset, batch_size=2)))[0]
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
