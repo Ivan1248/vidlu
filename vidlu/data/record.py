@@ -102,8 +102,9 @@ class Record(Sequence):  # Sized, Iterable len, iter
         self._dict = state
 
     def _to_string(self, to_string_func=repr):
-        fields = ", ".join([f"{k}={to_string_func(self[k])}" if self.is_evaluated(k) else f"{k}=<unevaluated>"
-                            for k in self.keys()])
+        fields = ", ".join(
+            [f"{k}={to_string_func(self[k])}" if self.is_evaluated(k) else f"{k}=<unevaluated>"
+             for k in self.keys()])
         return f"Record({fields})"
 
     def __str__(self):
