@@ -173,7 +173,7 @@ def mIoU(cm, eps=1e-8):
 
 class ClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count, get_target=lambda r: r.target,
-                 get_hard_prediction=lambda r: r.output.argmax(1),
+                 get_hard_prediction=lambda r: r.out.argmax(1),
                  metrics=('A', 'mP', 'mR', 'mIoU'), device=None):
         self.class_count = class_count
         self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False,
@@ -306,7 +306,7 @@ class MinMultiMetric(_MultiMetric):
 
 class SoftClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count, get_target=lambda r: r.target,
-                 get_probs=lambda r: r.output.softmax(1),
+                 get_probs=lambda r: r.out.softmax(1),
                  metrics=('A', 'mP', 'mR', 'mIoU')):
         super().__init__()
         self.class_count = class_count

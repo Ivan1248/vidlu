@@ -180,10 +180,6 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 # Evaluator and trainer ############################################################################
 
 
-def extend_output(output):
-    return output, NameDict(prediction=output)
-
-
 @dataclass
 class Evaluator:
     model: T.Callable = Required
@@ -193,7 +189,6 @@ class Evaluator:
         vdu.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=2, shuffle=True)
     batch_size: int = 1
     metrics: list = dc.field(default_factory=list)
-    extend_output: T.Callable = extend_output
     eval_step: T.Callable = Required
 
     def __post_init__(self):
@@ -262,7 +257,7 @@ class Trainer(Evaluator):
     Additional state should be stored in in the `trainer.training.state`
     dictionary or in a training extension from `trainer.extensions`.
     """
-    state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler')
+    state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler', 'train_step', 'eval_step')
 
     eval_batch_size: int = None
 
@@ -327,7 +322,8 @@ class Trainer(Evaluator):
 
     def load_state_dict(self, state_dict):
         for k in self.state_dict_attrs:
-            getattr(self, k).load_state_dict(state_dict[k])
+            if hasattr(attr := getattr(self, k), "state_dict"):
+                attr.load_state_dict(state_dict[k])
         if 'extensions' in state_dict:  # TODO: remove if
             for e in self.extensions:
                 e.load_state_dict(state_dict['extensions'][f"{type(e)}"])

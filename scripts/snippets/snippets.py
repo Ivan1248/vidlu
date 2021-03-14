@@ -153,7 +153,7 @@ visualization.view_predictions(
         1).squeeze().int().cpu().numpy())
 
 # save and view images
-x, x_av = state.output.x, state.output.x_p
+x, x_av = state.result.x, state.result.x_p
 # columns = 4  # semseg
 columns = 16  # cifar
 from torchvision import utils
@@ -246,12 +246,12 @@ def show_adversarial_examples(trainer, state, **kwargs):
             plt.show()
 
         N = 16
-        x_c = state.output.x[:N]
-        x_p = state.output.x_p[:N]
-        # x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.output.target[:N])
+        x_c = state.result.x[:N]
+        x_p = state.result.x_p[:N]
+        # x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.result.target[:N])
         diff = 0.5 + (x_p - x_c) * 255 / 80
-        pred = state.output.other_outputs_p.hard_prediction[:len(state.output.target)]
-        target = state.output.target
+        pred = state.result.other_outputs_p.hard_prediction[:len(state.result.target)]
+        target = state.result.target
 
         fooled = (pred != target)[:N]
         fooled = fooled.reshape(-1, *[1] * (len(x_p.shape) - 1))
@@ -260,7 +260,7 @@ def show_adversarial_examples(trainer, state, **kwargs):
         class_repr = [None] * 10
         for i, c in enumerate(target):
             if class_repr[c] is None:
-                class_repr[c] = state.output.x[i]
+                class_repr[c] = state.result.x[i]
         for i, x in enumerate(class_repr):
             if x is None:
                 class_repr[c] = 0 * x_p[0]
@@ -281,19 +281,19 @@ def activations(trainer, **kwargs):
     from vidlu.modules import with_intermediate_outputs
 
     for i in range(4):
-        print((with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.output.x)[1][
+        print((with_intermediate_outputs(trainer.model, [f'backbone.act{i}_1'])(state.result.x)[1][
                    0] != 0).float().mean())
 
     from vidlu.modules import with_intermediate_outputs
 
     for i in range(4):
-        print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
+        print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.result.x)[1][
             0]).float())
 
     from vidlu.modules import with_intermediate_outputs
 
     for i in range(4):
-        print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.output.x)[1][
+        print((with_intermediate_outputs(trainer.model, [f'backbone.norm{i}_1'])(state.result.x)[1][
                    0] > 0.5).float().mean())
 
     for k, v in trainer.model.named_buffers():
@@ -375,7 +375,7 @@ def visualize_inverse_adv_examples(trainer, state, **kwargs):
     n = 6
 
     xs = state.batch[0].to('cuda')
-    # logits, *other_out = state.output.other_outputs.full_output
+    # logits, *other_out = state.result.other_outputs.full_output
     # breakpoint()
     logits, *other_out = trainer.model(xs)
 
@@ -432,7 +432,7 @@ def visualize_potty_interpolation(trainer, state, **kwargs):
 
     papiga = to_tensor(pimg.open("/home/igrubisic/Potty3.webp"))
 
-    x = state.output.x[:20].clone()
+    x = state.result.x[:20].clone()
     x[0, :, 10:250, 20:230] = papiga
 
     with torch.no_grad():
@@ -501,7 +501,7 @@ def visualize_latent_imagenet_pasting(trainer, state, **kwargs):
     # images = [x[:, l:l + (r - l) // 32 * 32, u:u + (u - d) // 32 * 32]
     #          for x, (l, u, r, d) in zip(images, boxes)]
 
-    bimages = state.output.x[:len(pimages)].clone()
+    bimages = state.result.x[:len(pimages)].clone()
     if len(bimages) < len(pimages):
         bimages = torch.cat([bimages] * (len(pimages) // len(bimages) + 1), dim=0)
 
@@ -552,7 +552,7 @@ def visualize_interpolation_seq(trainer, state, **kwargs):
     path = Path("/home/shared/datasets/Cityscapes/leftImg8bit_sequence/val/frankfurt")
     x = [to_tensor(pimg.open(im)) for im in sorted(list(path.iterdir()))[:4 * 2:2]]
     x = torch.stack(x)
-    x = interpolate(x, size=state.output.x.shape[-2:]).to(state.output.x.device)
+    x = interpolate(x, size=state.result.x.shape[-2:]).to(state.result.x.device)
 
     with torch.no_grad():
         model_inj = vm.deep_split(trainer.model.backbone.backbone, 'concat')[0]
@@ -699,8 +699,8 @@ batchnorm_ensemble(**locals())
 def view_perturbed_inputs(state, **kwargs):
     import matplotlib.pyplot as plt
     from torchvision.utils import make_grid
-    print(list(state.output.keys()))
-    for x in [state.output.x_p, state.output.output_p]:
+    print(list(state.result.keys()))
+    for x in [state.result.x_p, state.result.out_p]:
         plt.figure()
         x = x[:, :3, :, :]
         x = make_grid(x, int(len(x) ** 0.5 + 0.5))

@@ -9,16 +9,15 @@ import vidlu.data as vd
 import vidlu.data.utils as vdu
 from vidlu.configs.robustness import *
 from .trainer_config import TrainerConfig, OptimizerMaker
-from .classification import classification_extend_output
 
-# Basic (train_step, eval_step, extend_output)
+# Basic (train_step, eval_step)
 
 supervised = TrainerConfig(
     eval_step=ts.supervised_eval_step,
     train_step=ts.supervised_train_step,
 )
 
-classification = TrainerConfig(supervised, extend_output=classification_extend_output)
+classification = supervised
 
 # Adversarial training, basic
 
@@ -208,7 +207,7 @@ mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
                          projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
                          loss=losses.kl_div_ll, output_to_target=lambda x: x)),
     eval_step=ts.SemisupVATEvalStep(),
-    train_step=ts.MeanTeacherStep(clean_teacher_input=True),
+    train_step=ts.MeanTeacherStep(),
 )
 
 # Classification, CIFAR

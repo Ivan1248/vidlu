@@ -245,7 +245,7 @@ def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
             import torch
             with torch.no_grad():
                 args = [s.x.permute(0, 2, 3, 1), s.y_adv, s.x_adv.permute(0, 2, 3, 1),
-                        s.output.argmax(1)]
+                        s.out.argmax(1)]
                 args = [a[0].detach().cpu().numpy() for a in args]
                 x = get_frame(*args)
                 im = np.round(x * 255).astype('uint8')
