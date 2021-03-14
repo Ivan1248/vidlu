@@ -83,7 +83,7 @@ def get_metrics(trainer, problem):  # TODO: move to configs
     if isinstance(problem, (Classification, SemanticSegmentation)):
         clf_metric_names = ('A', 'mIoU', 'IoU') if isinstance(problem, SemanticSegmentation) else (
             'A',)
-        get_hard_prediction = lambda r: r.output.argmax(1)
+        get_hard_prediction = lambda r: r.out.argmax(1)
         ret.append(partial(metrics.AverageMultiMetric,
                            filter=lambda k, v: isinstance(v, (int, float))
                                                and not (
@@ -93,7 +93,7 @@ def get_metrics(trainer, problem):  # TODO: move to configs
                                get_hard_prediction=get_hard_prediction,
                                class_count=problem.class_count, metrics=clf_metric_names))
         elif any(isinstance(e, t.SemisupVAT) for e in trainer.extensions):
-            get_hard_prediction = lambda r: r.output.argmax(1)
+            get_hard_prediction = lambda r: r.out.argmax(1)
         ret.append(partial(metrics.ClassificationMetrics, get_hard_prediction=get_hard_prediction,
                            class_count=problem.class_count, metrics=clf_metric_names))
         main_metrics = ("mIoU",) if isinstance(problem, SemanticSegmentation) else ("A",)

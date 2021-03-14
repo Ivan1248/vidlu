@@ -71,7 +71,7 @@ class PredictionSimilarityIndicator:
 @dataclass
 class ClassMatches(PredictionSimilarityIndicator):
     def __call__(self, state) -> torch.BoolTensor:
-        return state.output.argmax(dim=1) == state.y
+        return state.out.argmax(dim=1) == state.y
 
 
 @dataclass
@@ -80,7 +80,7 @@ class LossIsBelowThreshold(PredictionSimilarityIndicator):
     loss: callable = None
 
     def __call__(self, state) -> torch.BoolTensor:
-        loss = state.loss if self.loss is None else self.loss(state.output, state.y)
+        loss = state.loss if self.loss is None else self.loss(state.out, state.y)
         return loss < self.threshold
 
 
@@ -91,7 +91,7 @@ class AttackState:
     x: torch.Tensor
     y: torch.Tensor
     x_adv: torch.Tensor
-    output: torch.Tensor
+    out: torch.Tensor
     loss: torch.Tensor
     loss_sum: float
     reg_loss_sum: float
@@ -254,9 +254,9 @@ class EarlyStoppingMixin:
 
 class DummyAttack(OptimizingAttack):
     def _perturb(self, model, x, y=None, backward_callback=None):
-        output, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
+        out, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         if backward_callback is not None:
-            backward_callback(AttackState(x=x, y=y, output=output, x_adv=x, loss_sum=loss_s.item(),
+            backward_callback(AttackState(x=x, y=y, out=out, x_adv=x, loss_sum=loss_s.item(),
                                           grad=grad, loss=None, reg_loss_sum=0))
         return x
 
@@ -374,7 +374,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
         zero_grad(delta)
         ((-loss if minimize else loss) - reg_loss).backward()  # maximized
 
-        state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
+        state = AttackState(x=x, y=y, out=out, x_adv=x_adv, loss_sum=loss.item(),
                             reg_loss_sum=reg_loss.item(), grad=delta.grad, step=i, loss=unred_loss)
         backward_callback(state)
 
@@ -870,7 +870,7 @@ class InverseAttack(Attack):
 #             loss = self.loss(output, y).view(len(x), -1).mean(1).sum()
 #             grad = delta.grad  # .detach().clone() unnecessary
 #
-#             state = AttackState(x=x, y=y, output=output, x_adv=x_adv, loss_sum=loss.item(),
+#             state = AttackState(x=x, y=y, out=out, x_adv=x_adv, loss_sum=loss.item(),
 #                                 grad=grad, step=i)
 #             backward_callback(state)
 #
