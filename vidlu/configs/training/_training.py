@@ -89,32 +89,32 @@ semisup_cons_phtps20 = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_warp1 = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(smooth_warp_attack, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phw2 = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phw_attack_1, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_noise = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phtps20_r1w = TrainerConfig(
@@ -122,16 +122,16 @@ semisup_cons_phtps20_r1w = TrainerConfig(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,
                                         loss=lambda p, c: losses.kl_div_ll(p.detach(), c),
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(block_grad_on_clean=False),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 semisup_cons_phtps20_1wa = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,
                                         loss=lambda p, c: losses.kl_div_ll(p, c.detach()),
                                         output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(block_grad_on_clean=False),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phtps20_entmin = TrainerConfig(
@@ -141,8 +141,8 @@ semisup_cons_phtps20_entmin = TrainerConfig(
 
 semisup_cons_phtps20_l = TrainerConfig(
     semisup_cons_phtps20,
-    eval_step=ts.SemisupVATEvalStep(uns_loss_on_all=True),
     train_step=ts.SemisupVATStep(uns_loss_on_all=True),
+    eval_step=ts.SemisupVATEvalStep(uns_loss_on_all=True),
 )
 
 semisup_cons_phtps20_entmin_l = TrainerConfig(
@@ -154,8 +154,16 @@ semisup_cons_phtps20_seg = TrainerConfig(
     partial(te.SemisupVAT,
             attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
                              output_to_target=lambda x: x)),
-    eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
+)
+
+semisup_cons_cutmix = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(cutmix_attack_21, step_count=0, loss=losses.kl_div_ll,
+                             output_to_target=lambda x: x)),
+    train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phtps20_seg_morsic = TrainerConfig(

@@ -492,7 +492,7 @@ def _forward_warp(x, grid, mode, padding_mode, align_corners):
 def _warp(x, grid, y=None, mask=None, interpolation_mode='bilinear', padding_mode='zeros',
           align_corners=True, label_interpolation_mode='nearest',
           label_padding_mode=-1, forward=False):
-    assert not(y is None and mask is not None)
+    assert not (y is None and mask is not None)
     pm, lpm = ['zeros' if m == 0 else m for m in [padding_mode, label_padding_mode]]
     _warp_func = _forward_warp if forward else _grid_sample_p
 
@@ -601,6 +601,43 @@ class TPSWarp(PertModelBase):
 BackwardTPSWarp = partial(TPSWarp, forward=False)
 
 
+def cutmix_pairs_transform(x, mask):
+    x_p = x.clone()
+    x_p[::2][mask], x_p[1::2][mask] = x[1::2][mask], x[::2][mask]
+    return x_p
+
+
+def cutmix_roll_transform(x, mask):
+    x_p = x.clone()
+    x_p[mask] = torch.roll(x, 1)[mask]
+    return x_p
+
+
+class CutMix(PertModelBase):
+    def __init__(self, mask_gen, combination: T.Literal['pairs', 'roll'] = 'pairs'):
+        super().__init__()
+        self.mask_gen = mask_gen
+        self.combination = combination
+
+    def build(self, x, y=None, mask=None):
+        if self.combination == 'pairs' and len(x) % 2 != 0:
+            raise RuntimeError("There has to be an even number of examples for mode='symmetric'.")
+        n = len(x) // 2 if self.combination == 'pairs' else len(x)
+        self.register_buffer('mask', self.mask_gen(n, tuple(x.shape[-2:]), device=x.device))
+
+    def _adapt_mask(self, x, mask):
+        if len(x.shape) == 4:
+            mask = mask.view(len(mask), 1, *x.shape[2:])
+        return mask.expand(-1, *x.shape[1:])
+
+    def forward(self, x, y=None, loss_mask=None):
+        transform = cutmix_pairs_transform if self.combination == 'pairs' else cutmix_roll_transform
+        result = [None if a is None else
+                  transform(a, self._adapt_mask(a, self.mask))
+                  for a in [x, y, loss_mask]]
+        return result
+
+
 def pert_model_class(cls):
     breakpoint()
 
@@ -608,9 +645,6 @@ def pert_model_class(cls):
         def __init__(self, *args, forward_arg_count=None, **kwargs):
             PertModelBase.__init__(self, forward_arg_count=forward_arg_count)
             cls.__init__(self, *args, **kwargs)
-
-        def forward(self, *args, **kwargs):
-            return cls.forward(self, *args, **kwargs)
 
     PertModelClass.__name__ = f"{cls.__name__}PertModel"
     PertModelClass.__qualname__ = f"pert_model_class{PertModelClass.__name__}"

@@ -136,6 +136,16 @@ phtps_attack_20 = partial(
     step_size=0.01,  # 0.01 the image height/width
 )
 
+cutmix_attack_21 = partial(
+    attacks.PertModelAttack,
+    pert_model_f=partial(vmi.CutMix, mask_gen=vtj.BoxMaskGenerator(prop_range=0.5),
+                         combination='pairs'),
+    initializer=lambda *a: None,
+    projection=None,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    step_size=None,
+)
+
 phw_attack_1 = partial(
     attacks.PertModelAttack,
     pert_model_f=partial(pert.PhotoWarp1, sigma=5),
