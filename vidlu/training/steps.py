@@ -736,19 +736,19 @@ def _cons_output_to_target(out_uns, block_grad, output_to_target):
     return target_uns
 
 
-def _perturb(attack, model, x, target, mask='create', attack_eval_model=False, eval=False):
+def _perturb(attack, model, x, target, loss_mask='create', attack_eval_model=False, eval=False):
     """Applies corresponding perturbations to the input, unsupervised target, and validity mask.
     Also computes the prediction in the perturbed input."""
-    if mask == 'create':
-        mask = torch.ones_like(target[:, 0, ...])
+    if loss_mask == 'create':
+        loss_mask = torch.ones_like(target[:, 0, ...])
 
-    with switch_training(model, False) if attack_eval_model else ctx.suppress():
-        with batchnorm_stats_tracking_off(model) if model.training else ctx.suppress():
-            pmodel = attack(model, x, target)
-            x_p, target_p, mask_p = pmodel(x, target, mask)
+    with switch_training(model, False) if attack_eval_model else \
+            batchnorm_stats_tracking_off(model) if model.training else ctx.suppress():
+        pmodel = attack(model, x, target, loss_mask=loss_mask)
+        x_p, target_p, loss_mask_p = pmodel(x, target, loss_mask)
             with torch.no_grad() if eval else ctx.suppress():  # TODO: enable enabling batchnorm stats tracking here
                 out_p = model(x_p)
-    return NameDict(x=x_p, target=target_p, mask=mask_p, out=out_p)
+    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, out=out_p)
 
 
 @dc.dataclass
