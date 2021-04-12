@@ -134,6 +134,18 @@ phtps_attack_20 = partial(
     projection=None,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     step_size=0.01,  # 0.01 the image height/width
+    step_count=0,
+)
+
+phtps_attack_20_unif = partial(
+    phtps_attack_20,
+    initializer=pert.MultiInit(
+        tps=pert.UniformInit({'offsets': (-0.1, 0.1)}),
+        photometric=pert.UniformInit(
+            {'add_v.addend': [-0.25, 0.25],
+             'mul_s.factor': [0.25, 2.],
+             'add_h.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
 )
 
 cutmix_attack_21 = partial(

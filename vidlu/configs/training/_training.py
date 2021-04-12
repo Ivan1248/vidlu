@@ -1,7 +1,7 @@
 from torch import optim
 
 from vidlu.transforms import jitter
-from vidlu.optim.lr_schedulers import ScalableMultiStepLR, ScalableLR, CosineLR
+from vidlu.optim.lr_schedulers import ScalableMultiStepLR, ScalableLR, CosineLR, QuarterCosLR
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
 
@@ -86,11 +86,17 @@ semisup_vat_entmin = TrainerConfig(
 )
 
 semisup_cons_phtps20 = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
+)
+
+semisup_cons_phtps20u = TrainerConfig(
+    semisup_cons_phtps20,
+    attack_f=partial(phtps_attack_20_unif, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
 )
 
 semisup_cons_warp1 = TrainerConfig(
@@ -299,10 +305,27 @@ swiftnet_cityscapes = TrainerConfig(
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
 )
 
+deeplabv2_cityscapes = TrainerConfig(
+    classification,
+    optimizer_f=OptimizerMaker(optim.Adam,
+                               [dict(params='backbone.aspp', lr=4e-4, weight_decay=1e-4)],
+                               lr=1e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
+    lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
+    epoch_count=250,
+    batch_size=4,
+    eval_batch_size=4,  # 6
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
+)
+
 swiftnet_cityscapes_halfres = TrainerConfig(
     swiftnet_cityscapes,
-    batch_size=16,
+    batch_size=8,
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=1.5, overflow=0))
+
+deeplabv2_cityscapes_halfres = TrainerConfig(
+    swiftnet_cityscapes_halfres,
+    optimizer_f=deeplabv2_cityscapes.optimizer_f,
+)
 
 swiftnet_irevnet_hybrid_cityscapes = TrainerConfig(
     swiftnet_cityscapes,
