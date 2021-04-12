@@ -20,6 +20,13 @@ visualization.view_predictions(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
         1).squeeze().int().cpu().numpy())
 
+visualization.view_predictions(
+    data.train_u.map(lambda r, trainer=trainer: (
+        [x:=r.x.permute(1, 2, 0).detach().cpu().numpy(), x[:,:, 0]])),
+    infer=lambda x, trainer=trainer: trainer.model(
+        torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
+        1).squeeze().int().cpu().numpy())
+
 # semseg, adversarial
 
 trainer.attack.minimize = False
@@ -65,7 +72,6 @@ trainer.attack.step_count = 150
 
 
 def greyed_image_as(x):
-    return x * 0.5  # REMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVEREMOVE
     x = x * 0.5 + x.mean()
     x[0, 0, 0] = 0
     x[0, 0, 1] = 1
@@ -221,6 +227,18 @@ trainer.eval_attack.eps *= 4
 trainer.eval_attack.loss = lambda *a, **k: -trainer.eval_attack.loss(*a, **k)
 
 
+def show_pert_inputs(trainer, state, **kwargs):
+    import matplotlib.pyplot as plt
+    # y_p = state.result.y_p.argmax(1)
+    y_p = state.result.x_p.permute(0, 2, 3, 1)
+    for y in y_p:
+        plt.imshow(y.cpu().detach().numpy())
+        plt.show()
+
+
+show_pert_inputs(**locals())
+
+
 # show adversarial examples
 
 def show_adversarial_examples(trainer, state, **kwargs):
@@ -250,7 +268,7 @@ def show_adversarial_examples(trainer, state, **kwargs):
         x_p = state.result.x_p[:N]
         # x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.result.target[:N])
         diff = 0.5 + (x_p - x_c) * 255 / 80
-        pred = state.result.other_outputs_p.hard_prediction[:len(state.result.target)]
+        pred = state.result.out_p.argmax(1)[:len(state.result.target)]
         target = state.result.target
 
         fooled = (pred != target)[:N]
@@ -273,6 +291,58 @@ def show_adversarial_examples(trainer, state, **kwargs):
 
 
 show_adversarial_examples(**locals())
+
+
+def show_seg_adversarial_examples(trainer, state, **kwargs):
+    import vidlu.modules.inputwise as vmi
+
+    # trainer.eval_attack.pert_model_f = vmi.Warp
+    # trainer.eval_attack.eps = 0.2
+    # trainer.eval_attack.step_size = 1
+    # trainer.eval_attack.step_count = 100
+    # trainer.eval_attack.stop_on_success = True
+
+    import torch
+
+    with torch.no_grad():
+        from torchvision.utils import make_grid
+
+        def show(img):
+            import numpy as np
+            import matplotlib.pyplot as plt
+            npimg = img.detach().cpu().numpy()
+            plt.close()
+            plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
+            plt.show()
+
+        N = 16
+        x_c = state.result.x[:N]
+        x_p = state.result.x_p[:N]
+        # x_p = trainer.eval_attack.perturb(trainer.model, x_c, state.result.target[:N])
+        diff = 0.5 + (x_p - x_c) * 255 / 80
+        pred = state.result.out_p.argmax(1)[:len(state.result.target)]
+        target = state.result.target
+
+        fooled = (pred != target)[:N]
+        fooled = fooled.reshape(-1, *[1] * (len(x_p.shape) - 1))
+        fooled = fooled.float() * (x_p * 0 + 1)
+
+        class_repr = [None] * 10
+        for i, c in enumerate(target):
+            if class_repr[c] is None:
+                class_repr[c] = state.result.x[i]
+        for i, x in enumerate(class_repr):
+            if x is None:
+                class_repr[c] = 0 * x_p[0]
+
+        predicted_class_representatives = list(map(class_repr.__getitem__, pred[:N]))
+
+    show(make_grid(
+        sum((list(x) for x in [x_c, x_p, diff, fooled, predicted_class_representatives]), []),
+        nrow=len(x_p)))
+
+
+show_seg_adversarial_examples(**locals())
 
 
 # activations

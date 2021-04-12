@@ -108,3 +108,5 @@ CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2
 CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:744],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*4" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:372],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+
+# https://docs.google.com/spreadsheets/d/1Tqydw1Hhvjyflo412UJJ1Y6720sRpCkYUjH3FRvYeLw/edit#gid=851257437

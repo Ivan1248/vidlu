@@ -42,5 +42,13 @@ if args.jitter:
 if args.permute:
     ds = ds.permute()
 
-ds = ds.map(lambda r: (image.torch_to_numpy(r[0].permute(1, 2, 0)), r[1].numpy()))
+
+def transform(r):
+    x = image.torch_to_numpy(r[0].permute(1, 2, 0))
+    if len(r) == 1:
+        return x, 0
+    return x, r[1].numpy()
+
+
+ds = ds.map(transform)
 view_predictions(ds, infer=None)
