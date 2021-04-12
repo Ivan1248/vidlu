@@ -6,14 +6,22 @@ import torch.utils.data as tud
 import numpy as np
 
 
+def worker_init_fn(worker_id):
+    np.random.seed(np.random.get_state()[1][0] + worker_id)
+
+
 class DataLoader(tud.DataLoader):
     """DataLoader class with support for `Record`-typed examples."""
-    __init__ = partialmethod(tud.DataLoader.__init__, collate_fn=default_collate, drop_last=True)
+    __init__ = partialmethod(tud.DataLoader.__init__, collate_fn=default_collate, drop_last=True,
+                             worker_init_fn=worker_init_fn)
 
 
 class BatchTuple(tuple):
     """The type of `ZipDataLoader` outputs."""
-    pass
+
+    def __str__(self):
+        content = ", ".join(str(type(x) for x in self))
+        return f"BatchTuple({content})"
 
 
 def _repeat(iterable, n):
