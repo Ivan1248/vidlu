@@ -1,4 +1,7 @@
+import math
+
 from torch.optim import lr_scheduler
+from torch.optim.lr_scheduler import *
 
 from vidlu.utils.func import default_args
 from vidlu.utils.misc import broadcast
@@ -90,3 +93,16 @@ class ScalableLR(lr_scheduler.LambdaLR):
                               for x in (func, scaling, min)]
         func = [lambda e: ll(e / epoch_count) * s + m for ll, s, m in zip(func, scaling, min)]
         super().__init__(optimizer=optimizer, lr_lambda=func, last_epoch=last_epoch)
+
+
+def quarter_cos(x):
+    if not 0 <= x <= 1:
+        raise ValueError(f"{x=} should be between 0 and 1.")
+    return math.cos(x * math.pi / 2)
+
+
+class QuarterCosLR(ScalableLR):
+    def __init__(self, optimizer, epoch_count, min=0.,
+                 last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
+        super().__init__(optimizer, func=quarter_cos, epoch_count=epoch_count, min=min,
+                         last_epoch=last_epoch)
