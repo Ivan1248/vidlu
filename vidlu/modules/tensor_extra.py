@@ -113,10 +113,6 @@ class Name(ExtraBase):
     name = 'name'
 
     @classmethod
-    def set(cls, x, name):
-        return super().set(x, name)
-
-    @classmethod
     def add(cls, x, name):
         for xi in vmu.extract_tensors(x):
             if not cls.has(x):
@@ -128,7 +124,8 @@ class Name(ExtraBase):
                 p = len(prefix)
                 try:
                     cls.set(xi,
-                            f"{prefix}({prev_name[p:]}, {name[p:]})" if p > 0 and prefix[-1] != '(' else
+                            f"{prefix}({prev_name[p:]}, {name[p:]})"
+                            if p > 0 and prefix[-1] != '(' else
                             f"{prefix}{prev_name[p:-1]}, {name[p:]})")
                 except:
                     breakpoint()
