@@ -2,8 +2,7 @@ import typing as T
 from vidlu.utils.func import partial
 import inspect
 import copy
-import warnings
-import contextlib as ctx
+from warnings import warn
 
 import torch
 import torch.nn.functional as F
@@ -171,8 +170,8 @@ class PertModelBase(E.Module):
                       def_value())
 
     def ensure_output_within_bounds(self, x, bounds, computed_output=None):
-        warnings.warn(f"ensure_output_within_bounds is called"
-                      + f" but not implemented for {type(self).__name__}")
+        warn(f"ensure_output_within_bounds is called"
+             + f" but not implemented for {type(self).__name__}")
 
 
 def default_parameters(pert_model, full_size: bool, recurse=True):
@@ -479,7 +478,7 @@ def _forward_warp(x, grid, mode, padding_mode, align_corners):
     # https://github.com/sniklaus/softmax-splatting
     from vidlu.libs.softmax_splatting import softsplat
     pv = 0 if padding_mode in (0, 0., "zeros") else padding_mode
-    warnings.warn("align_corners and mode not used in _forward_warp")
+    warn("align_corners and mode not used in _forward_warp")
     H, W = grid.shape[-3:-1]
     base_grid = vmf.uniform_grid_2d((H, W), low=-1., high=1., device=grid.device, dtype=grid.dtype)
     offsets = grid - base_grid
@@ -603,7 +602,11 @@ BackwardTPSWarp = partial(TPSWarp, forward=False)
 
 def cutmix_pairs_transform(x, mask):
     x_p = x.clone()
-    x_p[::2][mask], x_p[1::2][mask] = x[1::2][mask], x[::2][mask]
+    if len(x) % 2 != 0:
+        x_p[:-1:2][mask[:-1]], x_p[1::2][mask[:-1]] = x[1::2][mask[:-1]], x[:-1:2][mask[:-1]]
+        x_p[-1:][mask[-1:]] = x_p[0:1][mask[-1:]]
+    else:
+        x_p[::2][mask], x_p[1::2][mask] = x[1::2][mask], x[::2][mask]
     return x_p
 
 
@@ -621,8 +624,8 @@ class CutMix(PertModelBase):
 
     def build(self, x, y=None, mask=None):
         if self.combination == 'pairs' and len(x) % 2 != 0:
-            raise RuntimeError("There has to be an even number of examples for mode='symmetric'.")
-        n = len(x) // 2 if self.combination == 'pairs' else len(x)
+            warn("There has to be an even number of examples for mode='symmetric'.")
+        n = (len(x) + 1) // 2 if self.combination == 'pairs' else len(x)
         self.register_buffer('mask', self.mask_gen(n, tuple(x.shape[-2:]), device=x.device))
 
     def _adapt_mask(self, x, mask):
