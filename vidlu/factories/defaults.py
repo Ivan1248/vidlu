@@ -28,7 +28,7 @@ def get_problem_from_dataset(dataset):
 
 def get_model_argtree_for_problem(model_class, problem):
     from vidlu.modules import components
-
+    
     if inspect.isclass(model_class):
         if issubclass(model_class, DiscriminativeModel):
             if type(problem) is Classification:
@@ -88,12 +88,10 @@ def get_metrics(trainer, problem):  # TODO: move to configs
                            filter=lambda k, v: isinstance(v, (int, float))
                                                and not (
                                any(k.startswith(c) for c in common_names))))
-        if any(isinstance(e, t.AdversarialTraining) for e in trainer.extensions):
+        if "Adversarial" in type(trainer.train_step).__name__:
             ret.append(partial(metrics.with_suffix(metrics.ClassificationMetrics, 'adv'),
                                get_hard_prediction=get_hard_prediction,
                                class_count=problem.class_count, metrics=clf_metric_names))
-        elif any(isinstance(e, t.SemisupVAT) for e in trainer.extensions):
-            get_hard_prediction = lambda r: r.out.argmax(1)
         ret.append(partial(metrics.ClassificationMetrics, get_hard_prediction=get_hard_prediction,
                            class_count=problem.class_count, metrics=clf_metric_names))
         main_metrics = ("mIoU",) if isinstance(problem, SemanticSegmentation) else ("A",)
