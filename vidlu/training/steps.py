@@ -45,6 +45,23 @@ class BaseStep:
 
 
 # Supervised
+@torch.no_grad()
+def _prepare_sup_batch(batch):
+    """Extracts labeled and unlabeled batches.
+
+    Args:
+        batch: See the code.
+
+    Returns:
+        x - inputs, y - labels
+    """
+    if isinstance(batch, BatchTuple):
+        warn("The batch (batchTuple) consists of 2 batches.")
+        x, y = tuple(torch.cat(a, 0) for a in zip(*batch))
+    else:
+        x, y = batch
+    return x, y
+
 
 def do_optimization_step(optimizer, loss):
     optimizer.zero_grad()
@@ -62,7 +79,7 @@ def optimization_step(optimizer):
 @torch.no_grad()
 def supervised_eval_step(trainer, batch):
     trainer.model.eval()
-    x, y = batch
+    x, y = _prepare_sup_batch(batch)
     out = trainer.model(x)
     loss = trainer.loss(out, y).mean()
     return NameDict(x=x, target=y, out=out, loss=loss.item())
@@ -77,7 +94,8 @@ def _supervised_train_step_x_y(trainer, x, y):
 
 
 def supervised_train_step(trainer, batch):
-    return _supervised_train_step_x_y(trainer, *batch)
+    x, y = _prepare_sup_batch(batch)
+    return _supervised_train_step_x_y(trainer, x, y)
 
 
 @dc.dataclass
