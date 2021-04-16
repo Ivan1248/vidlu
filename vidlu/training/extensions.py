@@ -2,7 +2,8 @@ from vidlu.utils.func import params, Empty, ArgTree, argtree_partial
 
 
 class TrainerExtension:
-    pass
+    def initialize(self, trainer):
+        raise NotImplementedError()
 
     def state_dict(self):
         return dict()
