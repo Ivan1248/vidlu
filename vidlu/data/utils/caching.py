@@ -8,6 +8,7 @@ import numpy as np
 from tqdm import tqdm
 
 from vidlu.data import DatasetFactory
+from vidlu.data.record import Record
 from vidlu.utils import path
 
 
@@ -38,12 +39,20 @@ def _compute_pixel_mean_std_d(ds):
     return Namespace(mean=mean, std=std)
 
 
+def _map_record(func, r):
+    def map_(k):
+        return lambda: func(r[k])
+
+    return Record({f'{k}_': map_(k) for k in r.keys()})
+
+
 def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
+    pds = parted_dataset
     try:
-        stats_ds = parted_dataset.trainval
+        stats_ds = pds.trainval if 'trainval' in pds else pds.train.join(pds.val)
     except KeyError:
-        part_name, stats_ds = next(parted_dataset.items())
-        warnings.warn('The parted dataset object has no "trainval" part.'
+        part_name, stats_ds = next(iter(pds.items()))
+        warnings.warn('The parted dataset object has no "trainval" or "train" and "val" parts.'
                       + f' "{part_name}" is used instead.')
     ds_with_info = stats_ds.info_cache_hdd(
         dict(standardization=_compute_pixel_mean_std_d), Path(cache_dir) / 'dataset_statistics')
@@ -52,18 +61,18 @@ def add_image_statistics_to_info_lazily(parted_dataset, cache_dir):
         return ds.info_cache(
             dict(standardization=partial(_get_standardization, ds_with_info=ds_with_info)))
 
-    return parted_dataset.with_transform(cache_transform)
+    return _map_record(cache_transform, pds)
 
 
 # Caching ##########################################################################################
 
-def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
-    elem_size = next(parted_dataset.items())[1].approx_example_size()
-    size = elem_size * sum(len(ds) for _, ds in parted_dataset.top_level_items())
-    free_space = shutil.disk_usage(cache_dir).free
-    space_left = free_space - size
-
+def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 1024 ** 3):
     def transform(ds):
+        elem_size = ds.example_size(sample_count=4)
+        size = len(ds) * elem_size
+        free_space = shutil.disk_usage(cache_dir).free
+        space_left = free_space - size
+
         ds_cached = ds.cache_hdd(f"{cache_dir}/datasets")
         has_been_cached = path.get_size(ds_cached.cache_dir) > size * 0.1
         if has_been_cached or space_left >= min_free_space:
@@ -75,10 +84,10 @@ def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
                           + f' much space left.'
                           + f'\nAvailable space: {free_space / 2 ** 30:.3f} GiB.'
                           + f'\nData size: {elem_size * len(ds) / 2 ** 30:.3f} GiB (subset),'
-                          + f' {size / 2 ** 30:.3f} GiB (all).')
+                          + f' {size / 1024 ** 3:.3f} GiB (all).')
         return ds
 
-    return parted_dataset.with_transform(transform)
+    return _map_record(transform, parted_dataset)
 
 
 class CachingDatasetFactory(DatasetFactory):

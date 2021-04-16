@@ -142,7 +142,7 @@ class Dataset(abc.Sequence):
     def get_example(self, idx):  # This can be overridden
         return self.data[idx]
 
-    def approx_example_size(self, sample_count=4):
+    def example_size(self, sample_count):
         return pickle_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
 
     def sample(self, length, replace=False, seed=53, **kwargs):
