@@ -2,6 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 import re
+import datetime as dt
 
 
 # Path #############################################################################################
@@ -53,6 +54,13 @@ def remove_dir_trees_with_no_files(path: Path, verbose=False):
         path.rmdir()
         return True
     return False
+
+
+# File info ########################################################################################
+
+def time_since_access(file):
+    access_time = dt.datetime.utcfromtimestamp(Path(file).stat().st_atime)
+    return dt.datetime.utcnow() - access_time
 
 
 # File #############################################################################################
@@ -110,6 +118,3 @@ def disk_partition(path):
 
 def fs_type(path):
     return disk_partition(path).fstype
-
-
-#
