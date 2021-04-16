@@ -83,8 +83,8 @@ class Record(Sequence):  # Sized, Iterable len, iter
             return val
 
     def __contains__(self, item):
-        """This might not be a good design. Both keys and values are compared. """
-        return (item in self._dict) or super().__contains__(item)
+        """Only keys are compared. """
+        return item in self._dict
 
     def __iter__(self):  # returns values, Iterable
         return iter(self.values())
@@ -130,10 +130,24 @@ class Record(Sequence):  # Sized, Iterable len, iter
     def keys(self) -> KeysView:
         return self._dict.keys()
 
-    def values(self) -> ValuesView:
-        self.evaluate()
-        return self._dict.values()
+    def values(self):
+        return RecordValuesView(self)
 
-    def items(self) -> ItemsView:
-        self.evaluate()
-        return self._dict.items()
+    def items(self):
+        return RecordItemsView(self)
+
+
+class RecordItemsView(Record):
+    def __iter__(self):
+        return ((k, self[k]) for k in self.keys())
+
+    def __contains__(self, item):
+        return any(v == item for k, v in self)
+
+
+class RecordValuesView(Record):
+    def __iter__(self):
+        return (self[k] for k in self.keys())
+
+    def __contains__(self, item):
+        return item in self.keys()
