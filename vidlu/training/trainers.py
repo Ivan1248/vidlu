@@ -179,6 +179,8 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 
 # Evaluator and trainer ############################################################################
 
+NUM_WORKERS = int(os.environ.get("VIDLU_NUM_WORKERS", 2))
+
 
 @dataclass
 class Evaluator:
@@ -186,7 +188,8 @@ class Evaluator:
     loss: T.Callable = Required
     prepare_batch: T.Callable = default_prepare_batch
     data_loader_f: vdu.TMultiDataLoaderF = partial(
-        vdu.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=2, shuffle=True)
+        vdu.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=NUM_WORKERS,
+        shuffle=True)
     batch_size: int = 1
     metrics: list = dc.field(default_factory=list)
     eval_step: T.Callable = Required
