@@ -129,7 +129,41 @@ def reduce_loss(x, batch_reduction: T.Literal['sum', 'mean', None] = None,
     return x
 
 
-# mIoU ############################################################################################
+# Distance losses ##################################################################################
+
+def probs_sqr_l2_dist(probs, target):
+    return (probs - target).pow_(2).sum(1)
+
+
+def probs_sqr_l2_dist_l(logits, target):
+    return probs_sqr_l2_dist(logits.softmax(1), target)
+
+
+def probs_sqr_l2_dist_ll(logits, target_logits):
+    return probs_sqr_l2_dist_l(logits, target_logits.softmax(1))
+
+
+# Confidence thresholding ##########################################################################
+
+def conf_thresh_kl_div_l(logits, target, conf_thresh):
+    return kl_div_l(logits, target) * (target.max(1).values >= conf_thresh)
+
+
+def conf_thresh_kl_div_ll(logits, target_logits, conf_thresh):
+    return conf_thresh_kl_div_l(logits, target_logits.softmax(1), conf_thresh=conf_thresh)
+
+
+def conf_thresh_probs_sqr_l2_dist_ll(logits, target_logits, conf_thresh):
+    target = target_logits.softmax(1)
+    return probs_sqr_l2_dist_l(logits, target) * (target.max(1).values >= conf_thresh)
+
+
+def uncertain_kl_div_ll(logits, target_logits):
+    target = target_logits.softmax(1)
+    targ_sorted = target.sort(descending=True)
+
+
+# mIoU #############################################################################################
 
 def neg_soft_mIoU_ll(logits, target_logits, batch=True, weights=None):  # TODO
     return neg_soft_mIoU_l(logits, target_logits.softmax(1), batch=batch, weights=weights)
