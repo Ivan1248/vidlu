@@ -185,7 +185,7 @@ def grid_2d_points_to_indices(grid_points, shape, grid_low=0., grid_high=1.):
 def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     """Fits a 1D thin plate spline and supports batch inputs.
 
-    Based on NumPy code from https://github.com/cheind/py-thin-plate-spline
+    Based on code from https://github.com/cheind/py-thin-plate-spline
     """
 
     def d(a, b):
