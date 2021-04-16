@@ -119,10 +119,10 @@ def _resolve_padding(input_padding: T.Union[Number, str, T.Sequence], shape: T.S
     return np.array(result)
 
 
-def random_crop_args(x: T.Union[Tensor, T.Sequence], shape, overflow=0):
+def random_crop_args(x: T.Union[Tensor, T.Sequence], shape, overflow=0, rng=np.random):
     input_shape, shape = np.array(x[0].shape[-2:]), np.array(shape)
     overflow = _resolve_padding(overflow, shape)
-    p0 = np.random.rand(2) * (input_shape - shape) - overflow / 2
+    p0 = rng.rand(2) * (input_shape - shape) - overflow / 2
     p1 = p0 + shape
     p0 = np.maximum(p0, 0, out=p0)  # in-place
     p1 = np.minimum(p1, input_shape, out=p1)
@@ -131,22 +131,22 @@ def random_crop_args(x: T.Union[Tensor, T.Sequence], shape, overflow=0):
     return dict(location=num.round_to_int(p0), shape=feasible_shape)
 
 
-def random_crop(x: T.Union[Tensor, T.Sequence], shape, overflow=0):
-    return crop(x, **random_crop_args(x, shape, overflow=overflow))
+def random_crop(x: T.Union[Tensor, T.Sequence], shape, overflow=0, rng=np.random):
+    return crop(x, **random_crop_args(x, shape, overflow=overflow, rng=rng))
 
 
 RandomCrop = func_to_module_class(random_crop)
 
 
-def random_hflip(x: Tensor, p=0.5) -> Tensor:
-    return hflip(x) if np.random.rand() < p else x
+def random_hflip(x: Tensor, p=0.5, rng=np.random) -> Tensor:
+    return hflip(x) if rng.rand() < p else x
 
 
 RandomHFlip = func_to_module_class(random_hflip)
 
 
 def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0, is_segmentation=False,
-                      align_corners=None):
+                      align_corners=None, rng=np.random):
     multiple = isinstance(x, tuple)
     xs = x if multiple else (x,)
     if isinstance(is_segmentation, bool):
@@ -157,9 +157,9 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0, is_segmen
     if not all(a.shape[-2:] == input_shape for a in xs):
         raise RuntimeError("All inputs must have the same height and width.")
 
-    scale = np.random.rand() * (max_scale - min_scale) + min_scale
+    scale = rng.rand() * (max_scale - min_scale) + min_scale
 
-    xs = random_crop(xs, shape=np.array(shape) / scale, overflow=overflow)
+    xs = random_crop(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
 
     shape = tuple(
         d for d in
