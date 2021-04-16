@@ -267,8 +267,7 @@ class Dataset(abc.Sequence):
 
     def join(self, *other, **kwargs):
         datasets = [self] + list(other)
-        info = kwargs.pop('info', {k: v for k, v in datasets[0].info.items()
-                                   if all(d.info.get(k, None) == v for d in datasets[1:])})
+        info = kwargs.pop('info', datasets[0].info)
         name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
 
