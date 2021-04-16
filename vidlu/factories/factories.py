@@ -1,3 +1,4 @@
+import datetime
 import os
 import re
 from pathlib import Path
@@ -111,10 +112,12 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     """
     from vidlu import data
-    from vidlu.data import Record
+    from vidlu.data import Record, clear_hdd_cache, clean_up_dataset_cache
     import vidlu.transforms as vt
     import torchvision.transforms.functional_tensor as tvt
     import vidlu.modules.functional as vmf
+
+    cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 14))
 
     if ':' in data_str:
         data_str, transform_str = data_str.split(':', 1)
@@ -126,7 +129,9 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
     get_parted_dataset = data.DatasetFactory(datasets_dir)
     if cache_dir is not None:
         add_stats = partial(vdu.add_image_statistics_to_info_lazily, cache_dir=cache_dir)
+        clean_up_dataset_cache(cache_dir, datetime.timedelta(days=cache_cleanup_time))
         get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [add_stats])
+
     data = []
     for name, options_str, subsets in name_options_subsets_tuples:
         options = unsafe_eval(f'dict{options_str or "()"}', dict(Record=Record))
@@ -285,8 +290,8 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         input_adapter_str, problem=problem,
         data_statistics=(None if prep_dataset is None
                          else prep_dataset.info.cache['standardization']))
-        if len(argtree_arg) != 0:
-            argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
+    if len(argtree_arg) != 0:
+        argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
     if len(argtree) > 0:
         model_f = vuf.argtree_partial(model_f, **argtree)
     _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
@@ -374,7 +379,7 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 def short_symbols_for_get_trainer():
     import math
     from torch import optim
-    from torch.optim import lr_scheduler
+    import vidlu.optim.lr_schedulers as lr
     from vidlu.modules import losses
     import vidlu.data as vd
     import vidlu.training.robustness as ta
