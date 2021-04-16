@@ -4,6 +4,7 @@ import dataclasses as dc
 from dataclasses import dataclass, InitVar
 import logging
 from warnings import warn
+import os
 
 from tqdm import tqdm
 import torch
@@ -16,6 +17,7 @@ from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import Event, Stopwatch, broadcast
 import vidlu.configs.training as vct
+from vidlu.training.extensions import TrainerExtension
 
 
 # Engine based on Ignite Engine ####################################################################
@@ -269,11 +271,11 @@ class Trainer(Evaluator):
     lr_scheduler_f: InitVar[T.Callable] = ConstLR  # optimization; vidlu.optim.lr_schedulers
     jitter: T.Callable = None  # learning
     train_step: T.Callable = Required  # learning; vidlu.training.steps
-    extension_fs: InitVar[T.Sequence] = ()  # learning
+    extension_fs: InitVar[T.Sequence[T.Callable]] = ()  # learning
 
     optimizer: T.Any = dc.field(init=False)
     lr_scheduler: T.Any = dc.field(init=False)
-    extensions: T.Sequence = dc.field(init=False)
+    extensions: T.Sequence[TrainerExtension] = dc.field(init=False)
 
     def __post_init__(self, optimizer_f, lr_scheduler_f, extension_fs):
         super().__post_init__()
@@ -297,8 +299,6 @@ class Trainer(Evaluator):
         if len(set(map(type, self.extensions))) < len(self.extensions):
             raise RuntimeError("Multiple extensions of the same type are not allowed. The types are"
                                + f"{', '.join([type(e).__name__ for e in self.extensions])}.")
-        self.state = NameDict()
-
         for e in self.extensions:
             e.initialize(self)
 
@@ -327,9 +327,8 @@ class Trainer(Evaluator):
         for k in self.state_dict_attrs:
             if hasattr(attr := getattr(self, k), "state_dict"):
                 attr.load_state_dict(state_dict[k])
-        if 'extensions' in state_dict:  # TODO: remove if
-            for e in self.extensions:
-                e.load_state_dict(state_dict['extensions'][f"{type(e)}"])
+        for e in self.extensions:
+            e.load_state_dict(state_dict['extensions'][f"{type(e)}"])
 
     def __getattr__(self, key):
         for e in self.extensions:
