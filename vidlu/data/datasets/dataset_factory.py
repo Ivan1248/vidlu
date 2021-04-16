@@ -4,11 +4,11 @@ from pathlib import Path
 import dataclasses as dc
 import warnings
 import itertools
+from functools import partial
 
 from . import datasets
 from .datasets import Dataset
-from .. import PartedDataset
-
+from vidlu.data.record import Record
 import vidlu.utils.path as vup
 
 
@@ -20,16 +20,10 @@ class _DatasetInfo:
 
 
 class DatasetFactory:
-    def __init__(self, datasets_dir_or_dirs, datasets_modules=(datasets,),
-                 default_parts=('all', 'trainval', 'train', 'val', 'test'),
-                 default_splits="default"):
+    def __init__(self, datasets_dir_or_dirs, datasets_modules=(datasets,)):
         if isinstance(datasets_dir_or_dirs, os.PathLike):
             datasets_dir_or_dirs = [datasets_dir_or_dirs]
         self.datasets_dirs = list(map(Path, datasets_dir_or_dirs))
-        if default_splits == "default":
-            default_splits = {'all': (('trainval', 'test'), 0.8),
-                              'trainval': (('train', 'val'), 0.8)}
-        self.default_parts, self.default_splits = default_parts, default_splits
 
         self.ds_to_info = {
             k: _DatasetInfo(v, path=getattr(v, 'default_dir', None))
@@ -58,7 +52,5 @@ class DatasetFactory:
             subsets = ['all']
             load = lambda s: ds_info.cls(*path_args, **{**ds_info.kwargs, **kwargs})
         else:
-            load = lambda s: ds_info.cls(*path_args, s, **{**ds_info.kwargs, **kwargs})
-        splits = getattr(ds_info.cls, 'splits', self.default_splits)
-        # TODO: dict/Record instead of PartedDataset?
-        return PartedDataset({s: load(s) for s in subsets}, splits)
+            load = lambda s: ds_info.cls(*path_args, subset=s, **{**ds_info.kwargs, **kwargs})
+        return Record(**{f"{s}_": partial(load, s) for s in subsets})
