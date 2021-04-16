@@ -12,8 +12,7 @@ from torch import nn
 
 from vidlu.data import BatchTuple, Record
 from vidlu.utils.collections import NameDict
-from vidlu.torch_utils import (concatenate_tensors_trees, switch_training,
-                               batchnorm_stats_tracking_off)
+from vidlu.torch_utils import (switch_training, batchnorm_stats_tracking_off)
 import vidlu.modules as vm
 import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
@@ -516,7 +515,7 @@ class AdversarialTrainStep:
         trainer.model.eval()  # adversarial examples are generated in eval mode
         crc = CleanResultCallback()
         x_p, y_p = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y_a,
-                                     backward_callback=crc)
+                                          backward_callback=crc)
         trainer.model.train()
 
         out = trainer.model(torch.cat((x_c, x_p), dim=0))
@@ -755,18 +754,23 @@ def _cons_output_to_target(out_uns, block_grad, output_to_target):
     return target_uns
 
 
-def _perturb(attack, model, x, target, loss_mask='create', attack_eval_model=False, eval=False):
+# TODO: check TODO
+def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_model=False,
+             bn_stats_updating=False, detach_out=False):
     """Applies corresponding perturbations to the input, unsupervised target, and validity mask.
     Also computes the prediction in the perturbed input."""
     if loss_mask == 'create':
-        loss_mask = torch.ones_like(target[:, 0, ...])
+        loss_mask = torch.ones_like(attack_target[:, 0, ...])
 
     with switch_training(model, False) if attack_eval_model else \
-            batchnorm_stats_tracking_off(model) if model.training else ctx.suppress():
-        pmodel = attack(model, x, target, loss_mask=loss_mask)
-        x_p, target_p, loss_mask_p = pmodel(x, target, loss_mask)
-            with torch.no_grad() if eval else ctx.suppress():  # TODO: enable enabling batchnorm stats tracking here
-                out_p = model(x_p)
+            batchnorm_stats_tracking_off(model) if model.training and not bn_stats_updating else \
+                    ctx.suppress():
+        pmodel = attack(model, x, attack_target, loss_mask=loss_mask)
+        x_p, target_p, loss_mask_p = pmodel(x, attack_target, loss_mask)
+        with torch.no_grad() if detach_out else ctx.suppress():  # TODO: enable enabling batchnorm stats tracking here, CHECK!
+            out_p = model(x_p)
+            if detach_out:
+                out_p = out_p.detach()
     return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, out=out_p)
 
 
@@ -775,32 +779,37 @@ class SemisupCleanTargetConsStepBase:
     """Base class for VAT, mean teacher, ..."""
     alpha: float = 1
     attack_eval_model: bool = False
+    pert_bn_stats_updating: bool = False
     uns_loss_on_all: bool = False
     entropy_loss_coef: float = 0
-    block_grad_on_clean: bool = True
     loss_cons: T.Optional[T.Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
-    mem_efficient: bool = False
+    block_grad_on_clean: bool = True
+    block_grad_on_pert: bool = False
+    pert_both: bool = False
+    rev_cons: bool = False
+    mem_efficient: bool = True
     eval: bool = False
-
-    def __post_init__(self):
-        if self.mem_efficient and self.uns_loss_on_all:
-            warn("memory_efficient is set to true, but will have no effect because uns_loss_on_all"
-                 + " is also true.")
 
     def get_student_and_teacher(self, trainer):
         return [trainer.model] * 2
 
     def __call__(self, trainer, batch):
         x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all)
+        detach_clean = self.eval or self.block_grad_on_clean
+        detach_pert = self.eval or self.block_grad_on_pert
 
         attack = trainer.attack
         model, teacher = self.get_student_and_teacher(trainer)
-        loss_cons = self.loss_cons or attack.loss
+        lc = self.loss_cons or attack.loss
+        loss_cons = (lambda a, b: lc(b, a)) if self.rev_cons else lc
         output_to_target = partial(_cons_output_to_target, block_grad=self.block_grad_on_clean,
                                    output_to_target=attack.output_to_target)
         mem_eff = teacher is not model or self.mem_efficient and not self.uns_loss_on_all
+        perturb_input = lambda attack_target, detach_out: _perturb(
+            attack=attack, model=model, x=x_u, attack_target=attack_target, detach_out=detach_out,
+            attack_eval_model=self.attack_eval_model, bn_stats_updating=self.pert_bn_stats_updating)
 
-        model.eval() if self.eval else model.train()
+        model.eval() if self.eval else model.train()  # teacher always eval. mode if it's not model
 
         with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
             with torch.no_grad() if self.eval else ctx.suppress():
@@ -810,14 +819,26 @@ class SemisupCleanTargetConsStepBase:
                     loss_l.backward()
                     loss_l = loss_l.detach()
 
-            with torch.no_grad() if self.block_grad_on_clean or self.eval else ctx.suppress():
-                out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
-                target_uns = output_to_target(out_u)  # usually identity with .detach()
+            if self.alpha == 0:
+                return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(),
+                                loss_u=0, x_u=x_u, x_p=None, y_p=None, out_u=None, out_p=None,
+                                loss_ent=0)
 
-            pert = _perturb(attack=attack, model=model, x=x_u, target=target_uns,
-                            attack_eval_model=self.attack_eval_model, eval=self.eval)
+            with torch.no_grad() if detach_clean else ctx.suppress():
+                if self.pert_both:
+                    out_u = perturb_input(attack_target=x_u.new_zeros(x_u[:, :1].shape),
+                                          detach_out=detach_clean).out
+                else:  # default
+                    out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
+                target_uns = output_to_target(out_u)  # usually identity with .detach()
+            pert = perturb_input(attack_target=target_uns, detach_out=detach_pert)
+
             with torch.no_grad() if self.eval else ctx.suppress():
-                loss_u = loss_cons(pert.out, pert.target)[pert.mask >= 1 - 1e-6].mean()
+                if self.block_grad_on_pert:  # non-default
+                    pert.out = pert.out.detach()
+                if self.block_grad_on_clean:  # just in case
+                    pert.target = pert.target.detach()
+                loss_u = loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
                 loss = loss_l + self.alpha * loss_u
                 loss_ent = vml.entropy_l(pert.out).mean()
                 if self.entropy_loss_coef:
@@ -826,7 +847,8 @@ class SemisupCleanTargetConsStepBase:
                 loss.backward()
 
         return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
-                        x_u=x_u, x_p=pert.x, out_u=out_u, out_p=pert.out, loss_ent=loss_ent.item())
+                        x_u=x_u, x_p=pert.x, y_p=pert.target, out_u=out_u, out_p=pert.out,
+                        loss_ent=loss_ent.item())
 
 
 @dc.dataclass
@@ -920,7 +942,7 @@ def update_mean_teacher(teacher, model, ema_decay):
 
 @dc.dataclass
 class MeanTeacherStep(SemisupCleanTargetConsStepBase):
-    ema_decay = 0.99
+    ema_decay: float = 0.99
     ema_teacher: T.Optional[T.Union[nn.Module, dict]] = None  # should this be here?
 
     def __call__(self, trainer, batch):
@@ -940,11 +962,12 @@ class MeanTeacherStep(SemisupCleanTargetConsStepBase):
         return trainer.model, self.ema_teacher
 
     def state_dict(self):
-        return self.ema_teacher.state_dict()
+        t = self.ema_teacher
+        return t if isinstance(t, dict) else dict() if isinstance(t, dict) else t.state_dict()
 
-    def load_state_dict(self, state_dict):  # TODO
+    def load_state_dict(self, state_dict):
         if self.ema_teacher is None or isinstance(self.ema_teacher, dict):
-            self.ema_teacher = dict(state_dict)
+            self.ema_teacher = dict(state_dict) if len(state_dict) > 0 else None
         else:
             self.ema_teacher.load_state_dict(state_dict)
 
