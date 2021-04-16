@@ -10,15 +10,17 @@ import os
 import pickle
 import typing as T
 from collections import abc
-from pathlib import Path
-import shutil
 import warnings
 import multiprocessing
+import datetime as dt
+from pathlib import Path
+import shutil
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
 
+import vidlu.utils.path as vup
 from vidlu.utils.misc import slice_len, query_user
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
@@ -164,8 +166,10 @@ class Dataset(abc.Sequence):
 
         Args:
             directory: The directory in which cached datasets are to be stored.
-            separate_fields: If True, record fileds are saved in separate files,
+            separate_fields (bool): If True, record files are saved in separate files,
                 e.g. labels are stored separately from input examples.
+            unused_cleanup_time (datetime.timedelta): Time since last access for cached
+                dataset that needs to pass so that it is to be deleted.
             **kwargs: additional arguments for the Dataset initializer.
         """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
@@ -270,7 +274,7 @@ class Dataset(abc.Sequence):
         info = kwargs.pop('info', datasets[0].info)
         name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
-
+        
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
 
@@ -441,14 +445,25 @@ class HDDAndRAMCacheDataset(Dataset):
         super().__init__(modifiers="cache_hdd_ram", info=dataset.info, data=data, **kwargs)
 
 
+def clean_up_dataset_cache(cache_dir, max_time_since_access: dt.timedelta):
+    to_delete = []
+    for dir in Path(cache_dir).iterdir():
+        file = next(dir.iterdir(), None)
+        if file is None or (vup.time_since_access(file) > max_time_since_access):
+            to_delete.append(dir)
+    for dir in tqdm(to_delete,
+                    desc=f"Cleaning up dataset cache unused for {max_time_since_access}."):
+        shutil.rmtree(dir)
+
+
 class HDDCacheDataset(Dataset):
     # Caches the whole dataset on HDD
     __slots__ = ('cache_dir', 'separate_fields', 'keys')
 
     def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=4,
                  **kwargs):
-        modifier = 'cache_hdd' + ('_s' if separate_fields else '')
-        super().__init__(modifiers=modifier, data=dataset, **kwargs)
+        super().__init__(modifiers='cache_hdd' + ('_s' if separate_fields else ''),
+                         data=dataset, **kwargs)
         self.cache_dir = to_valid_path(Path(cache_dir) / self.identifier)
         self.separate_fields = separate_fields
         if len(dataset) == 0:
@@ -469,12 +484,12 @@ class HDDCacheDataset(Dataset):
                 os.makedirs(self.cache_dir, exist_ok=False)
                 break
 
-    def _get_cache_path(self, idx, field=None):
+    def _get_example_cache_path(self, idx, field=None):
         path = f"{self.cache_dir}/{idx}"
         return f"{path}_{field}.p" if field else path + '.p'
 
     def _get_example_or_field(self, idx, field=None):
-        cache_path = self._get_cache_path(idx, field)
+        cache_path = self._get_example_cache_path(idx, field)
         if os.path.exists(cache_path):
             try:
                 with open(cache_path, 'rb') as cache_file:
