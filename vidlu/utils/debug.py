@@ -11,12 +11,11 @@ state = Namespace()
 
 # ##################################################################################################
 
-def trace_calls(
-        depth=float('inf'),
-        filter_=lambda **k: True,
-        enter_action=lambda indent, frame, **k: print(
-            " " * indent, frame.f_code.co_name,
-            f"{frame.f_code.co_filename}:{frame.f_code.co_firstlineno}")):
+def trace_calls(depth=float('inf'),
+                filter_=lambda **k: True,
+                enter_action=lambda indent, frame, **k: print(
+                    " " * indent, frame.f_code.co_name,
+                    f"{frame.f_code.co_filename}:{frame.f_code.co_firstlineno}")):
     indent = 0
 
     def tracefunc(frame, event, arg):
