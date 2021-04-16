@@ -481,8 +481,8 @@ class AdversarialTrainStep:
         >>>
         >>> trainer.model.eval()
         >>> crc = CleanResultCallback()
-        >>> x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y,
-        >>>                                backward_callback=crc)
+        >>> x_p, y_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y,
+        >>>                                   backward_callback=crc)
         >>> trainer.model.train()
         >>>
         >>> out = trainer.model(x_p)
@@ -497,18 +497,18 @@ class AdversarialTrainStep:
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
         crc = CleanResultCallback()
-        x_p = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y_a,
+        x_p, y_p = trainer.attack.perturb(trainer.model, x_a, None if self.virtual else y_a,
                                      backward_callback=crc)
         trainer.model.train()
 
         out = trainer.model(torch.cat((x_c, x_p), dim=0))
         out_c, out_p = split(out)
-        loss_p = trainer.loss(out_p, y_a).mean()
+        loss_p = trainer.loss(out_p, y_p).mean()
         loss_c = trainer.loss(out_c, y_c).mean() if len(y_c) > 0 else 0
         do_optimization_step(trainer.optimizer,
                              loss=cln_proportion * loss_c + (1 - cln_proportion) * loss_p)
         return NameDict(x=x, out=crc.result.out, target=y, loss=crc.result.loss_mean,
-                        x_p=x_p, target_p=y_a, out_p=out_p, loss_p=loss_p.item())
+                        x_p=x_p, target_p=y_p, out_p=out_p, loss_p=loss_p.item())
 
 
 @dc.dataclass
@@ -542,11 +542,11 @@ class AdversarialCombinedLossTrainStep:
         x, y = batch
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
-        x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
+        x_p, y_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
 
         trainer.model.train()
         out_c = trainer.model(x)
-        loss_c = trainer.loss(out_c, y).mean()
+        loss_c = trainer.loss(out_c, y_p).mean()
         out_p = trainer.model(x_p)
         loss_p = (trainer.attack if self.use_attack_loss else trainer).loss(out_p, y).mean()
 
@@ -572,8 +572,8 @@ class AdversarialTrainBiStep:
         x, y = batch
         clean_result = _supervised_train_step_x_y(trainer, x, y)
         trainer.model.eval()  # adversarial examples are generated in eval mode
-        x_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
-        result_p = _supervised_train_step_x_y(trainer, x_p, y)
+        x_p, y_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
+        result_p = _supervised_train_step_x_y(trainer, x_p, y_p)
         return NameDict(x=x, out=clean_result.out, target=y, loss=clean_result.loss_mean,
                         x_p=x_p, out_p=result_p.out, loss_p=result_p.loss_mean)
 
@@ -610,13 +610,14 @@ class AdversarialTrainMultiStep:
             perturb = trainer.attack.perturb
             if self.reuse_pert:
                 perturb = partial(perturb, initial_pert=self.last_pert)
-            x_p = perturb(trainer.model, x, None if self.virtual else y, backward_callback=step)
+            x_p, y_p = perturb(trainer.model, x, None if self.virtual else y,
+                               backward_callback=step)
             if self.reuse_pert:
                 self.last_pert = x_p - x
 
         trainer.model.train()
         out_p = trainer.model(x_p)
-        loss_p = trainer.loss(out_p, y).mean()
+        loss_p = trainer.loss(out_p, y_p).mean()
         do_optimization_step(trainer.optimizer, loss_p)
 
         return NameDict(x=x, target=y, out=clean_result.out, loss=clean_result.loss_mean,
@@ -643,9 +644,9 @@ class VATTrainStep:
                 target = target.detach()
         with switch_training(model, False) if self.attack_eval_model else ctx.suppress():
             with batchnorm_stats_tracking_off(model) if model.training else ctx.suppress():
-                x_p = attack.perturb(model, x, target)
+                x_p, y_p = attack.perturb(model, x, target)
                 out_p = model(x_p)
-        loss_p = attack.loss(out_p, target).mean()
+        loss_p = attack.loss(out_p, y_p).mean()
         loss = loss + self.alpha * loss_p
         loss_ent = vml.entropy_l(out_p).mean()
         if self.entropy_loss_coef:
@@ -845,10 +846,10 @@ class SemisupVATCorrEvalStep:
         out_uns, target_uns = _cons_output_to_target(
             out, uns_start, self.block_grad_on_clean, attack.output_to_target)
 
-        x_p = attack.perturb(model, x_c, target_uns)
+        x_p, y_p = attack.perturb(model, x_c, target_uns)
         out_p = model(x_p)
 
-        loss_p = attack.loss(out_p, target_uns).mean()
+        loss_p = attack.loss(out_p, y_p).mean()
         loss_l = trainer.loss(out_l := out[:len(x_l)], y_l).mean()
         loss = loss_l + self.alpha * loss_p
         loss_ent = vml.entropy_l(out_p).mean()
@@ -944,7 +945,7 @@ class AdversarialEvalStep:
             out = trainer.model(x)
             loss = trainer.loss(out, y).mean()
 
-        x_p = attack.perturb(trainer.model, x, None if self.virtual else y)
+        x_p, y_p = attack.perturb(trainer.model, x, None if self.virtual else y)
         with torch.no_grad():
             out_p = trainer.model(x_p)
             loss_p = (attack.loss(out_p, attack.output_to_target(out)) if self.virtual
