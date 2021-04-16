@@ -33,7 +33,7 @@ IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tif
 def _load_image(path, force_rgb=True):
     img = pimg.open(path)
     if force_rgb and img.mode != 'RGB':
-        img = img.convert('BGR')
+        img = img.convert('RGB')
     return img
 
 
