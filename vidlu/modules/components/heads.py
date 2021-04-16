@@ -46,6 +46,17 @@ class SegmentationHead(E.Module):
         return self.interpolate(self.logits(x), shape or self.shape)
 
 
+class ResizingHead(E.Module):
+    def __init__(self, shape=None, kernel_size=1,
+                 interpolate=partial(F.interpolate, mode='bilinear', align_corners=False)):
+        super().__init__()
+        self.interpolate = interpolate
+        self.shape = shape
+
+    def forward(self, logits, shape=None):
+        return self.interpolate(logits, shape or self.shape)
+
+
 class RegressionHead(E.Seq):
     def __init__(self, class_count, shape):
         super().__init__(logits=E.Conv(class_count, kernel_size=1),
