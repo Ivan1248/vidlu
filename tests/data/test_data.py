@@ -6,7 +6,7 @@ from collections.abc import Sequence
 import numpy as np
 import torch
 
-from vidlu.data import Record, Dataset, PartedDataset, DataLoader
+from vidlu.data import Record, Dataset, DataLoader
 
 
 class TestRecord:
@@ -115,28 +115,6 @@ class TestDataset:
         assert [i for i, r in enumerate(ds)][-1] == len(ds) - 1
 
         assert len(ds[1::3]) == len([x for x in ds[1::3]])
-
-    def test_parted_dataset(self):
-        part_to_split = {
-            'all': (('trainval', 'test'), 0.8),
-            'trainval': (('train', 'val'), 0.7),
-            'valtest': (('val', 'test'), 0.8 / 1.8),
-        }
-        for subsets in [["trainval", "test"], ["train", "val", "test"], ["all"]]:
-            subset_to_getter = {name: Dataset(name=name, data=range(i * 10))
-                                for i, name in enumerate(subsets)}
-            pds = PartedDataset(subset_to_getter, part_to_split)
-
-            def run_tests(pds):
-                assert len(pds.trainval) == len(pds.train) + len(pds.val)
-                assert all(a == b for a, b in zip(pds.trainval, pds.train + pds.val))
-                assert len(pds.all) == len(pds.trainval) + len(pds.test)
-                assert all(a == b for a, b in zip(pds.all, pds.trainval + pds.test))
-                assert len(pds.valtest) == len(pds.all) - len(pds.train)
-
-            run_tests(pds)
-            pds_t = pds.with_transform(lambda x: x)
-            run_tests(pds_t)
 
     def test_info_cache_hdd(self, tmpdir):
         upper = 9
