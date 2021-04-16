@@ -818,8 +818,8 @@ class CamVid(Dataset):
 
 
 class CamVidSequences(Dataset):  # TODO
-    subsets = ['01TP', '05VD', '06R0', '16E5']
-    subset_to_size = {'01TP': 3691, '05VD': 5101, '06R0': 3001, '16E5': 8251}
+    subsets = ['06R0', '16E5', '01TP', '05VD']  # 01TP and 05VD contain the test set
+    subset_to_size = {'06R0': 3001, '16E5': 8251, '01TP': 3691, '05VD': 5101}
     default_dir = 'CamVid-sequences'
 
     def download(self, data_dir):
@@ -835,8 +835,9 @@ class CamVidSequences(Dataset):  # TODO
 
         self._downsampling = downsampling
 
-        images = list((data_dir / subset).iterdir())
-        _check_size(images, size=self.subset_to_size[subset])
+        self._image_paths = list((data_dir / subset).iterdir())
+        _check_size(self._image_paths, size=self.subset_to_size[subset],
+                    name=f"{type(self).__name__}-{subset}")
 
         info = dict(
             problem='semantic_segmentation', class_count=11,
@@ -847,27 +848,27 @@ class CamVidSequences(Dataset):  # TODO
         super().__init__(subset=subset, modifiers=modifiers, info=info)
 
     def get_example(self, idx):
-        ip, lp = self._img_lab_list[idx]
-        ds = self._downsampling
-        return _make_record(
-            x_=lambda: load_image(ip, ds),
-            y_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label))
+        image_path = self._image_paths[idx]
+        return _make_record(x_=lambda: load_image(image_path, self._downsampling))
 
     def __len__(self):
-        return len(self._img_lab_list)
+        return len(self._image_paths)
 
 
 class Cityscapes(Dataset):
-    subsets = ['train', 'val', 'test']  # 'test' labels are invalid
+    subsets = ['train', 'val', 'test', 'train_extra']  # 'test' labels are invalid
     default_dir = 'Cityscapes'
-    subset_to_size = dict(train=2975, val=500, test=1525, train_extra="Ne znam")
+    subset_to_size = dict(train=2975, val=500, test=1525, train_extra=19998)
     info = dict(problem='semantic_segmentation', class_count=19,
                 class_names=[l.name for l in cslabels if l.trainId >= 0],
                 class_colors=[l.color for l in cslabels if l.trainId >= 0],
                 in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
 
-    def __init__(self, data_dir, subset='train', downsampling=1):
+    def __init__(self, data_dir, subset='train', label_kind=None, downsampling=1):
+        if label_kind is None:
+            label_kind = 'gtCoarse' if subset == 'train_extra' else 'gtFine'
         data_dir = Path(data_dir)
+        im_data_dir = data_dir / subset if subset == 'train_extra' else data_dir
         _check_subsets(self.__class__, subset)
         if downsampling < 1:
             raise ValueError("downsampling must be greater or equal to 1.")
@@ -875,26 +876,26 @@ class Cityscapes(Dataset):
         self.downsampling = downsampling
         self._shape = np.array([1024, 2048]) // downsampling
 
-        subdirs = {x.name for x in data_dir.glob('*')}
+        subdirs = {x.name for x in im_data_dir.glob('*')}
         if 'leftImg8bit' in subdirs:
-            images_dir, labels_dir = 'leftImg8bit', 'gtFine'
-            img_suffix, lab_suffix = "_leftImg8bit.png", "_gtFine_labelIds.png"
+            images_dir, labels_dir = 'leftImg8bit', label_kind
+            img_suffix, lab_suffix = "_leftImg8bit.png", f"_{label_kind}_labelIds.png"
             self._id_to_label = {l.id: l.trainId for l in cslabels}
         elif 'rgb' in subdirs:  # IK's format
-            images_dir, labels_dir = 'rgb', 'labels'
-            img_suffix, lab_suffix = ".ppm", ".png"
-            self._id_to_label = {i: i for i in range(19)}
-            self._id_to_label[19] = -1
+            images_dir, labels_dir, img_suffix, lab_suffix = 'rgb', 'labels', ".ppm", ".png"
+            self._id_to_label = {**{i: i for i in range(19)}, 19: -1}
         else:
-            raise RuntimeError(f"Invalid directory structure in {data_dir}.")
+            raise RuntimeError(f"Invalid directory structure in {im_data_dir}: {subdirs=}.")
 
-        self._images_dir = data_dir / images_dir / subset
+        self._images_dir = im_data_dir / images_dir / subset
         self._labels_dir = data_dir / labels_dir / subset
+
         self._images = list(sorted([
             x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]))
         self._labels = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._images]
 
-        _check_size(self._images, self._labels, size=self.subset_to_size[subset])
+        _check_size(self._images, size=self.subset_to_size[subset],
+                    name=f"{type(self).__name__}-{subset}")
 
         modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
         super().__init__(subset=subset, modifiers=modifiers, info=self.info)
@@ -903,9 +904,9 @@ class Cityscapes(Dataset):
         im_path = self._images_dir / self._images[idx]
         lab_path = self._labels_dir / self._labels[idx]
         d = self.downsampling
-        return _make_record(
-            x_=lambda: load_image(im_path, d),
-            y_=lambda: load_segmentation_with_downsampling(lab_path, d, self._id_to_label))
+        im_get = lambda: load_image(im_path, d)
+        lab_get = lambda: load_segmentation_with_downsampling(lab_path, d, self._id_to_label)
+        return _make_record(x_=im_get, y_=lab_get)
 
     def __len__(self):
         return len(self._images)
