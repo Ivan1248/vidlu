@@ -56,15 +56,17 @@ def _check_subsets(dataset_class, subset):
         raise ValueError(f"Invalid subset name for {dataset_class.__name__}.")
 
 
-def _check_size(*images, size):
+def _check_size(*images, size, name=None):
+    pre = "" if name is None else f"{name}: "
     if len(images) == 1:
         images = images[0]
         if not (len(images) == size):
-            raise RuntimeError(f"The number of found images ({len(images)}) does not equal {size}.")
+            raise RuntimeError(
+                f"{pre}The number of found images ({len(images)}) does not equal {size}.")
     else:
         images, labels = images
         if not (len(images) == len(labels) == size):
-            raise RuntimeError(f"The number of found images ({len(images)}) or labels"
+            raise RuntimeError(f"{pre}The number of found images ({len(images)}) or labels"
                                + f" ({len(labels)}) does not equal {size}.")
 
 
