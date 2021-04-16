@@ -95,7 +95,9 @@ class AttackState:
     loss: torch.Tensor
     loss_sum: float
     reg_loss_sum: float
-    grad: torch.Tensor
+    grad: torch.Tensor = None
+    loss_mask: torch.Tensor = None
+    loss_mask_p: torch.Tensor = None,
     y_adv: torch.Tensor = None
     step: int = None
     loss_mean: float = dc.field(init=False)
@@ -107,9 +109,15 @@ class AttackState:
         self.reg_loss_mean = self.reg_loss_sum / len(self.x)
         if self.y_adv is None:
             self.y_adv = self.y
+        if self.loss_mask_p is None:
+            self.loss_mask_p = self.loss_mask
 
 
 # Attack ###########################################################################################
+
+
+def apply_loss_mask(loss, mask):
+    return loss if mask is None else loss * mask
 
 
 @torch.no_grad()
@@ -128,7 +136,7 @@ class Attack:
     __call__ merthod returns a perturbation model, while perturb returns an
     adversarial example. A subclass should override one or both of them.
     """
-    output_to_target: T.Union[T.Callable, str] = logits_to_argmax
+    output_to_target: T.Union[T.Callable, str] = None  # = logits_to_argmax
     compute_model_grads: bool = False  # TODO: use
 
     target_computed: Event = dc.field(default_factory=Event, init=False)
@@ -137,7 +145,7 @@ class Attack:
         if isinstance(self.output_to_target, str):
             self.output_to_target = _output_to_target_wiki[self.output_to_target]
 
-    def __call__(self, model: nn.Module, x, y=None, output=None, **kwargs):
+    def __call__(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
         """Generates an adversarial perturbation model.
 
         __call__ or perturb should be overridden by subclasses.
@@ -162,32 +170,35 @@ class Attack:
             y = self._get_target(model, x, output)
 
         with torch.enable_grad():
-            if NotImplemented is not (pert := self._get_perturbation(model, x, y=y, **kwargs)):
+            if NotImplemented is not (
+                    pert := self._get_perturbation(model, x, y=y, loss_mask=loss_mask, **kwargs)):
                 return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
-            elif NotImplemented is not (x_adv := self._perturb(model, x, y=y, **kwargs)):
+            elif NotImplemented is not (
+                    x_adv := self._perturb(model, x, y=y, loss_mask=loss_mask, **kwargs)):
                 return _pert_to_pert_model(x_adv, x)
             raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
 
-    def perturb(self, model: nn.Module, x, y=None, output=None, **kwargs):
+    def perturb(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
         """Generates an adversarial example.
 
         __call__ or perturb should be overridden by subclasses.
 
         Args:
-            model (Module): model.
-            x (Tensor): input tensor.
-            y (Tensor, optional): target/label tensor. If `None`, the prediction
+            model (Module): Model.
+            x (Tensor): Input tensor.
+            y (Tensor, optional): Target/label tensor. If `None`, the prediction
                 obtained from `self.to_virtual_target(output)` is used as the
                 label.
-            output (Tensor, optional): output for use as a target. If `None`
+            loss_mask (BoolTensor): Mask to be multiplied with unreduced loss.
+            output (Tensor, optional): Output for use as a target. If `None`
                 it is obtained by calling `model(x)` (and then transformad with
                 `self.to_virtual_target`).
 
         Return:
             Perturbed input.
         """
-        perturb = self(model, x, y=y, output=output, **kwargs)
-        return perturb(x)
+        perturb = self(model, x, y=y, loss_mask=loss_mask, output=output, **kwargs)
+        return perturb(x, y, loss_mask)
 
     @torch.no_grad()
     def _get_target(self, model, x, output):
@@ -204,11 +215,11 @@ class Attack:
         self.target_computed(dict(output=output, y=y))
         return y
 
-    def _perturb(self, model, x, y=None, **kwargs):
+    def _perturb(self, model, x, y=None, loss_mask=None, **kwargs):
         # this or _get_perturbation has to be implemented in subclasses
         return NotImplemented
 
-    def _get_perturbation(self, model, x, y=None, output=None, **kwargs):
+    def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
         # this or _perturb  has to be implemented in subclasses
         return NotImplemented
 
@@ -238,12 +249,12 @@ class OptimizingAttack(Attack):
     minimize: bool = False
     clip_bounds: tuple = (0, 1)
 
-    def _get_output_and_loss_s_and_grad(self, model, x, y=None):
+    def _get_output_and_loss_s_and_grad(self, model, x, y=None, loss_mask=None):
         x.requires_grad_()
-        output = model(x)
-        loss = self.loss(output, y).view(len(x), -1).mean(1).sum()
+        out = model(x)
+        loss = apply_loss_mask(self.loss(out, y), loss_mask).view(len(x), -1).mean(1).sum()
         loss.backward()
-        return output, loss, x.grad
+        return out, loss, x.grad
 
 
 @dataclass
@@ -253,11 +264,12 @@ class EarlyStoppingMixin:
 
 
 class DummyAttack(OptimizingAttack):
-    def _perturb(self, model, x, y=None, backward_callback=None):
+    def _perturb(self, model, x, y=None, loss_mask=None, backward_callback=None):
         out, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
         if backward_callback is not None:
-            backward_callback(AttackState(x=x, y=y, out=out, x_adv=x, loss_sum=loss_s.item(),
-                                          grad=grad, loss=None, reg_loss_sum=0))
+            backward_callback(AttackState(x=x, y=y, loss_mask=loss_mask, out=out, x_adv=x,
+                                          loss_sum=loss_s.item(), grad=grad, loss=None,
+                                          reg_loss_sum=0))
         return x
 
 
@@ -270,8 +282,8 @@ class GradientSignAttack(OptimizingAttack):
     """
     eps: float = 8 / 255
 
-    def _perturb(self, model, x, y=None):
-        output, _, grad = self._get_output_and_loss_s_and_grad(model, x, y)
+    def _perturb(self, model, x, y=None, loss_mask=None):
+        output, _, grad = self._get_output_and_loss_s_and_grad(model, x, y, loss_mask)
         with torch.no_grad:
             return (x + self.eps * grad.sign()).clamp_(*self.clip_bounds)
 
@@ -325,14 +337,16 @@ def zero_grad(delta):
         delta.grad.zero_()
 
 
-def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, initial_pert=None,
-                      clip_bounds=(0, 1), stop_mask=None, backward_callback=None):
+def perturb_iterative(model, x, y, loss_mask, step_count, update, loss, minimize=False,
+                      initial_pert=None, clip_bounds=(0, 1), stop_mask=None,
+                      backward_callback=None):
     """Iteratively optimizes the loss over the input.
 
     Args:
         model: Forward pass function.
         x: Inputs.
         y: Input labels.
+        loss_mask (BoolTensor): Mask to be multiplied with unreduced loss.
         step_count: Number of iterations.
         update (procedure): A `AttackStepUpdate` object defining a single
             perturbation update in an iteration, and optionally a finish
@@ -366,16 +380,17 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
 
     for i in range(step_count):
         x_adv = x + delta
-        output = model(x_adv)
-        unred_loss = loss_fn(output, y)
+        out = model(x_adv)
+        unred_loss = apply_loss_mask(loss_fn(out, y), loss_mask)
         loss = unred_loss.view(len(x), -1).mean(1).sum()
-        reg_loss = rloss_fn(x, delta, output, y).view(len(x), -1).mean(1).sum() if rloss_fn \
+        reg_loss = rloss_fn(x, delta, out, y).view(len(x), -1).mean(1).sum() if rloss_fn \
             else torch.tensor(0.)
         zero_grad(delta)
         ((-loss if minimize else loss) - reg_loss).backward()  # maximized
 
-        state = AttackState(x=x, y=y, out=out, x_adv=x_adv, loss_sum=loss.item(),
-                            reg_loss_sum=reg_loss.item(), grad=delta.grad, step=i, loss=unred_loss)
+        state = AttackState(x=x, y=y, loss_mask=loss_mask, out=out, x_adv=x_adv,
+                            loss_sum=loss.item(), reg_loss_sum=reg_loss.item(), grad=delta.grad,
+                            step=i, loss=unred_loss)
         backward_callback(state)
 
         with torch.no_grad():
@@ -384,8 +399,8 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
                 if is_adv.any():  # keep the already successful adversarial examples unchanged
                     delta_all[index[is_adv]] = delta[is_adv]
                     is_nonadv = ~is_adv
-                    x, y, index, grad, delta = (a[is_nonadv]
-                                                for a in [x, y, index, delta.grad, delta])
+                    x, y, loss_mask, index, grad, delta = \
+                        (a[is_nonadv] for a in [x, y, loss_mask, index, delta.grad, delta])
                     del is_nonadv  # free some memory
                     delta.requires_grad_()
                     delta.grad = grad
@@ -393,7 +408,7 @@ def perturb_iterative(model, x, y, step_count, update, loss, minimize=False, ini
                         break  # stop when all adversarial examples are successful
                 del is_adv  # free some memory
 
-            del state, loss, reg_loss, output  # free some memory
+            del state, loss, reg_loss, out  # free some memory
             delta = update(delta, delta.grad)
 
             if clip_bounds is not None:
@@ -460,7 +475,7 @@ MaskingMode = T.Literal['loss', 'grad']
 
 
 def perturb_iterative_with_perturbation_model(
-        model, x, y, step_count, optim_f, loss_fn, minimize=False,
+        model, x, y, step_count, optim_f, loss_fn, loss_mask=None, minimize=False,
         pert_model: vmi.PertModelBase = None,
         projection: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = None,
         bounds=(0, 1),
@@ -515,6 +530,8 @@ def perturb_iterative_with_perturbation_model(
     projection = projection or (lambda _: None)
     stop_on_success = stop_mask is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
+    if loss_mask is None:
+        loss_mask = x.new_tensor(0., dtype=torch.bool).expand(len(x))
     backward_callback = backward_callback or (lambda _: None)
     optim = optim_f(pert_model.parameters()) if step_count > 0 else None  # init
     if stop_on_success:  # support for early stopping (example-wise and location-wise)
@@ -524,30 +541,37 @@ def perturb_iterative_with_perturbation_model(
     x_all = x
 
     for i in range(step_count):
-        x_p, y_ = pert_model(x, y)
+        x_p, y_p, loss_mask_p = pert_model(x, y, loss_mask)
+
+        if stop_on_success and i == 0:
+            if any(len(p) != len(x) for p in pert_model.parameters()):
+                raise RuntimeError("stop_on_success not supported if the pert. model has any"
+                                   + "  p such that len(p) != len(x).")
         if bounds is not None and torch.any(x_p[0] != x_p.clamp(*bounds)):
             warnings.warn("The perturbation model does not limit input values to clip_bounds.")
 
         if stop_on_success:
-            storage = [x, y, x_p]
-            x, x_p = [a[index] for a in (x, x_p)]
-            y, y_ = (y[index],) * 2 if y_ is y else (a[index] for a in (y, y_))
+            storage = [x, y, loss_mask]
+            (x, x_p), (y, y_p), (loss_mask, loss_mask_p) = [
+                (a[index],) * 2 if a_p is a else (b[index] for b in (a, a_p))
+                for a, a_p in [(x, x_p), (y, y_p), (loss_mask, loss_mask_p)]]
 
         with vtu.switch_requires_grad(model, compute_model_grads):
-            output = model(x_p)
-            unred_loss = loss_fn(output, y_)
+            out = model(x_p)
+            unred_loss = apply_loss_mask(loss_fn(out, y_p), loss_mask_p)
             loss, reg_loss, loss_no_mask = _reduce_losses(
                 unred_loss=unred_loss,
-                unred_reg_loss=reg_loss_fn(pert_model, x, y_, x_p, output) if reg_loss_fn else None,
+                unred_reg_loss=reg_loss_fn(pert_model, x, y_p, x_p, out) if reg_loss_fn else None,
                 nonadv_mask=nonadv_mask)
             optim.zero_grad()
             ((loss if minimize else -loss) + reg_loss).backward()  # minimized
 
-        state = AttackState(x=x, y=y, output=output, x_adv=x_p, y_adv=y_, loss=unred_loss,
-                            loss_sum=loss_no_mask.item(), reg_loss_sum=reg_loss.item(), grad=None,
-                            step=i, pert_model=pert_model)
+        state = AttackState(x=x, y=y, out=out, x_adv=x_p, y_adv=y_p, loss=unred_loss,
+                            loss_mask=loss_mask, loss_mask_p=loss_mask_p,
+                            loss_sum=loss_no_mask.item(), reg_loss_sum=reg_loss.item(), step=i,
+                            pert_model=pert_model)
         backward_callback(state)
-        del output, loss, reg_loss, loss_no_mask  # free some memory
+        del out, loss, reg_loss, loss_no_mask  # free some memory
 
         with torch.no_grad():
             if stop_on_success:
@@ -559,7 +583,7 @@ def perturb_iterative_with_perturbation_model(
             projection(pert_model, x_all)
 
         if stop_on_success:
-            x, y, x_p = storage
+            x, y, loss_mask = storage
             if len(index) == 0:
                 break
 
@@ -654,7 +678,7 @@ class PGDAttackOld(OptimizingAttack, EarlyStoppingMixin):
     rand_init: bool = True
     p: float = np.inf
 
-    def _perturb(self, model, x, y=None, initial_pert=None, backward_callback=None):
+    def _perturb(self, model, x, y=None, loss_mask=None, initial_pert=None, backward_callback=None):
         if initial_pert is None:
             initial_pert = (rand_init_delta(x, self.p, self.eps, self.clip_bounds, True)
                             if self.rand_init
@@ -663,9 +687,9 @@ class PGDAttackOld(OptimizingAttack, EarlyStoppingMixin):
         update = PGDUpdate(step_size=self.step_size, eps=self.eps,
                            grad_processing=self.grad_processing, project_or_p=self.p)
         delta = perturb_iterative(
-            model, x, y, step_count=self.step_count, update=update, loss=self.loss,
-            minimize=self.minimize, initial_pert=initial_pert, clip_bounds=self.clip_bounds,
-            stop_mask=self.similar if self.stop_on_success else None,
+            model, x, y, loss_mask=loss_mask, step_count=self.step_count, update=update,
+            loss=self.loss, minimize=self.minimize, initial_pert=initial_pert,
+            clip_bounds=self.clip_bounds, stop_mask=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback)
 
         return (x + delta).clamp_(*self.clip_bounds)
@@ -700,8 +724,8 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
 
             self.projection = projection
 
-    def _get_perturbation(self, model, x, y=None, pert_model=None, initialize_pert_model=True,
-                          backward_callback=None):
+    def _get_perturbation(self, model, x, y=None, loss_mask=None, pert_model=None,
+                          initialize_pert_model=True, backward_callback=None):
         if pert_model is None:
             pert_model = self.pert_model_f()
         _init_pert_model(pert_model, x,
@@ -716,9 +740,10 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
             optim_f = partial(self.optim_f, lr=self.step_size)
 
         return perturb_iterative_with_perturbation_model(
-            model, x, y, step_count=self.step_count, optim_f=optim_f, loss_fn=self.loss,
-            minimize=self.minimize, pert_model=pert_model, projection=self.projection,
-            bounds=self.clip_bounds, stop_mask=self.similar if self.stop_on_success else None,
+            model, x, y, loss_mask=loss_mask, step_count=self.step_count, optim_f=optim_f,
+            loss_fn=self.loss, minimize=self.minimize, pert_model=pert_model,
+            projection=self.projection, bounds=self.clip_bounds,
+            stop_mask=self.similar if self.stop_on_success else None,
             backward_callback=backward_callback, compute_model_grads=self.compute_model_grads)
 
 
@@ -751,20 +776,21 @@ class PGDAttack(OptimizingAttack, EarlyStoppingMixin):
         pmodel.ensure_output_within_bounds(x, self.clip_bounds)
 
     @torch.no_grad()
-    def _initializer(self, pmodel):
+    def _initializer(self, pmodel, _):
         if self.rand_init:
             pmodel.addend.set_(
                 rand_init_delta(pmodel.addend, self.p, self.eps, self.clip_bounds, True))
         else:
             pmodel.addend.zero_()
 
-    def _get_perturbation(self, model, x, y=None, initial_pert=None, backward_callback=None):
+    def _get_perturbation(self, model, x, y=None, loss_mask=None, initial_pert=None,
+                          backward_callback=None):
         fields = (f.name for f in dc.fields(PertModelAttack) if f.init)
         base_attack = PertModelAttack(
             **{k: getattr(self, k) for k in fields if hasattr(self, k)},
             pert_model_f=partial(vmi.Add, ()), initializer=self._initializer,
             projection=self._project_params)
-        get_pert = partial(base_attack._get_perturbation, model, x, y,
+        get_pert = partial(base_attack._get_perturbation, model, x, y, loss_mask=loss_mask,
                            backward_callback=backward_callback)
         if initial_pert is not None:
             pert_model = vmi.Add(())
@@ -793,12 +819,13 @@ class VATAttack(OptimizingAttack):
     step_count: int = 1
     p: Number = 2
 
-    def _perturb(self, model, x, y=None, backward_callback=None):
+    def _perturb(self, model, x, y=None, loss_mask=None, backward_callback=None):
         initial_pert = rand_init_delta(x, self.p, self.xi, self.clip_bounds, True)
         update = VATUpdate(xi=self.xi, p=self.p)
-        delta = perturb_iterative(model, x, y, step_count=self.step_count, update=update,
-                                  loss=self.loss, minimize=self.minimize, initial_pert=initial_pert,
-                                  clip_bounds=None, backward_callback=backward_callback)
+        delta = perturb_iterative(model, x, y, loss_mask=loss_mask, step_count=self.step_count,
+                                  update=update, loss=self.loss, minimize=self.minimize,
+                                  initial_pert=initial_pert, clip_bounds=None,
+                                  backward_callback=backward_callback)
         with torch.no_grad():
             delta = ops.batch.normalize_by_norm(delta, self.p, inplace=True).mul_(self.eps)
             # TODO: clip bounds
