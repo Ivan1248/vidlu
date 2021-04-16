@@ -247,10 +247,12 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     from torch import nn
     import vidlu.modules as vm
     import vidlu.modules.components as vmc
+    import vidlu.modules.other as vmo
     import torchvision.models as tvmodels
     from fractions import Fraction as Frac
 
-    namespace = dict(nn=nn, vm=vm, vmc=vmc, models=models, tvmodels=tvmodels, t=vuf.ArgTree,
+    namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
+                     t=vuf.ArgTree,
                      partial=partial, Reserved=Reserved, Frac=Frac, **extensions)
 
     if prep_dataset is None:
@@ -283,9 +285,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         input_adapter_str, problem=problem,
         data_statistics=(None if prep_dataset is None
                          else prep_dataset.info.cache['standardization']))
-    if len(argtree) > 0:
         if len(argtree_arg) != 0:
             argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
+    if len(argtree) > 0:
         model_f = vuf.argtree_partial(model_f, **argtree)
     _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
                          verbosity=verbosity)
@@ -294,7 +296,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     else:
         model = model_f()
         if input_adapter_str != 'id':
-            model.register_forward_pre_hook(lambda m, x: input_adapter(x))
+            model.register_forward_pre_hook(lambda m, x: input_adapter(*x))
 
     build_and_init_model(model, init_input, device)
     model.eval()
