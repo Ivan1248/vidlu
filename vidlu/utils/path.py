@@ -1,3 +1,4 @@
+import functools
 import os
 import tempfile
 from pathlib import Path
@@ -27,10 +28,28 @@ def find_in_ancestors(start_path, subpath):
     raise FileNotFoundError(f"No ancestor of {start_path} has a child {subpath}.")
 
 
-def to_valid_path(path):
+def _split_long_name(name, max_length=255):
+    result, remainder = [], name
+    while len(remainder) > max_length:
+        result.append(remainder[:max_length])
+        remainder = remainder[max_length:]
+    result.append(remainder)
+    return result
+
+
+def _split_long_names(path: Path, max_length=255):
+    partses = [_split_long_name(p, max_length) for p in path.parts]
+    return functools.reduce(list.__add__, partses, [])
+
+
+def to_valid_path(path, split_long_names=False, max_name_length=255):
     path = str(path).strip()
     allowed = r"-\w.,\'\\/!#$%^&()_+=@{}\[\]"
-    return Path(re.sub(f"(?u)[^{allowed}]", "+", str(path)))
+    path = Path(re.sub(f"(?u)[^{allowed}]", "+", str(path)))
+    if split_long_names:
+        parts = _split_long_names(path, max_name_length)
+        path = Path(os.path.join(*parts))
+    return path
 
 
 def get_size(path):
