@@ -9,6 +9,7 @@ import time
 
 import torch
 import torch.nn as nn
+# from torch.utils.tensorboard import SummaryWriter
 
 from vidlu import factories
 import vidlu.modules as vm
@@ -55,6 +56,13 @@ def to_dhm_str(time):
     return " ".join([f"{v}{k}" for k, v in dict(d=d, h=h, m=m).items() if v > 0])
 
 
+# def find_best_epoch(epoch_to_main_metrics, metrics_to_perf):
+#     epochs = list(epoch_to_main_metrics.keys())
+#     perfs = list(map(metrics_to_perf, epoch_to_main_metrics.values()))
+#     argmax = np.argmax(perfs)
+#     return epochs[argmax]
+
+
 def define_training_loop_actions(
         trainer: Trainer, cpman: CheckpointManager, data, logger, main_metrics: T.Sequence[str],
         eval_count=200, min_train_report_count=800, interact_shortcuts=dict(i='embed()'),
@@ -65,47 +73,11 @@ def define_training_loop_actions(
     epoch_time, inter_epoch_time, eval_time = -1, -1, -1
     epoch_sw, inter_epoch_sw, eval_sw = Stopwatch(), Stopwatch(), Stopwatch()
 
-    @trainer.training.epoch_started.handler
-    def on_epoch_started(es):
-        epoch_sw.start()
-        if sleepiness > 0:
-            print(f"Warning: {sleepiness}s of sleep per epoch.")
-        time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * epoch_time)
-        time_left = time_left_training + (1 - es.epoch / es.max_epochs) * (eval_count * eval_time)
-        info_str = (f"Epoch {es.epoch + 1}/{es.max_epochs}:"
-                    + f" {es.batch_count} batches,"
-                    + f" lr=({', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
-        if epoch_time > 0:
-            info_str += f", left {to_dhm_str(time_left)} ({to_dhm_str(time_left_training)} training)"
-        logger.log(info_str)
-
-    @trainer.training.epoch_completed.handler
-    def on_epoch_completed(es):
-        nonlocal epoch_time
-        epoch_time = epoch_sw.time
-        inter_epoch_sw.start()
-        if es.epoch in eval_epochs:
-            es_val = trainer.eval(data.test)
-            cpman.save(trainer.state_dict(),
-                       summary=dict(logger=logger.state_dict(),
-                                    perf=es_val.metrics[main_metrics[0]],
-                                    log="\n".join(logger.lines),
-                                    epoch=es.epoch))
-
-    @trainer.evaluation.epoch_started.handler
-    def on_eval_epoch_started(es):
-        nonlocal inter_epoch_time
-        inter_epoch_time = inter_epoch_sw.time
-        eval_sw.start()
-
-    @trainer.evaluation.epoch_completed.handler
-    def on_eval_epoch_completed(es):
-        nonlocal eval_time
-        eval_time = eval_sw.time
-        report_metrics(es, special_format=special_format, is_validation=True)
+    # epoch_to_main_metrics = cpman.load_last()
 
     def report_metrics(es, is_validation=False, line_width=line_width,
-                       special_format: T.Mapping[str, T.Callable[[str], str]] = None):
+                       special_format: T.Mapping[str, T.Callable[[str], str]] = None,
+                       prefix=None):
         special_format = special_format or {}
 
         def eval_str(metrics):
@@ -132,31 +104,45 @@ def define_training_loop_actions(
             epoch_fmt, iter_fmt = f'{len(str(trainer.epoch_count))}d', f'{len(str(es.batch_count))}d'
             epoch = trainer.training.state.epoch
             iter_ = es.iteration % es.batch_count
-            prefix = (f'{format(epoch + 1, epoch_fmt)} val' if is_validation
-                      else f'{format(epoch + 1, epoch_fmt)}.'
-                           + f'{format(iter_ % es.batch_count + 1, iter_fmt)}')
+            if prefix is None:
+                prefix = (f'{format(epoch + 1, epoch_fmt)} val' if is_validation
+                          else f'{format(epoch + 1, epoch_fmt)}.'
+                               + f'{format(iter_ % es.batch_count + 1, iter_fmt)}')
             logger.log(f"{prefix}: {eval_str(metrics)}")
             # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
 
-    def set_sleepiness(x):
-        nonlocal sleepiness
-        sleepiness = x
+    @trainer.training.epoch_started.handler
+    def on_epoch_started(es):
+        epoch_sw.start()
+        if sleepiness > 0:
+            print(f"Warning: {sleepiness}s of sleep per epoch.")
+        time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * epoch_time)
+        time_left = time_left_training + (1 - es.epoch / es.max_epochs) * (eval_count * eval_time)
+        info_str = (f"Epoch {es.epoch + 1}/{es.max_epochs}:"
+                    + f" {es.batch_count} batches,"
+                    + f" lr=({', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
+        if epoch_time > 0:
+            info_str += f", left {to_dhm_str(time_left)} ({to_dhm_str(time_left_training)} training)"
+        logger.log(info_str)
 
-    # noinspection PyUnresolvedReferences
-    @trainer.evaluation.started.handler
-    @trainer.evaluation.iter_completed.handler
-    def interact(state):
-        from IPython import embed
-        from vidlu.utils.presentation import visualization
-        nonlocal trainer, data, set_sleepiness, sleepiness
-        if (optional_input := try_input()) is None:
-            return
-        try:
-            cmd = interact_shortcuts.get(optional_input, optional_input)
-            print(f"Variables: " + ", ".join(locals().keys()))
-            exec(cmd)
-        except Exception as e:
-            print(f'Cannot execute "{optional_input}". Error:\n{e}.')
+    @trainer.training.epoch_completed.handler
+    @trainer.training.epoch_completed.handler
+    def on_epoch_completed(es):
+        nonlocal epoch_time
+        epoch_time = epoch_sw.time
+        inter_epoch_sw.start()
+        if es.epoch in eval_epochs:
+            es_val = trainer.eval(data.test)
+            # epoch_to_main_metrics[es.epoch] = {k: es_val.metrics[k] for k in main_metrics}
+            # best_epoch = find_best_epoch(epoch_to_main_metrics, lambda s: s[main_metrics[0]])
+            # report_metrics(es_val, special_format=special_format, is_validation=True,
+            #                prefix=f'Best epoch ({best_epoch}): ')
+            cpman.save(trainer.state_dict(),
+                       summary=dict(logger=logger.state_dict(),
+                                    perf=es_val.metrics[main_metrics[0]],
+                                    # summary=epoch_to_main_metrics,
+                                    log="\n".join(logger.lines),
+                                    epoch=es.epoch))
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
@@ -170,6 +156,39 @@ def define_training_loop_actions(
 
         if sleepiness > 0:
             time.sleep(sleepiness / es.batch_count)
+
+    @trainer.evaluation.epoch_started.handler
+    def on_eval_epoch_started(es):
+        nonlocal inter_epoch_time
+        inter_epoch_time = inter_epoch_sw.time
+        eval_sw.start()
+
+    @trainer.evaluation.epoch_completed.handler
+    def on_eval_epoch_completed(es):
+        nonlocal eval_time
+        eval_time = eval_sw.time
+        report_metrics(es, special_format=special_format, is_validation=True)
+
+    def set_sleepiness(x):
+        nonlocal sleepiness
+        sleepiness = x
+
+    # noinspection PyUnresolvedReferences
+    @trainer.evaluation.started.handler
+    @trainer.evaluation.iter_completed.handler
+    def interact(es):
+        from IPython import embed
+        from vidlu.utils.presentation import visualization
+        nonlocal trainer, data, set_sleepiness, sleepiness, cpman, logger, main_metrics
+        state = es
+        if (optional_input := try_input()) is None:
+            return
+        try:
+            cmd = interact_shortcuts.get(optional_input, optional_input)
+            print(f"Variables: " + ", ".join(locals().keys()))
+            exec(cmd)
+        except Exception as e:
+            print(f'Cannot execute "{optional_input}". Error:\n{e}.')
 
 
 # Experiment #######################################################################################
