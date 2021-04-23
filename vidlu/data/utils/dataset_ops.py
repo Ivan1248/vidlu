@@ -26,6 +26,17 @@ def rotating_labels(ds: Dataset) -> Dataset:
     return ds[indices]
 
 
+def chunk(ds: Dataset, size, i) -> Dataset:
+    if 0 < size < 1:
+        size = int(len(ds) * size + 0.5)
+    elif isinstance(size, float):
+        raise RuntimeError(f"Invalid argument type: size: {type(size)} = {size}.")
+    chunk = ds[i * size:(i + 1) * size]
+    if len(chunk) != size:
+        raise RuntimeError(f"The fold with index {i} can only have size {len(chunk)} < {size}.")
+    return chunk
+
+
 def folds(ds: Dataset, n: int):
     indices = np.linspace(0.5, len(ds) + 0.5, n + 1, dtype=int)
 
