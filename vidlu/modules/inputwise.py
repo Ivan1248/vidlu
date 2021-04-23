@@ -554,7 +554,7 @@ class TPSWarp(PertModelBase):
     def __init__(self, *, forward: bool, control_grid_shape=(2, 2),
                  control_grid_align_corners=False, align_corners=True, padding_mode='zeros',
                  interpolation_mode='bilinear', label_interpolation_mode=None,
-                 label_padding_mode=None, swap_src_dst=False):
+                 label_padding_mode=None, swap_src_dst=False, center_offsets=False):
         super().__init__()
         self.store_args()
 
@@ -576,8 +576,12 @@ class TPSWarp(PertModelBase):
                                       self.args['label_padding_mode']]:
             raise RuntimeError(f"label_interpolation_mode and label_padding_mode should be defined")
 
-        c_src = self.c_src.unsqueeze(0).expand_as(self.offsets)
-        c_dst = c_src + self.offsets
+        offsets = self.offsets
+        if self.args.center_offsets:
+            offsets.sub_(offsets.mean(list(range(1, len(offsets.shape))), keepdim=True))
+
+        c_src = self.c_src.unsqueeze(0).expand_as(offsets)
+        c_dst = c_src + offsets
         if self.args.swap_src_dst:
             c_src, c_dst = c_dst, c_src
 
