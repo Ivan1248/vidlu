@@ -818,8 +818,8 @@ class CamVid(Dataset):
 
 
 class CamVidSequences(Dataset):  # TODO
-    subsets = ['06R0', '16E5', '01TP', '05VD']  # 01TP and 05VD contain the test set
-    subset_to_size = {'06R0': 3001, '16E5': 8251, '01TP': 3691, '05VD': 5101}
+    subsets = ['0006R0', '0016E5', '0001TP', 'Seq05VD']  # 0001TP and Seq05VD contain the test set
+    subset_to_size = {'0006R0': 3001, '0016E5': 8251, '0001TP': 3691, 'Seq05VD': 5101}
     default_dir = 'CamVid-sequences'
 
     def download(self, data_dir):
