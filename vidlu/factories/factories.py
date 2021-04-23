@@ -112,12 +112,10 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     """
     from vidlu import data
-    from vidlu.data import Record, clear_hdd_cache, clean_up_dataset_cache
+    from vidlu.data import Record
     import vidlu.transforms as vt
     import torchvision.transforms.functional_tensor as tvt
     import vidlu.modules.functional as vmf
-
-    cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 14))
 
     if ':' in data_str:
         data_str, transform_str = data_str.split(':', 1)
@@ -129,7 +127,6 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
     get_parted_dataset = data.DatasetFactory(datasets_dir)
     if cache_dir is not None:
         add_stats = partial(vdu.add_image_statistics_to_info_lazily, cache_dir=cache_dir)
-        clean_up_dataset_cache(cache_dir, datetime.timedelta(days=cache_cleanup_time))
         get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [add_stats])
 
     data = []

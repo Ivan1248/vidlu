@@ -3,6 +3,7 @@ import argparse
 from time import time
 import random
 from datetime import datetime
+import os
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -18,6 +19,7 @@ from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.misc import indent_print
 from vidlu.utils.misc import query_user
 from vidlu.utils import debug
+from vidlu.data import clean_up_dataset_cache
 import dirs
 
 
@@ -87,6 +89,10 @@ def train(args):
     exp.cpman.remove_old_checkpoints()
 
     print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
+
+    if dirs.CACHE is not None:
+        cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
+        clean_up_dataset_cache(dirs.CACHE / 'datasets', datetime.timedelta(days=cache_cleanup_time))
 
 
 def path(args):
