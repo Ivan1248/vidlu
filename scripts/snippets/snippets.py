@@ -43,7 +43,7 @@ visualization.view_predictions(
     infer=lambda x, trainer=trainer: trainer.model(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
         1).squeeze().int().cpu().numpy(),
-    save_dir="/home/igrubisic/robust_seg_eps3_it40")
+    save_dir="/home/igrubisic/perturbed")
 
 # semseg, adversarial - shifted labels, targeted
 
