@@ -6,19 +6,19 @@ from vidlu.utils import tree
 
 
 def test_get_data_single(tmpdir):
-    data = dict(factories.get_data("WhiteNoise{trainval,test}", tmpdir))
-    assert list(data.keys()) == [("WhiteNoise", "trainval"), ("WhiteNoise", "test")]
+    data = factories.get_data("WhiteNoise{all,all}", tmpdir)
+    assert [k for k, _ in data] == [("WhiteNoise", "all")] * 2
 
 
-def test_get_datasets_single_args(tmpdir):
+def test_get_data_single_args(tmpdir):
     example_shape = (random.randint(1, 32),) * 2 + (3,)
-    data = dict(factories.get_data(f"WhiteNoise(example_shape={example_shape}){{train,val}}", tmpdir))
-    assert list(data.keys())[0][0] == (f"WhiteNoise(example_shape={example_shape})")
-    train, val = dict(tree.flatten(data)).values()
-    assert train[0].x.shape == val[0].x.shape == example_shape
+    data = factories.get_data(f"WhiteNoise(example_shape={example_shape}){{all}}", tmpdir)
+    assert data[0][0] == (f"WhiteNoise(example_shape={example_shape})", 'all')
+    ds = data[0][1]
+    assert ds[0].x.shape == example_shape
 
 
-def test_get_datasets_multiple(tmpdir):
-    data = dict(factories.get_data("WhiteNoise{trainval,test}, WhiteNoise(example_shape=(8,8,8)){val}",
-                                   tmpdir))
+def test_get_data_multiple(tmpdir):
+    data = factories.get_data("WhiteNoise{all,all}, WhiteNoise(example_shape=(8,8,8)){all}",
+                              tmpdir)
     assert len(data) == 3
