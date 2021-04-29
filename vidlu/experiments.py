@@ -126,7 +126,6 @@ def define_training_loop_actions(
         logger.log(info_str)
 
     @trainer.training.epoch_completed.handler
-    @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
         nonlocal epoch_time
         epoch_time = epoch_sw.time
