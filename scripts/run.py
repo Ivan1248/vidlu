@@ -2,7 +2,7 @@ import sys
 import argparse
 from time import time
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 # noinspection PyUnresolvedReferences
@@ -92,7 +92,7 @@ def train(args):
 
     if dirs.CACHE is not None:
         cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
-        clean_up_dataset_cache(dirs.CACHE / 'datasets', datetime.timedelta(days=cache_cleanup_time))
+        clean_up_dataset_cache(dirs.CACHE / 'datasets', timedelta(days=cache_cleanup_time))
 
 
 def path(args):
