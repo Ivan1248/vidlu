@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 from functools import partial, wraps
 from vidlu.utils.func import (Empty, default_args, params, func_to_class, class_to_func)
+from vidlu.utils.func import FuncTree as ft, IndexableUpdatree as it, StrictObjectUpdatree as ot
 
 
 class TestHardPartial:
@@ -159,3 +160,21 @@ class TestFuncToClassAndClassToFunc:
         CarryThing = func_to_class(carry_thing_wrapper)
 
         assert CarryThing(destination='Caerbannog')('rabbit') == carry_thing('rabbit', 'Caerbannog')
+
+
+class TestUpdatrees:
+    def test_updatrees(self):
+        import vidlu.configs.training as vct
+
+        argtree = ot(attack_f=ft(loss=vct.losses.crossentropy_ll,
+                                 initializer=ot(tps=ot(name_to_mean_std=it(offsets=(0, 0.05))))),
+                     train_step=ot(mem_efficient=False))
+
+        conf = argtree.apply(vct.semisup_cons_phtps20)
+        assert params(conf.attack_f).loss == vct.losses.crossentropy_ll
+        assert params(conf.attack_f).initializer.tps.name_to_mean_std['offsets'] == (0, 0.05)
+        assert not conf.train_step.mem_efficient
+
+        argtree_nea = ot(argtree, nonexisting_attr=None)
+        with pytest.raises(AttributeError):
+            argtree_nea.apply(vct.semisup_cons_phtps20)
