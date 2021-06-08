@@ -4,6 +4,8 @@ from PIL import Image
 import numpy as np
 import torch
 
+from vidlu.utils.func import vectorize
+
 
 def is_pil_image(img):
     return isinstance(img, Image.Image)
@@ -202,3 +204,23 @@ def to_pil(x, mode=None):
 
 class ToPIL:
     __call__ = staticmethod(to_pil)
+
+
+# layout: CHW
+
+@vectorize
+def hwc_to_chw(x):
+    return x.permute(2, 0, 1) if len(x.shape) == 3 else x.permute(0, 3, 1, 2)
+
+
+class HWCToCHW:
+    __call__ = staticmethod(hwc_to_chw)  # keywords: call, copy, ...
+
+
+@vectorize
+def chw_to_hwc(x):
+    return x.permute(1, 2, 0) if len(x.shape) == 3 else x.permute(0, 2, 3, 1)
+
+
+class CHWToHWC:
+    __call__ = staticmethod(chw_to_hwc)  # keywords: call, copy, ...
