@@ -25,7 +25,6 @@ from . import _default_factories as D
 
 class GaussianFilter2D(E.Module):
     def __init__(self, sigma=2, ksize=None, sigma_to_ksize_ratio=4, padding_mode='reflect'):
-        # TODO: exploit separability of the kernel if it is large
         if ksize is None:
             ksize = int(sigma_to_ksize_ratio * sigma)
             ksize += int(ksize % 2 == 0)
@@ -782,7 +781,8 @@ class ResNetV2Unit(E.Seq):
         else:
             shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change,
                                               block_args.conv_f)
-            self.add(preact=block[:'conv0'], fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
+            self.add(preact=block[:'conv0'],
+                     fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
         self.add(sum=E.Sum())
 
 
@@ -858,7 +858,8 @@ class DenseSequence(E.Seq):
                      DenseBlock(length, block_f=Reserved.partial(block_f, base_width=growth_rate)))
             if i != len(db_lengths) - 1:
                 self.add(f'transition{i}', DenseTransition(compression, **norm_act_args))
-        self.add(norm=default_args(block_f).norm_f(), act=default_args(block_f).act_f())
+        self.add(norm=default_args(block_f).norm_f(),
+                 act=default_args(block_f).act_f())
 
 
 class DenseNetBackbone(E.Seq):

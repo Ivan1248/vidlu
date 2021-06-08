@@ -34,10 +34,10 @@ class NameDict(MutableMapping):
     def __delitem__(self, name):
         del self.__dict__[name]
 
-    def __getattr__(self, item):
-        if item not in self.__dict__:
-            raise AttributeError(f"The NameDict instance does not contain the key {item}.")
-        return self.__dict__[item]
+    def __getattr__(self, key):
+        if key not in self.__dict__:
+            raise AttributeError(f"The NameDict instance does not contain the key {key}.")
+        return self.__dict__[key]
 
     def __iter__(self):
         return iter(self.__dict__)
