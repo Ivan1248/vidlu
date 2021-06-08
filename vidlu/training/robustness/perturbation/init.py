@@ -10,6 +10,12 @@ class Initializer:
     def __call__(self, pert_model, x=None):
         raise NotImplemented
 
+    def __getstate__(self):
+        return self.__dict__
+
+    def __setstate__(self, state):
+        self.__dict__ = dict(state)
+
 
 @dc.dataclass
 class UniformInit(Initializer):
