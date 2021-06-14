@@ -195,7 +195,7 @@ class Evaluator:
     batch_size: int = 1
     metrics: list = dc.field(default_factory=list)
     eval_step: T.Callable = Required
-    eval_sync: bool = bool(int(os.environ.get("VIDLU_SYNCHRONIZE_STEP", 0))) and torch.cuda.is_available()
+    eval_sync: bool = bool(int(os.environ.get("VIDLU_SYNCHRONIZE_STEP", 1))) and torch.cuda.is_available()
 
     def __post_init__(self):
         self.prepare_batch = partial(self.prepare_batch, device=vmu.get_device(self.model),
@@ -205,7 +205,7 @@ class Evaluator:
             self.evaluation.state.metrics = self.get_metric_values()
 
         def evaluation(engine, batch):
-            return self._run_step(self.eval_step, batch)
+            return self._run_step(self.eval_step, batch, synchronize=self.eval_sync)
 
         self.evaluation = Engine(evaluation)
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
@@ -232,15 +232,15 @@ class Evaluator:
             self._reset_metrics()
         return metric_evals
 
-    def _run_step(self, step, batch):
+    def _run_step(self, step, batch, synchronize=False):
         batch = self.prepare_batch(batch)
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
-        if self.eval_sync:
+        if synchronize:
             torch.cuda.synchronize()
         with Stopwatch() as t:
             output = step(self, batch)
-        if self.eval_sync:
+        if synchronize:
             torch.cuda.synchronize()
         output['freq'] = len(batch) / t.time
         if isinstance(output, T.MutableMapping) and torch.cuda.is_available():
