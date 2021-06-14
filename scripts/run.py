@@ -102,28 +102,30 @@ def path(args):
 
 
 def test(args):
+    if args.restart:
+        raise ValueError("`restart=True` is not allowed in the test procedure.")
+    if not args.resume:
+        warnings.warn("`resume` is set to `False`. The initial parameters will be tested.")
     e = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
-    print('Starting evaluation (test/val):...')
-    e.trainer.eval(e.data.test)
-    print('Starting evaluation (train):...')
-    e.trainer.eval(e.data.train)
+    if (module_arg := args.module) is not None:
+        import importlib
+        module_name, proc_name, *_ = *module_arg.split(':'), None
+        if proc_name is None:
+            proc_name = 'run'
+        module = importlib.import_module(module_name)
+        if ',' in proc_name:
+            proc_name, args_str = proc_name.split(",", 1)
+            result = eval(f"{proc_name}(e,{args_str})", vars(module), locals())
+        else:
+            result = getattr(module, proc_name)(e)
 
-    e.cpman.remove_old_checkpoints()
-
-
-def test_trained(args):
-    e = TrainingExperiment.from_args(
-        call_with_args_from_dict(TrainingExperimentFactoryArgs,
-                                 {**args.__dict__, **dict(resume=True, restart=False)}), dirs=dirs)
-
-    print('Starting evaluation (test/val):...')
-    e.trainer.eval(e.data.test)
-    print('Starting evaluation (train):...')
-    e.trainer.eval(e.data.train)
-
-    e.cpman.remove_old_checkpoints()
+    else:
+        print('Starting evaluation (test/val):...')
+        e.trainer.eval(e.data.test)
+        print('Starting evaluation (train):...')
+        e.trainer.eval(e.data.train)
 
 
 # Argument parsing #################################################################################
@@ -181,9 +183,8 @@ if __name__ == "__main__":
 
     parser_test = subparsers.add_parser("test")
     add_standard_arguments(parser_test, test)
-
-    parser_test_trained = subparsers.add_parser("test_trained")
-    add_standard_arguments(parser_test_trained, test_trained)
+    parser_test.add_argument("-m", "--module", type=str, default=None,
+                             help="Path of a module containing a `run(Experiment)` procedure.")
 
     args = parser.parse_args()
 
