@@ -17,7 +17,10 @@ supervised = TrainerConfig(
     train_step=ts.supervised_train_step,
 )
 
-classification = supervised
+classification = TrainerConfig(
+    supervised,
+    loss=losses.NLLLossWithLogits(ignore_index=-1)
+)
 
 # Adversarial training, basic
 
@@ -393,11 +396,6 @@ irevnet_at_hybrid_cifar = TrainerConfig(
 
 # other
 
-wrn_cifar_tent = TrainerConfig(
-    wrn_cifar,
-    # overriding
-    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=1e-4))
-
 resnet_cifar_adversarial_esos = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
     resnet_cifar,
     adversarial,
@@ -416,11 +414,3 @@ mnistnet = TrainerConfig(  # as in www.arxiv.org/abs/1603.05027
                                         weight_decay=1e-4), epoch_count=50,
     lr_scheduler_f=partial(ScalableMultiStepLR, milestones=[0.3, 0.6, 0.8],
                            gamma=0.2), batch_size=128)
-
-mnistnet_tent = TrainerConfig(
-    classification,
-    optimizer_f=partial(optim.Adam, lr=1e-3, weight_decay=1e-4),
-    epoch_count=40,
-    lr_scheduler_f=None,
-    batch_size=100,
-)

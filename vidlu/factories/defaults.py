@@ -59,14 +59,8 @@ def get_model_argtree_for_problem(model_class, problem):
 
 # Trainer/Evaluator ################################################################################
 
-def get_trainer_args(trainer_extension_fs, dataset):
-    from vidlu.modules import losses
-
-    problem = get_problem_from_dataset(dataset)
-    args = dict()
-    if isinstance(problem, (Classification, SemanticSegmentation)):
-        args.update(loss=losses.NLLLossWithLogits(ignore_index=-1))
-    return args
+def get_trainer_args(dataset):
+    return dict()
 
 
 # Metrics ##########################################################################################
