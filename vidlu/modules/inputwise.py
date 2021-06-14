@@ -7,6 +7,7 @@ from warnings import warn
 import torch
 import torch.nn.functional as F
 from numpy import s_
+
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
@@ -294,7 +295,7 @@ def _get_center(center_arg, x, equivariant_dims):
 
 
 class Contrast(EquivariantPertModel):
-    """Linearly interpolates between inputs and centers.
+    """Linearly interpolates or extrapolates between inputs and centers.
 
     The interpolation factor (contrast) can be any positive number.
 
@@ -303,7 +304,7 @@ class Contrast(EquivariantPertModel):
 
     >>> from vidlu.ops.image import rgb_to_luma
     >>> center = lambda x: rgb_to_luma(x, 601).unsquezze(-3).mean((-2, -1), keepdim=True)
-    >>> torchvision_contrast = Contrast(cente[r=center)
+    >>> torchvision_contrast = Contrast(center=center)
     """
     param_defaults = dict(factor=dict(value=1., bounds=[0, float('inf')]))
 

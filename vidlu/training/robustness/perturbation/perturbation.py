@@ -73,7 +73,8 @@ class Photometric20(SeqPertModel):
 class PhotoTPS20(SeqPertModel):
     def __init__(self, clamp, forward_arg_count=None):
         super().__init__(photometric=Photometric20(clamp, forward_arg_count=1),
-                         tps=vmi.BackwardTPSWarp(label_interpolation_mode='nearest', label_padding_mode=-1),
+                         tps=vmi.BackwardTPSWarp(label_interpolation_mode='nearest',
+                                                 label_padding_mode=-1),
                          forward_arg_count=forward_arg_count)
 
 
