@@ -156,6 +156,13 @@ def define_training_loop_actions(
         if sleepiness > 0:
             time.sleep(sleepiness / es.batch_count)
 
+    @trainer.evaluation.iter_completed.handler
+    def on_eval_iteration_completed(es):
+        interact(es)
+
+        if sleepiness > 0:
+            time.sleep(sleepiness / es.batch_count)
+
     @trainer.evaluation.epoch_started.handler
     def on_eval_epoch_started(es):
         nonlocal inter_epoch_time
@@ -174,7 +181,6 @@ def define_training_loop_actions(
 
     # noinspection PyUnresolvedReferences
     @trainer.evaluation.started.handler
-    @trainer.evaluation.iter_completed.handler
     def interact(es):
         from IPython import embed
         from vidlu.utils.presentation import visualization
@@ -188,7 +194,7 @@ def define_training_loop_actions(
             exec(cmd)
         except Exception as e:
             print(f'Cannot execute "{optional_input}". Error:\n{e}.')
-
+            
 
 # Experiment #######################################################################################
 
