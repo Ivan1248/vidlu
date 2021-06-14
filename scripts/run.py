@@ -4,6 +4,7 @@ from time import time
 import random
 from datetime import datetime, timedelta
 import os
+import warnings
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -114,10 +115,11 @@ def test(args):
         module_name, proc_name, *_ = *module_arg.split(':'), None
         if proc_name is None:
             proc_name = 'run'
+
         module = importlib.import_module(module_name)
         if ',' in proc_name:
             proc_name, args_str = proc_name.split(",", 1)
-            result = eval(f"{proc_name}(e,{args_str})", vars(module), locals())
+            result = eval(f"{proc_name}({args_str})", vars(module), locals())
         else:
             result = getattr(module, proc_name)(e)
 
@@ -197,8 +199,6 @@ if __name__ == "__main__":
 
     if args.warnings_as_errors:
         import traceback
-        import warnings
-        import sys
 
 
         def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
