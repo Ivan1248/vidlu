@@ -254,7 +254,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     from fractions import Fraction as Frac
 
     namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
-                     t=vuf.ArgTree,
+                     t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree, it=vuf.IndexableUpdatree,
                      partial=partial, Reserved=Reserved, Frac=Frac, **extensions)
 
     if prep_dataset is None:
@@ -290,7 +290,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     if len(argtree_arg) != 0:
         argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
     if len(argtree) > 0:
-        model_f = vuf.argtree_partial(model_f, **argtree)
+        model_f = argtree.apply(model_f)
     _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
                          verbosity=verbosity)
     if "input_adapter" in vuf.params(model_f):
