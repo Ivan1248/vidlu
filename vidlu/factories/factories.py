@@ -193,7 +193,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
 
 # Model ############################################################################################
 
-def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
+def get_input_adapter(input_adapter_str, *, data_stats=None):
     """Returns a bijective module to be inserted before the model to scale
     inputs.
 
@@ -202,33 +202,32 @@ def get_input_adapter(input_adapter_str, *, problem, data_statistics=None):
     Args:
         input_adapter_str: a string in {"standardize", "id"}
         problem (ProblemInfo):
-        data_statistics (optional): a namespace containing the mean and the standard
+        data_stats (optional): a namespace containing the mean and the standard
             deviation ("std") of the training dataset.
 
     Returns:
         A torch module.
     """
     import vidlu.modules as M
-    from vidlu.factories.problem import Supervised
     from vidlu.transforms import image as imt
     import vidlu.configs.data.stats as cds
-    if isinstance(problem, Supervised):
-        if input_adapter_str.startswith("standardize"):
-            if input_adapter_str == "standardize":
-                stats = dict(mean=torch.from_numpy(data_statistics.mean),
-                             std=torch.from_numpy(data_statistics.std))
-            else:
-                stats = unsafe_eval("dict(" + input_adapter_str[len("standardize("):],
-                                    {**vars(cds), **extensions})
-                stats = {k: torch.tensor(v) for k, v in stats.items()}
-            return M.Func(imt.Standardize(**stats), imt.Destandardize(**stats))
-        elif input_adapter_str == "id":  # min 0, max 1 is expected for images
-            return M.Identity()
+
+    if input_adapter_str.startswith("standardize"):
+        if input_adapter_str == "standardize":
+            stats = dict(mean=torch.from_numpy(data_stats.mean),
+                         std=torch.from_numpy(data_stats.std))
         else:
-            try:
-                return unsafe_eval(input_adapter_str)
-            except Exception as e:
-                raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}, \n{e}")
+            stats = unsafe_eval("dict(" + input_adapter_str[len("standardize("):],
+                                {**vars(cds), **extensions})
+            stats = {k: torch.tensor(v) for k, v in stats.items()}
+        return M.Func(imt.Standardize(**stats), imt.Destandardize(**stats))
+    elif input_adapter_str == "id":  # min 0, max 1 is expected for images
+        return M.Identity()
+    else:
+        try:
+            return unsafe_eval(input_adapter_str)
+        except Exception as e:
+            raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}, \n{e}")
     raise NotImplementedError()
 
 
@@ -254,8 +253,9 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     from fractions import Fraction as Frac
 
     namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
-                     t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree, it=vuf.IndexableUpdatree,
-                     partial=partial, Reserved=Reserved, Frac=Frac, **extensions)
+                     t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
+                     it=vuf.IndexableUpdatree, partial=partial, Reserved=Reserved, Frac=Frac, 
+                     **extensions)
 
     if prep_dataset is None:
         if problem is None or init_input is None:
@@ -283,14 +283,12 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_class = model_f
 
     argtree = defaults.get_model_argtree_for_problem(model_f, problem)
-    input_adapter = get_input_adapter(
-        input_adapter_str, problem=problem,
-        data_statistics=(None if prep_dataset is None
-                         else prep_dataset.info.cache['standardization']))
     if len(argtree_arg) != 0:
         argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
-    if len(argtree) > 0:
-        model_f = argtree.apply(model_f)
+    model_f = argtree.apply(model_f)
+    input_adapter = get_input_adapter(
+        input_adapter_str, data_stats=(None if prep_dataset is None
+                                       else prep_dataset.info.cache['standardization']))
     _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
                          verbosity=verbosity)
     if "input_adapter" in vuf.params(model_f):
