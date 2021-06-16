@@ -14,9 +14,7 @@ This repository contains
 
 that I am using for research.
 
-
 ## Main scripts
-
 
 ### Running experiments
 
@@ -28,6 +26,7 @@ There is also a `test` procedure that can be used for standard evaluation or for
 
 `scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
 Running `python train_cifar.py` is equivalent to running
+
 ```shell
 python run.py train \
     "Cifar10{trainval,test}" "id" \  # data
@@ -38,13 +37,15 @@ python run.py train \
 ### Directories
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. 
-* `dirs.DATASETS` is a list of paths that can be searched for datasets. One of them is , if defined, in the environment variable `VIDLU_DATASETS`. If found to exist, "&lt;ancestor&gt;/datasets" and "&lt;ancestor&gt;/data/datasets", where "&lt;ancestor&gt;" is any of ancestor directories of `dirs.py`, are included too.
-* `dirs.PRETRAINED` is set to the value of the `VIDLU_PRETRAINED` environment variable if defined or "&lt;ancestor&gt;/data/pretrained_parameters".
-* `dirs.PRETRAINED` is set to the value of the `VIDLU_EXPERIMENTS` environment variable if defined or "&lt;ancestor&gt;/data/experiments".
+
+-   `dirs.DATASETS` is a list of paths that can be searched for datasets. One of them is , if defined, in the environment variable `VIDLU_DATASETS`. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too.
+-   `dirs.PRETRAINED` is set to the value of the `VIDLU_PRETRAINED` environment variable if defined or "&lt;ancestor>/data/pretrained_parameters".
+-   `dirs.PRETRAINED` is set to the value of the `VIDLU_EXPERIMENTS` environment variable if defined or "&lt;ancestor>/data/experiments".
 
 The following paths are derived: `CACHE = EXPERIMENTS / "cache"` and `SAVED_STATES = EXPERIMENTS / "states"`. They are automatically created by running/importing `dirs.py`.
 
 It might be easiest to create the following directory structure (symbolic links can be useful) so that the directories can be found automatically by `dirs.py`:
+
 ```
 <ancestor>
 ├─ .../vidlu/scripts/dirs.py
@@ -56,7 +57,6 @@ It might be easiest to create the following directory structure (symbolic links 
    └─ pretrained parameters
 
 ```
-
 
 ## The framework
 
@@ -77,7 +77,7 @@ Most of the code here is rather generic except for concrete datasets in `vidlu.d
 ### Modules (model components) and models
 
 `vidlu.modules` contains implementations of various modules and functions (`elements`, `components`, `heads`, `losses`) and useful procedures for debugging, extending and manipulating modules. 
-*The modules (inheriting `Module`) support shape inference like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet) (an initial run in necessary for initialization). 
+\*The modules (inheriting `Module`) support shape inference like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet) (an initial run in necessary for initialization). 
 
 `try_get_module_name_from_call_stack` enables getting the name of the current module.
 
@@ -94,9 +94,9 @@ For many elementary modules which can be invertible, the `inverse` property retu
 Composite modules are desined to be "in-depth" configurable through constructor arguments 
 that are factories/constructors for child modules. Their names  usually end with `_f`. Python allows accessing default arguments. If a default argument is a function, its arguments can be modified using e.g. `functools.partial`. `vidlu.utils.func` defines tree data structures and procedures that enable eays modification of deeply nested arguments.
 
-`vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet<sup>[1](#myfootnote1)</sup>, Ladder-DenseNet<sup>[1](#myfootnote1)</sup>.
+`vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet<sup>[1](#fn1)</sup>, Ladder-DenseNet<sup>[1](#myfootnote1)</sup>.
 
-<a name="myfootnote1">1</a>: There might be some unintended differences to the original code.
+<a name="fn1">1</a>: There might be some unintended differences to the original code.
 
 ### Training
 
@@ -134,12 +134,10 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 `vidlu.experiment` defines a program for creating and running experiments. It uses `vidlu.factories` to create a `Trainer`, it defines training and evaluation loop actions such as evaluation of performance metrics from `vidlu.metrics`, printing, logging, checkpoint management, user interaction (command execution and training/evaluation step output inspection), and training time estimation. 
 
-
 ### Commonly used utilities
 
 In many places in the code some parameter names end with `_f`. 
 This means that the argument is not a final object but a factory (hence `_f`). E.g. `backbone_f()` should produce a `backbone`. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `argtree_partial` allows flexible modification of any set of parameters of nested functions. 
-
 
 ```py
 
@@ -155,6 +153,7 @@ def eu(..., fleet_f=make_flock):
 from vidlu.utils.func import ArgTree as t
 au = argtree_partial(eu, bar_f=t(load='coconut', swallow_f=t(type='african')))
 ```
+
 <!--
 instead of
 
@@ -173,10 +172,6 @@ def make_some_baz(..., swallow_type='european'):
 foo(baz_args=dict(swallow_type='african'))
 ```
 -->
-
-
-
-
 
 <!--
 
