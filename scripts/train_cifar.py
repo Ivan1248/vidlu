@@ -24,15 +24,25 @@ from run import log_run
 
 t = vuf.ArgTree  # used for propagating arguments into nested functions
 
+"""
+`python train_cifar.py` is equivalent to
+```
+python run.py train \
+    "Cifar10{trainval,test}" "id" \
+    "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \
+    "ct.resnet_cifar,lr_scheduler_f=ConstLR,epoch_count=50,jitter=None"
+```
+"""
+
 data_str = "Cifar10{trainval,test}"  # "Cifar10{train,val}"
 model_class = models.ResNetV1  # models.ResNetV2
 model_config = dict(backbone_f=t(depth=18, small_input=True,
-                                 # block_f=t(norm_f=None),  # no BatchNorm
+                                 block_f=t(norm_f=None),  # no BatchNorm
                                  ))
 trainer_config = vct.TrainerConfig(vct.resnet_cifar,
-                                   # lr_scheduler_f=ConstLR,
-                                   # epoch_count=50,
-                                   # jitter=None,
+                                   lr_scheduler_f=ConstLR,  # no learning rate decay
+                                   epoch_count=50,  # 50 instead of 200 epochs
+                                   jitter=None,  # no data jittering instead of jitter.CifarPadRandCropHFlip
                                    )
 
 
