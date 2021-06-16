@@ -15,6 +15,49 @@ This repository contains
 that I am using for research.
 
 
+## Main scripts
+
+
+### Running experiments
+
+`scripts/run.py` is a genaral script for running experiments. 
+
+If the `train` procedure is chosen (by running `python run.py train ...`), it forwards its command line arguments and directory paths from `dirs.py` to the `Experiment` constructor, which forwards them to factories from `vidlu.factories` to create a `Trainer` instance. Then `train` runs evaluation and training. If the `--resume` (`--r`) is provided, the `Experiment` instance loads a previously saved training state before continuing training or evaluation.
+
+There is also a `test` procedure that can be used for standard evaluation or for running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
+
+`scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
+Running `python train_cifar.py` is equivalent to running
+```shell
+python run.py train \
+    "Cifar10{trainval,test}" "id" \  # data
+    "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \  # model
+    "ct.resnet_cifar,lr_scheduler_f=ConstLR,epoch_count=50,jitter=None"  # training
+```
+
+### Directories
+
+`scripts/dirs.py` is a module that determines directory paths needed for running experiments. 
+* `dirs.DATASETS` is a list of paths that can be searched for datasets. One of them is , if defined, in the environment variable `VIDLU_DATASETS`. If found to exist, "&lt;ancestor&gt;/datasets" and "&lt;ancestor&gt;/data/datasets", where "&lt;ancestor&gt;" is any of ancestor directories of `dirs.py`, are included too.
+* `dirs.PRETRAINED` is set to the value of the `VIDLU_PRETRAINED` environment variable if defined or "&lt;ancestor&gt;/data/pretrained_parameters".
+* `dirs.PRETRAINED` is set to the value of the `VIDLU_EXPERIMENTS` environment variable if defined or "&lt;ancestor&gt;/data/experiments".
+
+The following paths are derived: `CACHE = EXPERIMENTS / "cache"` and `SAVED_STATES = EXPERIMENTS / "states"`. They are automatically created by running/importing `dirs.py`.
+
+It might be easiest to create the following directory structure (symbolic links can be useful) so that the directories can be found automatically by `dirs.py`:
+```
+<ancestor>
+├─ .../vidlu/scripts/dirs.py
+└─ data
+   ├─ datasets
+   ├─ experiments  # subdirectories created automatically
+   │  ├─ states
+   │  └─ cache
+   └─ pretrained parameters
+
+```
+
+
 ## The framework
 
 Some of the main packages in the framework are `vidlu.data`, `vidlu.modules`, `vidlu.models`, `vidlu.training`, `vidlu.metrics`, `vidlu.factories`, `vidlu.configs`, `vidlu.utils` and `vidlu.experiment`. 
@@ -131,34 +174,6 @@ foo(baz_args=dict(swallow_type='african'))
 ```
 -->
 
-## Scripts
-
-
-### Experiment running
-
-`scripts/run.py` is a genaral script for running experiments. 
-
-If the `train` procedure is chosen (by running `python run.py train ...`), it forwards its command line arguments and directory paths from `dirs.py` to the `Experiment` constructor, which forwards them to factories from `vidlu.factories` to create a `Trainer` instance. Then `train` runs evaluation and training. If the `--resume` (`--r`) is provided, the `Experiment` instance loads a previously saved training state before continuing training or evaluation.
-
-There is also a `test` procedure that can be used for standard evaluation or for running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
-
-`scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
-Running `python train_cifar.py` is equivalent to running
-```shell
-python run.py train \
-    "Cifar10{trainval,test}" "id" \  # data
-    "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \  # model
-    "ct.resnet_cifar,lr_scheduler_f=ConstLR,epoch_count=50,jitter=None"  # training
-```
-
-### Directories
-
-`scripts/dirs.py` is a module that determines directory paths needed for running experiments. 
-* `dirs.DATASETS` is a list of paths that can be searched for datasets. One of them is , if defined, in the environment variable `VIDLU_DATASETS`. If found to exist, "&lt;ancestor&gt;datasets" and "&lt;ancestor&gt;data/datasets", where "&lt;ancestor&gt;" is any of ancestor directories of `dirs.py`, are included too.
-* `dirs.PRETRAINED` is set to the value of the `VIDLU_PRETRAINED` environment variable if defined or "&lt;ancestor&gt;data/pretrained_parameters".
-* `dirs.PRETRAINED` is set to the value of the `VIDLU_EXPERIMENTS` environment variable if defined or "&lt;ancestor&gt;data/experiments".
-
-The following paths are derived: `CACHE = EXPERIMENTS / 'cache'`, `SAVED_STATES = EXPERIMENTS / 'states'`
 
 
 
