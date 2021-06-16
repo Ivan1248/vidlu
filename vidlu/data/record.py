@@ -21,14 +21,20 @@ class Record(Sequence):  # Sized, Iterable len, iter
     An immutable sequence (supports numeric indexes) that behaves as a mapping
     as well (supports string keys) and supports the dot operator for accessing
     elements.
+
     A field of a record can be lazily evaluated. Such a field is represented
     with a function. The output of the function is cached when accessed for
     the first time.
+
     Example:
         >>> r = Record(a=2, b=53)
         Record(a=2, b=53)
         >>> r.a == r['a'] == r[0]
         True
+        >>> list(r)
+        [2, 53]
+        >>> dict(r)
+        {'a': 2, 'b': 53}
         >>> r = Record(a_=lambda: 2+3, b=7)
         Record(a=<unevaluated>, b=7)
         >>> r.a; print(r)

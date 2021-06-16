@@ -73,7 +73,7 @@ class Dataset(abc.Sequence):
     def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
                  info: T.Mapping = None, data=None):
         self.name = name or getattr(data, 'name', None) or type(self).__name__
-        self.subset = subset or getattr(data, 'subset', None)
+        self.subset = subset or getattr(data, 'subset', None)  # TODO: remove and absorb into name
         self.modifiers = list(getattr(data, 'modifiers', [])) \
                          + ([modifiers] if isinstance(modifiers, str) else (modifiers or []))
         self.info = NameDict(info or getattr(data, 'info', dict()))

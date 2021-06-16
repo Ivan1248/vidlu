@@ -80,7 +80,7 @@ class ExtraBase:
         return stop(x, cls.name)
 
 
-class LogAbsDetJac(ExtraBase):
+class LogAbsDetJac(ExtraBase):  # TODO: rename to LogVolChange?
     name = 'ladj'
 
     @classmethod

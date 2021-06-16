@@ -13,8 +13,6 @@ import vidlu.modules.components as vmc
 from vidlu.modules.other import mnistnet
 from vidlu.models.utils import ladder_input_names, set_inplace
 from vidlu.utils.func import (Reserved, Empty, default_args)
-from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
-from torch.utils import hooks
 
 from . import initialization
 
