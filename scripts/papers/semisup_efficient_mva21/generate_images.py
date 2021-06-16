@@ -13,7 +13,6 @@ from vidlu.experiments import TrainingExperiment
 import numpy as np
 
 
-
 def _perturb(attack, model, x, target):
     loss_mask = torch.ones_like(target[:, 0, ...])
     pmodel = attack(model, x, target, loss_mask=loss_mask)
@@ -60,7 +59,7 @@ def generate_results(e: TrainingExperiment, dir="/tmp/semisup", suffix=""):
               r.items()})
         for r in results]
 
-    colors = vis.normalize_colors(e.data.test.info.class_colors)
+    colors = vis.normalize_colors(e.data.test.info.class_colors, insert_zeros=True)
     for i, r in enumerate(results):
         r = {k: v if len(v.shape) == 3 else vis.colorize_segmentation(v + 1, colors)
              for k, v in r.items()}

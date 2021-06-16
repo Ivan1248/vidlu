@@ -116,6 +116,13 @@ class Viewer:
         show(0)
 
 
+def normalize_colors(colors, insert_zeros=False):
+    colors = list(map(np.array, colors))
+    if np.max(np.array(colors)) > 1:
+        colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
+    return np.array([np.zeros(3)] + colors) if insert_zeros else np.array(colors)
+
+
 def view_predictions_2(dataset, infer=None, save_dir=None):
     if 'class_colors' in dataset.info:
         colors = list(map(np.array, dataset.info['class_colors']))
