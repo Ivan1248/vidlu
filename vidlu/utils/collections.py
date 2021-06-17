@@ -14,7 +14,7 @@ class NameDict(MutableMapping):
         self.update(*args, **kwargs)
 
     def __repr__(self):
-        arg_strings = [f'{name}={value}' for name, value in self._get_kwargs()]
+        arg_strings = [f'{name}={repr(value)}' for name, value in self._get_kwargs()]
         return f"{type(self).__name__}({', '.join(arg_strings)})"
 
     def __eq__(self, other):
