@@ -1110,44 +1110,64 @@ def _wrap_torch_operations(namespace):
 
 _wrap_torch_operations(vars())
 
-
 # Wrapped modules ##################################################################################
+torch.nn.Conv2d
 
-def _dimensional_build(name, input, args, in_channels_name='in_channels') -> nn.Module:
+
+def _dimensional_build(factory, input, args, in_channels_name='in_channels') -> nn.Module:
+    args = NameDict(args)
     if in_channels_name in args and args[in_channels_name] is None:
         args[in_channels_name] = input.shape[1]
-    dim = len(input.shape) - 2  # assuming 1 batch and 1 channels dimension
-    if dim not in [1, 2, 3]:
-        raise ValueError(f"Cannot infer {name} dimension from input shape.")
-    name = f"{name}{dim}d"
-    factory = nn.__getattribute__(name)
+    if isinstance(factory, str):
+        dim = len(input.shape) - 2  # assuming 1 batch and 1 channels dimension
+        if dim not in [1, 2, 3]:
+            raise ValueError(f"Cannot infer {factory} dimension from input shape.")
+        factory = f"{factory}{dim}d"
+        factory = nn.__getattribute__(factory)
     for k in vuf.params(factory).keys():
         if k not in args:
-            raise ValueError(f"Missing argument for {name}: {k}.")
+            raise ValueError(f"Missing argument for {factory}: {k}.")
+
+    if 'padding' in args:
+        padding = _get_conv_padding(input.shape[-2:], args.padding, args.kernel_size,
+                                    args.get('dilation', 1), args.get('stride', 1))
+        args = {**args, 'padding': padding}
+    for k in ['device', 'dtype']:  # for backward compatibility with PyTorch versions < 1.8.1
+        if k in args and args[k] is None:
+            del args[k]
     module = factory(**args)
     return module
 
 
-def _get_conv_padding(padding_type, kernel_size, dilation):
+def _get_conv_padding(shape, padding_type, kernel_size, dilation, stride):
+    # TODO: update - PyTorch now supports 'valid' and 'same'
     if not isinstance(padding_type, str):
         return padding_type
-    if any(k % 2 == 0 for k in ([kernel_size] if isinstance(kernel_size, int) else kernel_size)):
+
+    shape = np.array(shape)
+    k, d, s = [np.array([x] * len(shape) if isinstance(x, int) else x)
+               for x in [kernel_size, dilation, stride]]
+
+    if any(x % 2 == 0 for x in k):
         raise ValueError(f"`kernel_size` must be an odd positive integer "
                          f"or a sequence of them, not {kernel_size}.")
-    if padding_type not in ('half', 'full'):
-        raise ValueError(f"Invalid padding_type value {padding_type}.")
 
-    def get_padding(k, d):
-        return (k - 1) * d // 2 if padding_type == 'half' else (k - 1) * d
-
-    if any(isinstance(x, T.Sequence) for x in [kernel_size, dilation]):
-        if isinstance(dilation, int):
-            dilation = [dilation] * len(kernel_size)
-        elif isinstance(kernel_size, int):
-            kernel_size = [kernel_size] * len(dilation)
-        return tuple(get_padding(k, d) for k, d in zip(kernel_size, dilation))
+    kd = (k - 1) * d + 1
+    if padding_type == 'half':
+        padding = (kd - 1) // 2
+    elif padding_type == 'full':
+        padding = kd - 1
+    elif padding_type == 'same':
+        out_shape = (shape + s - 1) // s  # minimal shape so that all input pixels are covered
+        total_padding = (out_shape - 1) * s + kd - shape
+        if np.any(odd := total_padding % 2):
+            warnings.warn(f"padding='same' does noot result in asymmetric padding like in "
+                + f"Tensorflow. {total_padding=} will be increased to become even.")
+            total_padding += odd
+        padding = np.maximum(0, total_padding // 2)
     else:
-        return get_padding(kernel_size, dilation)
+        raise ValueError(f'Unrecognized padding "{padding_type}".')
+    return tuple(padding)
 
 
 class WrappedModule(Module):
@@ -1166,10 +1186,9 @@ class WrappedModule(Module):
 @_replaces(*(f'Conv{i}d' for i in range(1, 4)))
 class Conv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
-                 bias=None, in_channels=None, padding_mode='zeros'):
+                 bias=None, in_channels=None, padding_mode='zeros', device=None, dtype=None):
         if bias is None:
             raise ValueError("The bias argument should be provided for the Conv module.")
-        padding = _get_conv_padding(padding, kernel_size, dilation)
         super().__init__(orig=None)
         self.store_args()
 
@@ -1179,10 +1198,9 @@ class Conv(WrappedModule):
 
 class DeconvConv(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1,
-                 bias=None, in_channels=None, padding_mode='zeros'):
+                 bias=None, in_channels=None, padding_mode='zeros', device=None, dtype=None):
         if bias is None:
             raise ValueError("The bias argument should be provided for the Conv module.")
-        padding = _get_conv_padding(padding, kernel_size, dilation)
         if padding_mode != 'zeros':
             raise NotImplemented("padding_mode other than 'zeros' not supported.")
         del padding_mode
@@ -1199,7 +1217,6 @@ class DeconvConv(WrappedModule):
 class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
                  ceil_mode=False):
-        padding = _get_conv_padding(padding, kernel_size, dilation)
         super().__init__(orig=None)
         self.store_args()
 
@@ -1211,7 +1228,6 @@ class MaxPool(WrappedModule):
 class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
                  count_include_pad=True, divisor_override=None):
-        padding = _get_conv_padding(padding, kernel_size, dilation=1)
         super().__init__(orig=None)
         self.store_args()
 
@@ -1222,7 +1238,7 @@ class AvgPool(WrappedModule):
 @_replaces(*(f'ConvTranspose{i}d' for i in range(1, 4)))
 class ConvTranspose(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, output_padding=1, groups=1,
-                 bias=True, dilation=1, in_channels=None):
+                 bias=True, dilation=1, in_channels=None, device=None, dtype=None):
         super().__init__(orig=None)
         self.store_args()
 
@@ -1266,7 +1282,7 @@ class PositiveChannelScale(Module):
 @_replaces(*(f'BatchNorm{i}d' for i in range(1, 4)))
 class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
-                 num_features=None):
+                 num_features=None, device=None, dtype=None):
         super().__init__(orig=None)
         self.store_args()
 

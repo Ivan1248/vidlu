@@ -133,29 +133,40 @@ class TestConv:
         conv = Conv(2, 3, bias=True).eval()
         assert conv.args.in_channels is None
         conv(x)
-        assert conv.args.in_channels == x.shape[1]
+        assert conv.orig.in_channels == x.shape[1]
 
     def test_padding(self):
+        C = 53
+        shape = (4, C, 27, 28)
+        nshape = np.array(shape)
+        x = torch.ones(shape)
         for ksize in [1, 3, 5]:
-            conv = Conv(53, ksize, padding=0, bias=False).eval()
-            assert conv(torch.ones(4, 1, 28, 28)).shape == (4, 53, 28 - ksize + 1, 28 - ksize + 1)
+            conv = Conv(C, ksize, padding=0, bias=False)
+            assert conv(x).shape == (4, 53, 27 - ksize + 1, 28 - ksize + 1)
 
-            conv = Conv(53, ksize, padding='half', bias=False).eval()
-            assert conv(torch.ones(4, 1, 28, 28)).shape == (4, 53, 28, 28)
+            for d in [1, 2]:
+                for s in [1, 2, 3]:
+                    out_shape = shape[:2] + tuple((nshape[2:] + s - 1) // s)
+                    conv = Conv(C, ksize, padding='half', dilation=d, stride=s, bias=False)
+                    assert conv(x).shape == out_shape
 
-            conv = Conv(53, ksize, padding='full', bias=False).eval()
-            assert conv(torch.ones(4, 2, 28, 28)).shape == (4, 53, 28 + ksize - 1, 28 + ksize - 1)
+                    out_shape = shape[:2] + tuple((nshape[2:] + s - 1) // s)
+                    conv = Conv(C, ksize, padding='same', dilation=d, stride=s, bias=False)
+                    assert conv(x).shape == out_shape
+
+            conv = Conv(C, ksize, padding='full', bias=False)
+            assert conv(x).shape == (4, 53, 27 + ksize - 1, 28 + ksize - 1)
 
     def test_conv_dim(self):
-        conv = Conv(8, 3, bias=True).eval()
+        conv = Conv(8, 3, bias=True)
         conv(torch.randn(1, 2, 3))
         assert isinstance(conv.orig, nn.Conv1d)
 
-        conv = Conv(8, 3, bias=True).eval()
+        conv = Conv(8, 3, bias=True)
         conv(torch.randn(1, 2, 3, 4))
         assert isinstance(conv.orig, nn.Conv2d)
 
-        conv = Conv(8, 3, bias=True).eval()
+        conv = Conv(8, 3, bias=True)
         conv(torch.randn(1, 2, 3, 4, 5))
         assert isinstance(conv.orig, nn.Conv3d)
 
