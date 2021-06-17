@@ -151,7 +151,7 @@ def eu(..., fleet_f=make_flock):
     ...
 
 from vidlu.utils.func import ArgTree as t
-au = argtree_partial(eu, bar_f=t(load='coconut', swallow_f=t(type='african')))
+au = argtree_partial(eu, fleet_f=t(load='coconut', swallow_f=t(type='african')))
 ```
 
 <!--
