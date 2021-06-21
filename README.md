@@ -16,18 +16,20 @@ that I am using for research.
 
 ## Main scripts
 
+Application scripts are in the `scripts` directory. 
+
 ### Running experiments
 
 `scripts/run.py` is a genaral script for running experiments. 
 
-If the `train` procedure is chosen (by running `python run.py train ...`), it forwards its command line arguments and directory paths from `dirs.py` to the `Experiment` constructor, which forwards them to factories from `vidlu.factories` to create a `Trainer` instance. Then `train` runs evaluation and training. If the `--resume` (`--r`) is provided, the `Experiment` instance loads a previously saved training state before continuing training or evaluation.
+The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or finished experiments can be continued/reevaluated by the `--resume` (`--r`) argument.
 
-There is also a `test` procedure that can be used for standard evaluation or for running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
+There is also a `test` command that accepts almost the same arguments and can be used for standard evaluation or running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
 
 `scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
-Running `python train_cifar.py` is equivalent to running
+Running `python train_cifar.py` is equivalent to running the following.
 
-```shell
+```sh
 python run.py train \
     "Cifar10{trainval,test}" "id" \  # data
     "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \  # model
@@ -36,17 +38,19 @@ python run.py train \
 
 ### Directories
 
-`scripts/dirs.py` is a module that determines directory paths needed for running experiments. 
+`scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
--   `dirs.DATASETS` is a list of paths that can be searched for datasets. One of them is , if defined, in the environment variable `VIDLU_DATASETS`. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too.
--   `dirs.PRETRAINED` is set to the value of the `VIDLU_PRETRAINED` environment variable if defined or "&lt;ancestor>/data/pretrained_parameters".
--   `dirs.PRETRAINED` is set to the value of the `VIDLU_EXPERIMENTS` environment variable if defined or "&lt;ancestor>/data/experiments".
+-   `DATASETS` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, the first path in the list is its value. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be consiered read-only.
+-   `PRETRAINED` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained_parameters" (if found).
+-   `EXPERIMENTS` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
+    -   `CACHE = EXPERIMENTS / "cache"` is for data cache.
+    -   `SAVED_STATES = EXPERIMENTS / "states"` is for storing intermediate and complete training states. 
 
-The following paths are derived: `CACHE = EXPERIMENTS / "cache"` and `SAVED_STATES = EXPERIMENTS / "states"`. They are automatically created by running/importing `dirs.py`.
+#### Setup
 
-It might be easiest to create the following directory structure (symbolic links can be useful) so that the directories can be found automatically by `dirs.py`:
+It might be easiest to create the following directory structure) so that the directories can be found automatically by `dirs.py`: Symbolic links can be useful.
 
-```
+```sh
 <ancestor>
 ├─ .../vidlu/scripts/dirs.py
 └─ data
@@ -136,7 +140,7 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Commonly used utilities
 
-In many places in the code some parameter names end with `_f`. 
+In many places in the code, some parameter names end with `_f`. 
 This means that the argument is not a final object but a factory (hence `_f`). E.g. `backbone_f()` should produce a `backbone`. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `argtree_partial` allows flexible modification of any set of parameters of nested functions. 
 
 ```py
@@ -152,6 +156,7 @@ def eu(..., fleet_f=make_flock):
 
 from vidlu.utils.func import ArgTree as t
 au = argtree_partial(eu, fleet_f=t(load='coconut', swallow_f=t(type='african')))
+au()
 ```
 
 <!--
