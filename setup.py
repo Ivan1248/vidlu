@@ -19,8 +19,7 @@ def process_pillow_req(pillow_req):
 
 requirements = [r if not r.startswith("pillow") else process_pillow_req(r)
                 for r in Path('requirements.txt').read_text().splitlines()]
+requirements_optional = Path('requirements-optional.txt').read_text().splitlines()
 
-if os.environ.get("VIDLU_OPTIONAL_REQUIREMENTS", False):
-    requirements += Path('requirements-optional.txt').read_text().splitlines()
-
-setup(name="vidlu", packages=find_packages(), install_requires=requirements)
+setup(name="vidlu", packages=find_packages(), install_requires=requirements,
+      extras_require={'full': requirements_optional})
