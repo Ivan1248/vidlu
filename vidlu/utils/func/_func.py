@@ -1,6 +1,5 @@
 import inspect
 from inspect import signature
-from functools import wraps
 import functools
 import typing
 import warnings
@@ -162,7 +161,7 @@ def compose(func0, *funcs):
             argument.
     """
 
-    @wraps(func0)
+    @functools.wraps(func0)
     def wrapper(*args, **kwargs):
         x = func0(*args, **kwargs)
         for f in funcs:
@@ -287,7 +286,7 @@ def keyfilter(func, d, factory=dict):
 # Decorators #######################################################################################
 
 def vectorize(func):
-    @wraps(func)
+    @functools.wraps(func)
     def wrapper(x, *a, **k):
         if isinstance(x, tuple):
             return tuple(func(x_, *a, **k) for x_ in x)
@@ -300,7 +299,7 @@ def type_checked(func):
     """A decorator that checks whether annotated parameters have valid types."""
     sig = inspect.signature(func)
 
-    @wraps(func)
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         ba = sig.bind(*args, **kwargs)
         ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
