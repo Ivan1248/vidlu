@@ -139,7 +139,8 @@ class Model(M.Module):
     def initialize(self, input=None):
         if input is not None:
             self(input)
-        self._init(self)
+        if self._init is not None:
+            self._init(self)
 
 
 class SeqModel(M.Seq):
@@ -160,6 +161,8 @@ class WrappedModel(SeqModel):
 
 class DiscriminativeModel(SeqModel):
     def __init__(self, backbone_f, head_f, init, input_adapter=None):
+        if head_f is None:
+            head_f = vm.Identity
         super().__init__(seq=dict(backbone=backbone_f(), head=head_f()), init=init,
                          input_adapter=input_adapter)
 
