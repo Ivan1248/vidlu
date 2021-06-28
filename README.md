@@ -20,7 +20,7 @@ Application scripts are in the `scripts` directory.
 
 ### Running experiments
 
-`scripts/run.py` is a genaral script for running experiments. 
+`scripts/run.py` is a general script for running experiments. 
 
 The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or finished experiments can be continued/reevaluated by the `--resume` (`--r`) argument.
 
@@ -40,15 +40,16 @@ python run.py train \
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
--   `DATASETS` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, the first path in the list is its value. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be consiered read-only.
+-   `DATASETS` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be considered read-only.
 -   `PRETRAINED` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained_parameters" (if found).
 -   `EXPERIMENTS` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
     -   `CACHE = EXPERIMENTS / "cache"` is for data cache.
-    -   `SAVED_STATES = EXPERIMENTS / "states"` is for storing intermediate and complete training states. 
+    -   `SAVED_STATES = EXPERIMENTS / "states"` is for storing intermediate and complete training states.
+
 
 #### Setup
 
-It might be easiest to create the following directory structure) so that the directories can be found automatically by `dirs.py`: Symbolic links can be useful.
+It might be easiest to create the following directory structure so that the directories can be found automatically by `dirs.py`. Symbolic links can be useful.
 
 ```sh
 <ancestor>
@@ -59,8 +60,9 @@ It might be easiest to create the following directory structure) so that the dir
    │  ├─ states
    │  └─ cache
    └─ pretrained parameters
-
 ```
+
+If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS` need to be defined, or a single env. variable, `VIDLU_DATA` pointing to the "data" directory, can be defined.
 
 ## The framework
 
@@ -95,8 +97,7 @@ For many elementary modules which can be invertible, the `inverse` property retu
 
 `vidlu.modules.losses` contains loss functions.
 
-Composite modules are desined to be "in-depth" configurable through constructor arguments 
-that are factories/constructors for child modules. Their names  usually end with `_f`. Python allows accessing default arguments. If a default argument is a function, its arguments can be modified using e.g. `functools.partial`. `vidlu.utils.func` defines tree data structures and procedures that enable eays modification of deeply nested arguments.
+Composite modules are designed to be "deeply" configurable: arguments of arguments that are factories/constructors for child modules can be modified. Names of such factory arguments usually end with `_f`. If a default argument is a function, its arguments can be accessed and modified using `vidlu.utils.func`, which relies on `inspect.signature` and `functools.partial`. `vidlu.utils.func` defines tree data structures and procedures that enable eays modification of deeply nested arguments.
 
 `vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet<sup>[1](#fn1)</sup>, Ladder-DenseNet<sup>[1](#myfootnote1)</sup>.
 
@@ -149,9 +150,9 @@ def make_swallow(..., type='european'): ...
 
 def make_flock(..., load=None, swallow_f=make_swallow): ...
 
-def eu(..., fleet_f=make_flock):
+def eu(..., flock_f=make_flock):
     ...
-    fleet = fleet_f(...)
+    flock = flock_f(...)
     ...
 
 from vidlu.utils.func import ArgTree as t
