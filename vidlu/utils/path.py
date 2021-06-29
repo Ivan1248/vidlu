@@ -15,17 +15,19 @@ def find_in_directories(dirs, child):
     raise FileNotFoundError(f"None of {dirs} contains '{child}'.")
 
 
-def find_in_ancestors(start_path, subpath):
+def find_in_ancestors(start, subpath, include_start=False):
     """
     `ancestor_sibling_path` can be the name of a sibling directory (or some
     descendant of the sibling) to some ancestor of `path` or `path`
     """
-    start_path = Path(start_path).absolute()
-    for anc in start_path.parents:
+    start = Path(start).absolute()
+    if include_start:
+        start /= "_"
+    for anc in start.parents:
         candidate = anc / subpath
         if candidate.exists():
             return candidate
-    raise FileNotFoundError(f"No ancestor of {start_path} has a child {subpath}.")
+    raise FileNotFoundError(f"No ancestor of {start} has a child {subpath}.")
 
 
 def _split_long_name(name, max_length=255):
