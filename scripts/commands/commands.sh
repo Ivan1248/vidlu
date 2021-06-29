@@ -84,7 +84,7 @@ python run.py train "train,train_u,test:camvid{val,train,test}" id "SwiftNet,bac
 python run.py train "train,train_u,test:Cifar10{trainval,test}:(*uniform_labels(d[0]).split(index=4000),d[1])" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
 
 # rsync
-rsync -avzhe ssh --progress pretrained_parameters/ igrubisic@treebeard:/home/igrubisic/data/pretrained_parameters/
+rsync -avzhe ssh --progress pretrained/ igrubisic@treebeard:/home/igrubisic/data/pretrained/
 
 
 # Semi-supervised consistency
