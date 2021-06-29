@@ -28,7 +28,7 @@ DATA = opt_path(os.environ.get("VIDLU_DATA", None))
 # Datasets
 datasets = filter_valid(
     [opt_path(DATA / "datasets" if DATA else os.environ.get("VIDLU_DATASETS", None)),
-     _find('data/datasets'), _find('datasets'), Path('/tmp/datasets')])
+     _find('data/datasets'), _find('datasets'), _find('datasets', start='tmp/_')])
 
 # Pre-trained parameters
 pretrained = Path(
