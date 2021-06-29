@@ -14,9 +14,61 @@ This repository contains
 
 that I am using for research.
 
+## Setup
+
+### Without installing
+
+Make a local copy of the repository with
+
+```sh
+git clone https://github.com/Ivan1248/vidlu.git
+cd vidlu
+```
+
+Install dependencies listed in `requirements.txt`. If Pip is to be used, you can run
+
+```sh
+pip install -r requirements.txt
+```
+
+### Pip installation
+
+Run
+
+```sh
+pip install git+https://github.com/Ivan1248/Vidlu
+```
+
 ## Main scripts
 
-Application scripts are in the `scripts` directory. 
+The `scripts` directory contains scripts that use the framework. 
+
+### Directories
+
+`scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
+
+-   `DATASETS` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be considered read-only.
+-   `PRETRAINED` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained_parameters" (if found).
+-   `EXPERIMENTS` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
+    -   `CACHE = EXPERIMENTS / "cache"` is for data cache.
+    -   `SAVED_STATES = EXPERIMENTS / "states"` is for storing intermediate and complete training states.
+
+#### Setup
+
+It might be easiest to create the following directory structure so that the directories can be found automatically by `dirs.py`. Symbolic links can be useful.
+
+```sh
+<ancestor>
+├─ .../vidlu/scripts/dirs.py
+└─ data
+   ├─ datasets
+   ├─ experiments  # subdirectories created automatically
+   │  ├─ states
+   │  └─ cache
+   └─ pretrained parameters
+```
+
+If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS` need to be defined, or a single env. variable, `VIDLU_DATA` pointing to the "data" directory, can be defined.
 
 ### Running experiments
 
@@ -35,34 +87,6 @@ python run.py train \
     "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \  # model
     "ct.resnet_cifar,lr_scheduler_f=ConstLR,epoch_count=50,jitter=None"  # training
 ```
-
-### Directories
-
-`scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
-
--   `DATASETS` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be considered read-only.
--   `PRETRAINED` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained_parameters" (if found).
--   `EXPERIMENTS` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
-    -   `CACHE = EXPERIMENTS / "cache"` is for data cache.
-    -   `SAVED_STATES = EXPERIMENTS / "states"` is for storing intermediate and complete training states.
-
-
-#### Setup
-
-It might be easiest to create the following directory structure so that the directories can be found automatically by `dirs.py`. Symbolic links can be useful.
-
-```sh
-<ancestor>
-├─ .../vidlu/scripts/dirs.py
-└─ data
-   ├─ datasets
-   ├─ experiments  # subdirectories created automatically
-   │  ├─ states
-   │  └─ cache
-   └─ pretrained parameters
-```
-
-If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS` need to be defined, or a single env. variable, `VIDLU_DATA` pointing to the "data" directory, can be defined.
 
 ## The framework
 
