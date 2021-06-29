@@ -18,7 +18,7 @@ model_str = 'ResNetV2,backbone_f=t(depth=18,small_input=True)'
 trainer_str = ('tc.resnet_cifar,tc.adversarial,'
                + 'attack_f=partial(tc.madry_cifar10_attack,step_count=7,stop_on_success=True),'
                + 'eval_attack_f=t(step_count=10,stop_on_success=True)')
-data = vf.get_prepared_data_for_trainer(data_str, datasets_dir=dirs.DATASETS, cache_dir=dirs.CACHE)
+data = vf.get_prepared_data_for_trainer(data_str, datasets_dir=dirs.datasets, cache_dir=dirs.cache)
 model = vf.get_model('ResNetV2,backbone_f=t(depth=18,small_input=True)', prep_dataset=data.train,
                      device=device)
 trainer = vf.get_trainer(trainer_str, dataset=data.train, model=model)

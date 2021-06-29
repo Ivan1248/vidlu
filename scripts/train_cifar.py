@@ -51,7 +51,7 @@ def get_experiment(resume=True, restart=False):
 
     with indent_print('Initializing checkpoint manager and logger...'):
         logger = Logger()
-        cpman = CheckpointManager(dirs.SAVED_STATES, experiment_name="resnet_cifar_example",
+        cpman = CheckpointManager(dirs.saved_states, experiment_name="resnet_cifar_example",
                                   separately_saved_state_parts=("model",), n_best_kept=1,
                                   mode='restart' if restart else 'resume' if resume else 'new',
                                   perf_func=lambda s: s.get('perf', 0),
@@ -59,7 +59,7 @@ def get_experiment(resume=True, restart=False):
                                   name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
 
     with indent_print('Initializing data...'):
-        data = factories.get_prepared_data_for_trainer(data_str, dirs.DATASETS, dirs.CACHE)
+        data = factories.get_prepared_data_for_trainer(data_str, dirs.datasets, dirs.cache)
 
     first_ds = next(iter(data.values()))
 

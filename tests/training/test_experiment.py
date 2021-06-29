@@ -8,8 +8,8 @@ from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 
 def get_dirs(tmpdir):
     tmpdir = Path(tmpdir)
-    dirs = dict(DATASETS=tmpdir / 'datasets', CACHE=tmpdir / 'cache',
-                SAVED_STATES=tmpdir / 'states', PRETRAINED=tmpdir / 'pretrained_parameters')
+    dirs = dict(datasets=tmpdir / 'datasets', cache=tmpdir / 'cache',
+                saved_states=tmpdir / 'states', pretrained=tmpdir / 'pretrained')
     for d in dirs.values():
         d.mkdir(exist_ok=True)
     return Namespace(**dirs)

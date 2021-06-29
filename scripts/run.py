@@ -34,7 +34,7 @@ def log_run(status):
     if (d := len('start') - len(status)) > 0:
         status += ' ' * d
     try:
-        with (dirs.EXPERIMENTS / 'runs.txt').open('a') as runs_file:
+        with (dirs.experiments / 'runs.txt').open('a') as runs_file:
             prefix = f"[{status} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
             fcntl.flock(runs_file, fcntl.LOCK_EX)
             args = [a if i < 2 or len(a) == 0 or a[0] == '-' else f'"{a}"'
@@ -79,7 +79,7 @@ def train(args):
 
     exp.trainer.train(*training_datasets.values(), restart=False)
 
-    if not args.no_train_evaluation:
+    if not args.no_train_eval:
         print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
         for name, ds in training_datasets.items():
             exp.trainer.eval(ds)
@@ -91,9 +91,9 @@ def train(args):
 
     print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
 
-    if dirs.CACHE is not None:
+    if dirs.cache is not None:
         cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
-        clean_up_dataset_cache(dirs.CACHE / 'datasets', timedelta(days=cache_cleanup_time))
+        clean_up_dataset_cache(dirs.cache / 'datasets', timedelta(days=cache_cleanup_time))
 
 
 def path(args):
@@ -161,7 +161,7 @@ def add_standard_arguments(parser, func):
                         help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
-    parser.add_argument("--no_train_evaluation", action='store_true',
+    parser.add_argument("--no_train_eval", action='store_true',
                         help="No evaluation on the training set.")
     parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: `int(time()) % 100`.")

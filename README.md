@@ -47,11 +47,11 @@ The `scripts` directory contains scripts that use the framework.
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
--   `DATASETS` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be considered read-only.
--   `PRETRAINED` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained_parameters" (if found).
--   `EXPERIMENTS` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
-    -   `CACHE = EXPERIMENTS / "cache"` is for data cache.
-    -   `SAVED_STATES = EXPERIMENTS / "states"` is for storing intermediate and complete training states.
+-   `datasets` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be considered read-only.
+-   `pretrained` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
+-   `experiments` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
+    -   `cache = experiments / "cache"` is for data cache.
+    -   `SAVED_STATES = experiments / "states"` is for storing intermediate and complete training states.
 
 #### Setup
 

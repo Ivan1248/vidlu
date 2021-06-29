@@ -11,7 +11,7 @@ from vidlu.ops import one_hot
 
 import dirs
 
-key_to_ds = get_data("CamVid{train, val, test}", dirs.DATASETS)
+key_to_ds = get_data("CamVid{train, val, test}", dirs.datasets)
 ds_train, ds_val, ds_test = (ds for k, ds in key_to_ds)
 
 

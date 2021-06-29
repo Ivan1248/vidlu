@@ -38,7 +38,7 @@ if use_model:
                                                               class_count=19),
                          init_input=images[0])
     params, submodule_path = vf.get_translated_parameters("swiftnet:swiftnet_ss_cs.pt",
-                                                          params_dir=dirs.PRETRAINED)
+                                                          params_dir=dirs.pretrained)
     model.load_state_dict(params)
     model, _ = vm.deep_split(model.backbone.backbone, "bulk.unit0_0")
     #model, _ = vm.deep_split(model.backbone.backbone, "root.conv")

@@ -240,7 +240,7 @@ def load_parameters(model, params_str, params_dir):
 
 
 def _check_dirs(dirs):
-    for name in ['DATASETS', 'CACHE', 'SAVED_STATES', 'PRETRAINED']:
+    for name in ['datasets', 'cache', 'saved_states', 'pretrained']:
         dirs_ = getattr(dirs, name)
         if isinstance(dirs_, (str, Path)):
             dirs_ = [dirs_]
@@ -273,14 +273,14 @@ class TrainingExperiment:
                        + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
                        + f' -d "{a.device}" --metrics "{a.metrics}" -r')
 
-            cpman = get_checkpoint_manager(a, dirs.SAVED_STATES)
+            cpman = get_checkpoint_manager(a, dirs.saved_states)
 
         try:
             with indent_print('Initializing data...'):
                 print(a.data)
                 with Stopwatch() as t:
-                    data = factories.get_prepared_data_for_trainer(a.data, dirs.DATASETS,
-                                                                   dirs.CACHE)
+                    data = factories.get_prepared_data_for_trainer(a.data, dirs.datasets,
+                                                                   dirs.cache)
                 print(f"Data initialized in {t.time:.2f} s.")
             first_ds = next(iter(data.values()))
 
@@ -316,6 +316,6 @@ class TrainingExperiment:
         elif a.params is not None:
             with indent_print("Loading parameters..."):
                 print(a.params)
-                load_parameters(model, a.params, dirs.PRETRAINED)
+                load_parameters(model, a.params, dirs.pretrained)
 
         return TrainingExperiment(model, trainer, data, logger, cpman)

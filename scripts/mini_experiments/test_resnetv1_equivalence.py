@@ -12,7 +12,7 @@ from vidlu.factories import problem
 
 # data = data.datasets.HBlobs(example_shape=(32, 32, 3))
 
-ds_id, dataset = factories.get_data("TinyImageNet{val}", dirs.DATASETS)[0]
+ds_id, dataset = factories.get_data("TinyImageNet{val}", dirs.datasets)[0]
 dataset = factories.get_data_preparation(dataset)(dataset)
 inp = next(iter(data.DataLoader(dataset, batch_size=1)))[0]
 

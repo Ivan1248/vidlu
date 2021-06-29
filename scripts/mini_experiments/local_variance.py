@@ -8,8 +8,8 @@ from vidlu import modules, factories
 from vidlu.utils.presentation.visualization import Viewer
 from vidlu.transforms import image
 
-data = factories.get_prepared_data_for_trainer("Cityscapes(downsampling=4){train}", dirs.DATASETS,
-                                               dirs.CACHE).train
+data = factories.get_prepared_data_for_trainer("Cityscapes(downsampling=4){train}", dirs.datasets,
+                                               dirs.cache).train
 
 
 def filter_(x, sigma):

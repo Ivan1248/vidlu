@@ -28,4 +28,4 @@ learner_name = to_valid_path(f"{args.model}-{args.trainer}")
 experiment_id = f'{args.data}-{learner_name}-exp_{args.experiment_suffix}'
 print('Learner name:', learner_name)
 print('Experiment ID:', experiment_id)
-CheckpointManager(dirs.SAVED_STATES, experiment_name=experiment_id).remove_checkpoints()
+CheckpointManager(dirs.saved_states, experiment_name=experiment_id).remove_checkpoints()

@@ -8,7 +8,7 @@ import _context
 import dirs
 from vidlu.factories import get_model, get_prepared_data_for_trainer
 
-data = get_prepared_data_for_trainer("cifar10{train,val}", dirs.DATASETS, dirs.CACHE).test
+data = get_prepared_data_for_trainer("cifar10{train,val}", dirs.datasets, dirs.cache).test
 model = get_model("ResNetV2,backbone_f=t(depth=10, small_input=True)", input_adapter_str="id",
                   prep_dataset=data, device=torch.device("cpu"), verbosity=2)
 
