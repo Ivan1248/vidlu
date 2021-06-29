@@ -162,7 +162,7 @@ class NoMatchError(Exception):
 
 
 class FormatScanner:
-    def __init__(self, fmt, full_match=True, debug=False):
+    def __init__(self, fmt, full_match, debug=False):
         self.format = fmt
         format_parser = arpeggio.ParserPython(scanner_expr)
         try:
@@ -172,6 +172,7 @@ class FormatScanner:
         input_pattern, self.var_names = visit_parse_tree(format_parse_tree,
                                                          _ScannerExprVisitor(debug=debug))
         self.full_match = full_match
+
         input_pattern = input_pattern + "$" if full_match else ".*?" + input_pattern
         self.regex = re.compile(input_pattern)
 
@@ -190,8 +191,8 @@ class FormatScanner:
             return None
 
 
-def scan(format, x):
-    return FormatScanner(format)(x)
+def scan(format, x, *, full_match):
+    return FormatScanner(format, full_match=full_match)(x)
 
 
 class FormatWriter:
