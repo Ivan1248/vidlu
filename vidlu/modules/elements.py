@@ -704,8 +704,9 @@ def pasum(x):
 
 
 class Sum(Module):  # TODO: rename to "Add"
-    def __init__(self):
+    def __init__(self, inplace=False):
         super().__init__()
+        self.inplace = inplace
 
     def forward(self, *inputs):
         inputs = vmu.sole_tuple_to_varargs(inputs)
@@ -716,7 +717,11 @@ class Sum(Module):  # TODO: rename to "Add"
                       ' '.join(str(tuple(x.shape)) for x in inputs))
         if len(inputs) == 1:
             return inputs[0]
-        y = inputs[0] + inputs[1]
+        if self.inplace:
+            y = inputs[0]
+            y += inputs[1]
+        else:
+            y = inputs[0] + inputs[1]
         for x in inputs[2:]:
             y += x
         return y
@@ -1162,7 +1167,7 @@ def _get_conv_padding(shape, padding_type, kernel_size, dilation, stride):
         total_padding = (out_shape - 1) * s + kd - shape
         if np.any(odd := total_padding % 2):
             warnings.warn(f"padding='same' does noot result in asymmetric padding like in "
-                + f"Tensorflow. {total_padding=} will be increased to become even.")
+                          + f"Tensorflow. {total_padding=} will be increased to become even.")
             total_padding += odd
         padding = np.maximum(0, total_padding // 2)
     else:

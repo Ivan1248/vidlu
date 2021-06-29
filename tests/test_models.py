@@ -1,9 +1,9 @@
-import platform
 import pytest
 import contextlib as ctx
 
 import torch
 import torchvision
+from tqdm import tqdm
 
 from vidlu import factories
 from vidlu import models
@@ -18,35 +18,77 @@ from vidlu.modules.tensor_extra import LogAbsDetJac
 def compare_with_torchvision(mymodelname, tvmodelname):
     torch.random.manual_seed(53)
     x = torch.randn(2, 3, 224, 224)  # TODO: investigate: 64x64 doesn't work on linux
-    vidlu_model = factories.get_model(
+    model_vidlu = factories.get_model(
         mymodelname, problem=problem.Classification(class_count=8), init_input=x, verbosity=2)
-    assert vm.is_built(vidlu_model, thorough=True)
-    tv_model = torchvision.models.__dict__[tvmodelname](num_classes=8)
+    assert vm.is_built(model_vidlu, thorough=True)
+    if tvmodelname.startswith("resnet_v2"):
+        import vidlu.modules.other as vmo
+        model_tv = vmo.resnet_v2.__dict__[tvmodelname](num_classes=8)
+    else:
+        model_tv = torchvision.models.__dict__[tvmodelname](num_classes=8)
 
-    vidlu_model.eval()
-    tv_model.eval()
+    model_vidlu.eval()
+    model_tv.eval()
 
-    tsd = tv_model.state_dict()
-    translator_name = text.scan(r"{a:([a-zA-Z]+)}(\d+)", tvmodelname)['a']
+    tsd = model_tv.state_dict()
+    translator_name = text.scan(r"{a:([\w_]*[a-zA-Z_])}(\d+)", tvmodelname, full_match=True)['a']
+    translator_name = translator_name.rstrip("_")
     params = models.params.translate(translator_name, tsd)
 
-    vidlu_model.load_state_dict(params)
+    model_vidlu.load_state_dict(params)
 
-    if platform.system() == 'Windows':
-        assert torch.all(vidlu_model(x) == tv_model(x))
-    else:
-        assert (vidlu_model(x) - tv_model(x)).abs().max() < 3e-7
+    y_vidlu, interm_vidlu = vm.with_intermediate_outputs(model_vidlu, return_dict=True)(x)
+    y_tv, interm_tv = vm.with_intermediate_outputs(model_tv, return_dict=True)(x)
+
+    interm_translations = dict()
+    interm_tv_transl = dict()
+    from vidlu.utils.text import NoMatchError
+    for k, v in interm_tv.items():
+        try:
+            d = models.params.translate(translator_name, {k: v})
+            interm_tv_transl.update(d)
+            interm_translations[k] = next(iter(d.keys()))
+        except NoMatchError as e:
+            pass
+
+    def compare(a, b, k):
+        if a.device == torch.device('cpu'):
+            assert torch.all(a == b), k
+        else:
+            assert (a - b).abs().max() < 3e-7, k
+
+    for k, v in tqdm(interm_tv_transl.items()):
+        try:
+            if v is None:
+                breakpoint()
+            compare(v, interm_vidlu[k], k)
+        except AssertionError as e:
+            raise e
+    compare(y_vidlu, y_tv, k)
 
 
 class TestResNet:
     @torch.no_grad()
     def test_resnet(self):
         # basic block
-        compare_with_torchvision("ResNetV1,backbone_f=t(depth=18,small_input=False)", "resnet18")
+        compare_with_torchvision(
+            "ResNetV1, backbone_f=t(depth=18, small_input=False, block_f=t(act_f=t(inplace=True)), groups_f=t(unit_f=t(inplace_add=True)))",
+            "resnet18")
 
     @torch.no_grad()
     def test_resnet_bottleneck(self):
-        compare_with_torchvision("ResNetV1,backbone_f=t(depth=50,small_input=False)", "resnet50")
+        compare_with_torchvision(
+            "ResNetV1, backbone_f=t(depth=50, small_input=False, block_f=t(act_f=t(inplace=True)), groups_f=t(unit_f=t(inplace_add=True)))",
+            "resnet50")
+
+
+class TestResNetV2:
+    @torch.no_grad()
+    def test_resnet_v2(self):
+        # basic block
+        compare_with_torchvision(
+            "ResNetV2, backbone_f=t(depth=18, small_input=False, block_f=t(act_f=t(inplace=True)), groups_f=t(unit_f=t(inplace_add=False)))",
+            "resnet_v2_18")
 
 
 class TestDenseNet:

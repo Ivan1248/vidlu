@@ -1,1 +1,2 @@
-from . import swiftnet, mnistnet, deeplab
+from . import swiftnet, mnistnet, deeplab, resnet_v2
+

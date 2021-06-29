@@ -1,6 +1,4 @@
-from collections.abc import Mapping
-import warnings
-
+from warnings import warn
 import torch
 
 from vidlu.utils import text
@@ -11,7 +9,8 @@ def filter_by_and_remove_key_prefix(state_dict, prefix, error_on_no_match=False)
         return state_dict
     result = {k[len(prefix) + 1:]: v for k, v in state_dict.items() if k.startswith(prefix)}
     if error_on_no_match and len(result) == 0:
-        raise RuntimeError(f'No key in state_dict starts with {prefix=}. (Example keys: {list(state_dict)[:5]}.)')
+        raise RuntimeError(
+            f'No key in state_dict starts with {prefix=}. (Example keys: {list(state_dict)[:5]}.)')
     return result
 
 
@@ -48,21 +47,44 @@ def translate_madrylab_resnet(state_dict):
     return translate_resnet(state_dict)
 
 
+resnet_dict = {  # backbone
+    r"{a:conv|bn}1{e}":
+        r"backbone.root.{a:bn->norm}.orig{e}",
+    r"layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}{e}":
+        r"backbone.bulk.unit{`int(a)-1`}_{b}.fork.block.{c:bn->norm}{`int(d)-1`}.orig{e}",
+    # logits
+    r"fc{e}":
+        r"head.logits.orig{e}",
+}
+
+resnet_v1_dict = {
+    **resnet_dict,
+    # backbone
+    r"layer{a:(\d+)}.{b:(\d+)}.downsample.{c:0|1}{e}":
+        r"backbone.bulk.unit{`int(a)-1`}_{b}.fork.shortcut.{c:0->conv|1->norm}.orig{e}",
+}
+
+
 def translate_resnet(state_dict):
     """Translates Torchvision ResNet parameters to Vidlu ResNet parameters."""
-    return translate_dict_keys(
-        state_dict,
-        {  # backbone
-            r"{a:conv|bn}1.{e}":
-                r"backbone.root.{a:bn->norm}.orig.{e}",
-            r"layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}.{e}":
-                r"backbone.bulk.unit{`int(a)-1`}_{b}.fork.block.{c:bn->norm}{`int(d)-1`}.orig.{e}",
-            r"layer{a:(\d+)}.{b:(\d+)}.downsample.{c:0|1}.{e:(.*)}":
-                r"backbone.bulk.unit{`int(a)-1`}_{b}.fork.shortcut.{c:0->conv|1->norm}.orig.{e}",
-            # logits
-            r"fc.{e:(.*)}":
-                r"head.logits.orig.{e}"
-        }.items())
+    return translate_dict_keys(state_dict, resnet_v1_dict.items())
+
+
+resnet_v2_dict = {
+    r"layer{a:([2-9]\d*)}.0.bn1{e}":  #
+        r"backbone.bulk.unit{`int(a)-1`}_0.preact.norm0.orig{e}",
+    **resnet_dict,
+    # ResNet-v2 backbone
+    r"layer{a:(\d+)}.{b:(\d+)}.downsample{e}":
+        r"backbone.bulk.unit{`int(a)-1`}_{b}.fork.shortcut.orig{e}",
+    r"bn5{e}":
+        r"backbone.bulk.post_norm.orig{e}",
+}
+
+
+def translate_resnet_v2(state_dict):
+    """Translates Torchvision ResNet parameters to Vidlu ResNet parameters."""
+    return translate_dict_keys(state_dict, resnet_v2_dict.items())
 
 
 def translate_densenet(state_dict):
@@ -88,8 +110,8 @@ def translate_densenet(state_dict):
 def translate_swiftnet(state_dict):
     """Translates Marin's SwiftNet-RN parameters to Vidlu SwiftNet-RN
      parameters."""
-    warnings.warn(f"Unused arrays: 'backbone.img_mean' ({state_dict['backbone.img_mean']}) and 'backbone.img_std' "
-                  + f"({state_dict['backbone.img_std']}) removed from state_dict.")
+    warn(f"Unused arrays: 'backbone.img_mean' ({state_dict['backbone.img_mean']}) and"
+         + f" 'backbone.img_std' ({state_dict['backbone.img_std']}) removed from state_dict.")
     del state_dict['backbone.img_std']
     del state_dict['backbone.img_mean']
     state_dict = translate_dict_keys(

@@ -675,10 +675,11 @@ def _check_resnet_unit_args(block_f, dim_change):
 
 
 class ResNetV1Unit(E.Seq):
-    def __init__(self, block_f=partial(PostactBlock, stride_after_1x1=True), dim_change='proj'):
+    def __init__(self, block_f=partial(PostactBlock, stride_after_1x1=True), dim_change='proj',
+                 inplace_add=False):
         _check_resnet_unit_args(block_f, dim_change)
         super().__init__()
-        self.block_f, self.dim_change = block_f, dim_change
+        self.block_f, self.dim_change, self.inplace_add = block_f, dim_change, inplace_add
 
     def build(self, x):
         block_args = default_args(self.block_f)
@@ -690,8 +691,8 @@ class ResNetV1Unit(E.Seq):
                                           conv_f=block_args.conv_f,
                                           norm_f=block_args.norm_f)
         block = Reserved.call(self.block_f)[:-1]  # block without the last activation
-        self.add(fork=E.Fork(shortcut=shortcut, block=block),
-                 sum=E.Sum(),
+        self.add(fork=E.Fork(block=block, shortcut=shortcut),
+                 sum=E.Sum(inplace=self.inplace_add),
                  act=default_args(self.block_f).act_f())
 
 
@@ -765,10 +766,10 @@ def _get_resnetv2_shortcut(in_width, out_width, stride, dim_change, conv_f):
 
 
 class ResNetV2Unit(E.Seq):
-    def __init__(self, block_f=PreactBlock, dim_change='proj'):
+    def __init__(self, block_f=PreactBlock, dim_change='proj', inplace_add=False):
         _check_resnet_unit_args(block_f, dim_change)
         super().__init__()
-        self.block_f, self.dim_change = block_f, dim_change
+        self.block_f, self.dim_change, self.inplace_add = block_f, dim_change, inplace_add
 
     def build(self, x):
         block = self.block_f()
@@ -777,13 +778,13 @@ class ResNetV2Unit(E.Seq):
         out_width = block_args.base_width * block_args.width_factors[-1]
         stride = block_args.stride
         if stride == 1 and in_width == out_width:
-            self.add(fork=E.Fork(shortcut=nn.Identity(), block=block))
+            self.add(fork=E.Fork(block=block, shortcut=nn.Identity(),))
         else:
             shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change,
                                               block_args.conv_f)
             self.add(preact=block[:'conv0'],
-                     fork=E.Fork(shortcut=shortcut, block=block['conv0':]))
-        self.add(sum=E.Sum())
+                     fork=E.Fork(block=block['conv0':], shortcut=shortcut))
+        self.add(sum=E.Sum(inplace=self.inplace_add))
 
 
 class ResNetV2Groups(ResNetV1Groups):
@@ -793,8 +794,9 @@ class ResNetV2Groups(ResNetV1Groups):
                  block_f=partial(default_args(ResNetV2Unit).block_f,
                                  base_width=Reserved,
                                  stride=Reserved),
-                 dim_change=default_args(ResNetV2Unit).dim_change):
-        super().__init__(group_lengths, base_width, block_f, dim_change, unit_f=ResNetV2Unit)
+                 dim_change=default_args(ResNetV2Unit).dim_change,
+                 unit_f=ResNetV2Unit):
+        super().__init__(group_lengths, base_width, block_f, dim_change, unit_f)
         if (norm_f := default_args(block_f).norm_f) is not None:
             self.add('post_norm', norm_f())
         self.add('post_act', default_args(block_f).act_f())

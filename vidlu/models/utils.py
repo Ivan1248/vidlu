@@ -1,6 +1,7 @@
 import warnings
 
 import vidlu.modules.components as vmc
+import vidlu.modules as vm
 
 
 def _last_by_prefix(names, name_to_prefix, parent_last):
@@ -24,9 +25,9 @@ def ladder_input_names(backbone):
     return [f"bulk.{name}" for name in names][:-1]
 
 
-def set_inplace(module, inplace):
+def set_all_inplace(module, inplace):
     for name, module in module.named_modules():
-        if hasattr(module, 'inplace'):
+        if isinstance(module, vm.Sum) or hasattr(module, 'inplace'):
             if module.inplace and not inplace:
                 warnings.warn(f"`inplace` attribute of module {name} overridden with `False`.")
             module.inplace = inplace  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s

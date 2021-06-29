@@ -11,7 +11,7 @@ import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
 from vidlu.modules.other import mnistnet
-from vidlu.models.utils import ladder_input_names, set_inplace
+from vidlu.models.utils import ladder_input_names, set_all_inplace
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
 from . import initialization
@@ -29,7 +29,8 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
                                        kernel_sizes=Reserved),
                        backbone_f=vmc.ResNetV1Backbone,
                        group_lengths=(2,) * 4, width_factors=(1, 1), ksizes=(3, 3),
-                       dim_change='proj'):
+                       dim_change='proj',
+                       groups_f=vmc.ResNetV1Groups):
     # TODO: dropout
     if depth is not None:
         basic = ([3, 3], [1, 1], 'proj')  # maybe it should be 'pad' instead of 'proj'
@@ -47,7 +48,7 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
         }[depth]
     kwargs = dict(base_width=base_width, small_input=small_input, group_lengths=group_lengths,
                   block_f=partial(block_f, kernel_sizes=ksizes, width_factors=width_factors),
-                  dim_change=dim_change)
+                  dim_change=dim_change, groups_f=groups_f)
     if isinstance(backbone_f, functools.partial) \
             and not len(inters := set(backbone_f.keywords).intersection(kwargs)) == 0:
         raise RuntimeError(f"Arguments {inters} should be given directly to the factory instead of "
@@ -58,11 +59,12 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
 resnet_v2_backbone = partial(resnet_v1_backbone,
                              block_f=partial(default_args(vmc.ResNetV2Backbone).block_f,
                                              kernel_sizes=Reserved),
-                             backbone_f=vmc.ResNetV2Backbone)
+                             backbone_f=vmc.ResNetV2Backbone, groups_f=vmc.ResNetV2Groups)
 
 
 def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
-                         block_f=default_args(resnet_v2_backbone).block_f):
+                         block_f=default_args(resnet_v2_backbone).block_f,
+                         groups_f=vmc.ResNetV2Groups):
     group_count, ksizes = 3, [3, 3]
     group_depth = (group_count * len(ksizes))
     zagoruyko_depth = depth
@@ -75,7 +77,8 @@ def wide_resnet_backbone(depth, width_factor, small_input, dim_change='proj',
                                 group_lengths=[blocks_per_group] * group_count,
                                 block_f=partial(block_f, kernel_sizes=ksizes,
                                                 width_factors=[width_factor] * 2),
-                                dim_change=dim_change)
+                                dim_change=dim_change,
+                                groups_f=groups_f)
 
 
 def densenet_backbone(depth, small_input, k=None, compression=0.5, ksizes=(1, 3),
@@ -290,7 +293,7 @@ class SwiftNet(SwiftNetBase):
         efficiency."""
         super().post_build()
 
-        set_inplace(self, self.mem_efficiency >= 1)
+        set_all_inplace(self, self.mem_efficiency >= 1)
         if self.lateral_suffix == 'sum':
             for lb in self.laterals:
                 vm.get_submodule(self.backbone.backbone, f"{lb}.act").inplace = False
@@ -309,7 +312,7 @@ class SwiftNetIRevNet(SwiftNetBase):
 
     def post_build(self, *args, **kwargs):
         super().post_build()
-        set_inplace(self, self.mem_efficiency >= 1)
+        set_all_inplace(self, self.mem_efficiency >= 1)
         if self.mem_efficiency >= 2:
             raise NotImplementedError()
 
