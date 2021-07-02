@@ -29,16 +29,20 @@ DATA = opt_path(os.environ.get("VIDLU_DATA", None))
 datasets = filter_valid(
     [opt_path(DATA / "datasets" if DATA else os.environ.get("VIDLU_DATASETS", None)),
      _find('data/datasets'), _find('datasets'), _find('datasets', start='tmp/_')])
+if len(datasets) ==0:
+    raise FileNotFoundError('No directory containing datasets provided or found.')
 
 # Pre-trained parameters
-pretrained = Path(
-    opt_path(DATA / "pretrained" if DATA else os.environ.get("VIDLU_PRETRAINED", None))
-    or _find('data/pretrained'))
+pretrained = opt_path(DATA / "pretrained" if DATA else
+                      os.environ.get("VIDLU_PRETRAINED", None) or _find('data/pretrained'))
+if pretrained is None:
+    raise FileNotFoundError('"pretrained" directory not provided or found.')
 
 # Cache and experimental results/states
-experiments = Path(
-    opt_path(DATA / "experiments" if DATA else os.environ.get("VIDLU_EXPERIMENTS", None))
-    or _find('data/experiments'))
+experiments = opt_path(DATA / "experiments" if DATA else
+                       os.environ.get("VIDLU_EXPERIMENTS", None) or _find('data/experiments'))
+if experiments is None:
+    raise FileNotFoundError('"experiments" directory not provided or found.')
 
 # Cache
 cache = experiments / 'cache'
