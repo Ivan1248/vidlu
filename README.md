@@ -16,8 +16,7 @@ that I am using for research.
 
 ## Setup
 
-### Without installing
-
+**Without installing.**
 Make a local copy of the repository with
 
 ```sh
@@ -31,19 +30,23 @@ Install dependencies listed in `requirements.txt`. If Pip is to be used, you can
 pip install -r requirements.txt
 ```
 
-### Pip installation
+**Pip installation.**
 
-Run
-
+If you want to install the package, you can run
 ```sh
 pip install git+https://github.com/Ivan1248/Vidlu
 ```
+or, in a local copy of the repository,
+```sh
+pip install .
+```
+
 
 ## Main scripts
 
-The `scripts` directory contains scripts that use the framework. 
+The `scripts` directory contains scripts that use <a href="#the-framework">the framework</a>. 
 
-### Directories
+### Directory configuration
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
