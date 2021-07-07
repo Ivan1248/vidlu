@@ -5,6 +5,7 @@ import random
 from datetime import datetime, timedelta
 import os
 import warnings
+import contextlib as ctx
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -66,29 +67,37 @@ def train(args):
 
     exp.logger.log(f"RNG seed: {seed}")
 
-    if args.debug:
-        debug.stop_tracing_calls()
+    # if args.debug:
+    #     debug.stop_tracing_calls()
 
-    if not args.no_init_eval:
-        print('Evaluating initially...')
-        exp.trainer.eval(exp.data.test)
-    log_run('cont.' if args.resume else 'start')
+    profiler = None
+    if args.profile:
+        from torch.autograd.profiler import profile
+        from functools import partial
+        profiler = partial(profile, use_cuda=True)
 
-    print(('Continuing' if args.resume else 'Starting') + ' training...')
-    training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
+    with profiler() if profiler is not None else ctx.suppress() as prof:
+        if not args.no_init_eval:
+            print('Evaluating initially...')
+            exp.trainer.eval(exp.data.test)
+        log_run('cont.' if args.resume else 'start')
 
-    exp.trainer.train(*training_datasets.values(), restart=False)
+        print(('Continuing' if args.resume else 'Starting') + ' training...')
+        training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
 
-    if not args.no_train_eval:
-        print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
-        for name, ds in training_datasets.items():
-            exp.trainer.eval(ds)
-    log_run('done')
+        exp.trainer.train(*training_datasets.values(), restart=False)
 
-    print(f"RNG seed: {seed}")
+        if not args.no_train_eval:
+            print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
+            for name, ds in training_datasets.items():
+                exp.trainer.eval(ds)
+        log_run('done')
+    if prof is not None:
+        print(prof.key_averages().table(sort_by="self_cuda_time_total"))
 
     exp.cpman.remove_old_checkpoints()
 
+    print(f"RNG seed: {seed}")
     print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
 
     if dirs.cache is not None:
@@ -155,9 +164,12 @@ def add_standard_arguments(parser, func):
     parser.add_argument("-rb", "--resume_best", action='store_true',
                         help="Use the best checkpoint if --resume is provided.")
     # if func is train:
-    parser.add_argument("-r", "--resume", action='store_true',
+    cpman_mode = parser.add_mutually_exclusive_group(required=False)
+    cpman_mode.add_argument("-r", "--resume", action='store_true',
                         help="Resume training from a checkpoint of the same experiment.")
-    parser.add_argument("--restart", action='store_true',
+    cpman_mode.add_argument("-rs", "--resume_or_start", action='store_true',
+                        help="Resume training if there is a checkpoint or start new training.")
+    cpman_mode.add_argument("--restart", action='store_true',
                         help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
@@ -167,6 +179,7 @@ def add_standard_arguments(parser, func):
                         help="RNG seed. Default: `int(time()) % 100`.")
     # reporting, debugging
     parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
+    parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
     parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.",
                         action='store_true')
     parser.add_argument("-v", "--verbosity", type=int, help="Console output verbosity.", default=2)

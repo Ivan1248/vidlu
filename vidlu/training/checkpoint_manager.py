@@ -123,7 +123,8 @@ class CheckpointManager(object):
     """
 
     def __init__(self, checkpoints_dir, experiment_name: str, info: T.Mapping = None,
-                 n_last_kept=1, n_best_kept=0, mode: T.Literal['restart', 'resume', 'new'] = False,
+                 n_last_kept=1, n_best_kept=0,
+                 mode: T.Literal['restart', 'resume', 'resume_or_start', 'start'] = 'start',
                  separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
                  log_func=lambda s: "", name_suffix_func=lambda s: ""):
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
@@ -140,11 +141,11 @@ class CheckpointManager(object):
         self.sync()
         if mode == 'restart':
             self.restart()
-        self.resuming_required = mode == 'resume'
-        if self.resuming_required and len(self.saved) == 0:
+        self.resuming_required = mode != 'restart' and len(self.saved) > 0
+        if mode == 'resume' and not self.resuming_required:
             raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
                                + f" {self.experiment_dir}.")
-        elif not self.resuming_required and len(self.saved) > 0:
+        elif mode == 'start' and self.resuming_required:
             raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If you"
                                + " want to use this ID anyway, pass `mode='resume'`.")
 
@@ -195,11 +196,12 @@ class CheckpointManager(object):
 
     @property
     def last_checkpoint_path(self):
-        return self.experiment_dir / self.saved[-1]
+        return self.experiment_dir / self.saved[-1] if len(self.saved) > 0 else None
 
     @property
     def best_checkpoint_path(self):
-        return self.experiment_dir / max(self.saved, key=self.id_to_perf.__getitem__)
+        return self.experiment_dir / max(self.saved, key=self.id_to_perf.__getitem__) \
+            if len(self.saved) > 0 else None
 
     def load_last(self, map_location=None):
         return self._load(self.last_checkpoint_path, map_location=map_location)
