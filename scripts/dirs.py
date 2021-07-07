@@ -1,61 +1,87 @@
 import warnings
 from pathlib import Path
 import os
+from functools import cached_property
 
-from vidlu.utils import path
-
-__all__ = ("datasets", "experiments", "cache", "saved_states", "pretrained")
+from vidlu.utils.path import find_in_ancestors
 
 
 def _find(path_end, start=__file__):
     try:
-        return Path(path.find_in_ancestors(start, path_end))
+        return Path(find_in_ancestors(start, path_end))
     except FileNotFoundError:
         warnings.warn(f'Cannot find directory "{path_end}" in ancestors of {__file__}.')
         return None
 
 
-def opt_path(x):
-    return Path(x) if x else None
+def opt(func, x):
+    return func(x) if x else None
 
 
-def filter_valid(items):
-    return [x for x in items if x is not None]
-
-
-DATA = opt_path(os.environ.get("VIDLU_DATA", None))
-
-# Datasets
-datasets = filter_valid(
-    [opt_path(DATA / "datasets" if DATA else os.environ.get("VIDLU_DATASETS", None)),
-     _find('data/datasets'), _find('datasets'), _find('datasets', start='tmp/_')])
-if len(datasets) ==0:
-    raise FileNotFoundError('No directory containing datasets provided or found.')
-
-# Pre-trained parameters
-pretrained = opt_path(DATA / "pretrained" if DATA else
-                      os.environ.get("VIDLU_PRETRAINED", None) or _find('data/pretrained'))
-if pretrained is None:
-    raise FileNotFoundError('"pretrained" directory not provided or found.')
-
-# Cache and experimental results/states
-experiments = opt_path(DATA / "experiments" if DATA else
-                       os.environ.get("VIDLU_EXPERIMENTS", None) or _find('data/experiments'))
-if experiments is None:
-    raise FileNotFoundError('"experiments" directory not provided or found.')
-
-# Cache
-cache = experiments / 'cache'
-
-# Experimental results/states
-saved_states = experiments / 'states'
-
-cache.mkdir(exist_ok=True)
-saved_states.mkdir(exist_ok=True)
-
-for k in __all__:
-    path = globals()[k] if k != "datasets" else datasets[0]
+def _check_dir_path(path, kind=None):
+    if path is None:
+        raise FileNotFoundError(f'No {kind} directory provided or found.')
     if not path.exists():
         raise FileNotFoundError(f'Directory {k}="{path}" does not exist.')
     if not path.is_dir():
         raise FileNotFoundError(f'{k}="{path}" is not a directory path.')
+
+
+class _Dirs:
+    @cached_property
+    def data(self):
+        """Optional root directory that can contain "datasets", "pretrained"
+        and "experiments" directories.
+        """
+        return opt(Path, os.environ.get("VIDLU_DATA", None))
+
+    @cached_property
+    def datasets(self):
+        """List of directories that caontain datasets"""
+        datasets = [self._get_path("datasets"), _find('datasets'), _find('datasets', start='tmp/_')]
+        datasets = [x for x in datasets if x is not None]
+        _check_dir_path(None if len(datasets) == 0 else datasets[0], "datasets")
+        return datasets
+
+    @cached_property
+    def pretrained(self):
+        """Pretrained parameters"""
+        pretrained = self._get_path("pretrained")
+        _check_dir_path(pretrained, "pretrained")
+        return pretrained
+
+    @cached_property
+    def experiments(self):
+        """Cache and experimental results/states"""
+        experiments = self._get_path("experiments")
+        _check_dir_path(experiments, "experiments")
+        return experiments
+
+    @cached_property
+    def cache(self):
+        """Various cache"""
+        cache = self.experiments / 'cache'
+        cache.mkdir(exist_ok=True)
+        return cache
+
+    @cached_property
+    def saved_states(self):
+        """Experimental results or incomplete training states"""
+        saved_states = self.experiments / 'states'
+        saved_states.mkdir(exist_ok=True)
+        return saved_states
+
+    def _get_path(self, dir_name: str):
+        return opt(Path, self.data / dir_name if self.data else (
+                os.environ.get(f"VIDLU_{dir_name.upper()}", None) or _find(f"data/{dir_name}")))
+
+
+_dirs = _Dirs()
+
+
+def __getattr__(name):
+    return getattr(_dirs, name)
+
+
+def __dir__():
+    return "data", "datasets", "pretrained", "experiments", "cache", "saved_states"
