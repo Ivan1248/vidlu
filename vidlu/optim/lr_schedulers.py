@@ -91,7 +91,8 @@ class ScalableLR(lr_scheduler.LambdaLR):
                  last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
         func, scaling, min = [broadcast(x, len(optimizer.param_groups))
                               for x in (func, scaling, min)]
-        func = [lambda e: ll(e / epoch_count) * s + m for ll, s, m in zip(func, scaling, min)]
+        func = [lambda e: ll(0 if e == 0 else e / epoch_count) * s + m
+                for ll, s, m in zip(func, scaling, min)]
         super().__init__(optimizer=optimizer, lr_lambda=func, last_epoch=last_epoch)
 
 
