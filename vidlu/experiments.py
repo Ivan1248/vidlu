@@ -32,8 +32,9 @@ class TrainingExperimentFactoryArgs:
     params: T.Optional[str]
     experiment_suffix: str
     resume: bool
-    resume_best: bool
+    resume_or_start: bool
     restart: bool
+    resume_best: bool
     device: T.Optional[torch.device]
     verbosity: int
 
@@ -194,7 +195,7 @@ def define_training_loop_actions(
             exec(cmd)
         except Exception as e:
             print(f'Cannot execute "{optional_input}". Error:\n{e}.')
-            
+
 
 # Experiment #######################################################################################
 
@@ -222,7 +223,10 @@ def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpo
     cpman = CheckpointManager(
         checkpoints_dir, experiment_name=experiment_id, info=training_args,
         separately_saved_state_parts=("model",), n_best_kept=1,
-        mode='restart' if a.restart else 'resume' if a.resume else 'new',
+        mode=('restart' if a.restart else
+              'resume' if a.resume else
+              'resume_or_start' if a.resume_or_start else
+              'start'),
         perf_func=lambda s: s.get('perf', 0), log_func=lambda s: s.get('log', ""),
         name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
     return cpman

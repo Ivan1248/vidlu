@@ -166,11 +166,11 @@ def add_standard_arguments(parser, func):
     # if func is train:
     cpman_mode = parser.add_mutually_exclusive_group(required=False)
     cpman_mode.add_argument("-r", "--resume", action='store_true',
-                        help="Resume training from a checkpoint of the same experiment.")
+                            help="Resume training from a checkpoint of the same experiment.")
     cpman_mode.add_argument("-rs", "--resume_or_start", action='store_true',
-                        help="Resume training if there is a checkpoint or start new training.")
+                            help="Resume training if there is a checkpoint or start new training.")
     cpman_mode.add_argument("--restart", action='store_true',
-                        help="Delete the data of an experiment with the same name.")
+                            help="Delete the data of an experiment with the same name.")
     parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
     parser.add_argument("--no_train_eval", action='store_true',

@@ -77,6 +77,9 @@ class Checkpoint:  # TODO
             else fi.load(path)
 
 
+Mode = T.Literal['restart', 'resume', 'resume_or_start', 'start']
+
+
 class CheckpointManager(object):
     """Checkpoint manager can be used to periodically save objects to disk.
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
@@ -123,8 +126,7 @@ class CheckpointManager(object):
     """
 
     def __init__(self, checkpoints_dir, experiment_name: str, info: T.Mapping = None,
-                 n_last_kept=1, n_best_kept=0,
-                 mode: T.Literal['restart', 'resume', 'resume_or_start', 'start'] = 'start',
+                 n_last_kept=1, n_best_kept=0, mode: Mode = 'start',
                  separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
                  log_func=lambda s: "", name_suffix_func=lambda s: ""):
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
@@ -139,15 +141,19 @@ class CheckpointManager(object):
 
         self.index = 0
         self.sync()
-        if mode == 'restart':
+        self.resuming_required = mode != "restart" and len(self.saved) > 0
+        if mode == "restart":
             self.restart()
-        self.resuming_required = mode != 'restart' and len(self.saved) > 0
-        if mode == 'resume' and not self.resuming_required:
-            raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
-                               + f" {self.experiment_dir}.")
-        elif mode == 'start' and self.resuming_required:
-            raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If you"
-                               + " want to use this ID anyway, pass `mode='resume'`.")
+        elif mode == "resume":
+            if not self.resuming_required:
+                raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
+                                   + f" {self.experiment_dir}.")
+        elif mode == "start":
+            if self.resuming_required:
+                raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If"
+                                   + " you want to use this ID anyway, pass `mode='resume'`.")
+        elif mode != "resume_or_start":
+            raise ValueError(f"Argument {mode=} does not match {Mode}.")
 
     def restart(self):
         self.remove_old_checkpoints(0, 0)  # does not remove checkpoints when called from __init__
