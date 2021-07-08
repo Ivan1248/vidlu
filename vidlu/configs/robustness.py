@@ -148,6 +148,41 @@ phtps_attack_20_unif = partial(
              'mul_v.factor': [0.25, 2.]})),
 )
 
+phtps_attack_20_1 = partial(
+    phtps_attack_20,
+    initializer=pert.MultiInit(
+        tps=pert.NormalInit({'offsets': (0, 0.02)}),
+        photometric=pert.UniformInit(
+            {'add_v.addend': [-0.25, 0.25],
+             'mul_s.factor': [0.25, 2.],
+             'add_h.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
+)
+
+phtps_attack_20_2 = partial(
+    phtps_attack_20,
+    pert_model_f=partial(pert.PhotoTPS3, clamp=False, forward_arg_count=3),
+    initializer=pert.MultiInit(
+        tps=pert.NormalInit({'offsets': (0, 0.1)}),
+        photometric=pert.UniformInit(
+            {'add_h.addend': [-1 / 6, 1 / 6],
+             'add_s.addend': [-0.2, 0.2],
+             'add_v.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
+)
+
+phtps_attack_20_3 = partial(
+    phtps_attack_20,
+    pert_model_f=partial(pert.PhotoTPS3, clamp=False, forward_arg_count=3),
+    initializer=pert.MultiInit(
+        tps=pert.NormalInit({'offsets': (0, 0.02)}),
+        photometric=pert.UniformInit(
+            {'add_h.addend': [-1 / 6, 1 / 6],
+             'add_s.addend': [-0.2, 0.2],
+             'add_v.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
+)
+
 cutmix_attack_21 = partial(
     attacks.PertModelAttack,
     pert_model_f=partial(vmi.CutMix, mask_gen=vtj.BoxMaskGenerator(prop_range=0.5),

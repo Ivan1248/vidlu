@@ -308,6 +308,19 @@ swiftnet_cityscapes = TrainerConfig(
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
 )
 
+ddrnet_cityscapes = TrainerConfig(
+    classification,
+    optimizer_f=OptimizerMaker(optim.Adam,
+                               [dict(params=module_name, lr=4e-4, weight_decay=1e-4)
+                                for module_name in ['backbone.spp', 'backbone.final_layer']],
+                               lr=1e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
+    lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
+    epoch_count=250,
+    batch_size=14,
+    eval_batch_size=4,  # 6
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
+)
+
 deeplabv2_cityscapes = TrainerConfig(
     classification,
     optimizer_f=OptimizerMaker(optim.Adam,
