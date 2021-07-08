@@ -197,6 +197,8 @@ class _DownloadProgressBar(tqdm):
 def download_if_not_downloaded(url, output_path):
     if not Path(output_path).exists():
         download(url, output_path, md5=None)
+        return True
+    return False
 
 
 def download(url, output_path, md5=None):
