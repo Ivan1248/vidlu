@@ -310,6 +310,10 @@ def unpickle(file):
 class Cifar10(Dataset):
     subsets = ['trainval', 'test']  # TODO: use original subset names
     default_dir = 'cifar-10-batches-py'
+    info = dict(
+        class_count=10, problem='classification', in_ram=True,
+        class_names=["airplane", "car", "bird", "cat", "deer", "dog", "frog", "horse", "ship",
+                     "truck"])
 
     def download(self, data_dir):
         datasets_dir = data_dir.parent
@@ -341,8 +345,7 @@ class Cifar10(Dataset):
             x = data['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
             y = np.array(data['labels'], dtype=np.int8)
         self.x, self.y = map(to_shared_array, [x, y])
-        super().__init__(subset=subset,
-                         info=dict(class_count=10, problem='classification', in_ram=True))
+        super().__init__(subset=subset, info=Cifar10.info)
 
     def get_example(self, idx):
         return _make_record(x=self.x[idx], y=self.y[idx])
