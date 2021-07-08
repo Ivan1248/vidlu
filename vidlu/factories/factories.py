@@ -11,7 +11,7 @@ import numpy as np
 
 from vidlu import models, metrics
 import vidlu.modules as vm
-from vidlu.models import params
+from vidlu.models import params as mparams
 import vidlu.data.utils as vdu
 from vidlu.data import DataLoader, Dataset
 from vidlu.training import Trainer
@@ -254,7 +254,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
     namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
                      t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
-                     it=vuf.IndexableUpdatree, partial=partial, Reserved=Reserved, Frac=Frac, 
+                     it=vuf.IndexableUpdatree, partial=partial, Reserved=Reserved, Frac=Frac,
                      **extensions)
 
     if prep_dataset is None:
@@ -321,18 +321,25 @@ get_model.help = \
 
 def _parse_parameter_translation_string(params_str):
     dst_re = fr'\w+(?:\.\w+)*'
-    src_re = fr'(\w+(?:,\w+)*)?{dst_re}'
+    src_re = fr'(\w+(?:\/\w+)*)?{dst_re}'
     regex = re.compile(
-        fr'(?P<transl>[\w]+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<file>.+))?')
+        fr'(?P<transl>[\w]+)(?::(?P<src>{src_re})?(?:->(?P<dst>{dst_re}))?)?:(?P<name>.+)')
     m = regex.fullmatch(params_str.strip())
     if m is None:
+        regex = re.compile(
+            fr'(?P<transl>[\w]+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<name>.+))?')
+        m = regex.fullmatch(params_str.strip())
+    if m is None:
+        # raise ValueError(
+        #     f'{params_str=} does not match the pattern "translator[[<src>]][-><dst>][:<name>]".'
+        #     + " <src> supports indexing nested dictionaries by putting commas between keys.")
         raise ValueError(
-            f'{params_str=} does not match the pattern "translator[[<src>]][-><dst>][!][:file]".'
-            + " <src> supports indexing nested dictionaries by putting commas between keys.")
-    p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'file']})
+            f'{params_str=} does not match the pattern "translator[:[<src>][-><dst>]]:<name>".'
+            + ' <src> supports indexing nested dictionaries by putting "/" between keys.')
+    p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'name']})
     *src_dict, src = p1.src.split(",")
     return Namespace(translator=p1.transl, src_dict=src_dict, src_module=src, dest_module=p1.dst,
-                     file=p1.file)
+                     name=p1.name)
 
 
 def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
@@ -356,15 +363,16 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
     """
     p = _parse_parameter_translation_string(params_str)
     # load the state and filter and remove `src_module` from module names
-    if not ((state_dict is None) ^ (p.file == '')):
+    if not ((state_dict is None) ^ (p.name == '')):
         raise RuntimeError('Either state_dict should be provided or params_str should contain the'
                            + ' parameters file path at the end of `params_str`.')
-    if p.file != '':
-        state_dict = params.load_params_file(path if (path := Path(p.file)).is_absolute() else
-                                             Path(params_dir) / path)
-    state_dict = params.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
-    state_dict_fr = params.filter_by_and_remove_key_prefix(state_dict, p.src_module,
-                                                           error_on_no_match=True)
+    if p.name != '':
+        import pudb; pudb.set_trace()
+        path = mparams.get_path(p.name, params_dir)
+        state_dict = torch.load(path)
+    state_dict = mparams.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
+    state_dict_fr = mparams.filter_by_and_remove_key_prefix(state_dict, p.src_module,
+                                                            error_on_no_match=True)
     return state_dict_fr, p.dest_module
 
 

@@ -19,12 +19,8 @@ def translate_dict_keys(dict_, input_output_format_pairs, context=None):
     return {translator(k): v for k, v in dict_.items()}
 
 
-def load_params_file(path):
-    return torch.load(path)
-
-
 def get_translated_parameters(translator_name, state_dict, subdict=''):
-    subdict = [] if not subdict else subdict.split(',')
+    subdict = [] if not subdict else subdict.split('/')
     for sub in subdict:
         state_dict = state_dict[sub]
     return translate(translator_name, state_dict)
@@ -110,10 +106,12 @@ def translate_densenet(state_dict):
 def translate_swiftnet(state_dict):
     """Translates Marin's SwiftNet-RN parameters to Vidlu SwiftNet-RN
      parameters."""
-    warn(f"Unused arrays: 'backbone.img_mean' ({state_dict['backbone.img_mean']}) and"
-         + f" 'backbone.img_std' ({state_dict['backbone.img_std']}) removed from state_dict.")
-    del state_dict['backbone.img_std']
-    del state_dict['backbone.img_mean']
+    unused = ["backbone.img_std", "backbone.img_mean"]
+    unused += [k for k in state_dict if k.startswith("criterion")]
+    unused_arays = {k: state_dict[k] for k in unused}
+    print(f"unused arrays: {unused_arays}")
+    for k in unused:
+        del state_dict[k]
     state_dict = translate_dict_keys(
         state_dict,
         {  # backbone
