@@ -367,7 +367,6 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
         raise RuntimeError('Either state_dict should be provided or params_str should contain the'
                            + ' parameters file path at the end of `params_str`.')
     if p.name != '':
-        import pudb; pudb.set_trace()
         path = mparams.get_path(p.name, params_dir)
         state_dict = torch.load(path)
     state_dict = mparams.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
