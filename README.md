@@ -10,9 +10,7 @@ A deep learning framework for research with emphasis on computer vision, based o
 This repository contains
 1) a machine learning framework mostly based on PyTorch,
 1) a set of datasets, models and training configurations (as part of the framework), and
-1) a set of scripts that use it
-
-that I am using for research.
+1) a set of scripts that use it.
 
 ## Setup
 
