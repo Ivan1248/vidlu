@@ -183,13 +183,13 @@ def define_training_loop_actions(
     # noinspection PyUnresolvedReferences
     @trainer.evaluation.started.handler
     def interact(es):
-        from IPython import embed
-        from vidlu.utils.presentation import visualization
-        nonlocal trainer, data, set_sleepiness, sleepiness, cpman, logger, main_metrics
-        state = es
         if (optional_input := try_input()) is None:
             return
+        from IPython import embed
+        import vidlu.utils.presentation.visualization as visualization
+        nonlocal trainer, data, set_sleepiness, sleepiness, cpman, logger, main_metrics
         try:
+            state = es
             cmd = interact_shortcuts.get(optional_input, optional_input)
             print(f"Variables: " + ", ".join(locals().keys()))
             exec(cmd)
