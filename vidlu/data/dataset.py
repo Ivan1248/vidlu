@@ -80,9 +80,11 @@ class Dataset(abc.Sequence):
         self.data = data
 
     def download_if_necessary(self, data_dir):
-        if not self.is_available(data_dir):
-            if not query_user(f'Dataset not found in {data_dir}. Would you like to download it?'):
-                raise FileNotFoundError(f"The dataset doesn't exist in {data_dir}.")
+        sdir = data_dir / self.subdir if hasattr(self, "subdir") else data_dir
+        if not self.is_available(sdir):
+            if not query_user(f'{sdir} does not exist. Would you like to download the dataset?',
+                              "y"):
+                raise FileNotFoundError(f"The dataset doesn't exist in {sdir}.")
             self.download(data_dir)
 
     def is_available(self, data_dir):
@@ -274,7 +276,7 @@ class Dataset(abc.Sequence):
         info = kwargs.pop('info', datasets[0].info)
         name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
         return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
-        
+
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
 
@@ -340,6 +342,7 @@ class FieldsMap:
 
 
 # Dataset wrappers and proxies
+
 
 class MapDataset(Dataset):
     __slots__ = ("func",)

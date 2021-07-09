@@ -14,6 +14,7 @@ from scipy.io import loadmat
 import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
+from torchvision.datasets.utils import download_and_extract_archive
 
 from .. import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
@@ -777,12 +778,16 @@ class CamVid(Dataset):
     color_to_label = {color: i for i, class_name_color in enumerate(class_groups_colors.values())
                       for _, color in class_name_color.items()}
     color_to_label[(0, 0, 0)] = -1
+    info = dict(
+        problem='semantic_segmentation', class_count=11,
+        class_names=list(class_groups_colors.keys()),
+        class_colors=[next(iter(v.values())) for v in class_groups_colors.values()],
+        url="https://github.com/Ivan1248/CamVid/archive/master.zip")
 
     def download(self, data_dir):
         datasets_dir = Path(data_dir).parent
         download_path = datasets_dir / "CamVid.zip"
-        download(url="https://github.com/Ivan1248/CamVid/archive/master.zip",
-                 output_path=download_path)
+        download(url=self.info["url"], output_path=download_path)
         print(f"Extracting dataset to {datasets_dir}")
         extract_zip(download_path, datasets_dir)
         shutil.move(datasets_dir / 'CamVid-master', data_dir)
@@ -801,13 +806,9 @@ class CamVid(Dataset):
         img_dir, lab_dir = data_dir / '701_StillsRaw_full', data_dir / 'LabeledApproved_full'
         self._img_lab_list = [(str(img_dir / f'{name}.png'), str(lab_dir / f'{name}_L.png'))
                               for name in (data_dir / f'{subset}.txt').read_text().splitlines()]
-        info = dict(
-            problem='semantic_segmentation', class_count=11,
-            class_names=list(CamVid.class_groups_colors.keys()),
-            class_colors=[next(iter(v.values())) for v in CamVid.class_groups_colors.values()])
 
         modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=info)
+        super().__init__(subset=subset, modifiers=modifiers, info=self.info)
 
     def get_example(self, idx):
         ip, lp = self._img_lab_list[idx]
@@ -1006,8 +1007,10 @@ class ICCV09(Dataset):
 
 class VOC2012Segmentation(Dataset):
     subsets = ['train', 'val', 'trainval', 'test']
-    default_dir = 'VOC2012'
-    info = dict(problem='semantic_segmentation', class_count=21,
+    default_dir = 'VOCdevkit'
+    subdir = 'VOC2012'
+    info = dict(problem='semantic_segmentation',
+                class_count=21,
                 class_names=['background', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus',
                              'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse',
                              'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train',
@@ -1033,18 +1036,31 @@ class VOC2012Segmentation(Dataset):
                     (0, 0, 230),
                     (0, 0, 230),
                     (0, 0, 230),
-                    (119, 11, 32), ])
+                    (119, 11, 32)],
+                url='http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
+                md5='6cd6e144f989b92b3379bac3b3de84fd',
+                base_dir=Path('VOCdevkit/VOC2012'))
 
     def __init__(self, data_dir, subset='train'):
         _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
 
-        sets_dir = data_dir / 'ImageSets/Segmentation'
-        self._images_dir = data_dir / 'JPEGImages'
-        self._labels_dir = data_dir / 'SegmentationClass'
+        self.download_if_necessary(data_dir)
+
+        data_dir_2012 = data_dir / self.subdir
+        sets_dir = data_dir_2012 / 'ImageSets/Segmentation'
+        self._images_dir = data_dir_2012 / 'JPEGImages'
+        self._labels_dir = data_dir_2012 / 'SegmentationClass'
         self._image_list = (sets_dir / f'{subset}.txt').read_text().splitlines()
 
         super().__init__(subset=subset, info=self.info)
+
+    def download(self, data_dir: Path, remove_finished=True):
+        url = self.info['url']
+        filename = Path(url).name
+        download_and_extract_archive(url, data_dir.parent, filename=filename, md5=self.info['md5'],
+                                     remove_finished=remove_finished)
+        (data_dir.parent / filename).rename(data_dir)
 
     def get_example(self, idx):
         name = self._image_list[idx]
@@ -1056,7 +1072,7 @@ class VOC2012Segmentation(Dataset):
         def load_lab():
             lab = np.array(
                 _load_image(self._labels_dir / f"{name}.png",
-                            force_rgb=False).astype(np.int8))
+                            force_rgb=False)).astype(np.int8)
             return numpy_transforms.center_crop(lab, [500] * 2, fill=-1)  # -1 ok?
 
         return _make_record(x_=load_img, y_=load_lab)
