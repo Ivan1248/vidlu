@@ -83,3 +83,27 @@ class PhotoWarp1(SeqPertModel):
         super().__init__(warp=vmf.argtree_partial(vmi.SmoothWarp, smooth_f=t(sigma=sigma))(),
                          photometric=Photometric20(clamp, forward_arg_count=1),
                          forward_arg_count=forward_arg_count)
+
+
+class Photometric3(SeqPertModel):
+    def __init__(self, clamp, forward_arg_count=None):
+        add_f = partial(vmi.Add, equivariant_dims=(2, 3))
+        mul_f = partial(vmi.Multiply, equivariant_dims=(2, 3))
+        modules = NameDict(to_hsv=PertModel(voi.rgb_to_hsv),
+                           add_h=add_f(slice=s_[:, 0:1, ...]),
+                           add_s=add_f(slice=s_[:, 1:2, ...]),
+                           add_v=add_f(slice=s_[:, 2:, ...]),
+                           mul_v=mul_f(slice=s_[:, 2:, ...]),
+                           to_rgb=PertModel(voi.hsv_to_rgb))
+        if clamp:
+            modules.soft_clamp = PertModel(partial(vo.soft_clamp, min_=0, max_=1, eps=0.01),
+                                           forward_arg_count=1)
+        super().__init__(**modules, forward_arg_count=forward_arg_count)
+
+
+class PhotoTPS3(SeqPertModel):
+    def __init__(self, clamp, forward_arg_count=None):
+        super().__init__(photometric=Photometric3(clamp, forward_arg_count=1),
+                         tps=vmi.BackwardTPSWarp(label_interpolation_mode='nearest',
+                                                 label_padding_mode=-1),
+                         forward_arg_count=forward_arg_count)
