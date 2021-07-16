@@ -14,7 +14,7 @@ from vidlu.training.robustness.attacks import GradientSignAttack
 
 
 def get_a_model():
-    model = ResNetV2(backbone_f=partial(resnet_v2_backbone, depth=18),
+    model = ResNetV2(backbone_f=partial(resnet_v2_backbone, depth=18, small_input=True),
                      head_f=partial(ClassificationHead, 2))
     model(torch.empty(1, 3, 32, 32))
     return model
