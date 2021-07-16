@@ -26,40 +26,40 @@ python run.py train "Cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 # semantic segmentation
 
 ## DenseNet (pretrained on ImageNet)
-python run.py train "Cityscapes(downsampling=2){train,val}" id "DenseNet,backbone_f=t(depth=121,small_input=False)" "tc.ladder_densenet,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone':1/5})" --params "densenet(backbone),backbone:densenet121-a639ec97.pth"
+python run.py train "Cityscapes(downsampling=2){train,val}" id "DenseNet,backbone_f=t(depth=121)" "tc.ladder_densenet,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone':1/5})" --params "densenet(backbone),backbone:densenet121-a639ec97.pth"
 
 
 ## ResNet
-python run.py train "camvid(downsampling=2){train,val}" id "ResNetV1,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,jitter=jitter.SegRandomCropHFlip((360,480)),optimizer_maker=None" -r
+python run.py train "camvid(downsampling=2){train,val}" id "ResNetV1,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes,jitter=jitter.SegRandomCropHFlip((360,480)),optimizer_maker=None" -r
 
 ## Swiftnet
-python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
-python run.py train "Cityscapes(downsampling=2){train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes"
-python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid"
+python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes"
+python run.py train "Cityscapes(downsampling=2){train,val}" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes"
+python run.py train "camvid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_camvid"
 # network deconvolution
-python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False,block_f=t(norm_f=None,conv_f=partial(vm.DeconvConv,bias=True,padding='half')))" "tc.swiftnet_cityscapes"
+python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,block_f=t(norm_f=None,conv_f=partial(vm.DeconvConv,bias=True,padding='half')))" "tc.swiftnet_cityscapes"
 
 ## SwiftNet pretrained on Cityscapes
-python run.py train "Cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
-python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params swiftnet:rn18_single_scale/model.pt  # 75.39
+python run.py train "Cityscapes{train,val}" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
+python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes" --params swiftnet:rn18_single_scale/model.pt  # 75.39
 ## SwiftNet pretrained on ImageNet
-python run.py train "CamVid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
-python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
-python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"  # 75.39
+python run.py train "CamVid{trainval,test}" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_camvid" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "Cityscapes{train,val}" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes" --params "resnet:backbone->backbone.backbone:resnet18"  # 75.39
 
 ### SwiftNet-RN50 (non)robust pretraining
-python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet50-19c8e357.pth"
-python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_cityscapes" --params "madrylab_resnet[backbone]->backbone.backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
+python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50)" "tc.swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet50-19c8e357.pth"
+python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50)" "tc.swiftnet_cityscapes" --params "madrylab_resnet[backbone]->backbone.backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
 ### bs8 ep250
-CUDA_VISIBLE_DEVICES=0 python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,epoch_count=250,batch_size=8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+CUDA_VISIBLE_DEVICES=0 python run.py train "Cityscapes{train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes,epoch_count=250,batch_size=8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 
 ## SegResNetV1 pretrained
-python run.py train "Cityscapes{train,val}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.ladder_densenet"
+python run.py train "Cityscapes{train,val}" standardize "SegResNetV1,backbone_f=t(depth=50)" "tc.ladder_densenet"
 
 ## SegResNetV1 pretrained
-python run.py train "CamVid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "resnet[backbone]->backbone:resnet50-19c8e357.pth"
-python run.py train "CamVid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50,small_input=False)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "madrylab_resnet[backbone]->backbone.backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
+python run.py train "CamVid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "resnet[backbone]->backbone:resnet50-19c8e357.pth"
+python run.py train "CamVid{trainval,test}" standardize "SegResNetV1,backbone_f=t(depth=50)" "tc.swiftnet_camvid,epoch_count=400,optimizer_maker=tc.FineTuningOptimizerMaker({'backbone': 0})" --params "madrylab_resnet[backbone]->backbone.backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
 
 
 # Adversarial training
@@ -69,7 +69,7 @@ python run.py train "Cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 python run.py train "Cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True)" "tc.resnet_cifar,tc.adversarial,attack_f=partial(tc.madry_Cifar10_attack,step_count=7),eval_attack_f=partial(tc.madry_Cifar10_attack,step_count=20),train_step=tc.AdversarialTrainMultiStep(),epoch_count=25"
 
 ## Swiftnet
-python run.py train "Cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,epoch_count=40,batch_size=1,tc.adversarial,train_step=tc.AdversarialTrainStep(False),attack_f=partial(tc.madry_Cifar10_attack, step_count=40, eps=48/255, clip_bounds=None)" --params swiftnet:swiftnet_ss_cs.pt
+python run.py train "Cityscapes{train,val}" standardize "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes,epoch_count=40,batch_size=1,tc.adversarial,train_step=tc.AdversarialTrainStep(False),attack_f=partial(tc.madry_Cifar10_attack, step_count=40, eps=48/255, clip_bounds=None)" --params swiftnet:swiftnet_ss_cs.pt
 
 # Tent activations
 python run.py train "Cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,small_input=True,block_f=t(act_f=C.Tent))" "tc.wrn_cifar_tent,tc.adversarial},attack_f=attacks.DummyAttack,eval_attack_f=partial(tc.madry_Cifar10_attack,step_count=7,stop_on_success=True)"
@@ -80,8 +80,8 @@ python show_summary.py /home/igrubisic/data/states/Cifar10\{trainval\,test\}/Res
 
 
 # Semi-supervised VAT
-python run.py train "train,train_u,test:camvid{val,train,test}" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
-python run.py train "train,train_u,test:Cifar10{trainval,test}:(*uniform_labels(d[0]).split(index=4000),d[1])" id "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
+python run.py train "train,train_u,test:camvid{val,train,test}" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
+python run.py train "train,train_u,test:Cifar10{trainval,test}:(*uniform_labels(d[0]).split(index=4000),d[1])" id "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_camvid,tc.semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
 
 # rsync
 rsync -avzhe ssh --progress pretrained/ igrubisic@treebeard:/home/igrubisic/data/pretrained/
@@ -93,20 +93,20 @@ rsync -avzhe ssh --progress pretrained/ igrubisic@treebeard:/home/igrubisic/data
 python run.py train "train,train_u,test:Cifar10{trainval,test}:(rotating_labels(d[0])[:4000],d[0],d[1])" id "WRN,backbone_f=t(depth=28,width_factor=2,small_input=True)" "tc.wrn_cifar,tc.semisup_cons_phtps20,batch_size=[128,512],eval_batch_size=640,epoch_count=1000,train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False)"
 
 # CS
-python run.py train "train,train_u,test:Cityscapes{train,val}:(d[0],d[0],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,batch_size=8,eval_batch_size=4,epoch_count=300,batch_size=[8,8]" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "train,train_u,test:Cityscapes{train,val}:(d[0],d[0],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes,tc.semisup_cons_phtps20_seg,batch_size=8,eval_batch_size=4,epoch_count=300,batch_size=[8,8]" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 # CS halfres
-python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(d[0],d[0],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,tc.semisup_cons_phtps20_seg,epoch_count=600" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(d[0],d[0],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,tc.semisup_cons_phtps20_seg,epoch_count=600" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
-python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 # sup
-CUDA_VISIBLE_DEVICES=0 python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+CUDA_VISIBLE_DEVICES=0 python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
-CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:1448],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*2" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:1448],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*2" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
-CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:744],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*4" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:744],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*4" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
-CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:372],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18,small_input=False)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:372],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 # https://docs.google.com/spreadsheets/d/1Tqydw1Hhvjyflo412UJJ1Y6720sRpCkYUjH3FRvYeLw/edit#gid=851257437

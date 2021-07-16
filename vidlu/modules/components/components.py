@@ -732,8 +732,8 @@ class ResNetV1Backbone(E.Seq):
     """
 
     def __init__(self,
+                 small_input=False,
                  base_width=64,
-                 small_input=True,
                  group_lengths=(2,) * 4,
                  block_f=default_args(ResNetV1Groups).block_f,
                  dim_change=default_args(ResNetV1Groups).dim_change,
@@ -867,7 +867,7 @@ class DenseSequence(E.Seq):
 class DenseNetBackbone(E.Seq):
     def __init__(self,
                  growth_rate=12,
-                 small_input=True,
+                 small_input=False,
                  db_lengths=(2,) * 4,
                  compression=default_args(DenseSequence).compression,
                  block_f=default_args(DenseSequence).block_f):
@@ -951,7 +951,7 @@ class MDenseSequence(E.Seq):
 class MDenseNetBackbone(E.Seq):
     def __init__(self,
                  growth_rate=12,
-                 small_input=True,
+                 small_input=False,
                  db_lengths=(2,) * 4,
                  compression=default_args(MDenseSequence).compression,
                  block_f=default_args(MDenseSequence).block_f):
@@ -1014,7 +1014,7 @@ class FDenseSequence(E.Seq):
 class FDenseNetBackbone(E.Seq):
     def __init__(self,
                  growth_rate=12,
-                 small_input=True,
+                 small_input=False,
                  db_lengths=(2,) * 4,
                  compression=default_args(FDenseSequence).compression,
                  block_f=default_args(FDenseSequence).block_f):
