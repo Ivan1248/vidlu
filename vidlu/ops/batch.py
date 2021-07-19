@@ -270,3 +270,10 @@ def linear_min_on_p_ball(grad, r, p=2):
         # return sol.view(grad.shape)
     else:
         raise ValueError(f"Frank-Wolfe LMO solving not implemented for p={p}.")
+
+
+def min_max_rescale(x, inplace=False):
+    xf: torch.Tensor = x.view(x.shape[0], -1)
+    xf = (xf.sub_ if inplace else xf.sub)(xf.min(1, keepdim=True).values)
+    xf /= xf.max(1, keepdim=True).values
+    return xf.view(x.shape)
