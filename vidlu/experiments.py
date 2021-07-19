@@ -267,11 +267,11 @@ class TrainingExperiment:
         _check_dirs(dirs)
         a = training_args
 
-        with indent_print("Setting device..."):
+        with indent_print("\nSetting device..."):
             a.device = get_device(a.device)
             print(f"device: {a.device}")
 
-        with indent_print('Initializing checkpoint manager and logger...'):
+        with indent_print('\nInitializing checkpoint manager and logger...'):
             logger = Logger()
             logger.log("Resume command:\n"
                        + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
@@ -280,7 +280,7 @@ class TrainingExperiment:
             cpman = get_checkpoint_manager(a, dirs.saved_states)
 
         try:
-            with indent_print('Initializing data...'):
+            with indent_print('\nInitializing data...'):
                 print(a.data)
                 with Stopwatch() as t:
                     data = factories.get_prepared_data_for_trainer(a.data, dirs.datasets,
@@ -288,7 +288,7 @@ class TrainingExperiment:
                 print(f"Data initialized in {t.time:.2f} s.")
             first_ds = next(iter(data.values()))
 
-            with indent_print('Initializing model...'):
+            with indent_print('\nInitializing model...'):
                 print(a.model)
                 with Stopwatch() as t:
                     model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
@@ -296,7 +296,7 @@ class TrainingExperiment:
                                                 verbosity=a.verbosity)
                 print(f"Model initialized in {t.time:.2f} s.")
 
-            with indent_print('Initializing trainer and evaluation...'):
+            with indent_print('\nInitializing trainer and evaluation...'):
                 print(a.trainer)
                 trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
                                                 verbosity=a.verbosity)
@@ -318,7 +318,7 @@ class TrainingExperiment:
         if a.resume:
             trainer.load_state_dict(state)
         elif a.params is not None:
-            with indent_print("Loading parameters..."):
+            with indent_print("\nLoading parameters..."):
                 print(a.params)
                 load_parameters(model, a.params, dirs.pretrained)
 

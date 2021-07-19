@@ -78,17 +78,17 @@ def train(args):
 
     with profiler() if profiler is not None else ctx.suppress() as prof:
         if not args.no_init_eval:
-            print('Evaluating initially...')
+            print('\nEvaluating initially...')
             exp.trainer.eval(exp.data.test)
         log_run('cont.' if args.resume else 'start')
 
-        print(('Continuing' if args.resume else 'Starting') + ' training...')
+        print(('\nContinuing' if args.resume else 'Starting') + ' training...')
         training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
 
         exp.trainer.train(*training_datasets.values(), restart=False)
 
         if not args.no_train_eval:
-            print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')
+            print(f'\nEvaluating on training data ({", ".join(training_datasets.keys())})...')
             for name, ds in training_datasets.items():
                 exp.trainer.eval(ds)
         log_run('done')
@@ -97,7 +97,7 @@ def train(args):
 
     exp.cpman.remove_old_checkpoints()
 
-    print(f"RNG seed: {seed}")
+    print(f"\nRNG seed: {seed}")
     print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
 
     if dirs.cache is not None:
@@ -176,7 +176,7 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--no_train_eval", action='store_true',
                         help="No evaluation on the training set.")
     parser.add_argument("-s", "--seed", type=int, default=None,
-                        help="RNG seed. Default: `int(time()) % 100`.")
+                        help="RNG seed. Default: int(time()) %% 100.")
     # reporting, debugging
     parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
     parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
@@ -199,7 +199,7 @@ if __name__ == "__main__":
     parser_test = subparsers.add_parser("test")
     add_standard_arguments(parser_test, test)
     parser_test.add_argument("-m", "--module", type=str, default=None,
-                             help="Path of a module containing a `run(Experiment)` procedure.")
+                             help="Path of a module containing a run(Experiment) procedure.")
 
     args = parser.parse_args()
 
