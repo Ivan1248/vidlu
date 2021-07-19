@@ -1,3 +1,4 @@
+import functools
 from abc import ABCMeta
 
 import numpy as np
@@ -23,7 +24,8 @@ class AccumulatingMetric:
         raise NotImplementedError()
 
 
-def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False):
+def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False,
+                                use_bincount=False):
     """Computes a multi-class confusion matrix.
 
     Args:
@@ -35,13 +37,17 @@ def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False
     Returns:
         A confusion matrix with shape (class_count, class_count).
     """
-    return soft_pred_multiclass_confusion_matrix(true,
-                                                 one_hot(pred, class_count, dtype=torch.float64),
-                                                 batch=batch) \
-        .to(dtype or torch.int64)
+    if use_bincount:
+        non_ignored = true != -1
+        indices = class_count * true[non_ignored] + pred[non_ignored]
+        cm = torch.bincount(indices, minlength=class_count ** 2).reshape(class_count, class_count)
+    else:
+        cm = soft_pred_multiclass_confusion_matrix(
+            true, one_hot(pred, class_count, dtype=torch.float64), batch=batch)
+    return cm.to(dtype or torch.int64)
 
 
-def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
+def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False, loop_version=None):
     """Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
@@ -53,28 +59,33 @@ def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     Returns:
         A soft confusion matrix with shape (class_count, class_count)
     """
-    dtype = dtype or pred.dtype
-    class_count = pred.shape[-1]
-    non_ignored = true != -1
-    if batch:
-        assert torch.all(non_ignored)
-    return all_soft_multiclass_confusion_matrix(
-        one_hot(true[non_ignored], class_count, dtype=dtype),
-        pred[non_ignored].to(dtype), batch=batch)
+    if loop_version is None:
+        if true.device.type == 'cuda':
+            loop_version = "3090" in torch.cuda.get_device_name(true.device.index)
+    if not loop_version:
+        dtype = dtype or pred.dtype
+        class_count = pred.shape[-1]
+        non_ignored = true != -1
+        if batch:
+            assert torch.all(non_ignored)
+        return all_soft_multiclass_confusion_matrix(
+            one_hot(true[non_ignored], class_count, dtype=dtype),
+            pred[non_ignored].to(dtype), batch=batch)
+    else:  # usually 3 - 4 times slower
+        class_count = pred.shape[-1]
+        cm = torch.empty(list(true.shape[:int(batch)]) + [class_count] * 2,
+                         dtype=dtype or torch.float64, device=true.device)
+        if batch:
+            for c in range(class_count):
+                cm[:, c, :] = pred[:, true == c, :].sum(int(batch))
+        else:
+            for c in range(class_count):
+                cm[c, :] = pred[true == c, :].sum(int(batch))
+        return cm
 
-    # 3 - 4 times faster than
-    # cm = torch.empty(list(true.shape[:int(batch)]) + [class_count] * 2,
-    #                  dtype=dtype or torch.float64, device=true.device)
-    # if batch:
-    #     for c in range(class_count):
-    #         cm[:, c, :] = pred[:, true == c, :].sum(int(batch))
-    # else:
-    #     for c in range(class_count):
-    #         cm[c, :] = pred[true == c, :].sum(int(batch))
-    # return cm
 
-
-def all_soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
+def all_soft_multiclass_confusion_matrix(true: torch.Tensor, pred: torch.Tensor, dtype=None,
+                                         batch=False):
     """Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
@@ -89,7 +100,11 @@ def all_soft_multiclass_confusion_matrix(true, pred, dtype=None, batch=False):
     """
     if dtype is not None:
         true, pred = true.to(dtype), pred.to(dtype)
+    # return true.new_ones((true.shape[-1], true.shape[-1]))
     return torch.einsum("bni,bnj->bij" if batch else "ni,nj->ij", true, pred)
+    return torch.bmm(true.permute(1, 0).unsqueeze(0).to(dtype=torch.float16),
+                     pred.unsqueeze(0).to(dtype=torch.float16)).squeeze(0)
+    # return torch.einsum("ni,nj->ij", true, pred)
 
 
 def classification_metrics_np(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=1e-8):
