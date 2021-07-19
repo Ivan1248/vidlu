@@ -22,9 +22,9 @@ def _check_dir_path(path, kind=None):
     if path is None:
         raise FileNotFoundError(f'No {kind} directory provided or found.')
     if not path.exists():
-        raise FileNotFoundError(f'Directory {k}="{path}" does not exist.')
+        raise FileNotFoundError(f'Directory "{path}" does not exist.')
     if not path.is_dir():
-        raise FileNotFoundError(f'{k}="{path}" is not a directory path.')
+        raise FileNotFoundError(f'"{path}" is not a directory.')
 
 
 class _Dirs:
@@ -37,7 +37,7 @@ class _Dirs:
 
     @cached_property
     def datasets(self):
-        """List of directories that caontain datasets"""
+        """List of directories that contain datasets"""
         datasets = [self._get_path("datasets"), _find('datasets'), _find('datasets', start='tmp/_')]
         datasets = [x for x in datasets if x is not None]
         _check_dir_path(None if len(datasets) == 0 else datasets[0], "datasets")
