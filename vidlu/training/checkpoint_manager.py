@@ -142,6 +142,7 @@ class CheckpointManager(object):
         self.index = 0
         self.sync()
         self.resuming_required = mode != "restart" and len(self.saved) > 0
+
         if mode == "restart":
             self.restart()
         elif mode == "resume":
