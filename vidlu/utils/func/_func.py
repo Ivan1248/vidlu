@@ -66,7 +66,8 @@ class partial(functools.partial):
                 provided = set({**self.keywords, **kwargs}.keys())
                 unexpected = provided.difference(params_)
                 if len(unexpected) > 0:
-                    raise RuntimeError(f"Unexpected arguments {unexpected} for {func.__name__}"
+                    func_name = getattr(func, "__name__", str(func))
+                    raise RuntimeError(f"Unexpected arguments {unexpected} for {func_name}"
                                        + f" with signature {sig}.")
         except ValueError:
             pass
