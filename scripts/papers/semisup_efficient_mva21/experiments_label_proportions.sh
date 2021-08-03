@@ -2,6 +2,8 @@
 
 set -e
 
+cd "$(pwd | grep -o '.*/scripts')"  # moves to the directory that contains the run.py script
+
 # Table 1: Experiments on half-resolution Cityscapes with different proportions of labels ##########
 start_seed=53
 

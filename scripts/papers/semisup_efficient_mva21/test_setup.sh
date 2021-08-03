@@ -3,6 +3,8 @@
 
 set -e
 
+cd "$(pwd | grep -o '.*/scripts')"  # moves to the directory that contains the run.py script
+
 epoch_count=1  # set to 0 for evaluation only
 
 # SwiftNet-RN18, half-resolution Cityscapes

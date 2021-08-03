@@ -1,6 +1,6 @@
 # Configuration check
 
-To test whether everything is set up properly, you can run runs 3 training configurations for 1 epoch with
+To test whether everything is set up properly, you can run 3 training configurations for 1 epoch with
 ```sh
 bash test_setup.sh
 ```
