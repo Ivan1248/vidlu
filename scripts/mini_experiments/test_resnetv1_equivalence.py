@@ -17,7 +17,7 @@ dataset = factories.get_data_preparation(dataset)(dataset)
 inp = next(iter(data.DataLoader(dataset, batch_size=1)))[0]
 
 resnet_my = factories.get_model(
-    model_str='ResNetV1,backbone_f=t(depth=50,small_input=False,block_f=t(act_f=t(inplace=True)))',
+    model_str='ResNetV1,backbone_f=t(depth=50,block_f=t(act_f=t(inplace=True)))',
     input_adapter_str='id', problem=problem.Classification(dataset.info.class_count),
     init_input=inp)
 resnet_my.eval()

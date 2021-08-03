@@ -32,7 +32,7 @@ images += [images[-1]]
 
 use_model = True
 if use_model:
-    model = vf.get_model("SwiftNet,backbone_f=t(depth=18,small_input=False)",
+    model = vf.get_model("SwiftNet,backbone_f=t(depth=18)",
                          input_adapter_str="standardize(mean=[.485,.456,.406],std=[.229,.224,.225])",
                          problem=problem.SemanticSegmentation(y_shape=images[0].shape[-2:],
                                                               class_count=19),
