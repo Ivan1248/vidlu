@@ -477,15 +477,15 @@ def _grid_sample_p(x, grid, mode, padding_mode, align_corners):
 
 def _forward_warp(x, grid, mode, padding_mode, align_corners):
     # https://github.com/sniklaus/softmax-splatting
-    from vidlu.libs.softmax_splatting import softsplat
+    from vidlu.ops import softmax_splatting
     pv = 0 if padding_mode in (0, 0., "zeros") else padding_mode
     warn("align_corners and mode not used in _forward_warp")
     H, W = grid.shape[-3:-1]
     base_grid = vmf.uniform_grid_2d((H, W), low=-1., high=1., device=grid.device, dtype=grid.dtype)
     offsets = grid - base_grid
     flow = offsets.permute(0, 3, 1, 2).mul_(offsets.new([W / 2, H / 2]).view(1, 2, 1, 1))
-    result = softsplat.FunctionSoftsplat(x if pv == 0 else x - pv, flow.contiguous(),
-                                         tenMetric=None, strType="average")
+    result = softmax_splatting.FunctionSoftsplat(x if pv == 0 else x - pv, flow.contiguous(),
+                                                 tenMetric=None, strType="average")
     return result if pv == 0 else result.add_(pv)
 
 
@@ -504,7 +504,9 @@ def _warp(x, grid, y=None, mask=None, interpolation_mode='bilinear', padding_mod
 
     result = [x_p]
     for z in [y, mask]:
-        if z.dim() < 3:
+        if z is None:
+            continue
+        elif z.dim() < 3:
             result.append(z)
         else:
             continous = 'float' in f'{z.dtype}'
@@ -629,7 +631,7 @@ class CutMix(PertModelBase):
 
     def build(self, x, y=None, mask=None):
         if self.combination == 'pairs' and len(x) % 2 != 0:
-            warn("There has to be an even number of examples for mode='symmetric'.")
+            warn("There has to be an even number of examples for the 'pairs' combination mode.")
         n = (len(x) + 1) // 2 if self.combination == 'pairs' else len(x)
         self.register_buffer('mask', self.mask_gen(n, tuple(x.shape[-2:]), device=x.device))
 

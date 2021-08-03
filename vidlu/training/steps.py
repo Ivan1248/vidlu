@@ -771,7 +771,7 @@ def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_mo
             out_p = model(x_p)
             if detach_out:
                 out_p = out_p.detach()
-    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, out=out_p)
+    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, out=out_p, pmodel=pmodel)
 
 
 @dc.dataclass
@@ -794,6 +794,8 @@ class SemisupCleanTargetConsStepBase:
         return [trainer.model] * 2
 
     def __call__(self, trainer, batch):
+        result = NameDict()
+
         x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all)
         detach_clean = self.eval or self.block_grad_on_clean
         detach_pert = self.eval or self.block_grad_on_pert
@@ -805,9 +807,11 @@ class SemisupCleanTargetConsStepBase:
         output_to_target = partial(_cons_output_to_target, block_grad=self.block_grad_on_clean,
                                    output_to_target=attack.output_to_target)
         mem_eff = teacher is not model or self.mem_efficient and not self.uns_loss_on_all
-        perturb_input = lambda attack_target, detach_out: _perturb(
+        loss_mask = 'create'
+        perturb_input = lambda attack_target, detach_out, loss_mask: _perturb(
             attack=attack, model=model, x=x_u, attack_target=attack_target, detach_out=detach_out,
-            attack_eval_model=self.attack_eval_model, bn_stats_updating=self.pert_bn_stats_updating)
+            attack_eval_model=self.attack_eval_model, bn_stats_updating=self.pert_bn_stats_updating,
+            loss_mask=loss_mask)
 
         model.eval() if self.eval else model.train()  # teacher always eval. mode if it's not model
 
@@ -820,18 +824,25 @@ class SemisupCleanTargetConsStepBase:
                     loss_l = loss_l.detach()
 
             if self.alpha == 0:
-                return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(),
-                                loss_u=0, x_u=x_u, x_p=None, y_p=None, out_u=None, out_p=None,
-                                loss_ent=0)
+                return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=0,
+                                x_u=x_u, x_p=None, y_p=None, out_u=None, out_p=None, loss_ent=0)
 
             with torch.no_grad() if detach_clean else ctx.suppress():
                 if self.pert_both:
-                    out_u = perturb_input(attack_target=x_u.new_zeros(x_u[:, :1].shape),
-                                          detach_out=detach_clean).out
+                    pertt = perturb_input(attack_target=x_u.new_zeros(x_u[:, :1].shape),
+                                          detach_out=detach_clean, loss_mask=loss_mask)
+                    result.out_up = out_up = pertt.out
+                    result.x_pt = pertt.x
+                    if len(out_up.squeeze().shape) > 2:  # TODO: make more general
+                        result.x_pr, out_u, loss_mask = pertt.pmodel.tps.inverse(pertt.x, out_up,
+                                                                                 pertt.loss_mask)
+                    else:
+                        out_u = out_up
                 else:  # default
                     out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
                 target_uns = output_to_target(out_u)  # usually identity with .detach()
-            pert = perturb_input(attack_target=target_uns, detach_out=detach_pert)
+            pert = perturb_input(attack_target=target_uns, detach_out=detach_pert,
+                                 loss_mask=loss_mask)
 
             with torch.no_grad() if self.eval else ctx.suppress():
                 if self.block_grad_on_pert:  # non-default
@@ -845,10 +856,11 @@ class SemisupCleanTargetConsStepBase:
                     loss += self.entropy_loss_coef * loss_ent
             if not self.eval:
                 loss.backward()
-
+        if torch.any(torch.isnan(loss_l)):
+            breakpoint()
         return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
                         x_u=x_u, x_p=pert.x, y_p=pert.target, out_u=out_u, out_p=pert.out,
-                        loss_ent=loss_ent.item())
+                        loss_ent=loss_ent.item(), **result)
 
 
 @dc.dataclass
