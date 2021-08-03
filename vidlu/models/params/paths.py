@@ -9,6 +9,8 @@ name_to_url = {
     for k, v in model_urls.items()}
 name_to_url['deeplabv1_resnet101-coco'] = \
     "https://github.com/Ivan1248/semisup-seg-efficient/releases/download/pre-trained-dl/deeplabv1_resnet101-coco.pth"
+#name_to_url['resnetv2-18'] = \
+#    "https://github.com/Ivan1248/semisup-seg-efficient/releases/download/pre-trained-dl/resnetv2_18.pth"
 
 name_to_file_name = dict()
 
@@ -28,7 +30,7 @@ def initialize(pretrained_dir):
             add(line)
     for fpath in pretrained_dir.glob("**/*"):
         if fpath.is_file():
-            name_to_file_name[fpath.stem] = fpath
+            name_to_file_name[fpath.stem] = fpath.name
 
 
 def get_path(name: str, pretrained_dir) -> Path:
@@ -41,5 +43,5 @@ def get_path(name: str, pretrained_dir) -> Path:
         path = pretrained_dir / Path(url).name
         download_if_not_downloaded(url, path)
     else:
-        path = pretrained_dir / name_to_file_name[name]
+        path = pretrained_dir / name_to_file_name.get(name, name)
     return path
