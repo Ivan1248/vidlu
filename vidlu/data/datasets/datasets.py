@@ -868,7 +868,8 @@ class Cityscapes(Dataset):
                 class_colors=[l.color for l in cslabels if l.trainId >= 0],
                 in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
 
-    def __init__(self, data_dir, subset='train', label_kind=None, downsampling=1):
+    def __init__(self, data_dir, subset='train', label_kind=None, downsampling=1,
+                 downsample_labels=True):
         if label_kind is None:
             label_kind = 'gtCoarse' if subset == 'train_extra' else 'gtFine'
         data_dir = Path(data_dir)
@@ -877,7 +878,7 @@ class Cityscapes(Dataset):
         if downsampling < 1:
             raise ValueError("downsampling must be greater or equal to 1.")
 
-        self.downsampling = downsampling
+        self.downsampling, self.downsample_labels = downsampling, downsample_labels
         self._shape = np.array([1024, 2048]) // downsampling
 
         subdirs = {x.name for x in im_data_dir.glob('*')}
@@ -909,7 +910,8 @@ class Cityscapes(Dataset):
         lab_path = self._labels_dir / self._labels[idx]
         d = self.downsampling
         im_get = lambda: load_image(im_path, d)
-        lab_get = lambda: load_segmentation_with_downsampling(lab_path, d, self._id_to_label)
+        lab_get = lambda: load_segmentation_with_downsampling(
+            lab_path, d if self.downsample_labels else 1, self._id_to_label)
         return _make_record(x_=im_get, y_=lab_get)
 
     def __len__(self):
