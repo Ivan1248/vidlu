@@ -308,14 +308,15 @@ class TrainingExperiment:
         except Exception as e:
             raise e
         finally:
-            if a.resume:
+            resuming_required = cpman.resuming_required
+            if resuming_required:
                 state, summary = (cpman.load_best if a.resume_best else cpman.load_last)(
                     map_location=a.device)
                 # TODO: remove backward compatibility
                 logger.load_state_dict(summary.get('logger', summary))
                 logger.print_all()
 
-        if a.resume:
+        if resuming_required:
             trainer.load_state_dict(state)
         elif a.params is not None:
             with indent_print("\nLoading parameters..."):
