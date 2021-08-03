@@ -2,3 +2,4 @@ pillow-simd
 pydot
 pudb
 xmltodict
+cupy  # softmax splatting
