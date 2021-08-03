@@ -1011,37 +1011,19 @@ class VOC2012Segmentation(Dataset):
     subsets = ['train', 'val', 'trainval', 'test']
     default_dir = 'VOCdevkit'
     subdir = 'VOC2012'
-    info = dict(problem='semantic_segmentation',
-                class_count=21,
-                class_names=['background', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus',
-                             'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse',
-                             'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train',
-                             'tvmonitor'],
-                class_colors=[
-                    (128, 64, 128),
-                    (244, 35, 232),
-                    (70, 70, 70),
-                    (102, 102, 156),
-                    (190, 153, 153),
-                    (153, 153, 153),
-                    (250, 170, 30),
-                    (220, 220, 0),
-                    (107, 142, 35),
-                    (152, 251, 152),
-                    (70, 130, 180),
-                    (220, 20, 60),
-                    (255, 0, 0),
-                    (0, 0, 142),
-                    (0, 0, 70),
-                    (0, 60, 100),
-                    (0, 80, 100),
-                    (0, 0, 230),
-                    (0, 0, 230),
-                    (0, 0, 230),
-                    (119, 11, 32)],
-                url='http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
-                md5='6cd6e144f989b92b3379bac3b3de84fd',
-                base_dir=Path('VOCdevkit/VOC2012'))
+    info = dict(
+        problem='semantic_segmentation',
+        class_count=21,
+        class_names=['background', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car',
+                     'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse', 'motorbike', 'person',
+                     'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor'],
+        class_colors=[(128, 64, 128), (244, 35, 232), (70, 70, 70), (102, 102, 156),
+                      (190, 153, 153), (153, 153, 153), (250, 170, 30), (220, 220, 0),
+                      (107, 142, 35), (152, 251, 152), (70, 130, 180), (220, 20, 60), (255, 0, 0),
+                      (0, 0, 142), (0, 0, 70), (0, 60, 100), (0, 80, 100), (0, 0, 230), (0, 0, 230),
+                      (0, 0, 230), (119, 11, 32)],
+        url='http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
+        md5='6cd6e144f989b92b3379bac3b3de84fd')
 
     def __init__(self, data_dir, subset='train'):
         _check_subsets(self.__class__, subset)
@@ -1049,10 +1031,10 @@ class VOC2012Segmentation(Dataset):
 
         self.download_if_necessary(data_dir)
 
-        data_dir_2012 = data_dir / self.subdir
-        sets_dir = data_dir_2012 / 'ImageSets/Segmentation'
-        self._images_dir = data_dir_2012 / 'JPEGImages'
-        self._labels_dir = data_dir_2012 / 'SegmentationClass'
+        data_subdir = data_dir / self.subdir
+        sets_dir = data_subdir / 'ImageSets/Segmentation'
+        self._images_dir = data_subdir / 'JPEGImages'
+        self._labels_dir = data_subdir / 'SegmentationClass'
         self._image_list = (sets_dir / f'{subset}.txt').read_text().splitlines()
 
         super().__init__(subset=subset, info=self.info)
@@ -1081,6 +1063,7 @@ class VOC2012Segmentation(Dataset):
 
     def __len__(self):
         return len(self._image_list)
+
 
 # class Viper(Dataset):
 #     class_info = _viper_mapping.get_class_info()
