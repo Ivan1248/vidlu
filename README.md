@@ -66,7 +66,7 @@ It might be easiest to create the following directory structure so that the dire
    ├─ experiments  # subdirectories created automatically
    │  ├─ states
    │  └─ cache
-   └─ pretrained parameters
+   └─ pretrained
 ```
 
 If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS` need to be defined, or a single env. variable, `VIDLU_DATA` pointing to the "data" directory, can be defined.
