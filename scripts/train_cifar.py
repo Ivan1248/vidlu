@@ -39,11 +39,12 @@ model_class = models.ResNetV1  # models.ResNetV2
 model_config = dict(backbone_f=t(depth=18, small_input=True,
                                  block_f=t(norm_f=None),  # no BatchNorm
                                  ))
-trainer_config = vct.TrainerConfig(vct.resnet_cifar,
-                                   lr_scheduler_f=ConstLR,  # no learning rate decay
-                                   epoch_count=50,  # 50 instead of 200 epochs
-                                   jitter=None,  # no data jittering instead of jitter.CifarPadRandCropHFlip
-                                   )
+trainer_config = vct.TrainerConfig(
+    vct.resnet_cifar,
+    lr_scheduler_f=ConstLR,  # no learning rate decay
+    epoch_count=50,  # 50 instead of 200 epochs
+    jitter=None,  # no data jittering instead of jitter.CifarPadRandCropHFlip
+)
 
 
 def get_experiment(resume=True, restart=False):
@@ -73,8 +74,8 @@ def get_experiment(resume=True, restart=False):
         factories.build_and_init_model(model, init_input, device=device)
 
     with indent_print('Initializing trainer and evaluation...'):
-        trainer = Trainer(**trainer_config, loss=modules.losses.NLLLossWithLogits(ignore_index=-1),
-                          model=model)
+        trainer = Trainer(**trainer_config,
+                          loss=modules.losses.nll_loss_l, model=model)
         metrics, main_metrics = factories.get_metrics("", trainer, dataset=first_ds)
         for m in metrics:
             trainer.metrics.append(m())
