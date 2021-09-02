@@ -1,6 +1,6 @@
 # ViDLU: Vision Deep Learning Utilities
 
-A deep learning framework for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/).
+A deep learning framework for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/) (work in progress).
 
 [![Build Status](https://github.com/Ivan1248/Vidlu/workflows/build/badge.svg)](https://github.com/Ivan1248/Vidlu/actions)
 [![codecov](https://codecov.io/gh/Ivan1248/Vidlu/branch/master/graph/badge.svg)](https://codecov.io/gh/Ivan1248/Vidlu)
@@ -39,7 +39,6 @@ or, in a local copy of the repository,
 pip install .
 ```
 
-
 ## Main scripts
 
 The `scripts` directory contains scripts that use <a href="#the-framework">the framework</a>. 
@@ -48,11 +47,10 @@ The `scripts` directory contains scripts that use <a href="#the-framework">the f
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
--   `datasets` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any of ancestor directories of `dirs.py`, are included too. Dataset directories should be considered read-only.
+-   `datasets` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any ancestor directory of `dirs.py`, are included too. Dataset directories should be considered read-only.
+-   `cache` is used for automatically caching data. It should preferably and be on an SSD. `datasets` can be on slower disks since original data is usually accessed through cache unless there was not enough space for caching.
 -   `pretrained` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
--   `experiments` represents a directory that can contain  experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The following directories are automatically created:
-    -   `cache = experiments / "cache"` is for data cache.
-    -   `SAVED_STATES = experiments / "states"` is for storing intermediate and complete training states.
+-   `experiments` represents a directory that can contain experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `SAVED_STATES = experiments / "states"` is automatically created for storing intermediate and complete training states.
 
 #### Setup
 
@@ -62,10 +60,10 @@ It might be easiest to create the following directory structure so that the dire
 <ancestor>
 ├─ .../vidlu/scripts/dirs.py
 └─ data
+   ├─ cache
    ├─ datasets
    ├─ experiments  # subdirectories created automatically
-   │  ├─ states
-   │  └─ cache
+   │  └─ states
    └─ pretrained
 ```
 
@@ -80,14 +78,14 @@ The `train` command is chosen by running `python run.py train ...`. It creates a
 There is also a `test` command that accepts almost the same arguments and can be used for standard evaluation or running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
 
 `scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
-Running `python train_cifar.py` is equivalent to running the following.
-
+Running `python train_cifar.py` is equivalent to running the following training with modified hyperparameters. 
 ```sh
 python run.py train \
     "Cifar10{trainval,test}" "id" \  # data
     "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \  # model
     "ct.resnet_cifar,lr_scheduler_f=ConstLR,epoch_count=50,jitter=None"  # training
 ```
+Note the example has some changes with respect to the default CIFAR-10 configuration: disabled batchnorm, constant learning rate, 50 epochs, disabled jittering.
 
 ## The framework
 

@@ -60,8 +60,8 @@ class _Dirs:
     @cached_property
     def cache(self):
         """Various cache"""
-        cache = self.experiments / 'cache'
-        cache.mkdir(exist_ok=True)
+        cache = self._get_path("cache")
+        _check_dir_path(cache, "cache")
         return cache
 
     @cached_property
