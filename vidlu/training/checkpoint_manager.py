@@ -5,6 +5,9 @@ import warnings
 import typing as T
 import logging
 
+import torch
+from typeguard import check_argument_types
+
 from vidlu.utils.path import create_file_atomic
 from vidlu.utils.func import params
 from vidlu.utils.loadsave import TorchLoadSave, JsonLoadSave, TextLoadSave
@@ -61,6 +64,8 @@ class Checkpoint:  # TODO
 
     @classmethod
     def load(cls, path, map_location=None):
+        if map_location is None and not torch.cuda.is_available():
+            map_location = "cpu"
         fields = {k: (getattr(cls, k) if k in ("perf", "log") else
                       Checkpoint._load(path, k, map_location=map_location))
                   for k in cls.__annotations__}
@@ -77,7 +82,7 @@ class Checkpoint:  # TODO
             else fi.load(path)
 
 
-Mode = T.Literal['restart', 'resume', 'resume_or_start', 'start']
+ModeArg = T.Literal['restart', 'resume', 'resume_or_start', 'start']
 
 
 class CheckpointManager(object):
@@ -125,10 +130,12 @@ class CheckpointManager(object):
         ['lin33_1', 'lin33_2']
     """
 
-    def __init__(self, checkpoints_dir, experiment_name: str, info: T.Mapping = None,
-                 n_last_kept=1, n_best_kept=0, mode: Mode = 'start',
+    def __init__(self, checkpoints_dir, experiment_name: str, info=None,
+                 n_last_kept=1, n_best_kept=0, mode: ModeArg = 'start',
                  separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
                  log_func=lambda s: "", name_suffix_func=lambda s: ""):
+        check_argument_types()
+
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
 
@@ -154,7 +161,7 @@ class CheckpointManager(object):
                 raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If"
                                    + " you want to use this ID anyway, pass `mode='resume'`.")
         elif mode != "resume_or_start":
-            raise ValueError(f"Argument {mode=} does not match {Mode}.")
+            raise ValueError(f"Argument {mode=} does not match {ModeArg}.")
 
     def restart(self):
         self.remove_old_checkpoints(0, 0)  # does not remove checkpoints when called from __init__

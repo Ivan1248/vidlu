@@ -20,6 +20,7 @@ import torch.nn.modules as M
 import torch.utils.checkpoint as cp
 from torch.utils import hooks
 import einops
+from typeguard import check_argument_types
 
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
@@ -434,7 +435,7 @@ def is_built(module: T.Union[nn.Module, Module], thorough=False):
     return all(is_built(m, thorough) for m in module.children())
 
 
-def call_if_not_built(module: T.Union[nn.Module, Module], *args, **kwargs):
+def call_if_not_built(module: nn.Module, *args, **kwargs):
     return module(*args, **kwargs) if not is_built(module) else None
 
 
@@ -1508,6 +1509,7 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List
         >>> module_wio(x)
         tensor(...), (tensor(...), tensor(...))
     """
+    check_argument_types()
 
     if submodule_paths is None:
         submodule_paths = [k for k, _ in module.named_modules()]

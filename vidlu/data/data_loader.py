@@ -4,6 +4,7 @@ import typing as T
 
 import torch.utils.data as tud
 import numpy as np
+from typeguard import check_argument_types
 
 
 def worker_init_fn(worker_id):
@@ -35,6 +36,7 @@ class ZipDataLoader:
     def __init__(self, *data_loaders,
                  primary_index: T.Optional[
                      T.Union[int, T.Literal['longest', 'shortest', 'equal']]] = 'shortest'):
+        check_argument_types()
         self._data_loaders = data_loaders
         lengths = np.array([len(d) for d in self._data_loaders])
         if primary_index == 'equal':

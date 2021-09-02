@@ -7,6 +7,7 @@ from warnings import warn
 import torch
 import torch.nn.functional as F
 from numpy import s_
+from typeguard import check_argument_types
 
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
@@ -310,6 +311,7 @@ class Contrast(EquivariantPertModel):
 
     def __init__(self, equivariant_dims=(-2, -1),
                  center: T.Union[float, T.Callable, T.Literal['mean']] = 0.5):
+        check_argument_types()
         super().__init__(equivariant_dims)
         self.center = center
 
@@ -432,6 +434,48 @@ class AlterColor(PertModel):
 
 
 # Warps ############################################################################################
+
+class AnglePreservingLinearSpatial(PertModelBase):
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.args = dict(mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+
+    def create_default_params(self, x):
+        return dict(scale=x.new_ones(x.shape[0]),
+                    ang=x.new_zeros(x.shape))
+
+    def get_matrix(self):
+        matrix = torch.eye((len(self.scaling), 2, 3))
+        sin_ang = self.ang.sin()
+        cos_ang = self.ang.cos()
+        matrix[:, 0, 0] = matrix[:, 1, 1] = cos_ang
+        matrix[:, 0, 1] = matrix[:, 1, 0] = sin_ang
+
+    def forward(self, x):
+        matrix = torch.eye(len(x), )
+
+    def inverse_module(self):
+        inv = copy.deepcopy(self)
+        with torch.no_grad:
+            inv.scale.set_(1 / inv.scaling)
+            inv.ang.neg_()
+
+
+class TranslationSpatial(PertModelBase):
+    def __init__(self, mode='bilinear', padding_mode='zeros', align_corners=True):
+        super().__init__()
+        self.args = dict(mode=mode, padding_mode=padding_mode, align_corners=align_corners)
+
+    def create_default_params(self, x):
+        return dict(translation=x.new_zeros(x.shape))
+
+    def forward(self, x):
+        return vmf.warp(x, self.flow, **self.args)
+
+    def inverse_module(self):
+        inv = copy.deepcopy(self)
+        with torch.no_grad:
+            inv.translation.set_(-inv.translation)
 
 
 class Warp(PertModelBase):
@@ -625,6 +669,7 @@ def cutmix_roll_transform(x, mask):
 
 class CutMix(PertModelBase):
     def __init__(self, mask_gen, combination: T.Literal['pairs', 'roll'] = 'pairs'):
+        check_argument_types()
         super().__init__()
         self.mask_gen = mask_gen
         self.combination = combination

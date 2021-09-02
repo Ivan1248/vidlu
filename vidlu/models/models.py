@@ -6,6 +6,7 @@ from warnings import warn
 import logging
 
 import torch
+from typeguard import check_argument_types
 
 import vidlu.modules as M
 import vidlu.modules as vm
@@ -249,8 +250,7 @@ class SwiftNetBase(SegmentationModel):
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  stage_count=None,
                  mem_efficiency=1):
-        if lateral_suffix not in ('sum', 'act', ''):
-            raise ValueError("lateral_suffix should be either 'sum' or 'act'.")
+        check_argument_types()
         super().__init__(
             backbone_f=backbone_f,
             head_f=partial(head_f, kernel_size=1),

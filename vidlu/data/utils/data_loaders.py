@@ -2,6 +2,7 @@ import typing as T
 
 import numpy as np
 import torch.utils.data as tud
+from typeguard import check_argument_types
 
 from vidlu.data import ZipDataLoader, DataLoader
 from vidlu.data.dataset import Dataset
@@ -58,6 +59,7 @@ def simple_or_zip_data_loader(*datasets,
                               data_loader_f: TDataLoaderF = DataLoader,
                               primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = 0,
                               **kwargs):
+    check_argument_types()
     return data_loader_f(*datasets, **kwargs) if len(datasets) == 1 else \
         zip_data_loader(*datasets, data_loader_f=data_loader_f, primary_index=primary_index,
                         **kwargs)

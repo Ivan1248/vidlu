@@ -19,6 +19,7 @@ import shutil
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm, trange
+from typeguard import check_argument_types
 
 import vidlu.utils.path as vup
 from vidlu.utils.misc import slice_len, query_user
@@ -329,8 +330,7 @@ def clear_hdd_cache(ds):
 class FieldsMap:
     # TODO: use @vuf.type_checked()
     def __init__(self, field_to_func, *, mode: T.Literal['override', 'replace'] = 'override'):
-        if not mode in ('override', 'replace'):
-            raise ValueError(f"Invalid mode argument '{mode}' is not in {'override', 'replace'}.")
+        check_argument_types()
         self.field_to_func = field_to_func
         self.mode = mode
 
