@@ -26,6 +26,13 @@ def colorize_segmentation(seg, colors):
 
 ####
 
+def show_batch(x):
+    from torchvision.utils import make_grid
+    grid = make_grid(x, nrow=len(x)//int(len(x) ** 0.5))
+    plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
+    plt.show()
+
+
 def composef(images, fmt):
     """Composes images into a grid according to the format.
 
