@@ -134,7 +134,7 @@ class Reserved(Empty):  # marker for parameters that shouldn't be assigned / are
         for k, v in kwargs.items():
             if dargs[k] is not Reserved:
                 warnings.warn(
-                    f"The argument {k} is assigned, although it should be marked `Reserved`."
+                    f"The argument {k} is assigned although it should be marked `Reserved`."
                     + " The reserved argument might have been overridden with partial.")
         return partial(func, **kwargs)
 

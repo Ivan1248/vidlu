@@ -26,7 +26,10 @@ class NameDict(MutableMapping):
         return key in self.__dict__
 
     def __getitem__(self, name):
-        return self.__dict__[name]
+        try:
+            return self.__dict__[name]
+        except KeyError as e:
+            raise KeyError(f"{e}. Available keys: {list(self.keys())}")
 
     def __setitem__(self, name, value):
         self.__dict__[name] = value
@@ -35,9 +38,10 @@ class NameDict(MutableMapping):
         del self.__dict__[name]
 
     def __getattr__(self, key):
-        if key not in self.__dict__:
-            raise AttributeError(f"The NameDict instance does not contain the key {key}.")
-        return self.__dict__[key]
+        try:
+            return self[key]
+        except KeyError as e:
+            raise AttributeError(f"The NameDict instance does not contain the key {key}. {e}.")
 
     def __iter__(self):
         return iter(self.__dict__)

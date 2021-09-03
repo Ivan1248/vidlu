@@ -480,6 +480,7 @@ class HDDCacheDataset(Dataset):
         os.makedirs(self.cache_dir, exist_ok=True)
         for i in range(consistency_check_sample_count):
             ii = i * len(dataset) // consistency_check_sample_count
+
             if pickle.dumps(dataset[ii]) != pickle.dumps(self[ii]):
                 warnings.warn(f"Cache of the dataset {self.identifier} inconsistent." +
                               " Deleting old and creating new cache.")
@@ -497,7 +498,7 @@ class HDDCacheDataset(Dataset):
             try:
                 with open(cache_path, 'rb') as cache_file:
                     return pickle.load(cache_file)
-            except (PermissionError, TypeError, EOFError):
+            except (PermissionError, TypeError, EOFError, pickle.UnpicklingError):
                 os.remove(cache_path)
         example = self.data[idx]
         if field is not None:
@@ -516,14 +517,13 @@ class HDDCacheDataset(Dataset):
         shutil.rmtree(self.cache_dir)
 
 
-class InfoCacheDataset(Dataset):  # TODO
-    # TODO: rename with "lazy"
-    def __init__(self, dataset, name_to_func, verbose=True, **kwargs):
+class InfoCacheDataset(Dataset):  # lazy
+    def __init__(self, dataset, name_to_func, **kwargs):
         self.names_str = ', '.join(name_to_func.keys())
         modifier = f"info_cache({self.names_str})"
         self.initialized = multiprocessing.Value('i', 0)  # must be before super
         info = NameDict(dataset.info or kwargs.get('info', dict()))
-        info.cache = NameDict(info.get('cache', NameDict()))
+        info.cache = NameDict(info.get('cache', None) or NameDict())
         self._info = None
         super().__init__(modifiers=modifier, data=dataset, info=info, **kwargs)
         self.name_to_func = name_to_func
@@ -542,7 +542,7 @@ class InfoCacheDataset(Dataset):  # TODO
         if the object is shared between processes."""
         self._info = value
 
-    def _get_info_cache(self):
+    def _compute(self):
         self._logger.info(f"{type(self).__name__}: computing/loading {self.names_str} for"
                           + f" {self.data.identifier}")
         info_cache = dict()
@@ -554,7 +554,7 @@ class InfoCacheDataset(Dataset):  # TODO
         with self.initialized.get_lock():
             if not self.initialized.value:  # lazy
                 if any(k not in self._info.cache for k in self.name_to_func):
-                    self._info.cache.update(self._get_info_cache())
+                    self._info.cache.update(self._compute())
                 self.initialized.value = True
 
 
@@ -562,10 +562,10 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
     def __init__(self, dataset, name_to_func, cache_dir, **kwargs):
         super().__init__(dataset, name_to_func, **kwargs)
         self.cache_dir = Path(cache_dir)
-        self.cache_file = to_valid_path(self.cache_dir / self.identifier / 'info_cache.txt')
+        self.cache_file = to_valid_path(self.cache_dir / "info_cache" / self.identifier)
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def _get_info_cache(self):
+    def _compute(self):
         if self.cache_file.exists():
             try:  # load
                 with self.cache_file.open('rb') as file:
@@ -574,7 +574,7 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
                 self.cache_file.unlink()
                 raise
         else:
-            info_cache = super()._get_info_cache()
+            info_cache = super()._compute()
             try:  # store
                 with self.cache_file.open('wb') as file:
                     pickle.dump(info_cache, file)

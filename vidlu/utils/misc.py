@@ -158,6 +158,7 @@ def query_user(question, default=None, timeout=np.inf, options=None):
         while sw.time < timeout:
             time.sleep(0.1)
             if (inp := try_input(default=no_input)) is not no_input:
+                print()
                 break
         if inp in [no_input, ""]:
             return options[default]
