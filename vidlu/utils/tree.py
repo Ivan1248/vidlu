@@ -34,6 +34,7 @@ def key_to_index(mapping, key):
 def index_to_key(mapping, index):
     return tuple(mapping.keys())[index]
 
+
 class _GetError:
     pass
 
@@ -147,6 +148,13 @@ def map(tree, func, tree_type=None):
     tree_type = tree_type or type(tree)
     return tree_type(**{k: map(v, func, tree_type) if isinstance(v, tree_type) else func(v)
                         for k, v in tree.items()})
+
+
+def filter(tree, func, tree_type=None):
+    tree_type = tree_type or type(tree)
+    return tree_type(**{k: filter(v, func, tree_type) if is_tree else v
+                        for k, v in tree.items()
+                        if (is_tree := isinstance(v, tree_type)) or func(v)})
 
 
 def to_dot(tree, label="ROOT", graph=None, tree_type=None, max_label_length=999999999):
