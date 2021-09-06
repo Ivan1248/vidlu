@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from vidlu.torch_utils import save_grads
+from vidlu.torch_utils import preserve_grads
 
 
 class TestSaveGrads:
@@ -12,7 +12,7 @@ class TestSaveGrads:
         (x ** 2).backward()
 
         pre_grad = x.grad.detach().clone()
-        with save_grads([x]):
+        with preserve_grads([x]):
             for _ in range(5):
                 (x ** 2).backward()
                 assert torch.all(x.grad != pre_grad)
