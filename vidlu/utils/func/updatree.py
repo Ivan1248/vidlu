@@ -189,7 +189,7 @@ class StrictObjectUpdatree(StrictIndexableUpdatree):
         return result
 
 
-class ObjectUpdatree(StrictIndexableUpdatree):
+class ObjectUpdatree(StrictObjectUpdatree):
     _check = False
 
 
