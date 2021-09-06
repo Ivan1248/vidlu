@@ -1489,7 +1489,7 @@ def deep_join(left: Module, right: Module):
 
 def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List[str], str] = None,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
-                              return_dict=False):
+                              return_dict=False, inputs=False):
     """Creates a function wrapping `module` that returns a pair containing the
     output of `module.forward` as well as a list of intermediate outputs as
     defined by `submodule_paths`.
@@ -1532,7 +1532,7 @@ def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List
 
         def create_hook(idx):
             def hook(module, input, output):
-                outputs[idx] = output
+                outputs[idx] = input if inputs else output
 
             return hook
 
@@ -1613,9 +1613,11 @@ class IntermediateOutputsModuleWrapper(Module):
         super().__init__()
         self.module = module
         self.submodule_paths = submodule_paths
+        self.inplace_modified_action = inplace_modified_action
 
     def forward(self, *args, **kwargs):
-        module_wio = with_intermediate_outputs(self.module, self.submodule_paths)
+        module_wio = with_intermediate_outputs(self.module, self.submodule_paths,
+                                               inplace_modified_action=self.inplace_modified_action)
         return module_wio(*args, **kwargs)
 
 
