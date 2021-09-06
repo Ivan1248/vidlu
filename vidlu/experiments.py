@@ -31,12 +31,10 @@ class TrainingExperimentFactoryArgs:
     metrics: str
     params: T.Optional[str]
     experiment_suffix: str
-    resume: bool
-    resume_or_start: bool
-    restart: bool
-    resume_best: bool
+    resume: T.Optional[T.Literal["strict", "?", "best", "restart"]]
     device: T.Optional[torch.device]
     verbosity: int
+    deterministic: bool
 
 
 # Component factories (or factory wrappers) ########################################################
@@ -212,21 +210,25 @@ def get_device(device_str):
             gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
 
 
-def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
+def get_experiment_name(training_args):
     a = training_args
     learner_name = to_valid_path(f"{a.model}/{a.trainer}"
                                  + (f"/{a.params}" if a.params else ""), split_long_names=True)
     expsuff = a.experiment_suffix or "_"
     experiment_id = f'{a.data}/{learner_name}/{expsuff}'
-    print('Learner name:', learner_name)
-    print('Experiment ID:', experiment_id)
+    return experiment_id
+
+
+def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
+    a = training_args
+    experiment_id = get_experiment_name(training_args)
     cpman = CheckpointManager(
         checkpoints_dir, experiment_name=experiment_id, info=training_args,
         separately_saved_state_parts=("model",), n_best_kept=1,
-        mode=('restart' if a.restart else
-              'resume' if a.resume else
-              'resume_or_start' if a.resume_or_start else
-              'start'),
+        mode=('start' if a.resume is None else
+              'restart' if a.resume == "restart" else
+              'resume_or_start' if a.resume == "?" else
+              'resume'),
         perf_func=lambda s: s.get('perf', 0), log_func=lambda s: s.get('log', ""),
         name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
     return cpman
@@ -299,7 +301,8 @@ class TrainingExperiment:
             with indent_print('\nInitializing trainer and evaluation...'):
                 print(a.trainer)
                 trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
-                                                verbosity=a.verbosity)
+                                                verbosity=a.verbosity,
+                                                deterministic=a.deterministic)
                 metrics, main_metrics = factories.get_metrics(a.metrics, trainer, dataset=first_ds)
                 for m in metrics:
                     trainer.metrics.append(m())
@@ -310,7 +313,7 @@ class TrainingExperiment:
         finally:
             resuming_required = cpman.resuming_required
             if resuming_required:
-                state, summary = (cpman.load_best if a.resume_best else cpman.load_last)(
+                state, summary = (cpman.load_best if a.resume == "best" else cpman.load_last)(
                     map_location=a.device)
                 # TODO: remove backward compatibility
                 logger.load_state_dict(summary.get('logger', summary))

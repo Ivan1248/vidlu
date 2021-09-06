@@ -1,11 +1,14 @@
 import sys
 import argparse
-from time import time
 import random
 from datetime import datetime, timedelta
 import os
 import warnings
 import contextlib as ctx
+from pathlib import Path
+import subprocess
+import shlex
+import time
 
 # noinspection PyUnresolvedReferences
 # import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
@@ -16,10 +19,10 @@ import numpy as np
 import _context  # vidlu, dirs
 
 from vidlu import factories
+import vidlu.experiments as ve
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
-from vidlu.utils.misc import indent_print
-from vidlu.utils.misc import query_user
+from vidlu.utils.misc import indent_print, query_user
 from vidlu.utils import debug
 from vidlu.data import clean_up_dataset_cache
 import dirs
@@ -49,23 +52,32 @@ def log_run(status):
 
 
 def train(args):
-    if args.debug:
-        debug.trace_calls(depth=122,
-                          filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
-                                                         and not frame.f_code.co_name[0] in "_<")
+    old_write_error = sys.stderr.write
 
-    if args.restart and not query_user("Are you sure you want to restart the experiment?",
-                                       timeout=30, default='y'):
+    def write_error(m, *a, **k):
+        return old_write_error(f"\x1b[1;33m{m}\x1b[0m", *a, **k)
+
+    sys.stderr.write = write_error
+
+    if args.resume == "restart" \
+            and not query_user("Are you sure you want to restart the experiment?",
+                               timeout=30, default='y'):
         exit()
 
-    seed = int(time()) % 100 if args.seed is None else args.seed  # 53
-    for rseed in [torch.manual_seed, np.random.seed, random.seed]:
-        rseed(seed)
+    if args.remote_experiments and args.resume not in [None, "restart"]:
+        dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args)))
+        cmd = ["rsync", "-azvO", "--relative", "--delete", f"{args.remote_experiments}:{dir}/",
+               f"/"]
+        print("Running " + " ".join(cmd))
+        result = subprocess.run(cmd)
+        if result.returncode != 0:
+            warnings.warn(f"Experiment state transfer had errors: {result}")
+            query_user("Experiment state transfer had errors. Continue?", default='n')
 
     exp = TrainingExperiment.from_args(
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
-    exp.logger.log(f"RNG seed: {seed}")
+    exp.logger.log(f"RNG seed: {args.seed}")
 
     # if args.debug:
     #     debug.stop_tracing_calls()
@@ -82,7 +94,8 @@ def train(args):
             exp.trainer.eval(exp.data.test)
         log_run('cont.' if args.resume else 'start')
 
-        print(('\nContinuing' if args.resume else 'Starting') + ' training...')
+        print(('\nContinuing' if args.resume not in (
+            "restart", None) else 'Starting') + ' training...')
         training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
 
         exp.trainer.train(*training_datasets.values(), restart=False)
@@ -97,7 +110,7 @@ def train(args):
 
     exp.cpman.remove_old_checkpoints()
 
-    print(f"\nRNG seed: {seed}")
+    print(f"\nRNG seed: {args.seed}")
     print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
 
     if dirs.cache is not None:
@@ -112,8 +125,6 @@ def path(args):
 
 
 def test(args):
-    if args.restart:
-        raise ValueError("`restart=True` is not allowed in the test procedure.")
     if not args.resume:
         warnings.warn("`resume` is set to `False`. The initial parameters will be tested.")
     e = TrainingExperiment.from_args(
@@ -161,22 +172,22 @@ def add_standard_arguments(parser, func):
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
                              + " with the same configuration.")
-    parser.add_argument("-rb", "--resume_best", action='store_true',
-                        help="Use the best checkpoint if --resume is provided.")
-    # if func is train:
-    cpman_mode = parser.add_mutually_exclusive_group(required=False)
-    cpman_mode.add_argument("-r", "--resume", action='store_true',
-                            help="Resume training from a checkpoint of the same experiment.")
-    cpman_mode.add_argument("-rs", "--resume_or_start", action='store_true',
-                            help="Resume training if there is a checkpoint or start new training.")
-    cpman_mode.add_argument("--restart", action='store_true',
-                            help="Delete the data of an experiment with the same name.")
+    parser.add_argument("--remote_experiments", type=str, default=None,
+                        help="Identifier of experiment directory to copy the state from for resuming")
+    parser.add_argument("-r", "--resume", action='store', nargs="?",
+                        choices=["strict", "?", "best", "restart"], default=None, const="strict",
+                        help="Resume training from checkpoint of the same experiment. "
+                             + "? - can start new training if there are no checkpoints, "
+                             + "best - resumes from the best checkpoint, "
+                             + "restart - deletes existing checkpoints and restarts the experiments.")
     parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
     parser.add_argument("--no_train_eval", action='store_true',
                         help="No evaluation on the training set.")
     parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: int(time()) %% 100.")
+    parser.add_argument("--deterministic", action='store_true',
+                        help="Usage of deterministic operations.")
     # reporting, debugging
     parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
     parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
@@ -193,8 +204,8 @@ if __name__ == "__main__":
     parser_train = subparsers.add_parser("train")
     add_standard_arguments(parser_train, train)
 
-    parser_train = subparsers.add_parser("path")
-    add_standard_arguments(parser_train, path)
+    parser_path = subparsers.add_parser("path")
+    add_standard_arguments(parser_path, path)
 
     parser_test = subparsers.add_parser("test")
     add_standard_arguments(parser_test, test)
@@ -209,6 +220,22 @@ if __name__ == "__main__":
     if args.debug:
         print("Debug: Autograd anomaly detection on.")
         torch.autograd.set_detect_anomaly(True)
+
+    if args.deterministic:
+        # torch.backends.cudnn.benchmark = False
+        # torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True)
+
+    seed = (0 if args.deterministic else int(time.time()) % 100) if args.seed is None else args.seed
+    for rseed in [torch.manual_seed, np.random.seed, random.seed]:
+        rseed(seed)
+    args.seed = seed
+        torch.compare = compare
+
+    if args.debug:
+        debug.trace_calls(depth=122,
+                          filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
+                                                         and not frame.f_code.co_name[0] in "_<")
 
     if args.warnings_as_errors:
         import traceback
