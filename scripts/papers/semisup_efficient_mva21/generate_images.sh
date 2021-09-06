@@ -22,16 +22,16 @@ test_robust=( python run.py test ${args_robust[@]} )
 test_baseline=( python run.py test ${args_baseline[@]} )
 
 # runs training or evaluates performance if it is already complete
-${train_baseline[@]} --no_init_eval --no_train_eval --resume_or_start
-${train_robust[@]} --no_init_eval --no_train_eval --resume_or_start
+${train_baseline[@]} --no_init_eval --no_train_eval -r ?
+${train_robust[@]} --no_init_eval --no_train_eval -r ?
 
 echo "2. Generating clean and perturbed examples in ${output_path} to be used by generate_results..."
 ${test_robust[@]} -r --module "papers.semisup_efficient_mva21.generate_images:generate_inputs,e,n=${n},dir='${output_path}'"
 
-echo "3. Generaiing result visualizations (semi-supervised MT-PhTPS)..."
+echo "3. Generating result visualizations (semi-supervised MT-PhTPS)..."
 ${test_robust[@]} -r --module "papers.semisup_efficient_mva21.generate_images:generate_results,e,dir='${output_path}'"
 
-echo "4. Generaiing result visualizations (supervised baseline)..."
+echo "4. Generating result visualizations (supervised baseline)..."
 ${test_baseline[@]} -r --module "papers.semisup_efficient_mva21.generate_images:generate_results,e,dir='${output_path}',suffix='sup'"
 
 echo "5. Producing LaTeX code for the figure..."
