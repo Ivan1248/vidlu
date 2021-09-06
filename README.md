@@ -19,35 +19,35 @@ Make a local copy of the repository with
 
 ```sh
 git clone https://github.com/Ivan1248/vidlu.git
-cd vidlu
 ```
 
 Install dependencies listed in `requirements.txt`. If Pip is to be used, you can run
 
 ```sh
+cd vidlu
 pip install -r requirements.txt
 ```
 
 **Pip installation.**
 
-If you want to install the package, you can run
+Alternatively, run
 ```sh
 pip install git+https://github.com/Ivan1248/Vidlu
 ```
-or, in a local copy of the repository,
+or, if there is a local copy of the repository,
 ```sh
 pip install .
 ```
 
 ## Main scripts
 
-The `scripts` directory contains scripts that use <a href="#the-framework">the framework</a>. 
+The `scripts` directory contains scripts that use <a href="#the-framework">the framework</a>. The main script for running experiments is `run.py` and `dirs.py` contains directory paths. 
 
 ### Directory configuration
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
--   `datasets` is a list of paths that can be looked up for datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any ancestor directory of `dirs.py`, are included too. Dataset directories should be considered read-only.
+-   `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any ancestor directory of `dirs.py`, are included too. Dataset directories should be considered read-only.
 -   `cache` is used for automatically caching data. It should preferably and be on an SSD. `datasets` can be on slower disks since original data is usually accessed through cache unless there was not enough space for caching.
 -   `pretrained` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
 -   `experiments` represents a directory that can contain experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `SAVED_STATES = experiments / "states"` is automatically created for storing intermediate and complete training states.
@@ -73,7 +73,10 @@ If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASE
 
 `scripts/run.py` is a general script for running experiments. 
 
-The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or finished experiments can be continued/reevaluated by the `--resume` (`--r`) argument.
+The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or finished experiments can be continued/reevaluated using the `--resume` (`-r`) argument. The command can have the following structure:
+```sh
+run.py train DATA INPUT_ADAPTER MODEL TRAINER [-h] [--params PARAMS] [--metrics METRICS] [-e EXPERIMENT_SUFFIX] [-r [{strict,?,best,restart}]]
+```
 
 There is also a `test` command that accepts almost the same arguments and can be used for standard evaluation or running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
 
@@ -122,7 +125,7 @@ For many elementary modules which can be invertible, the `inverse` property retu
 
 Composite modules are designed to be "deeply" configurable: arguments of arguments that are factories/constructors for child modules can be modified. Names of such factory arguments usually end with `_f`. If a default argument is a function, its arguments can be accessed and modified using `vidlu.utils.func`, which relies on `inspect.signature` and `functools.partial`. `vidlu.utils.func` defines tree data structures and procedures that enable eays modification of deeply nested arguments.
 
-`vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet<sup>[1](#fn1)</sup>, Ladder-DenseNet<sup>[1](#myfootnote1)</sup>.
+`vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet<sup>[1](#fn1)</sup>, Ladder-DenseNet<sup>[1](#fn1)</sup>.
 
 <a name="fn1">1</a>: There might be some unintended differences to the original code.
 
