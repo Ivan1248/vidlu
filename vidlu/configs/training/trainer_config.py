@@ -32,9 +32,14 @@ class OptimizerMaker:
     def __call__(self, model):
         if not isinstance(model, torch.nn.Module):
             raise ValueError(f"The model argument should be a nn.Module, not {type(model)}.")
-        params = [{
-            **d, 'params': tuple(get_submodule(model, d['params']).parameters())}
-            for d in self.params]
+
+        def get_params(names_or_funcs):
+            if isinstance(names_or_funcs, str) or callable(names_or_funcs):
+                names_or_funcs = [names_or_funcs]
+            return [p for nf in names_or_funcs for p in (
+                get_submodule(model, nf).parameters() if isinstance(nf, str) else nf(model))]
+
+        params = [{**d, 'params': get_params(d['params'])} for d in self.params]
         params_lump = set(p for d in params for p in d['params'])
         remaining_params = () if self.ignore_remaining_params \
             else tuple(p for p in model.parameters() if p not in params_lump)
@@ -44,7 +49,7 @@ class OptimizerMaker:
 # Trainer config
 
 
-def distribute_argtree_to_funcs(base_funcs, argtree_args): # not used
+def distribute_argtree_to_funcs(base_funcs, argtree_args):  # not used
     func_args_pairs = [(f, params(f)) for f in base_funcs]
     argtrees = [ArgTree() for _ in func_args_pairs]
 
