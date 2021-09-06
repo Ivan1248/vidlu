@@ -1,12 +1,14 @@
-from vidlu.utils.func import partial
+import warnings
 from numbers import Number
 import typing as T
 
 from torch import Tensor
 import torch.nn.functional as nnF
 import numpy as np
+from typeguard import check_argument_types
 
 from vidlu.utils import num
+from vidlu.utils.func import partial
 from vidlu.utils.func import vectorize
 from vidlu.torch_utils import is_int_tensor, round_float_to_int
 from vidlu.modules.utils import func_to_module_class
@@ -144,26 +146,40 @@ def random_hflip(x: Tensor, p=0.5, rng=np.random) -> Tensor:
 
 RandomHFlip = func_to_module_class(random_hflip)
 
+ScaleDistArg = T.Literal["uniform", "inv-uniform", "log-uniform"]
+
+
+def _sample_random_scale(min, max, dist: ScaleDistArg = "uniform", rng=np.random):
+    if min is None:
+        min = 1 / max
+    if dist == "log-uniform":
+        scale = np.exp(rng.uniform(np.log(min), np.log(max)))
+    elif dist == "inv-uniform":
+        scale = 1 / (rng.uniform(1 / max, 1 / min))
+    else:
+        scale = rng.uniform(min, max)
+    return scale
+
 
 def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0, is_segmentation=False,
-                      align_corners=None, rng=np.random):
+                      align_corners=None, scale_dist: ScaleDistArg = "uniform", rng=np.random):
+    check_argument_types()
+
     multiple = isinstance(x, tuple)
     xs = x if multiple else (x,)
     if isinstance(is_segmentation, bool):
         is_segmentation = [is_segmentation] * len(xs)
-    if min_scale is None:
-        min_scale = 1 / max_scale
+
     input_shape = xs[0].shape[-2:]
     if not all(a.shape[-2:] == input_shape for a in xs):
         raise RuntimeError("All inputs must have the same height and width.")
 
-    scale = rng.rand() * (max_scale - min_scale) + min_scale
+    scale = _sample_random_scale(min_scale, max_scale, dist=scale_dist, rng=rng)
 
     xs = random_crop(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
 
-    shape = tuple(
-        d for d in
-        np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int)))
+    shape = [d for d in
+             np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int))]
     xs = tuple((resize_segmentation if iss
                 else partial(resize, mode='bilinear', align_corners=align_corners))(x, shape=shape)
                for x, iss in zip(xs, is_segmentation))

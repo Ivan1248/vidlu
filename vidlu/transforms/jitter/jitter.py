@@ -4,7 +4,6 @@ import typing as T
 import torch
 from vidlu.utils.func import partial
 
-from vidlu.transforms.image import RandomCrop, RandomHFlip, Pad, RandomScaleCrop, PadToShape
 from vidlu.utils.func import compose
 import vidlu.transforms.image as vti
 import vidlu.modules as vm
@@ -82,12 +81,12 @@ class ReplaceWithNoise(ClassificationJitter):
 
 class CifarPadRandCropHFlip(ClassificationJitter):
     def apply_input(self, x):
-        return compose(Pad(4), RandomCrop(x[0].shape[-2:]), RandomHFlip())(x)
+        return compose(vti.Pad(4), vti.RandomCrop(x[0].shape[-2:]), vti.RandomHFlip())(x)
 
 
 class SegRandHFlip(SegmentationJitter):
     def apply(self, x):
-        return RandomHFlip()(tuple(x))
+        return vti.RandomHFlip()(tuple(x))
 
 
 @dc.dataclass
@@ -95,28 +94,30 @@ class SegRandCropHFlip(SegmentationJitter):
     crop_shape: tuple
 
     def apply(self, x):
-        return compose(RandomCrop(self.crop_shape), RandomHFlip())(tuple(x))
+        return compose(vti.RandomCrop(self.crop_shape), vti.RandomHFlip())(tuple(x))
 
 
 @dc.dataclass
 class SegRandScaleCropPadHFlip(SegmentationJitter):
     shape: tuple
     max_scale: float
-    overflow: object
     min_scale: float = None
+    overflow: object = 0
     align_corners: bool = True
     image_pad_value: T.Union[torch.Tensor, float, T.Literal['mean']] = 'mean'
     label_pad_value = -1
+    scale_dist: vti.ScaleDistArg = "uniform"
 
     def apply(self, xy):
-        xy = RandomScaleCrop(shape=self.shape, max_scale=self.max_scale,
-                             min_scale=self.min_scale, overflow=self.overflow,
-                             is_segmentation=(False, True),
-                             align_corners=self.align_corners)(tuple(xy))
-        xy = RandomHFlip()(xy)
-        x = PadToShape(self.shape, value=self.image_pad_value)(xy[0])
+        xy = vti.RandomScaleCrop(
+            shape=self.shape, max_scale=self.max_scale, min_scale=self.min_scale,
+            overflow=self.overflow, is_segmentation=(False, True), align_corners=self.align_corners,
+            scale_dist=self.scale_dist)(tuple(xy))
+        xy = vti.RandomHFlip()(xy)
+        x = vti.PadToShape(self.shape, value=self.image_pad_value)(xy[0])
         return (x,) if len(xy) == 1 else \
-            (x, PadToShape(self.shape, value=self.label_pad_value)(xy[1]))
+            (x, vti.PadToShape(self.shape, value=self.label_pad_value)(xy[1]))
+
 
 
 class RandAugment(ClassificationJitter):
