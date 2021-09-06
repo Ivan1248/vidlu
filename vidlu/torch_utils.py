@@ -111,13 +111,32 @@ def is_modified(tensor: torch.Tensor):
     return tensor._version > 0
 
 
+class StateAwareCheckpointFunction(tuc.CheckpointFunction):
+    @staticmethod
+    def forward(ctx, run_function, preserve_rng_state, *args, preservation_cm_f=None):
+        result = super().forward(ctx, run_function, preserve_rng_state, *args)
+        if preservation_cm_f is not None:
+            def preserving_run_function(*args):
+                with preservation_cm_f():
+                    return run_function(*args)
+
+            ctx.run_function = preserving_run_function
+        return result
+
+
+def checkpoint_sa(function, *args, preservation_cm_f=None, preserve_rng_state=True):
+    # Can preserve the state in calls to function in backward
+    return StateAwareCheckpointFunction.apply(function, preserve_rng_state=preserve_rng_state,
+                                              *args, presevation_cm_f=preservation_cm_f)
+
+
 def checkpoint_fix(function, *args, **kwargs):
     """A workaround for CheckpointFunctionBackward not being set (and called)
     when the output of `function` is an in-place modified view tensor, e.g
     `x[:].relu_()`.
     """
 
-    def wrapper(*args_, **kwargs_):
+    def inplace_backward_fix_wrapper(*args_, **kwargs_):
         result = function(*args_, **kwargs_)
         if isinstance(result, torch.Tensor):
             return result[...] if is_modified(result) else result
@@ -128,10 +147,10 @@ def checkpoint_fix(function, *args, **kwargs):
         else:
             raise NotImplementedError()
 
-    return tuc.checkpoint(wrapper, *args, **kwargs)
+    return checkpoint_sa(inplace_backward_fix_wrapper, *args, **kwargs)
 
 
-class StateAwareCheckpoint:
+class StateAwareCheckpoint:  # preserves state in the first run
     def __init__(self, module, context_managers_fs=(batchnorm_stats_tracking_off,)):
         self.context_managers_fs = context_managers_fs
         self.module = module if isinstance(module, nn.Module) else nn.ModuleList(module)
