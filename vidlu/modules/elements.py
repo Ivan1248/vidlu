@@ -180,6 +180,7 @@ class InvertibleMixin:
             module_to_inv[self] = weakref.ref(inv_module)
             module_to_inv[inv_module] = weakref.ref(self)
             InvertibleMixin._inverses.add(inv_module)
+            inv_module.train(self.training)
             return inv_module
         except ModuleInverseError as e:
             # Turn it into a TypeError so that it doesn't get turned into a confusing
@@ -267,9 +268,14 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         return Namespace(**self._mode, training=self.training)
 
     def _init_call(self, *args, **kwargs):
+        if self.training:
+            warnings.warn("Consider turning off training mode by calling eval() before calling the"
+                          + "module for the first time to avoid unwanted state change.")
         device = _try_get_device_from_args(*args, **kwargs)
         if type(self).build != Module.build:
             self.build(*args, **kwargs)
+            for c in self.children():
+                c.training = self.training
         if device is not None:
             self.to(device)
         if type(self).post_build != Module.post_build:
@@ -387,18 +393,27 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         return self._built
 
     def build(self, *args, **kwargs):
-        """This is run before the first evaluation"""
+        """This is run before the first evaluation.
+
+        Children modules will automatically get the training/evaluation state of the parent after
+        running this.
+        """
         pass
 
     def post_build(self, *args, **kwargs):
-        """This is run after the first evaluation (if overridden)."""
+        """This is run after the first evaluation (if overridden).
+        
+        Children modules will not automatically get the same training/evaluation state as the parent
+        after running this.
+        """
         pass
 
     # Modified standard nn.Module methods
 
     def add(self, *args, **kwargs):
         """A generalization of add_module that can accept multiple modules if
-        supplied as keyword arguments."""
+        supplied as keyword arguments.
+        """
         if len(args) == 2 and len(kwargs) == 0:
             super().add_module(*args)
         elif len(args) == 0 and len(kwargs) > 0:
