@@ -5,9 +5,11 @@ from dataclasses import dataclass, InitVar
 import logging
 from warnings import warn
 import os
+import random
 
 from tqdm import tqdm
 import torch
+import numpy as np
 
 import vidlu.modules.utils as vmu
 from vidlu.data import Record, DataLoader, BatchTuple
@@ -184,6 +186,17 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 NUM_WORKERS = int(os.environ.get("VIDLU_NUM_WORKERS", 2))
 
 
+def deterministic_data_loader_args():
+    def worker_init_fn(worker_id):
+        seed = torch.initial_seed() % 2 ** 32
+        np.random.seed(seed)
+        random.seed(seed)
+
+    g = torch.Generator()
+    g.manual_seed(0)
+    return dict(worker_init_fn=worker_init_fn, generator=g)
+
+
 @dataclass
 class Evaluator:
     model: T.Callable = Required
@@ -192,6 +205,7 @@ class Evaluator:
     data_loader_f: vdu.TMultiDataLoaderF = partial(
         vdu.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=NUM_WORKERS,
         shuffle=True)
+    deterministic: bool = False
     batch_size: int = 1
     metrics: list = dc.field(default_factory=list)
     eval_step: T.Callable = Required
@@ -249,8 +263,10 @@ class Evaluator:
         return output
 
     def eval(self, *datasets, batch_size=None):
-        data_loader = self.data_loader_f(
-            *datasets, drop_last=False, batch_size=batch_size or self.batch_size)
+        dl_kwargs = dict(drop_last=False, batch_size=batch_size or self.batch_size)
+        if self.deterministic:
+            dl_kwargs.update(deterministic_data_loader_args())
+        data_loader = self.data_loader_f(*datasets, **dl_kwargs)
         return self.evaluation.run(tqdm(data_loader))
 
 
@@ -313,7 +329,10 @@ class Trainer(Evaluator):
                              for jitter, ds in zip(jitters, datasets)]
         else:
             datasets_jitt = datasets
-        data_loader = self.data_loader_f(*datasets_jitt, drop_last=True, batch_size=self.batch_size)
+        dl_kwargs = dict(drop_last=True, batch_size=self.batch_size)
+        if self.deterministic:
+            dl_kwargs.update(deterministic_data_loader_args())
+        data_loader = self.data_loader_f(*datasets_jitt, **dl_kwargs)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None):
