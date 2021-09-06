@@ -909,7 +909,7 @@ class SemisupVATCorrEvalStep:
             loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
 
         import vidlu.torch_utils as vtu
-        with vtu.save_params(model.parameters()):
+        with vtu.preserve_params(model.parameters()):
             loss_p.backward()
             with torch.no_grad():
                 for p in model.parameters():

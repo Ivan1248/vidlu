@@ -222,7 +222,7 @@ class VATLoss(nn.Module):
                 return F.kl_div(logp_hat, pred, reduction='batchmean')
 
             # approximate the direction of maximum loss
-            with save_grads(model.parameters()):
+            with preserve_grads(model.parameters()):
                 for _ in range(self.iter_count):
                     d.requires_grad_()
                     loss = get_kl_div(self.xi * d)

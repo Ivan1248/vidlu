@@ -3,8 +3,9 @@ import typing as T
 
 import torch
 from torch import nn
-
 import torch.utils.checkpoint as tuc
+
+import vidlu.utils.context as vuc
 
 
 def is_float_tensor(x):
@@ -21,69 +22,39 @@ def round_float_to_int(x, dtype=torch.int):
 
 # General context managers (move out of utils/torch?
 
-@contextlib.contextmanager
-def switch_attribute(objects, attrib_name, value):
-    state = {m: getattr(m, attrib_name) for m in objects}
-    for m in state:
-        setattr(m, attrib_name, value)
-    yield
-    for m, v in state.items():
-        setattr(m, attrib_name, v)
-
-
-@contextlib.contextmanager
-def switch_attributes(objects, **name_to_value):
-    with contextlib.ExitStack() as stack:
-        for name, value in name_to_value.items():
-            stack.enter_context(switch_attribute(objects, name, value))
-        yield
-
-
-def switch_attribute_if_exists(objects, attrib_name, value):
-    return switch_attribute((k for k in objects if hasattr(k, attrib_name)), attrib_name, value)
-
-
-@contextlib.contextmanager
-def save_attribute(objects, attrib_name, copy_func=lambda x: x):
-    state = {m: copy_func(getattr(m, attrib_name)) for m in objects}
-    yield
-    for m, v in state.items():
-        setattr(m, attrib_name, v)
+def switch_use_of_deterministic_algorithms(value):
+    return vuc.switch_var(
+        torch.are_deterministic_algorithms_enabled, torch.use_deterministic_algorithms, value,
+        omit_unnecessary_calls=True)
 
 
 # Context managers for modules and tensors
 
-def save_tensor_attribute(objects, attrib_name):
-    return save_attribute(objects, attrib_name, lambda x: x.detach().clone())
+def preserve_attribute_tensor(objects, attrib_name):
+    return vuc.preserve_attribute(objects, attrib_name, lambda x: x.detach().clone())
 
 
 def switch_requires_grad(module_or_params, value):
     params = module_or_params.parameters() if isinstance(module_or_params, torch.nn.Module) \
         else module_or_params
-    return switch_attribute(params, 'requires_grad', value)
+    return vuc.switch_attribute(params, 'requires_grad', value)
 
 
 def switch_training(module, value):
-    return switch_attribute(module.modules(), 'training', value)
-
-
-def switch_batchnorm_momentum(module, value):
-    modules = (m for m in module.modules()
-               if type(m).__name__.startswith('BatchNorm') and hasattr(m, 'momentum'))
-    return switch_attribute(modules, 'momentum', value)
+    return vuc.switch_attribute(module.modules(), 'training', value)
 
 
 @contextlib.contextmanager
 def batchnorm_stats_tracking_off(module):
     modules = [m for m in module.modules()
                if type(m).__name__.startswith('BatchNorm') and hasattr(m, 'momentum')]
-    with switch_attribute(modules, 'momentum', 0), \
-         save_tensor_attribute(modules, 'num_batches_tracked'):
+    with vuc.switch_attribute(modules, 'momentum', 0), \
+            preserve_attribute_tensor(modules, 'num_batches_tracked'):
         yield
 
 
 @contextlib.contextmanager
-def save_grads(params):
+def preserve_grads(params):
     param_grads = [(p, p.grad.detach().clone()) for p in params]
     yield param_grads
     for p, g in param_grads:
@@ -91,7 +62,7 @@ def save_grads(params):
 
 
 @contextlib.contextmanager
-def save_params(params):
+def preserve_params(params):
     param_param_saved = [(p, p.detach().clone()) for p in params]
     yield param_param_saved
     with torch.no_grad():
