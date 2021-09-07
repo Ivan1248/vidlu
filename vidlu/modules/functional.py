@@ -211,7 +211,7 @@ def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     L[..., :n, -3:] = C
     L[..., -3:, :n] = C.transpose(-1, -2)
 
-    theta = torch.linalg.solve(v.unsqueeze(-1), L)[0]  # p has structure w,a
+    theta = torch.linalg.solve(L, v.unsqueeze(-1))  # p has structure w,a
     return theta[..., 1:] if reduced else theta
 
 
