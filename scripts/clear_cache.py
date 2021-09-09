@@ -13,8 +13,8 @@ parser.add_argument('ds', type=str)
 args = parser.parse_args()
 
 get_data = vdu.CachingDatasetFactory(
-    dirs.DATASETS, dirs.cache,
-    [partial(vdu.add_image_statistics_to_info_lazily, cache_dir=dirs.cache)])
+    dirs.datasets, dirs.cache,
+    [partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=dirs.cache)])
 pds = get_data(args.ds)
 
 for k, ds in pds.items():

@@ -15,6 +15,8 @@ import multiprocessing
 import datetime as dt
 from pathlib import Path
 import shutil
+from torchvision.datasets.utils import download_and_extract_archive
+import dataclasses as dc
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
@@ -454,9 +456,10 @@ def clean_up_dataset_cache(cache_dir, max_time_since_access: dt.timedelta):
         file = next(dir.iterdir(), None)
         if file is None or (vup.time_since_access(file) > max_time_since_access):
             to_delete.append(dir)
-    for dir in tqdm(to_delete,
-                    desc=f"Cleaning up dataset cache unused for {max_time_since_access}."):
-        shutil.rmtree(dir)
+    if len(to_delete) > 0:
+        for dir in tqdm(to_delete,
+                        desc=f"Cleaning up dataset cache unused for {max_time_since_access}."):
+            shutil.rmtree(dir)
 
 
 class HDDCacheDataset(Dataset):

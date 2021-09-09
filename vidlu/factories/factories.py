@@ -126,7 +126,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     get_parted_dataset = data.DatasetFactory(datasets_dir)
     if cache_dir is not None:
-        add_stats = partial(vdu.add_image_statistics_to_info_lazily, cache_dir=cache_dir)
+        add_stats = partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir)
         get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [add_stats])
 
     data = []
@@ -288,7 +288,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_f = argtree.apply(model_f)
     input_adapter = get_input_adapter(
         input_adapter_str, data_stats=(None if prep_dataset is None
-                                       else prep_dataset.info.cache['standardization']))
+                                       else prep_dataset.info.cache['pixel_stats']))
     _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
                          verbosity=verbosity)
     if "input_adapter" in vuf.params(model_f):
