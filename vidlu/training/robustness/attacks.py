@@ -130,10 +130,53 @@ def _pert_to_pert_model(pert_or_x_adv, x=None):
 
 
 @dataclass
-class Attack:
+class BasePerturber:
+    def __call__(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
+        with torch.enable_grad():
+            if NotImplemented is not (
+                    pert := self._get_perturbation(model, x, y=y, loss_mask=loss_mask, **kwargs)):
+                return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
+            elif NotImplemented is not (
+                    x_adv := self._perturb(model, x, y=y, loss_mask=loss_mask, **kwargs)):
+                return _pert_to_pert_model(x_adv, x)
+            raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
+
+    def perturb(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
+        """Generates an adversarial example.
+
+        __call__ or perturb should be overridden by subclasses.
+
+        Args:
+            model (Module): Model.
+            x (Tensor): Input tensor.
+            y (Tensor, optional): Target/label tensor. If `None`, the prediction
+                obtained from `self.to_virtual_target(output)` is used as the
+                label.
+            loss_mask (BoolTensor): Mask to be multiplied with unreduced loss.
+            output (Tensor, optional): Output for use as a target. If `None`
+                it is obtained by calling `model(x)` (and then transformad with
+                `self.to_virtual_target`).
+
+        Return:
+            Perturbed input.
+        """
+        perturb = self(model, x, y=y, loss_mask=loss_mask, output=output, **kwargs)
+        return perturb(x, y, loss_mask)
+
+    def _perturb(self, model, x, y=None, loss_mask=None, **kwargs):
+        # this or _get_perturbation has to be implemented in subclasses
+        return NotImplemented
+
+    def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
+        # this or _perturb  has to be implemented in subclasses
+        return NotImplemented
+
+
+@dataclass
+class Attack(BasePerturber):
     """Adversarial attack.
 
-    __call__ merthod returns a perturbation model, while perturb returns an
+    __call__ returns a perturbation model, while perturb returns an
     adversarial example. A subclass should override one or both of them.
     """
     output_to_target: T.Union[T.Callable, str] = None  # = logits_to_argmax
@@ -169,36 +212,7 @@ class Attack:
         if y is None:
             y = self._get_target(model, x, output)
 
-        with torch.enable_grad():
-            if NotImplemented is not (
-                    pert := self._get_perturbation(model, x, y=y, loss_mask=loss_mask, **kwargs)):
-                return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
-            elif NotImplemented is not (
-                    x_adv := self._perturb(model, x, y=y, loss_mask=loss_mask, **kwargs)):
-                return _pert_to_pert_model(x_adv, x)
-            raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
-
-    def perturb(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
-        """Generates an adversarial example.
-
-        __call__ or perturb should be overridden by subclasses.
-
-        Args:
-            model (Module): Model.
-            x (Tensor): Input tensor.
-            y (Tensor, optional): Target/label tensor. If `None`, the prediction
-                obtained from `self.to_virtual_target(output)` is used as the
-                label.
-            loss_mask (BoolTensor): Mask to be multiplied with unreduced loss.
-            output (Tensor, optional): Output for use as a target. If `None`
-                it is obtained by calling `model(x)` (and then transformad with
-                `self.to_virtual_target`).
-
-        Return:
-            Perturbed input.
-        """
-        perturb = self(model, x, y=y, loss_mask=loss_mask, output=output, **kwargs)
-        return perturb(x, y, loss_mask)
+        return super().__call__(model=model, x=x, y=y, loss_mask=loss_mask, output=output, **kwargs)
 
     @torch.no_grad()
     def _get_target(self, model, x, output):
@@ -214,14 +228,6 @@ class Attack:
         y = self.output_to_target(model(x) if output is None else output)
         self.target_computed(dict(output=output, y=y))
         return y
-
-    def _perturb(self, model, x, y=None, loss_mask=None, **kwargs):
-        # this or _get_perturbation has to be implemented in subclasses
-        return NotImplemented
-
-    def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
-        # this or _perturb  has to be implemented in subclasses
-        return NotImplemented
 
 
 @dataclass
@@ -245,7 +251,7 @@ class OptimizingAttack(Attack):
         `clip_bounds` should be set to `None` (default) if adversarial inputs
          do not have to be clipped.
     """
-    loss: T.Callable = dc.field(default_factory=partial(vml.NLLLossWithLogits, ignore_index=-1))
+    loss: T.Callable = vml.nll_loss_l
     minimize: bool = False
     clip_bounds: tuple = (0, 1)
 
@@ -427,6 +433,7 @@ def perturb_iterative(model, x, y, loss_mask, step_count, update, loss, minimize
 def _init_pert_model(pert_model, x, initializer=None, projection=None):
     if pert_model is None:
         pert_model = vmi.Add(())
+    pert_model.eval()
     vm.call_if_not_built(pert_model, x)  # parameter shapes have to be inferred from x
     with torch.no_grad():
         if initializer is not None:
@@ -471,7 +478,7 @@ def _get_mask_and_update_index(pmodel: vmi.PertModelBase, adv_mask: torch.Tensor
     return adv_mask.logical_not_() if mask_loss and any_adv else None
 
 
-MaskingMode = T.Literal['loss', 'grad']
+MaskingModeArg = T.Literal['loss', 'grad']
 
 
 def perturb_iterative_with_perturbation_model(
@@ -480,7 +487,7 @@ def perturb_iterative_with_perturbation_model(
         projection: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = None,
         bounds=(0, 1),
         stop_mask: T.Callable[[AttackState], bool] = None,
-        masking_mode: T.Union[MaskingMode, T.Container[MaskingMode]] = None,
+        masking_mode: T.Union[MaskingModeArg, T.Container[MaskingModeArg]] = None,
         backward_callback: T.Callable[[AttackState], None] = None, compute_model_grads=False):
     """Iteratively optimizes the loss over some input perturbation model.
 
@@ -695,6 +702,44 @@ class PGDAttackOld(OptimizingAttack, EarlyStoppingMixin):
         return (x + delta).clamp_(*self.clip_bounds)
 
 
+def default_projection(eps, clip_bounds):
+    def projection(pmodel: vmi.PertModelBase, x):
+        params = pmodel.named_parameters()
+        default_vals = vmi.named_default_parameters(pmodel, full_size=False)
+        for (name, p), (name_, d) in zip(params, default_vals):
+            if name != name_:  # Do not remove!
+                raise RuntimeError(f'Parameter name not matching: "{name_}"!="{name}".')
+            p.clamp_(min=d - eps, max=d + eps)
+        if clip_bounds is not None:
+            pmodel.ensure_output_within_bounds(x, clip_bounds)
+
+    return projection
+
+
+@dataclass
+class PertModelRandPerturber(BasePerturber):
+    pert_model_f: vmi.PertModelBase = partial(vmi.Add, ())
+    initializer: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = Required
+    projection: T.Union[float, T.Callable[[vmi.PertModelBase, torch.Tensor], None]] = Required
+    project_init: bool = True
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.projection is None:
+            self.projection = lambda *_: None
+        elif not callable(self.projection):
+            self.projection = default_projection(eps=self.projection, clip_bounds=self.clip_bounds)
+
+    def _get_perturbation(self, model, x, y=None, loss_mask=None, pert_model=None,
+                          initialize_pert_model=True, backward_callback=None):
+        if pert_model is None:
+            pert_model = self.pert_model_f()
+        _init_pert_model(pert_model, x,
+                         initializer=self.initializer if initialize_pert_model else None,
+                         projection=self.projection if self.project_init else None)
+        return pert_model
+
+
 @dataclass
 class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
     pert_model_f: vmi.PertModelBase = partial(vmi.Add, ())
@@ -710,19 +755,7 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
         if self.projection is None:
             self.projection = lambda *_: None
         elif not callable(self.projection):
-            eps = self.projection
-
-            def projection(pmodel: vmi.PertModelBase, x):
-                params = pmodel.named_parameters()
-                default_vals = vmi.named_default_parameters(pmodel, full_size=False)
-                for (name, p), (name_, d) in zip(params, default_vals):
-                    if name != name_:  # Do not remove!
-                        raise RuntimeError(f'Parameter name not matching: "{name_}"!="{name}".')
-                    p.clamp_(min=d - eps, max=d + eps)
-                if self.clip_bounds is not None:
-                    pmodel.ensure_output_within_bounds(x, self.clip_bounds)
-
-            self.projection = projection
+            self.projection = default_projection(eps=self.projection, clip_bounds=self.clip_bounds)
 
     def _get_perturbation(self, model, x, y=None, loss_mask=None, pert_model=None,
                           initialize_pert_model=True, backward_callback=None):
