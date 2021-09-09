@@ -270,7 +270,7 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
     def _init_call(self, *args, **kwargs):
         if self.training:
             warnings.warn("Consider turning off training mode by calling eval() before calling the"
-                          + "module for the first time to avoid unwanted state change.")
+                          + " module for the first time to avoid unwanted state change.")
         device = _try_get_device_from_args(*args, **kwargs)
         if type(self).build != Module.build:
             self.build(*args, **kwargs)
@@ -1353,22 +1353,26 @@ class GhostBatchNorm(BatchNorm):
 class _Func(Module):
     def __init__(self, func):
         super().__init__()
-        self._func = func
+        self.func = func
 
     def forward(self, *args, **kwargs):
-        return self._func(*args, **kwargs)
+        return self.func(*args, **kwargs)
 
 
 class Func(_Func):
     def __init__(self, func, inv=None, module=None):
         super().__init__(func)
-        self._inv = inv
+        self.inv = inv
         self.module = (module if module else func if isinstance(func, nn.Module) else None)
 
     def inverse_module(self):
-        if self._inv is None:
+        if self.inv is None:
             raise ModuleInverseError("Inverse not defined.")
-        return Func(self._inv, self._func, module=self.module)
+        return Func(self.inv, self.func, module=self.module)
+
+    def extra_repr(self):
+        result = f"func={repr(self.func)}"
+        return result if self.inv is None else f"{result}, inv={repr(self.inv)}"
 
 
 class Inverse(Module):
