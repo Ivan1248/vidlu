@@ -232,6 +232,7 @@ def get_input_adapter(input_adapter_str, *, data_stats=None):
 
 
 def build_and_init_model(model, init_input, device):
+    model.eval()
     if device is not None:
         model.to(device)
         init_input = init_input.to(device)
