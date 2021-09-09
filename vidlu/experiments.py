@@ -275,9 +275,9 @@ class TrainingExperiment:
 
         with indent_print('\nInitializing checkpoint manager and logger...'):
             logger = Logger()
-            logger.log("Resume command:\n"
+            logger.log("Resume command:\n\x1b[0;30;42m"
                        + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
-                       + f' -d "{a.device}" --metrics "{a.metrics}" -r')
+                       + f'--params "{a.params}" -d "{a.device}" --metrics "{a.metrics}" -r \x1b[0m')
 
             cpman = get_checkpoint_manager(a, dirs.saved_states)
 
