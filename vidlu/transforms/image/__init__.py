@@ -1,3 +1,7 @@
+import dataclasses as dc
+
+import torch
+
 import vidlu.utils.func as vuf
 from .format import *
 from .space import *
@@ -22,25 +26,27 @@ def div(x, divisor):
 Div = vuf.func_to_class(div)
 
 
+@dc.dataclass
 class Standardize:
-    def __init__(self, mean, std):
-        self.mean, self.std = mean.view(-1, 1, 1), std.view(-1, 1, 1)
+    mean: torch.Tensor
+    std: torch.Tensor
 
     def __call__(self, x):
         fmt = dict(dtype=x.dtype, device=x.device)
-        return (x - self.mean.to(**fmt)) / self.std.to(**fmt)
+        return (x - self.mean.view(-1, 1, 1).to(**fmt)) / self.std.view(-1, 1, 1).to(**fmt)
 
 
 standardize = vuf.class_to_func(Standardize)
 
 
+@dc.dataclass
 class Destandardize:
-    def __init__(self, mean, std):
-        self.mean, self.std = mean.view(-1, 1, 1), std.view(-1, 1, 1)
+    mean: torch.Tensor
+    std: torch.Tensor
 
     def __call__(self, x):
         fmt = dict(dtype=x.dtype, device=x.device)
-        return x * self.std.to(**fmt) + self.mean.to(**fmt)
+        return x * self.std.view(-1, 1, 1).to(**fmt) + self.mean.view(-1, 1, 1).to(**fmt)
 
 
 destandardize = vuf.class_to_func(Destandardize)
