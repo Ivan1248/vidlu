@@ -110,10 +110,10 @@ def is_modified(tensor: torch.Tensor):
     return tensor._version > 0
 
 
-class StateAwareCheckpointFunction(tuc.CheckpointFunction):
+class StateAwareCheckpointFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, run_function, preserve_rng_state, *args, preservation_cm_f=None):
-        result = super().forward(ctx, run_function, preserve_rng_state, *args)
+    def forward(ctx, run_function, preservation_cm_f, preserve_rng_state, *args):
+        result = tuc.CheckpointFunction.forward(ctx, run_function, preserve_rng_state, *args)
         if preservation_cm_f is not None:
             def preserving_run_function(*args):
                 with preservation_cm_f():
@@ -122,11 +122,19 @@ class StateAwareCheckpointFunction(tuc.CheckpointFunction):
             ctx.run_function = preserving_run_function
         return result
 
+    @staticmethod
+    def backward(ctx, *args):
+        return (None,) + tuc.CheckpointFunction.backward(ctx, *args)
 
-def checkpoint_sa(function, *args, preservation_cm_f=None, preserve_rng_state=True):
+
+def checkpoint_sa(function, *args, **kwargs):
     # Can preserve the state in calls to function in backward
-    return StateAwareCheckpointFunction.apply(function, preserve_rng_state=preserve_rng_state,
-                                              *args, presevation_cm_f=preservation_cm_f)
+    preservation_cm_f = kwargs.pop('preservation_cm_f', None)
+    preserve_rng_state = kwargs.pop('preserve_rng_state', True)
+    if kwargs:
+        raise ValueError("Unexpected keyword arguments: " + ",".join(arg for arg in kwargs))
+    return StateAwareCheckpointFunction.apply(function, preservation_cm_f, preserve_rng_state,
+                                              *args)
 
 
 def checkpoint_fix(function, *args, **kwargs):
