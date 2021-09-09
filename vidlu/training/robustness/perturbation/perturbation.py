@@ -1,4 +1,4 @@
-from vidlu.utils.func import partial
+import torch
 from numpy import s_
 
 import vidlu.modules.inputwise as vmi
@@ -6,6 +6,7 @@ import vidlu.modules as vm
 from vidlu.modules.inputwise import PertModel, SeqPertModel
 import vidlu.ops.image as voi
 import vidlu.ops as vo
+from vidlu.utils.func import partial
 import vidlu.utils.func as vmf
 from vidlu.utils.collections import NameDict
 
@@ -54,7 +55,7 @@ class ChannelGammaHsv(PertModel):
 
 
 class Photometric20(SeqPertModel):
-    def __init__(self, clamp, forward_arg_count=None):
+    def __init__(self, clamp=False, projection=None, forward_arg_count=None):
         add_f = partial(vmi.Add, equivariant_dims=(2, 3))
         mul_f = partial(vmi.Multiply, equivariant_dims=(2, 3))
         modules = NameDict(to_hsv=PertModel(voi.rgb_to_hsv),
@@ -67,15 +68,20 @@ class Photometric20(SeqPertModel):
         if clamp:
             modules.soft_clamp = PertModel(partial(vo.soft_clamp, min_=0, max_=1, eps=0.01),
                                            forward_arg_count=1)
+        if projection == "scale":
+            modules.rescale = PertModel(partial(vo.batch.min_max_rescale),
+                                        forward_arg_count=1)
+
         super().__init__(**modules, forward_arg_count=forward_arg_count)
 
 
 class PhotoTPS20(SeqPertModel):
-    def __init__(self, clamp, forward_arg_count=None):
-        super().__init__(photometric=Photometric20(clamp, forward_arg_count=1),
-                         tps=vmi.BackwardTPSWarp(label_interpolation_mode='nearest',
-                                                 label_padding_mode=-1),
-                         forward_arg_count=forward_arg_count)
+    def __init__(self, clamp, projection=None, forward_arg_count=None):
+        super().__init__(
+            photometric=Photometric20(clamp, projection=projection, forward_arg_count=1),
+            tps=vmi.BackwardTPSWarp(label_interpolation_mode='nearest',
+                                    label_padding_mode=-1),
+            forward_arg_count=forward_arg_count)
 
 
 class PhotoWarp1(SeqPertModel):
@@ -86,7 +92,7 @@ class PhotoWarp1(SeqPertModel):
 
 
 class Photometric3(SeqPertModel):
-    def __init__(self, clamp, forward_arg_count=None):
+    def __init__(self, clamp, forward_arg_count=1):
         add_f = partial(vmi.Add, equivariant_dims=(2, 3))
         mul_f = partial(vmi.Multiply, equivariant_dims=(2, 3))
         modules = NameDict(to_hsv=PertModel(voi.rgb_to_hsv),
