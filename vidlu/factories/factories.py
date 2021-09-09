@@ -398,18 +398,19 @@ def short_symbols_for_get_trainer():
     return locals()
 
 
-def get_trainer(trainer_str: str, *, dataset, model, verbosity=1) -> Trainer:
+def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,
+                verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
     default_config = ct.TrainerConfig(**defaults.get_trainer_args(dataset))  # empty
     ah = unsafe_eval(f"vuf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
     config = ct.TrainerConfig(default_config, *ah.args)
-    argtree = vuf.ObjectUpdatree(**ah.kwargs)
-    config = argtree.apply(config)
+    updatree = vuf.ObjectUpdatree(**ah.kwargs)
+    config = updatree.apply(config)
 
     trainer_f = partial(Trainer, **config.normalized())
 
-    trainer = trainer_f(model=model)
+    trainer = trainer_f(model=model, deterministic=deterministic)
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
     return trainer
 
