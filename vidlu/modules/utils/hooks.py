@@ -43,7 +43,8 @@ def print_norm(module, input, output):
     """
     module_name = try_get_module_name_from_call_stack(module)
     for output_index, out in enumerate(extract_tensors(input)):
-        print(f"{module_name=}, [{output_index}] l2_norm={out.norm().item()}, linf_norm={out.abs().max()}")
+        print(
+            f"{module_name=}, [{output_index}] l2_norm={out.norm().item()}, linf_norm={out.abs().max()}")
 
 
 def check_outputs_log_abs_det_jac(module, input, output):

@@ -12,11 +12,10 @@ from torch import nn
 
 from vidlu.data import BatchTuple, Record
 from vidlu.utils.collections import NameDict
-from vidlu.torch_utils import (switch_training, batchnorm_stats_tracking_off)
+import vidlu.torch_utils as vtu
 import vidlu.modules as vm
 import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
-
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 
 
@@ -80,14 +79,14 @@ def supervised_eval_step(trainer, batch):
     trainer.model.eval()
     x, y = _prepare_sup_batch(batch)
     out = trainer.model(x)
-    loss = trainer.loss(out, y).mean()
+    loss = trainer.loss(out, y, reduction="mean")
     return NameDict(x=x, target=y, out=out, loss=loss.item())
 
 
 def _supervised_train_step_x_y(trainer, x, y):
     trainer.model.train()
     out = trainer.model(x)
-    loss = trainer.loss(out, y).mean()
+    loss = trainer.loss(out, y, reduction="mean")
     do_optimization_step(trainer.optimizer, loss)
     return NameDict(x=x, target=y, out=out, loss=loss.item())
 
@@ -106,7 +105,17 @@ class ClassifierEnsembleEvalStep:
         trainer.model.eval()
         x, y = batch
         out = self.combine(model(x) for model in self.model_iter(trainer.model))
-        loss = trainer.loss(out, y).mean()
+        loss = trainer.loss(out, y, reduction="mean")
+        return NameDict(x=x, target=y, out=out, loss=loss.item())
+
+
+class IIDMonocularStep:
+    def __call__(self, trainer, batch):
+        x, y = _prepare_sup_batch(batch)
+        trainer.model.train()
+        out = trainer.model(x)
+        loss = trainer.loss(out, y, reduction="mean")
+        do_optimization_step(trainer.optimizer, loss)
         return NameDict(x=x, target=y, out=out, loss=loss.item())
 
 
@@ -149,7 +158,7 @@ class DiscriminativeFlowSupervisedTrainStep:  # TODO: improve
             z = torch.cat([zi.view(x.shape[0], -1) for zi in vmu.extract_tensors(z)])
 
         loss_gen = vml.input_image_nll(x, z, self.bin_count).mean()
-        loss_dis = trainer.loss(out, y).mean()
+        loss_dis = trainer.loss(out, y, reduction="mean")
         loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
 
         do_optimization_step(trainer.optimizer, loss)
@@ -173,7 +182,7 @@ class DiscriminativeFlowSupervisedEvalStep:  # TODO: improve
         out, z = call_flow(trainer.model, x, end=self.flow_end)
 
         loss_gen = vml.input_image_nll(x, z, self.bin_count).mean()
-        loss_dis = trainer.loss(out, y).mean()
+        loss_dis = trainer.loss(out, y, reduction="mean")
         loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
 
         return NameDict(x=x, target=y, z=z, out=out, loss=loss.item(), loss_dis=loss_dis.item(),
@@ -204,7 +213,7 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep:  # TODO: improve
             z_ = Ladj.add(torch.cat(z, dim=1), z, Ladj.zero(z[0]))
 
         loss_gen = vml.input_image_nll(x, z_, self.bin_count).mean()
-        loss_dis = trainer.loss(out, y).mean()
+        loss_dis = trainer.loss(out, y, reduction="mean")
         loss_adv = self._adv_loss(out_d / d_temp).mean()
         if loss_adv_inf := torch.isinf(loss_adv):
             print(f"loss_adv={loss_adv.item()}, {loss_adv=}")
@@ -216,7 +225,7 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep:  # TODO: improve
         # adversarial step
 
         if self.adv_weight != 0 and not loss_adv_inf:
-            with batchnorm_stats_tracking_off(trainer.model):
+            with vtu.norm_stats_tracking_off(trainer.model):
                 with torch.no_grad():
                     out_adv = torch.roll(out, 1, dims=0)
                     out_full_adv = (torch.cat([out_adv, out_d], dim=1).detach(),
@@ -266,7 +275,7 @@ class AdversarialDiscriminativeFlowSupervisedEvalStep:  # TODO: improve
             z_ = Ladj.add(torch.cat(z, dim=1), z, Ladj.zero(z[0]))
 
         loss_gen = vml.input_image_nll(x, z_, self.bin_count).mean()
-        loss_dis = trainer.loss(out, y).mean()
+        loss_dis = trainer.loss(out, y, reduction="mean")
         loss_adv = self._adv_loss(out_d).mean()
         loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen + self.adv_weight * loss_adv
 
@@ -297,7 +306,7 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep2:  # TODO: improve
             z_ = Ladj.add(torch.cat(z, dim=1), z, Ladj.zero(z[0]))
 
         loss_gen = vml.input_image_nll(x, z_, self.bin_count).mean()
-        loss_dis = trainer.loss(logits, y).mean()
+        loss_dis = trainer.loss(logits, y, reduction="mean")
         loss = self.dis_weight * loss_dis + self.gen_weight * loss_gen
 
         if not self.eval:
@@ -305,7 +314,7 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep2:  # TODO: improve
 
         # adversarial step
 
-        with batchnorm_stats_tracking_off(trainer.model):
+        with vtu.norm_stats_tracking_off(trainer.model):
             with torch.no_grad():
                 logits_adv = torch.roll(logits, 1, dims=0)
                 out_full_adv = (logits_adv.detach(),
@@ -315,7 +324,7 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep2:  # TODO: improve
                                          end=self.flow_end)
             logits_adv_ = out_full_adv_[0]
 
-        loss_adv = trainer.loss(logits_adv_, y).mean()
+        loss_adv = trainer.loss(logits_adv_, y, reduction="mean")
 
         if not self.eval:
             do_optimization_step(trainer.optimizer, self.adv_weight * loss_adv)
@@ -348,9 +357,9 @@ class SupervisedTrainMultiStep:
         trainer.model.train()
         x, y = batch
         for i in range(self.repeat_count):
-            with batchnorm_stats_tracking_off(trainer.model) if i == 0 else ctx.suppress():
+            with vtu.norm_stats_tracking_off(trainer.model) if i == 0 else ctx.suppress():
                 out = trainer.model(x)
-                loss = trainer.loss(out, y).mean()
+                loss = trainer.loss(out, y, reduction="mean")
                 do_optimization_step(trainer.optimizer, loss)
                 if i == 0:
                     initial = dict(out=out, loss=loss.item())
@@ -409,10 +418,11 @@ class SupervisedSlidingBatchTrainStep:
             starts = list(reversed(starts))
         result = None
         for i in starts:
-            with batchnorm_stats_tracking_off(trainer.model) if i == starts[0] else ctx.suppress():
+            with vtu.norm_stats_tracking_off(trainer.model) if i == starts[
+                0] else ctx.suppress():
                 inter_x, inter_y = [a[i:i + n] for a in (x, y)]
                 out = trainer.model(inter_x)
-                loss = trainer.loss(out, inter_y).mean()
+                loss = trainer.loss(out, inter_y, reduction="mean")
                 do_optimization_step(trainer.optimizer, loss)
                 result = result or NameDict(x=inter_x, target=inter_y, out=out, loss=loss.item())
         self.start_index = starts[0 if self.reversed else -1] + stride - len(self.prev_x_y[0])
@@ -446,7 +456,7 @@ class SupervisedTrainAcumulatedBatchStep:
         for x, y in zip(xs, ys):
             out = trainer.model(x)
             outputs.append(out)
-            loss = trainer.loss(out, y).mean()
+            loss = trainer.loss(out, y, reduction="mean")
             if self.reduction == 'mean':
                 loss /= len(x)
             loss.backward()
@@ -503,7 +513,7 @@ class AdversarialTrainStep:
         >>> trainer.model.train()
         >>>
         >>> out = trainer.model(x_p)
-        >>> loss_p = trainer.loss(out, y).mean()
+        >>> loss_p = trainer.loss(out, y, reduction="mean")
         >>> do_optimization_step(trainer.optimizer, loss=loss_p)
         """
         x, y = batch
@@ -520,8 +530,8 @@ class AdversarialTrainStep:
 
         out = trainer.model(torch.cat((x_c, x_p), dim=0))
         out_c, out_p = split(out)
-        loss_p = trainer.loss(out_p, y_p).mean()
-        loss_c = trainer.loss(out_c, y_c).mean() if len(y_c) > 0 else 0
+        loss_p = trainer.loss(out_p, y_p, reduction="mean")
+        loss_c = trainer.loss(out_c, y_c, reduction="mean") if len(y_c) > 0 else 0
         do_optimization_step(trainer.optimizer,
                              loss=cln_proportion * loss_c + (1 - cln_proportion) * loss_p)
         return NameDict(x=x, out=crc.result.out, target=y, loss=crc.result.loss_mean,
@@ -563,9 +573,10 @@ class AdversarialCombinedLossTrainStep:
 
         trainer.model.train()
         out_c = trainer.model(x)
-        loss_c = trainer.loss(out_c, y_p).mean()
+        loss_c = trainer.loss(out_c, y_p, reduction="mean")
         out_p = trainer.model(x_p)
-        loss_p = (trainer.attack if self.use_attack_loss else trainer).loss(out_p, y).mean()
+        loss_p = (trainer.attack if self.use_attack_loss else trainer).loss(out_p, y,
+                                                                            reduction="mean")
 
         do_optimization_step(trainer.optimizer,
                              loss=self.clean_weight * loss_c + self.adv_weight * loss_p)
@@ -623,7 +634,7 @@ class AdversarialTrainMultiStep:
                 trainer.optimizer.zero_grad()
 
         (trainer.model.train if self.train_mode else trainer.model.eval)()
-        with batchnorm_stats_tracking_off(trainer.model) if self.train_mode else ctx.suppress():
+        with vtu.norm_stats_tracking_off(trainer.model) if self.train_mode else ctx.suppress():
             perturb = trainer.attack.perturb
             if self.reuse_pert:
                 perturb = partial(perturb, initial_pert=self.last_pert)
@@ -634,7 +645,7 @@ class AdversarialTrainMultiStep:
 
         trainer.model.train()
         out_p = trainer.model(x_p)
-        loss_p = trainer.loss(out_p, y_p).mean()
+        loss_p = trainer.loss(out_p, y_p, reduction="mean")
         do_optimization_step(trainer.optimizer, loss_p)
 
         return NameDict(x=x, target=y, out=clean_result.out, loss=clean_result.loss_mean,
@@ -654,18 +665,18 @@ class VATTrainStep:
         x, y = batch
 
         out = model(x)
-        loss = trainer.loss(out, y).mean()
+        loss = trainer.loss(out, y, reduction="mean")
         with torch.no_grad() if self.block_grad_for_clean else ctx.suppress():
             target = attack.output_to_target(out)  # usually the same as target.sogtmax(1)
             if self.block_grad_for_clean:
                 target = target.detach()
-        with switch_training(model, False) if self.attack_eval_model else ctx.suppress():
-            with batchnorm_stats_tracking_off(model) if model.training else ctx.suppress():
+        with vtu.switch_training(model, False) if self.attack_eval_model else ctx.suppress():
+            with vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
                 x_p, y_p = attack.perturb(model, x, target)
                 out_p = model(x_p)
-        loss_p = attack.loss(out_p, y_p).mean()
+        loss_p = attack.loss(out_p, y_p, reduction="mean")
         loss = loss + self.alpha * loss_p
-        loss_ent = vml.entropy_l(out_p).mean()
+        loss_ent = vml.entropy_l(out_p, reduction="mean")
         if self.entropy_loss_coef:
             loss += self.entropy_loss_coef * loss_ent if self.entropy_loss_coef != 1 else loss_ent
         do_optimization_step(trainer.optimizer, loss=loss)
@@ -687,14 +698,14 @@ class PertConsistencyTrainStep:  # TODO
         x, y = batch
 
         out = model(x)
-        loss = trainer.loss(out, y).mean()
-        with batchnorm_stats_tracking_off(model) if not self.track_pert_bn_stats \
+        loss = trainer.loss(out, y, reduction="mean")
+        with vtu.norm_stats_tracking_off(model) if not self.track_pert_bn_stats \
                 else ctx.suppress():
             with torch.no_grad():
                 x_p, y_p = trainer.pert_model(x, y)
             out_p = model(x_p)
             target_p = out.detach() if self.block_grad_for_clean else out
-            loss_p = trainer.loss(out_p, target_p).mean()
+            loss_p = trainer.loss(out_p, target_p, reduction="mean")
             loss = loss + self.alpha * loss_p
             if self.entropy_loss_coef:
                 loss_ent = vml.entropy_l(out_p).mean()
@@ -850,10 +861,10 @@ class SemisupCleanTargetConsStepBase:
                 if self.block_grad_on_clean:  # just in case
                     pert.target = pert.target.detach()
                 loss_u = loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
-                loss = loss_l + self.alpha * loss_u
+                loss = loss_l.add(loss_u, alpha=self.alpha)
                 loss_ent = vml.entropy_l(pert.out).mean()
                 if self.entropy_loss_coef:
-                    loss += self.entropy_loss_coef * loss_ent
+                    loss.add_(loss_ent, alpha=self.entropy_loss_coef)
             if not self.eval:
                 loss.backward()
         if torch.any(torch.isnan(loss_l)):
@@ -901,8 +912,8 @@ class SemisupVATCorrEvalStep:
         x_p, y_p = attack.perturb(model, x_c, target_uns)
         out_p = model(x_p)
 
-        loss_p = attack.loss(out_p, y_p).mean()
-        loss_l = trainer.loss(out_l := out[:len(x_l)], y_l).mean()
+        loss_p = attack.loss(out_p, y_p, reduction="mean")
+        loss_l = trainer.loss(out_l := out[:len(x_l)], y_l, reduction="mean")
         loss = loss_l + self.alpha * loss_p
         loss_ent = vml.entropy_l(out_p).mean()
         if self.entropy_loss_coef:
@@ -996,13 +1007,14 @@ class AdversarialEvalStep:
 
         with torch.no_grad():
             out = trainer.model(x)
-            loss = trainer.loss(out, y).mean()
+            loss = trainer.loss(out, y, reduction="mean")
 
         x_p, y_p = attack.perturb(trainer.model, x, None if self.virtual else y)
         with torch.no_grad():
             out_p = trainer.model(x_p)
-            loss_p = (attack.loss(out_p, attack.output_to_target(out)) if self.virtual
-                      else trainer.loss(out_p, y)).mean()
+            loss_p = (
+                attack.loss(out_p, attack.output_to_target(out), reduction="mean") if self.virtual
+                else trainer.loss(out_p, y, reduction="mean"))
 
         return NameDict(x=x, target=y, out=out, loss=loss.item(), x_p=x_p, out_p=out_p,
                         loss_p=loss_p.item())
@@ -1021,7 +1033,7 @@ class AdversarialTargetedEvalStep:
 
         with torch.no_grad():
             output = trainer.model(x)
-            loss = trainer.loss(output, y).mean()
+            loss = trainer.loss(output, y, reduction="mean")
 
         result = dict()
         for i, t in enumerate(self.targets):
@@ -1030,8 +1042,8 @@ class AdversarialTargetedEvalStep:
             with torch.no_grad():
                 result[f"out_p{i}"] = trainer.model(x_p)
                 result[f"loss_p_targ{i}"] = trainer.loss(result[f"out_p{i}"],
-                                                         t_var).mean().item()
-                result[f"loss_p{i}"] = trainer.loss(result[f"out_p{i}"], y).mean().item()
+                                                         t_var, reduction="mean").item()
+                result[f"loss_p{i}"] = trainer.loss(result[f"out_p{i}"], y, reduction="mean").item()
 
         return NameDict(x=x, target=y, out=output, loss=loss.item(), x_p=x_p, **result)
 
@@ -1042,7 +1054,7 @@ def autoencoder_train_step(trainer, batch):
     trainer.model.train()
     x = batch[0]
     x_r = trainer.model(x)
-    loss = trainer.loss(x_r, x).mean()
+    loss = trainer.loss(x_r, x, reduction="mean")
     do_optimization_step(trainer.optimizer, loss)
     return NameDict(x_r=x_r, x=x, loss=loss.item())
 
@@ -1072,7 +1084,7 @@ class GANTrainStep:
 
         # training discriminator with real
         output = discriminator(real)
-        errD_real = trainer.loss(output, real_labels).mean()  # torch.nn.BCELoss()
+        errD_real = trainer.loss(output, real_labels, reduction="mean")  # torch.nn.BCELoss()
         D_real = output.mean().item()
         errD_real.backward()
 

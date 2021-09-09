@@ -45,9 +45,8 @@ def switch_training(module, value):
 
 
 @contextlib.contextmanager
-def batchnorm_stats_tracking_off(module):
-    modules = [m for m in module.modules()
-               if type(m).__name__.startswith('BatchNorm') and hasattr(m, 'momentum')]
+def norm_stats_tracking_off(module):
+    modules = [m for m in module.modules() if 'Norm' in type(m).__name__ and hasattr(m, 'momentum')]
     with vuc.switch_attribute(modules, 'momentum', 0), \
             preserve_attribute_tensor(modules, 'num_batches_tracked'):
         yield
@@ -151,7 +150,7 @@ def checkpoint_fix(function, *args, **kwargs):
 
 
 class StateAwareCheckpoint:  # preserves state in the first run
-    def __init__(self, module, context_managers_fs=(batchnorm_stats_tracking_off,)):
+    def __init__(self, module, context_managers_fs=(norm_stats_tracking_off,)):
         self.context_managers_fs = context_managers_fs
         self.module = module if isinstance(module, nn.Module) else nn.ModuleList(module)
 

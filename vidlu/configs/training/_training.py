@@ -19,7 +19,7 @@ supervised = TrainerConfig(
 
 classification = TrainerConfig(
     supervised,
-    loss=losses.NLLLossWithLogits(ignore_index=-1)
+    loss=losses.nll_loss_l
 )
 
 # Adversarial training, basic
@@ -134,6 +134,7 @@ semisup_cons_phtps20_r1w = TrainerConfig(
     train_step=ts.SemisupVATStep(block_grad_on_clean=False),
     eval_step=ts.SemisupVATEvalStep(),
 )
+
 semisup_cons_phtps20_1wa = TrainerConfig(
     partial(
         te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,

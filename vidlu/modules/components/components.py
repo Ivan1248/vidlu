@@ -244,6 +244,25 @@ class StandardRootBlock(E.Seq):
             self.add(act=act_f(),
                      pool=pool_f(3, stride=2, padding='half'))
 
+    # def forward(self, x):
+    #     x_l = torch.load(f"/tmp/debug/x_l{0}.pt")
+    #     interm = torch.load(f"/tmp/debug/interm_outs_u{0}.pt")
+    #
+    #     print("im", x.min(), x.mean(), x.max())
+    #     try:
+    #         print(self.conv.orig.weight.min(), self.conv.orig.weight.max())
+    #     except:
+    #         pass
+    #     x = self.conv(x)
+    #     print("x", x.min(), x.max())
+    #     m = interm['backbone.conv1']
+    #     breakpoint()
+    #     x = self.norm(x)
+    #     x = self.act(x)
+    #     x = self.pool(x)
+    #     # x = super().forward(x)
+    #     return x
+
 
 class ImprovedRootBlock(E.Seq):
     """Standard Inception-v2 root block.
@@ -778,7 +797,7 @@ class ResNetV2Unit(E.Seq):
         out_width = block_args.base_width * block_args.width_factors[-1]
         stride = block_args.stride
         if stride == 1 and in_width == out_width:
-            self.add(fork=E.Fork(block=block, shortcut=nn.Identity(),))
+            self.add(fork=E.Fork(block=block, shortcut=nn.Identity()))
         else:
             shortcut = _get_resnetv2_shortcut(in_width, out_width, stride, self.dim_change,
                                               block_args.conv_f)

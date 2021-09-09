@@ -4,9 +4,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+from typeguard import check_argument_types
 
-from vidlu.utils.func import class_to_func
-from vidlu.torch_utils import batchnorm_stats_tracking_off, save_grads
+from vidlu.torch_utils import norm_stats_tracking_off, preserve_grads
 from vidlu.ops import one_hot
 from vidlu import metrics
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
@@ -49,20 +49,28 @@ Losses that have the "ll" suffix in the name accept 2 arguments:
 """
 
 
-class NLLLossWithLogits(nn.CrossEntropyLoss):
-    def __init__(self, weight=None, ignore_index=-1):
-        super().__init__(weight=weight, ignore_index=ignore_index, reduction='none')
-
-    def __call__(self, logits, target):
-        return super().__call__(logits, target)
+def nll_loss_l(logits, target, weight=None, ignore_index=-1,
+               reduction: T.Literal["none", "mean", "sum"] = "none"):
+    return F.cross_entropy(logits, target, ignore_index=ignore_index, weight=weight,
+                           reduction=reduction)
 
 
-nll_loss_l = class_to_func(NLLLossWithLogits)
+def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none", mask=None):
+    check_argument_types()
+    if mask is not None and reduction == "none":
+        raise ValueError(f'reduction="none" is not supported when a mask is provided.')
+    if mask is None:
+        return result.mean() if reduction == "mean" else result.sum() if reduction == "sum" else result
+    else:
+        result = result[mask]
+        return result.mean() if reduction == "mean" else result.sum()
 
 
-def nll_loss(probs, target):
-    return -torch.log(torch.einsum("nc...,nc...->n...", probs,
-                                   F.one_hot(target, probs.shape[1]).transpose(-1, 1)))
+def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none", ignore_index=-1):
+    check_argument_types()
+    result = -torch.log(torch.einsum("nc...,nc...->n...", probs,
+                                     F.one_hot(target, probs.shape[1]).transpose(-1, 1)))
+    return _apply_reduction(result, reduction=reduction, mask=target != ignore_index)
 
 
 def kl_div_l(logits, target):
@@ -158,11 +166,6 @@ def conf_thresh_probs_sqr_l2_dist_ll(logits, target_logits, conf_thresh):
     return probs_sqr_l2_dist_l(logits, target) * (target.max(1).values >= conf_thresh)
 
 
-def uncertain_kl_div_ll(logits, target_logits):
-    target = target_logits.softmax(1)
-    targ_sorted = target.sort(descending=True)
-
-
 # mIoU #############################################################################################
 
 def neg_soft_mIoU_ll(logits, target_logits, batch=True, weights=None):  # TODO
@@ -208,7 +211,7 @@ class VATLoss(nn.Module):
         self.iter_count = iter_count
 
     def forward(self, model, x, pred=None):
-        with batchnorm_stats_tracking_off(model):
+        with norm_stats_tracking_off(model):
             if pred is None:
                 with torch.no_grad():
                     pred = F.softmax(model(x), dim=1)
