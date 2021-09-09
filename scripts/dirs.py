@@ -6,11 +6,12 @@ from functools import cached_property
 from vidlu.utils.path import find_in_ancestors
 
 
-def _find(path_end, start=__file__):
+def _find(path_end, start=__file__, warn=False):
     try:
         return Path(find_in_ancestors(start, path_end))
     except FileNotFoundError:
-        warnings.warn(f'Cannot find directory "{path_end}" in ancestors of {__file__}.')
+        if warn:
+            warnings.warn(f'Cannot find directory "{path_end}" in ancestors of {__file__}.')
         return None
 
 
@@ -73,7 +74,8 @@ class _Dirs:
 
     def _get_path(self, dir_name: str):
         return opt(Path, self.data / dir_name if self.data else (
-                os.environ.get(f"VIDLU_{dir_name.upper()}", None) or _find(f"data/{dir_name}")))
+                os.environ.get(f"VIDLU_{dir_name.upper()}", None)
+                or _find(f"data/{dir_name}", warn=True)))
 
 
 _dirs = _Dirs()
