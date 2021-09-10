@@ -779,54 +779,6 @@ def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_mo
     return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, pmodel=pmodel)
 
 
-def wio(model, x):
-    from vidlu.modules import with_intermediate_outputs
-    model_wio = with_intermediate_outputs(model, return_dict=True, inputs=False)
-    out, interm_outs = model_wio(x)
-    from vidlu.utils import tree
-    interm_outs = tree.filter(interm_outs, lambda x: isinstance(x,
-                                                                torch.Tensor))  # or isinstance(x, tuple) and all(isinstance(a, torch.Tensor) for a in x))
-    assert len(interm_outs) > 0
-    from vidlu import models
-    if isinstance(model, models.MoSwiftnetRN18):
-        interm_outs = {k[len("wrapped."):]: v for k, v in interm_outs.items() if
-                       k.startswith("wrapped.backbone")}
-    return out, interm_outs
-
-
-def compare_interm_outs(model, interm_outs, path):
-    interm_outs_p = torch.load(path)
-
-    import vidlu.models as models
-    if isinstance(model, models.SwiftNet):
-        from vidlu.models.params import translate_swiftnet
-        warn("Translating intermediate outputs from MO Swiftnet to Vidlu Swiftnet.")
-        for k in list(interm_outs_p):
-            if any(k.endswith(suff) for suff in [
-                "relu", "maxpool", "downsample", "upsample.0", "upsample.1", "upsample.2",
-                "backbone", ".0", ".1", ".2"]):
-                del interm_outs_p[k]
-        interm_outs_p = translate_swiftnet(interm_outs_p)
-        # for k in list(interm_outs):
-        #     if k not in interm_outs_p:
-        #         del interm_outs[k]
-    assert len(interm_outs) > 0
-    return torch.compare(interm_outs_p, dict(interm_outs), name=path)
-
-
-def compare_model_state(model, path):
-    state_p = torch.load(path)
-    import vidlu.models as models
-    if isinstance(model, models.SwiftNet):
-        state = model.state_dict()
-        from vidlu.models.params import translate_swiftnet
-        warn("Translating intermediate outputs from MO Swiftnet to Vidlu Swiftnet.")
-        state_p = translate_swiftnet(state_p)
-    else:
-        state = model.wrapped.state_dict()
-    return torch.compare(dict(state), dict(state_p), name=path)
-
-
 @dc.dataclass
 class SemisupCleanTargetConsStepBase:
     """Base class for VAT, mean teacher, ...
