@@ -17,7 +17,6 @@ import vidlu.modules as vm
 import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
-from vidlu.modules.other.morsic_loss import SemsegCrossEntropy, SemiSupervisedExemplarLoss
 
 
 # Training/evaluation steps ########################################################################
