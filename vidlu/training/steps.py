@@ -17,6 +17,7 @@ import vidlu.modules as vm
 import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
+from vidlu.modules.other.morsic_loss import SemsegCrossEntropy, SemiSupervisedExemplarLoss
 
 
 # Training/evaluation steps ########################################################################
@@ -766,36 +767,84 @@ def _cons_output_to_target(out_uns, block_grad, output_to_target):
 
 
 # TODO: check TODO
-def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_model=False,
-             bn_stats_updating=False, detach_out=False):
+def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_model=False):
     """Applies corresponding perturbations to the input, unsupervised target, and validity mask.
     Also computes the prediction in the perturbed input."""
     if loss_mask == 'create':
         loss_mask = torch.ones_like(attack_target[:, 0, ...])
 
-    with switch_training(model, False) if attack_eval_model else \
-            batchnorm_stats_tracking_off(model) if model.training and not bn_stats_updating else \
-                    ctx.suppress():
+    with vtu.switch_training(model, False) if attack_eval_model else \
+            vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
         pmodel = attack(model, x, attack_target, loss_mask=loss_mask)
         x_p, target_p, loss_mask_p = pmodel(x, attack_target, loss_mask)
-        with torch.no_grad() if detach_out else ctx.suppress():  # TODO: enable enabling batchnorm stats tracking here, CHECK!
-            out_p = model(x_p)
-            if detach_out:
-                out_p = out_p.detach()
-    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, out=out_p, pmodel=pmodel)
+    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, pmodel=pmodel)
+
+
+def wio(model, x):
+    from vidlu.modules import with_intermediate_outputs
+    model_wio = with_intermediate_outputs(model, return_dict=True, inputs=False)
+    out, interm_outs = model_wio(x)
+    from vidlu.utils import tree
+    interm_outs = tree.filter(interm_outs, lambda x: isinstance(x,
+                                                                torch.Tensor))  # or isinstance(x, tuple) and all(isinstance(a, torch.Tensor) for a in x))
+    assert len(interm_outs) > 0
+    from vidlu import models
+    if isinstance(model, models.MoSwiftnetRN18):
+        interm_outs = {k[len("wrapped."):]: v for k, v in interm_outs.items() if
+                       k.startswith("wrapped.backbone")}
+    return out, interm_outs
+
+
+def compare_interm_outs(model, interm_outs, path):
+    interm_outs_p = torch.load(path)
+
+    import vidlu.models as models
+    if isinstance(model, models.SwiftNet):
+        from vidlu.models.params import translate_swiftnet
+        warn("Translating intermediate outputs from MO Swiftnet to Vidlu Swiftnet.")
+        for k in list(interm_outs_p):
+            if any(k.endswith(suff) for suff in [
+                "relu", "maxpool", "downsample", "upsample.0", "upsample.1", "upsample.2",
+                "backbone", ".0", ".1", ".2"]):
+                del interm_outs_p[k]
+        interm_outs_p = translate_swiftnet(interm_outs_p)
+        # for k in list(interm_outs):
+        #     if k not in interm_outs_p:
+        #         del interm_outs[k]
+    assert len(interm_outs) > 0
+    return torch.compare(interm_outs_p, dict(interm_outs), name=path)
+
+
+def compare_model_state(model, path):
+    state_p = torch.load(path)
+    import vidlu.models as models
+    if isinstance(model, models.SwiftNet):
+        state = model.state_dict()
+        from vidlu.models.params import translate_swiftnet
+        warn("Translating intermediate outputs from MO Swiftnet to Vidlu Swiftnet.")
+        state_p = translate_swiftnet(state_p)
+    else:
+        state = model.wrapped.state_dict()
+    return torch.compare(dict(state), dict(state_p), name=path)
 
 
 @dc.dataclass
 class SemisupCleanTargetConsStepBase:
-    """Base class for VAT, mean teacher, ..."""
+    """Base class for VAT, mean teacher, ...
+
+    attack_eval_model is set to False because training on adversarial examples
+    of the evaluation model instance is more likely to result in overfitting to
+    adversarial examples.
+    """
     alpha: float = 1
-    attack_eval_model: bool = False
+    attack_eval_model: bool = False  # intentionally false to avoid overfitting
     pert_bn_stats_updating: bool = False
     uns_loss_on_all: bool = False
     entropy_loss_coef: float = 0
     loss_cons: T.Optional[T.Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
     block_grad_on_clean: bool = True
     block_grad_on_pert: bool = False
+    eval_mode_teacher: bool = False
     pert_both: bool = False
     rev_cons: bool = False
     mem_efficient: bool = True
@@ -817,56 +866,142 @@ class SemisupCleanTargetConsStepBase:
         loss_cons = (lambda a, b: lc(b, a)) if self.rev_cons else lc
         output_to_target = partial(_cons_output_to_target, block_grad=self.block_grad_on_clean,
                                    output_to_target=attack.output_to_target)
+        if teacher is not model and not self.mem_efficient:
+            raise RuntimeError("Cannot run unlabeled and labeled examples in the same batch "
+                               + "because the teacher does not equal the student")
         mem_eff = teacher is not model or self.mem_efficient and not self.uns_loss_on_all
         loss_mask = 'create'
-        perturb_input = lambda attack_target, detach_out, loss_mask: _perturb(
-            attack=attack, model=model, x=x_u, attack_target=attack_target, detach_out=detach_out,
-            attack_eval_model=self.attack_eval_model, bn_stats_updating=self.pert_bn_stats_updating,
-            loss_mask=loss_mask)
+        perturb_x_u = lambda attack_target, loss_mask: _perturb(
+            attack=attack, model=model, x=x_u, attack_target=attack_target,
+            attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
+
+        import sys  # dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+        if sys.DEBUG and not self.eval:
+            import matplotlib.pyplot as plt
+            from torchvision.utils import make_grid
+
+            step = trainer.training.state.iteration
+            if step == 0:
+                model_state_dict = torch.load(f"/tmp/debug/model{step}.pt")
+                for k in ["criterion.weight", "criterion.mean", "criterion.step_counter",
+                          "criterion.supervised_loss.step_counter"]:
+                    del model_state_dict[k]
+                from vidlu import models
+                if isinstance(model, models.SwiftNet):
+                    from vidlu.models.params import translate_swiftnet
+                    model_state_dict = translate_swiftnet(model_state_dict)
+                    model.load_state_dict(model_state_dict)
+                else:
+                    model.wrapped.load_state_dict(model_state_dict)
+            compare_model_state(model, f"/tmp/debug/model{step}.pt")
+            # torch.compare(trainer.optimizer.state_dict(), f"/tmp/debug/opt{step}.pt")
+            from vidlu.utils.presentation.visualization import show_batch
+            x_l1 = torch.load(f"/tmp/debug/x_l{step}.pt").to(x_l.device)
+            # show_batch(torch.cat([x_l, x_l1], dim=0))
+            x_l = x_l1
+            torch.compare(x_l, f"/tmp/debug/x_l{step}.pt")
+            y_l = torch.load(f"/tmp/debug/y_l{step}.pt").to(x_l.device)
+            torch.compare(y_l, f"/tmp/debug/y_l{step}.pt")
+            y_l[y_l == 19] = -1
+            # trainer.loss.ignore_index = 19
+            x_u = torch.load(f"/tmp/debug/x_u{step}.pt").to(x_u.device)
+            torch.compare(x_u, f"/tmp/debug/x_u{step}.pt")
 
         model.eval() if self.eval else model.train()  # teacher always eval. mode if it's not model
 
         with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
             with torch.no_grad() if self.eval else ctx.suppress():
-                out_l = (out_all := model(x_all))[:len(y_l)] if not mem_eff else model(x_l)
-                loss_l = trainer.loss(out_l, y_l).mean()
+                if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddd
+                    compare_model_state(model, f"/tmp/debug/model{step}.pt")
+                    out_l, interm_outs_l = wio(model, x_l)
+                    print(len(interm_outs_l))
+                    compare_interm_outs(model, interm_outs_l, f"/tmp/debug/interm_outs_l{step}.pt")
+                    torch.compare(out_l, f"/tmp/debug/out_l{step}.pt")
+                    compare_model_state(model, f"/tmp/debug/model_l{step}.pt")
+                else:
+                    out_l = (out_all := model(x_all))[:len(y_l)] if not mem_eff else model(x_l)
+                loss_l = trainer.loss(out_l, y_l, reduction="mean")
                 if not self.eval and mem_eff:  # back-propagates supervised loss sooner
                     loss_l.backward()
+                    if sys.DEBUG and not self.eval:
+                        compare_model_state(model, f"/tmp/debug/model_bl{step}.pt")
                     loss_l = loss_l.detach()
+
+            if sys.DEBUG:
+                torch.compare(loss_l, f"/tmp/debug/loss_l{step}.pt")
 
             if self.alpha == 0:
                 return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=0,
                                 x_u=x_u, x_p=None, y_p=None, out_u=None, out_p=None, loss_ent=0)
 
             with torch.no_grad() if detach_clean else ctx.suppress():
-                if self.pert_both:
-                    pertt = perturb_input(attack_target=x_u.new_zeros(x_u[:, :1].shape),
-                                          detach_out=detach_clean, loss_mask=loss_mask)
-                    result.out_up = out_up = pertt.out
-                    result.x_pt = pertt.x
-                    if len(out_up.squeeze().shape) > 2:  # TODO: make more general
-                        result.x_pr, out_u, loss_mask = pertt.pmodel.tps.inverse(pertt.x, out_up,
-                                                                                 pertt.loss_mask)
-                    else:
-                        out_u = out_up
-                else:  # default
-                    out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
-                target_uns = output_to_target(out_u)  # usually identity with .detach()
-            pert = perturb_input(attack_target=target_uns, detach_out=detach_pert,
-                                 loss_mask=loss_mask)
-
+                with vtu.switch_training(teacher,
+                                         False) if self.eval_mode_teacher else ctx.suppress():
+                    if self.pert_both:
+                        pertt = perturb_x_u(attack_target=x_u.new_zeros(x_u[:, :1].shape),
+                                            loss_mask=loss_mask)
+                        with vtu.norm_stats_tracking_off(
+                                teacher) if self.pert_bn_stats_updating else ctx.suppress():
+                            pertt.out = teacher(pertt.x)
+                        result.out_up = out_up = pertt.out
+                        result.x_pt = pertt.x
+                        if len(out_up.squeeze().shape) > 2:  # TODO: make more general
+                            result.x_pr, out_u, loss_mask = pertt.pmodel.tps.inverse(
+                                pertt.x, out_up, pertt.loss_mask)
+                        else:
+                            out_u = out_up
+                    else:  # default
+                        if sys.DEBUG:  # ddddddddddddddddddddddddddddddddddddddddddddd
+                            assert mem_eff
+                            assert teacher is model and teacher.training
+                            out_u, interm_outs_u = wio(teacher, x_u)
+                            compare_interm_outs(model, interm_outs_u,
+                                                f"/tmp/debug/interm_outs_u{step}.pt")
+                            compare_model_state(model, f"/tmp/debug/model_u{step}.pt")
+                        else:
+                            out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
+                    target_uns = output_to_target(out_u)  # usually identity with .detach()
+            pert = perturb_x_u(attack_target=target_uns, loss_mask=loss_mask)
+            with torch.no_grad() if detach_pert else ctx.suppress():
+                with ctx.suppress() if self.pert_bn_stats_updating else \
+                        vtu.norm_stats_tracking_off(model):
+                    # from vidlu.utils.presentation.visualization import show_batch
+                    # show_batch(pert.x)
+                    if sys.DEBUG:  # dddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+                        pert.x = torch.load(f"/tmp/debug/x_up{step}.pt").to(x_l.device)
+                    # show_batch(pert.x)
+                    pert.out = model(pert.x)
+            if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddd
+                assert not detach_pert
+                torch.compare(out_u, f"/tmp/debug/out_u{step}.pt")
+                torch.compare(pert.x, f"/tmp/debug/x_up{step}.pt")
+                torch.compare(pert.out, f"/tmp/debug/out_up{step}.pt")
+                compare_model_state(model, f"/tmp/debug/model_up{step}.pt")
+                # pert.out = model(pert.x.detach())  ##########################################
             with torch.no_grad() if self.eval else ctx.suppress():
                 if self.block_grad_on_pert:  # non-default
                     pert.out = pert.out.detach()
                 if self.block_grad_on_clean:  # just in case
                     pert.target = pert.target.detach()
+
                 loss_u = loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
                 loss = loss_l.add(loss_u, alpha=self.alpha)
                 loss_ent = vml.entropy_l(pert.out).mean()
                 if self.entropy_loss_coef:
                     loss.add_(loss_ent, alpha=self.entropy_loss_coef)
+            if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddd
+                torch.compare(loss_u, f"/tmp/debug/loss_u{step}.pt")
             if not self.eval:
                 loss.backward()
+            if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddddd
+                compare_model_state(model, f"/tmp/debug/model_bu{step}.pt")
+                grad = {k: v.grad for k, v in model.wrapped.named_parameters()}
+                torch.compare(grad, f"/tmp/debug/grad{step}.pt")
+        if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddddddd
+            torch.compare(trainer.lr_scheduler.state_dict(), f"/tmp/debug/lrs{step}.pt")
+            compare_model_state(model, f"/tmp/debug/model_upd{step}.pt")
+            print(trainer.optimizer)
+            # torch.compare(trainer.optimizer.state_dict(), f"/tmp/debug/opt_upd{step}.pt")
         if torch.any(torch.isnan(loss_l)):
             breakpoint()
         return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
