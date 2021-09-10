@@ -231,64 +231,6 @@ if __name__ == "__main__":
         rseed(seed)
     args.seed = seed
 
-    sys.DEBUG = bool(int(os.environ.get('DEBUG', 0)))
-    sys.COMPARE = bool(int(os.environ.get('COMPARE', 0)))
-
-    if sys.COMPARE:
-        import difflib
-        from pathlib import Path
-
-
-        def compare(a, b, name=None, key=None):
-            import typing as T
-            if isinstance(b, (str, Path)):
-                name = b
-            if name is not None:
-                print(f"Comparing {name}")
-                other = torch.load(b) if isinstance(b, (str, Path)) else b
-                assert type(a) == type(other)
-                result = compare(a, other)
-                print("+" if result else "FAIL")
-                # if not result:
-                # if not result:
-                #     exit()
-                return result
-            if isinstance(a, torch.Tensor):
-                b = b.to(a.device)
-                if a.shape != b.shape:
-                    import pudb;
-                    pudb.set_trace()
-                # if "backbone.backbone.root.norm.orig.running_mean" == key:
-                #     breakpoint()
-                #     torch.old = (a.detach().clone(), b.detach().clone())
-                if not torch.all(a == b):
-                    print(f"{(a - b).abs().max():1.2e} {key}")
-                    return False
-                    # if not torch.allclose(a, b):
-                    #     return False
-                return True
-            elif isinstance(a, T.Mapping):
-                results = dict()
-                for k, v in a.items():
-                    if k not in b:
-                        raise KeyError(
-                            f"Key error: '{k}'. Similar keys: {difflib.get_close_matches(k, b.keys())}")
-                    results[k] = compare(v, b[k], key=k)
-                result = all(results.values())
-                if not result:
-                    # negatives = {k: v for k, v in results.items() if not v}
-                    print(str(results).replace(", ", ",\n"))
-                return result
-            elif isinstance(a, T.Sequence):
-                return compare(dict(enumerate(a)), dict(enumerate(b)))
-            else:
-                if a != b:
-                    return False
-                return True
-
-
-        torch.compare = compare
-
     if args.debug:
         debug.trace_calls(depth=122,
                           filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename

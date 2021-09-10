@@ -875,60 +875,15 @@ class SemisupCleanTargetConsStepBase:
             attack=attack, model=model, x=x_u, attack_target=attack_target,
             attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
 
-        import sys  # dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-        if sys.DEBUG and not self.eval:
-            import matplotlib.pyplot as plt
-            from torchvision.utils import make_grid
-
-            step = trainer.training.state.iteration
-            if step == 0:
-                model_state_dict = torch.load(f"/tmp/debug/model{step}.pt")
-                for k in ["criterion.weight", "criterion.mean", "criterion.step_counter",
-                          "criterion.supervised_loss.step_counter"]:
-                    del model_state_dict[k]
-                from vidlu import models
-                if isinstance(model, models.SwiftNet):
-                    from vidlu.models.params import translate_swiftnet
-                    model_state_dict = translate_swiftnet(model_state_dict)
-                    model.load_state_dict(model_state_dict)
-                else:
-                    model.wrapped.load_state_dict(model_state_dict)
-            compare_model_state(model, f"/tmp/debug/model{step}.pt")
-            # torch.compare(trainer.optimizer.state_dict(), f"/tmp/debug/opt{step}.pt")
-            from vidlu.utils.presentation.visualization import show_batch
-            x_l1 = torch.load(f"/tmp/debug/x_l{step}.pt").to(x_l.device)
-            # show_batch(torch.cat([x_l, x_l1], dim=0))
-            x_l = x_l1
-            torch.compare(x_l, f"/tmp/debug/x_l{step}.pt")
-            y_l = torch.load(f"/tmp/debug/y_l{step}.pt").to(x_l.device)
-            torch.compare(y_l, f"/tmp/debug/y_l{step}.pt")
-            y_l[y_l == 19] = -1
-            # trainer.loss.ignore_index = 19
-            x_u = torch.load(f"/tmp/debug/x_u{step}.pt").to(x_u.device)
-            torch.compare(x_u, f"/tmp/debug/x_u{step}.pt")
-
         model.eval() if self.eval else model.train()  # teacher always eval. mode if it's not model
 
         with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
             with torch.no_grad() if self.eval else ctx.suppress():
-                if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddd
-                    compare_model_state(model, f"/tmp/debug/model{step}.pt")
-                    out_l, interm_outs_l = wio(model, x_l)
-                    print(len(interm_outs_l))
-                    compare_interm_outs(model, interm_outs_l, f"/tmp/debug/interm_outs_l{step}.pt")
-                    torch.compare(out_l, f"/tmp/debug/out_l{step}.pt")
-                    compare_model_state(model, f"/tmp/debug/model_l{step}.pt")
-                else:
-                    out_l = (out_all := model(x_all))[:len(y_l)] if not mem_eff else model(x_l)
+                out_l = (out_all := model(x_all))[:len(y_l)] if not mem_eff else model(x_l)
                 loss_l = trainer.loss(out_l, y_l, reduction="mean")
                 if not self.eval and mem_eff:  # back-propagates supervised loss sooner
                     loss_l.backward()
-                    if sys.DEBUG and not self.eval:
-                        compare_model_state(model, f"/tmp/debug/model_bl{step}.pt")
                     loss_l = loss_l.detach()
-
-            if sys.DEBUG:
-                torch.compare(loss_l, f"/tmp/debug/loss_l{step}.pt")
 
             if self.alpha == 0:
                 return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=0,
@@ -951,33 +906,14 @@ class SemisupCleanTargetConsStepBase:
                         else:
                             out_u = out_up
                     else:  # default
-                        if sys.DEBUG:  # ddddddddddddddddddddddddddddddddddddddddddddd
-                            assert mem_eff
-                            assert teacher is model and teacher.training
-                            out_u, interm_outs_u = wio(teacher, x_u)
-                            compare_interm_outs(model, interm_outs_u,
-                                                f"/tmp/debug/interm_outs_u{step}.pt")
-                            compare_model_state(model, f"/tmp/debug/model_u{step}.pt")
-                        else:
-                            out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
+                        out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
                     target_uns = output_to_target(out_u)  # usually identity with .detach()
             pert = perturb_x_u(attack_target=target_uns, loss_mask=loss_mask)
             with torch.no_grad() if detach_pert else ctx.suppress():
                 with ctx.suppress() if self.pert_bn_stats_updating else \
                         vtu.norm_stats_tracking_off(model):
-                    # from vidlu.utils.presentation.visualization import show_batch
-                    # show_batch(pert.x)
-                    if sys.DEBUG:  # dddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-                        pert.x = torch.load(f"/tmp/debug/x_up{step}.pt").to(x_l.device)
-                    # show_batch(pert.x)
                     pert.out = model(pert.x)
-            if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddd
-                assert not detach_pert
-                torch.compare(out_u, f"/tmp/debug/out_u{step}.pt")
-                torch.compare(pert.x, f"/tmp/debug/x_up{step}.pt")
-                torch.compare(pert.out, f"/tmp/debug/out_up{step}.pt")
-                compare_model_state(model, f"/tmp/debug/model_up{step}.pt")
-                # pert.out = model(pert.x.detach())  ##########################################
+
             with torch.no_grad() if self.eval else ctx.suppress():
                 if self.block_grad_on_pert:  # non-default
                     pert.out = pert.out.detach()
@@ -989,19 +925,9 @@ class SemisupCleanTargetConsStepBase:
                 loss_ent = vml.entropy_l(pert.out).mean()
                 if self.entropy_loss_coef:
                     loss.add_(loss_ent, alpha=self.entropy_loss_coef)
-            if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddd
-                torch.compare(loss_u, f"/tmp/debug/loss_u{step}.pt")
             if not self.eval:
                 loss.backward()
-            if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddddd
-                compare_model_state(model, f"/tmp/debug/model_bu{step}.pt")
-                grad = {k: v.grad for k, v in model.wrapped.named_parameters()}
-                torch.compare(grad, f"/tmp/debug/grad{step}.pt")
-        if sys.DEBUG and not self.eval:  # ddddddddddddddddddddddddddddddddddddddddd
-            torch.compare(trainer.lr_scheduler.state_dict(), f"/tmp/debug/lrs{step}.pt")
-            compare_model_state(model, f"/tmp/debug/model_upd{step}.pt")
-            print(trainer.optimizer)
-            # torch.compare(trainer.optimizer.state_dict(), f"/tmp/debug/opt_upd{step}.pt")
+
         if torch.any(torch.isnan(loss_l)):
             breakpoint()
         return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
