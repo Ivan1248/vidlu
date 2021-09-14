@@ -111,32 +111,33 @@ def translate_swiftnet(state_dict):
     unused_arays = {k: state_dict[k] for k in unused}
     print(f"unused arrays: {unused_arays}")
     for k in unused:
-        del state_dict[k]
+        if k in state_dict:
+            del state_dict[k]
     state_dict = translate_dict_keys(
         state_dict,
         {  # backbone
             r"backbone.{a:conv|bn}1{e}":
                 r"backbone.backbone.root.{a:bn->norm}.orig{e}",
-            r"backbone.layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}.{e}":
+            r"backbone.layer{a:(\d+)}.{b:(\d+)}.{c:conv|bn}{d:(\d+)}{e}":
                 r"backbone.backbone.bulk.unit{`int(a)-1`}_{b}.fork"
-                + r".block.{c:bn->norm}{`int(d)-1`}.orig.{e}",
-            r"backbone.layer{a:(\d+)}.{b:(\d+)}.downsample.{c:0|1}.{e:(.*)}":
+                + r".block.{c:bn->norm}{`int(d)-1`}.orig{e}",
+            r"backbone.layer{a:(\d+)}.{b:(\d+)}.downsample.{c:0|1}{e:(.*)}":
                 r"backbone.backbone.bulk.unit{`int(a)-1`}_{b}.fork"
-                + r".shortcut.{c:0->conv|1->norm}.orig.{e}",
+                + r".shortcut.{c:0->conv|1->norm}.orig{e}",
             # spp
-            r"backbone.spp.spp.{a:spp_bn|spp_fuse}.{b:norm|conv}.{e:(.*)}":
-                r"backbone.context.{a:spp_bn->input_block|spp_fuse->fuse_block}.{b}0.orig.{e}",
-            r"backbone.spp.spp.spp{a:(\d+)}.{b:norm|conv}.{e:(.*)}":
-                r"backbone.context.pyramid.block{a}.{b}0.orig.{e}",
+            r"backbone.spp.spp.{a:spp_bn|spp_fuse}.{b:norm|conv}{e:(.*)}":
+                r"backbone.context.{a:spp_bn->input_block|spp_fuse->fuse_block}.{b}0.orig{e}",
+            r"backbone.spp.spp.spp{a:(\d+)}.{b:norm|conv}{e:(.*)}":
+                r"backbone.context.pyramid.block{a}.{b}0.orig{e}",
             # ladder
-            r"backbone.upsample.{a:(\d+)}.{b:bottleneck|blend_conv}.{c:norm|conv}.{e:(.*)}":
+            r"backbone.upsample.{a:(\d+)}.{b:bottleneck|blend_conv}.{c:norm|conv}{e:(.*)}":
                 r"backbone.ladder.up_blends.{a}.{b:bottleneck->project|blend_conv->blend}"
-                + r".{c}0.orig.{e}",
-            r"logits.norm.{e:(.*)}":
-                r"backbone.norm.orig.{e}",
+                + r".{c}0.orig{e}",
+            r"logits.norm{e:(.*)}":
+                r"backbone.norm.orig{e}",
             # logits
-            r"logits.conv.{e:(.*)}":
-                r"head.logits.orig.{e}"
+            r"logits.conv{e:(.*)}":
+                r"head.logits.orig{e}"
         }.items())
     return state_dict
 
