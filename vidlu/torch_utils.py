@@ -42,6 +42,8 @@ def switch_requires_grad(module_or_params, value):
 
 
 def switch_training(module, value):
+    """Sets the training attribute to false for the module and all submodules.
+    """
     return vuc.switch_attribute(module.modules(), 'training', value)
 
 
