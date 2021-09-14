@@ -46,6 +46,13 @@ Losses that have the "_l" suffix in the name accept 2 arguments:
 Losses that have the "ll" suffix in the name accept 2 arguments:
     1. logits of the approximating distribution
     2. logits of the target distribution
+    
+When targets are segmentations with ignored elements, `reduction="mean"` results
+in the loss being averaged over non-ignored elements.
+
+When targets are categorical probabilities and confidence thresholding is used,
+all elements are averaged, which might be inconsistent with the segmentation
+target behaviour.
 """
 
 
@@ -73,12 +80,6 @@ def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"
     return _apply_reduction(result, reduction=reduction, mask=target != ignore_index)
 
 
-def kl_div_l(logits, target):
-    if target.dim() == logits.dim() - 1:
-        return nll_loss_l(logits, target)
-    return F.kl_div(torch.log_softmax(logits, 1), target, reduction='none').sum(1)
-
-
 def crossentropy_l(logits, target):
     if target.dim() == logits.dim() - 1:
         return nll_loss_l(logits, target)
@@ -89,8 +90,8 @@ def crossentropy_ll(logits, target_logits):
     return crossentropy_l(logits, target_logits.softmax(1))
 
 
-def symmetric_crossentropy_ll(logits, target_logits):
-    return crossentropy_ll(logits, target_logits) + crossentropy_ll(target_logits, logits)
+def symmetric_crossentropy_ll(p_logits, q_logits):
+    return 0.5 * (crossentropy_ll(p_logits, q_logits) + crossentropy_ll(q_logits, p_logits))
 
 
 def clipped_rev_crossentropy_ll(logits, target_logits, A):
@@ -103,27 +104,30 @@ def rev_crossentropy_ll(target_logits, logits):
     return crossentropy_l(logits, target_logits.softmax(1))
 
 
+def kl_div_l(logits, target, log_target=False):
+    if target.dim() == logits.dim() - 1:
+        return nll_loss_l(logits, target)
+    return F.kl_div(torch.log_softmax(logits, 1), target, reduction='none',
+                    log_target=log_target).sum(1)
+
+
 def kl_div_ll(logits, target_logits):
-    return kl_div_l(logits, target_logits.softmax(1))
+    return kl_div_l(logits, target_logits.log_softmax(1), log_target=True)
 
 
 def rev_kl_div_ll(target_logits, logits):
     return kl_div_ll(logits, target_logits)
 
 
-def symmetric_crossentropy_ll(p_logits, q_logits):
-    return 0.5 * (crossentropy_l(p_logits, q_logits.softmax(1))
-                  + crossentropy_l(q_logits, p_logits.softmax(1)))
-
-
 def js_div_ll(p_logits, q_logits):
-    return 0.5 * (kl_div_l(p_logits, q_logits.softmax(1))
-                  + kl_div_l(q_logits, p_logits.softmax(1)))
+    m_log = p_logits.softmax(1).add(q_logits.softmax(1)).div_(2).log_()
+    return F.kl_div(m_log, p_logits.log_softmax(1), reduction='none', log_target=True).sum(1).add(
+        F.kl_div(m_log, q_logits.log_softmax(1), reduction='none', log_target=True).sum(1)).div_(2)
 
 
 def entropy_l(logits):
     log_probs = logits.log_softmax(1)
-    return -(log_probs.exp() * log_probs).sum(1)
+    return -torch.einsum("ij..., ij... -> i...", log_probs.exp(), log_probs)
 
 
 def reduce_loss(x, batch_reduction: T.Literal['sum', 'mean', None] = None,
@@ -154,6 +158,19 @@ def probs_sqr_l2_dist_ll(logits, target_logits):
 # Confidence thresholding ##########################################################################
 
 def conf_thresh_kl_div_l(logits, target, conf_thresh):
+    """
+
+    TODO: add option for averaging only over masked pixels
+    French averages over all pixels, not just the masked ones. We do so too,
+    but it might be inconsistent with `nll_loss_l`, which averages over
+    non-ignored pixels (when given segmentation targets).
+
+    Args:
+        logits:
+        target:
+        conf_thresh:
+
+    """
     return kl_div_l(logits, target) * (target.max(1).values >= conf_thresh)
 
 
