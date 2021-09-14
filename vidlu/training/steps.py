@@ -737,7 +737,7 @@ def _prepare_semisup_batch(batch):
     return x_l, y_l, x_u
 
 
-def _prepare_semisup_batch_s(batch, unsup_loss_on_all=False):
+def _prepare_semisup_batch_s(batch, unsup_loss_on_all, mem_efficient):
     """Returns arrays representing supervised inputs `x_l`, labels `y_l`,
     unsupervised inputs `x_u`, and all inputs `x_all`.
 
@@ -749,8 +749,13 @@ def _prepare_semisup_batch_s(batch, unsup_loss_on_all=False):
             the supervised inputs `x_l`.
     """
     x_l, y_l, x_u = _prepare_semisup_batch(batch)
-    x_all = x_l if x_u is None else torch.cat([x_l, x_u])
-    x_u = x_all if unsup_loss_on_all else x_u
+    if mem_efficient:
+        x_all = None
+        if unsup_loss_on_all:
+            x_u = x_l if x_u is None else torch.cat([x_l, x_u])
+    else:
+        x_all = x_l if x_u is None else torch.cat([x_l, x_u])
+        x_u = x_all if unsup_loss_on_all else x_u
 
     if x_u is None and not unsup_loss_on_all:
         raise RuntimeError(f"uns_loss_on_all must be True if there is no unlabeled batch.")
@@ -771,12 +776,11 @@ def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_mo
     Also computes the prediction in the perturbed input."""
     if loss_mask == 'create':
         loss_mask = torch.ones_like(attack_target[:, 0, ...])
-
     with vtu.switch_training(model, False) if attack_eval_model else \
             vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
         pmodel = attack(model, x, attack_target, loss_mask=loss_mask)
         x_p, target_p, loss_mask_p = pmodel(x, attack_target, loss_mask)
-    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p, pmodel=pmodel)
+    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p.detach(), pmodel=pmodel)
 
 
 @dc.dataclass
@@ -807,10 +811,6 @@ class SemisupCleanTargetConsStepBase:
     def __call__(self, trainer, batch):
         result = NameDict()
 
-        x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all)
-        detach_clean = self.eval or self.block_grad_on_clean
-        detach_pert = self.eval or self.block_grad_on_pert
-
         attack = trainer.attack
         model, teacher = self.get_student_and_teacher(trainer)
         lc = self.loss_cons or attack.loss
@@ -821,6 +821,9 @@ class SemisupCleanTargetConsStepBase:
             raise RuntimeError("Cannot run unlabeled and labeled examples in the same batch "
                                + "because the teacher does not equal the student")
         mem_eff = teacher is not model or self.mem_efficient and not self.uns_loss_on_all
+
+        x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all, mem_eff)
+
         loss_mask = 'create'
         perturb_x_u = lambda attack_target, loss_mask: _perturb(
             attack=attack, model=model, x=x_u, attack_target=attack_target,
@@ -832,6 +835,7 @@ class SemisupCleanTargetConsStepBase:
             with torch.no_grad() if self.eval else ctx.suppress():
                 out_l = (out_all := model(x_all))[:len(y_l)] if not mem_eff else model(x_l)
                 loss_l = trainer.loss(out_l, y_l, reduction="mean")
+
                 if not self.eval and mem_eff:  # back-propagates supervised loss sooner
                     loss_l.backward()
                     loss_l = loss_l.detach()
@@ -839,6 +843,9 @@ class SemisupCleanTargetConsStepBase:
             if self.alpha == 0:
                 return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=0,
                                 x_u=x_u, x_p=None, y_p=None, out_u=None, out_p=None, loss_ent=0)
+
+            detach_clean = self.eval or self.block_grad_on_clean
+            detach_pert = self.eval or self.block_grad_on_pert  # non-default
 
             with torch.no_grad() if detach_clean else ctx.suppress():
                 with vtu.switch_training(teacher,
@@ -860,22 +867,21 @@ class SemisupCleanTargetConsStepBase:
                         out_u = teacher(x_u) if mem_eff else out_all[-len(x_u):]
                     target_uns = output_to_target(out_u)  # usually identity with .detach()
             pert = perturb_x_u(attack_target=target_uns, loss_mask=loss_mask)
+            if detach_clean:  # just in case
+                pert.target = pert.target.detach()
             with torch.no_grad() if detach_pert else ctx.suppress():
                 with ctx.suppress() if self.pert_bn_stats_updating else \
                         vtu.norm_stats_tracking_off(model):
                     pert.out = model(pert.x)
 
             with torch.no_grad() if self.eval else ctx.suppress():
-                if self.block_grad_on_pert:  # non-default
-                    pert.out = pert.out.detach()
-                if self.block_grad_on_clean:  # just in case
-                    pert.target = pert.target.detach()
-
                 loss_u = loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
                 loss = loss_l.add(loss_u, alpha=self.alpha)
-                loss_ent = vml.entropy_l(pert.out).mean()
-                if self.entropy_loss_coef:
-                    loss.add_(loss_ent, alpha=self.entropy_loss_coef)
+                with ctx.suppress() if self.entropy_loss_coef else torch.no_grad():  # memory saving
+                    loss_ent = vml.entropy_l(pert.out).mean()
+                    if self.entropy_loss_coef:
+                        loss.add_(loss_ent, alpha=self.entropy_loss_coef)
+
             if not self.eval:
                 loss.backward()
 
@@ -971,7 +977,7 @@ def update_mean_teacher(teacher, model, ema_decay):
     if len(model_dict) != len(teacher_dict):
         raise RuntimeError("State dicts of the models are different.")
     for k, p in model_dict.items():
-        if torch.is_floating_point(p):
+        if torch.is_floating_point(p):  # parameters and buffers
             teacher_dict[k].mul_(ema_decay).add_(p, alpha=1 - ema_decay)
 
 
