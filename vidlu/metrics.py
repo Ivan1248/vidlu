@@ -215,6 +215,9 @@ class ClassificationMetrics(AccumulatingMetric):
         return {k: v.item() if v.dim() == 0 else v.cpu().numpy().copy() for k, v in
                 classification_metrics(self.cm, returns=self.metrics, eps=eps).items()}
 
+    def __repr__(self):
+        return f"{type(self).__name__}(class_count={self.class_count}, metrics={self.metrics})"
+
 
 class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
     def __init__(self, name, value_extractor=None):
@@ -225,6 +228,9 @@ class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
     def reset(self):
         self._sum = KleinSum()
         self._n = EPS
+
+    def __repr__(self):
+        return f"{type(self).__name__}(name={self.name})"
 
 
 class AverageMetric(_MeanMetric):
@@ -264,6 +270,9 @@ class _ExtremumMetric(AccumulatingMetric):
     def compute(self):
         return {self.name: self._ext}
 
+    def __repr__(self):
+        return f"{type(self).__name__}(name={self.name})"
+
 
 class MaxMetric(_ExtremumMetric):
     def __init__(self, name, extract_func=None):
@@ -297,6 +306,9 @@ class _MultiMetric(AccumulatingMetric):
         for m in self.metrics or ():
             result.update(m.compute())
         return result
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self.metrics})"
 
 
 class AverageMultiMetric(_MultiMetric):
