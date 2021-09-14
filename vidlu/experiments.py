@@ -261,24 +261,20 @@ class TrainingExperiment:
     model: nn.Module
     trainer: Trainer
     data: Namespace
-    logger: Logger
     cpman: CheckpointManager
+    logger: Logger
 
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
         _check_dirs(dirs)
         a = training_args
+        logger = Logger()
 
         with indent_print("\nSetting device..."):
             a.device = get_device(a.device)
             print(f"device: {a.device}")
 
-        with indent_print('\nInitializing checkpoint manager and logger...'):
-            logger = Logger()
-            logger.log("Resume command:\n\x1b[0;30;42m"
-                       + f'run.py train "{a.data}" "{a.input_adapter}" "{a.model}" "{a.trainer}"'
-                       + f'--params "{a.params}" -d "{a.device}" --metrics "{a.metrics}" -r \x1b[0m')
-
+        with indent_print('\nInitializing checkpoint manager...'):
             cpman = get_checkpoint_manager(a, dirs.saved_states)
 
         try:
@@ -326,4 +322,4 @@ class TrainingExperiment:
                 print(a.params)
                 load_parameters(model, a.params, dirs.pretrained)
 
-        return TrainingExperiment(model, trainer, data, logger, cpman)
+        return TrainingExperiment(model, trainer, data, cpman, logger)
