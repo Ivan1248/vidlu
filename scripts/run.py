@@ -10,8 +10,6 @@ import subprocess
 import shlex
 import time
 
-# noinspection PyUnresolvedReferences
-# import set_cuda_order_pci  # CUDA_DEVICE_ORDER = "PCI_BUS_ID"
 import torch
 import numpy as np
 
@@ -51,44 +49,45 @@ def log_run(status):
         print(e)
 
 
+def fetch_remote_experiment(args, dirs):
+    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args)))
+    cmd = ["rsync", "-azvO", "--relative", "--delete", f"{args.remote_experiments}:{dir}/",
+           f"/"]
+    print("Running " + " ".join(cmd))
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        warnings.warn(f"Experiment state transfer had errors: {result}")
+        query_user("Experiment state transfer had errors. Continue?", default='n')
+
+
+def get_profiler():
+    from torch.autograd.profiler import profile
+    return profile(use_cuda=True)
+
+
+def make_experiment(args, dirs):
+    return TrainingExperiment.from_args(
+        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+
+
 def train(args):
-    old_write_error = sys.stderr.write
-
-    def write_error(m, *a, **k):
-        return old_write_error(f"\x1b[1;33m{m}\x1b[0m", *a, **k)
-
-    sys.stderr.write = write_error
-
     if args.resume == "restart" \
             and not query_user("Are you sure you want to restart the experiment?",
                                timeout=30, default='y'):
         exit()
 
     if args.remote_experiments and args.resume not in [None, "restart"]:
-        dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args)))
-        cmd = ["rsync", "-azvO", "--relative", "--delete", f"{args.remote_experiments}:{dir}/",
-               f"/"]
-        print("Running " + " ".join(cmd))
-        result = subprocess.run(cmd)
-        if result.returncode != 0:
-            warnings.warn(f"Experiment state transfer had errors: {result}")
-            query_user("Experiment state transfer had errors. Continue?", default='n')
+        fetch_remote_experiment(args, dirs)
 
-    exp = TrainingExperiment.from_args(
-        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+    exp = make_experiment(args, dirs=dirs)
 
+    exp.logger.log("Resume command:\n\x1b[0;30;42m"
+                   + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
+                   + f' "{args.trainer}" --params "{args.params}" -d "{args.device}" --metrics "{args.metrics}"'
+                   + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
     exp.logger.log(f"RNG seed: {args.seed}")
 
-    # if args.debug:
-    #     debug.stop_tracing_calls()
-
-    profiler = None
-    if args.profile:
-        from torch.autograd.profiler import profile
-        from functools import partial
-        profiler = partial(profile, use_cuda=True)
-
-    with profiler() if profiler is not None else ctx.suppress() as prof:
+    with get_profiler() if args.profile else ctx.suppress() as prof:
         if not args.no_init_eval:
             print('\nEvaluating initially...')
             exp.trainer.eval(exp.data.test)
@@ -105,7 +104,8 @@ def train(args):
             for name, ds in training_datasets.items():
                 exp.trainer.eval(ds)
         log_run('done')
-    if prof is not None:
+
+    if args.profile:
         print(prof.key_averages().table(sort_by="self_cuda_time_total"))
 
     exp.cpman.remove_old_checkpoints()
@@ -119,16 +119,15 @@ def train(args):
 
 
 def path(args):
-    e = TrainingExperiment.from_args(
-        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+    e = make_experiment(args, dirs=dirs)
     print(e.cpman.experiment_dir)
 
 
 def test(args):
     if not args.resume:
         warnings.warn("`resume` is set to `False`. The initial parameters will be tested.")
-    e = TrainingExperiment.from_args(
-        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+
+    e = make_experiment(args, dirs=dirs)
 
     if (module_arg := args.module) is not None:
         import importlib
@@ -151,6 +150,15 @@ def test(args):
 
 
 # Argument parsing #################################################################################
+
+def make_stderr_yellow():
+    old_write_error = sys.stderr.write
+
+    def write_error(m, *a, **k):
+        return old_write_error(f"\x1b[1;33m{m}\x1b[0m", *a, **k)
+
+    sys.stderr.write = write_error
+
 
 def add_standard_arguments(parser, func):
     # learner configuration
@@ -198,6 +206,8 @@ def add_standard_arguments(parser, func):
 
 
 if __name__ == "__main__":
+    make_stderr_yellow()
+
     parser = argparse.ArgumentParser(description='Experiment running script')
     subparsers = parser.add_subparsers()
 
@@ -217,10 +227,6 @@ if __name__ == "__main__":
     with indent_print("Arguments:"):
         print(args)
 
-    if args.debug:
-        print("Debug: Autograd anomaly detection on.")
-        torch.autograd.set_detect_anomaly(True)
-
     if args.deterministic:
         # torch.backends.cudnn.benchmark = False
         # torch.backends.cudnn.deterministic = True
@@ -232,6 +238,8 @@ if __name__ == "__main__":
     args.seed = seed
 
     if args.debug:
+        print("Debug: Autograd anomaly detection on.")
+        torch.autograd.set_detect_anomaly(True)
         debug.trace_calls(depth=122,
                           filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
                                                          and not frame.f_code.co_name[0] in "_<")
