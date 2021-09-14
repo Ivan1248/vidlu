@@ -289,7 +289,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_f = argtree.apply(model_f)
     input_adapter = get_input_adapter(
         input_adapter_str, data_stats=(None if prep_dataset is None
-                                       else prep_dataset.info.cache['pixel_stats']))
+                                       else prep_dataset.info['pixel_stats']))
     _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
                          verbosity=verbosity)
     if "input_adapter" in vuf.params(model_f):

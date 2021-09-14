@@ -16,7 +16,7 @@ from vidlu.utils import path
 
 # not local for picklability
 def _get_info(_, source_ds, name):
-    return source_ds.info.cache[name]
+    return source_ds.info[name]
 
 
 def _map_record(func, r):
@@ -28,6 +28,12 @@ def _map_record(func, r):
 
 def add_info(dest_ds, name, source_ds):
     return dest_ds.info_cache({name: partial(_get_info, source_ds=source_ds, name=name)})
+
+
+def pds_add_info_lazily(parted_dataset, cache_dir, name, source_ds=None):
+    pds = parted_dataset
+    source_ds = source_ds.info_cache_hdd({name: _compute_pixel_stats_d}, Path(cache_dir))
+    return Record({f"{k}_": lambda: add_info(pds[k], name, source_ds) for k in pds.keys()})
 
 
 # Standardization ##################################################################################

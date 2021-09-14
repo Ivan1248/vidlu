@@ -264,3 +264,10 @@ def to_snake_case(identifier):
 
 def to_pascal_case(identifier):
     return ''.join(x.title() for x in identifier.split('_'))
+
+
+def common_prefix(strings):
+    for i, (c, *others) in enumerate(zip(*strings)):
+        if any(d != c for d in others):
+            return strings[0][:i]
+    return strings[0]

@@ -232,7 +232,8 @@ class ImageFolder(Dataset):
         self.data_dir = Path(data_dir)
         subset_dir = self.data_dir if subset == 'all' else self.data_dir / subset
         self._elements = sorted(p.name for p in subset_dir.iterdir())
-        super().__init__(subset=subset, info=dict(problem='images'), modifiers=self.data_dir.name)
+        super().__init__(name=f"imageFolder{self.data_dir.name}", subset=subset,
+                         info=dict(problem='images'))
 
     def get_example(self, idx):
         return _make_record(x_=lambda: _load_image(self.data_dir / self._elements[idx]))
@@ -806,9 +807,9 @@ class CamVid(Dataset):
         img_dir, lab_dir = data_dir / '701_StillsRaw_full', data_dir / 'LabeledApproved_full'
         self._img_lab_list = [(str(img_dir / f'{name}.png'), str(lab_dir / f'{name}_L.png'))
                               for name in (data_dir / f'{subset}.txt').read_text().splitlines()]
-
-        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=self.info)
+        super().__init__(
+            subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
+            info=self.info)
 
     def get_example(self, idx):
         ip, lp = self._img_lab_list[idx]
@@ -848,8 +849,9 @@ class CamVidSequences(Dataset):  # TODO
             class_names=list(CamVid.class_groups_colors.keys()),
             class_colors=[next(iter(v.values())) for v in CamVid.class_groups_colors.values()])
 
-        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=info)
+        super().__init__(
+            subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
+            info=info)
 
     def get_example(self, idx):
         image_path = self._image_paths[idx]
@@ -902,8 +904,9 @@ class Cityscapes(Dataset):
         _check_size(self._images, size=self.subset_to_size[subset],
                     name=f"{type(self).__name__}-{subset}")
 
-        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=self.info)
+        super().__init__(
+            subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
+            info=self.info)
 
     def get_example(self, idx):
         im_path = self._images_dir / self._images[idx]
@@ -948,8 +951,9 @@ class WildDash(Dataset):
                     class_names=[l.name for l in cslabels if l.trainId >= 0],
                     class_colors=[l.color for l in cslabels if l.trainId >= 0])
         self._blank_label = np.full(list(self._shape), -1, dtype=np.int8)
-        modifiers = [f"downsample({downsampling})"] if downsampling > 1 else []
-        super().__init__(subset=subset, modifiers=modifiers, info=info)
+        super().__init__(
+            subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
+            info=info)
 
     def get_example(self, idx):
         path_prefix = f"{self._images_dir}/{self._image_names[idx]}"
@@ -1063,7 +1067,6 @@ class VOC2012Segmentation(Dataset):
 
     def __len__(self):
         return len(self._image_list)
-
 
 # class Viper(Dataset):
 #     class_info = _viper_mapping.get_class_info()

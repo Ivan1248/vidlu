@@ -17,6 +17,7 @@ from pathlib import Path
 import shutil
 from torchvision.datasets.utils import download_and_extract_archive
 import dataclasses as dc
+from functools import cached_property
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
@@ -45,27 +46,49 @@ def _subset_hash(indices):
     return hash(tuple(indices)) % 16 ** 5
 
 
-def _split_on_common_prefix(strings):
-    i = -1
-    for i, (c, *others) in enumerate(zip(*strings)):
-        if any(d != c for d in others):
-            break
-    else:
-        i += 1
-    return [s[:i] for s in strings], [s[i:] for s in strings]
-
-
-def _split_on_common_suffix(strings):
-    def reverse(string):
-        return ''.join(reversed(string))
-
-    rsuffix, rprefixes = _split_on_common_prefix([reverse(s) for s in strings])
-    return [reverse(s) for s in rprefixes], reverse(rsuffix)
-
-
 # Dataset ######################################################################
 
-class Dataset(abc.Sequence):
+class StandardDownloadableDatasetMixin:
+    def download_if_necessary(self, data_dir):
+        if self.download_required(data_dir):
+            if not query_user(f'{type(self).__name__} requires downloading data. Proceed?', "y"):
+                raise FileNotFoundError(f"The required data does not exist in {data_dir}.")
+            self.download(data_dir)
+
+    def download_required(self, data_dir):
+        base_dir = data_dir / self.subdir if hasattr(self, "subdir") else data_dir
+        return not base_dir.exists()
+
+    def download(self, data_dir, remove_archive=True):
+        if "url" not in self.info:
+            raise TypeError(f"Dataset downloading not available for {type(self).__name__}.")
+        url = self.info["url"]
+        filename = Path(url).name
+        download_and_extract_archive(url, data_dir.parent, filename=filename,
+                                     md5=self.info.get("md5", None),
+                                     remove_finished=remove_archive)
+        (data_dir.parent / filename).rename(data_dir)
+
+
+@dc.dataclass
+class ChangeInfo:
+    id: str
+    data_change: T.Union[bool, T.Tuple[str], T.Literal["indices"]] = None
+    info_change: T.Union[bool, T.Tuple[str]] = None
+
+    def __repr__(self):
+        return self.id
+
+
+def default_change_info(ds, id, data_change=None, info_change=None):
+    if data_change is None:
+        data_change = ds.data is None or ds.get_example != Dataset.get_example
+    if info_change is None:
+        info_change = ds.info != getattr(ds.data, "info", ds.info)
+    return ChangeInfo(id, data_change, info_change)
+
+
+class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     """An abstract class representing a Dataset.
 
     All subclasses should override ``__len__``, that provides the size of the
@@ -73,37 +96,31 @@ class Dataset(abc.Sequence):
     from {0 .. len(self)-1}.
     """
 
-    def __init__(self, *, name: str = None, subset: str = None, modifiers=None,
-                 info: T.Mapping = None, data=None):
+    def __init__(self, *, name: str = None, subset: str = None, info: T.Mapping = None, data=None,
+                 change: T.Union[ChangeInfo, str, T.Mapping] = None):
         self.name = name or getattr(data, 'name', None) or type(self).__name__
-        self.subset = subset or getattr(data, 'subset', None)  # TODO: remove and absorb into name
-        self.modifiers = list(getattr(data, 'modifiers', [])) \
-                         + ([modifiers] if isinstance(modifiers, str) else (modifiers or []))
+        if subset is not None:
+            self.name = f"{self.name}-{subset}"
         self.info = NameDict(info or getattr(data, 'info', dict()))
         self.data = data
+        change = (dc.asdict(change) if isinstance(change, ChangeInfo) else
+                  dict(id=change) if isinstance(change, str) else
+                  dict(id=self.name) if change is None else change)
+        self.change_info = default_change_info(self, **change)
 
-    def download_if_necessary(self, data_dir):
-        sdir = data_dir / self.subdir if hasattr(self, "subdir") else data_dir
-        if not self.is_available(sdir):
-            if not query_user(f'{sdir} does not exist. Would you like to download the dataset?',
-                              "y"):
-                raise FileNotFoundError(f"The dataset doesn't exist in {sdir}.")
-            self.download(data_dir)
+    @cached_property
+    def changes(self):
+        if hasattr(self.data, "changes"):
+            return [*self.data.changes, self.change_info]
+        return [self.change_info]
 
-    def is_available(self, data_dir):
-        return data_dir.exists()
-
-    def download(self, data_dir):
-        raise TypeError(f"Dataset downloading not available for {type(self).__name__}.")
-
-    @property
+    @cached_property
     def identifier(self):
-        fn = self.name
-        if self.subset:
-            fn += '-' + self.subset
-        if len(self.modifiers) > 0:
-            fn += '.' + '.'.join(self.modifiers)
-        return fn
+        return ".".join(c.id for c in self.changes)
+
+    @cached_property
+    def data_identifier(self):
+        return ".".join(c.id for c in self.changes if c.data_change is not False)
 
     def __getitem__(self, idx, field=None):
         def element_fancy_index(d, key):
@@ -128,18 +145,15 @@ class Dataset(abc.Sequence):
             d = self.get_example(idx)
             return d if filter_fields is None else filter_fields(d)
         if filter_fields is not None:
-            field_str = '' if field is None else f', {field}'
-            ds = ds.map(filter_fields, func_name=ds.modifiers.pop()[:-1] + field_str + ']')
+            func_name = f"[{field}]"
+            ds = ds.map(filter_fields, func_name=func_name)
         return ds
 
     def __len__(self):  # This can be overridden
         return len(self.data)
 
-    def __str__(self):
-        return f'Dataset(identifier="{self.identifier}", info={self.info})'
-
     def __repr__(self):
-        return str(self)
+        return f'Dataset(identifier="{self.identifier}", info={self.info})'
 
     def __add__(self, other):
         return self.join(other)
@@ -194,7 +208,7 @@ class Dataset(abc.Sequence):
         return InfoCacheDataset(self, name_to_func, **kwargs)
 
     def info_cache_hdd(self, name_to_func, directory, **kwargs):
-        """Computes, adds, adn caches and caches dataset.info.cache attributes. .
+        """Computes, adds, and caches dataset.info attributes. .
 
         It can be useful to automatically
         cache preprocessed data without modifying the original dataset and make
@@ -202,8 +216,8 @@ class Dataset(abc.Sequence):
 
         Args:
             name_to_func: A mapping from names to functions computing attributes
-                to be stored in dataset.info.cache, e.g.
-                `dataset.info.cache.name = func()` for a `{name: func}` mapping.
+                to be stored in dataset.info, e.g.
+                `setattr(dataset.info, name, func())` for a `{name: func}` mapping.
             directory: The directory in which info cache is to be stored.
             **kwargs: additional arguments for the Dataset initializer.
         """
@@ -223,7 +237,7 @@ class Dataset(abc.Sequence):
         """
         indices = np.array(list(self.matching_indices(predicate, progress_bar=progress_bar)))
         func_name = func_name or f'{_subset_hash(indices):x}'
-        return SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
+        return SubDataset(self, indices, choice_name=f'filter({func_name})', **kwargs)
 
     def filter_split(self, predicates, *, func_names=None, **kwargs):
         """
@@ -233,8 +247,9 @@ class Dataset(abc.Sequence):
         func_names = func_names or [f'{_subset_hash(indices):x}' for indices in indiceses]
         if isinstance(func_names, str):
             func_names = [f"{func_names}_{i}" for i in range(len(predicates) + 1)]
-        return [SubDataset(self, indices, modifiers=f'filter({func_name})', **kwargs)
-                for indices, func_name in zip(indiceses, func_names)]
+        return [
+            SubDataset(self, indices, choice_name=f'filter({func_name})', **kwargs)
+            for indices, func_name in zip(indiceses, func_names)]
 
     def map(self, func, *, func_name=None, **kwargs):
         """Creates a dataset with elements transformed with `func`."""
@@ -257,7 +272,7 @@ class Dataset(abc.Sequence):
     def permute(self, seed=53, **kwargs):
         """Creates a permutation of the dataset."""
         indices = np.random.RandomState(seed=seed).permutation(len(self))
-        return SubDataset(self, indices, modifiers=F"permute({seed})", **kwargs)
+        return SubDataset(self, indices, choice_name=F"permute({seed})", **kwargs)
 
     def repeat(self, number_of_repeats, **kwargs):
         """Creates a dataset with `number_of_repeats` times the length of the
@@ -282,17 +297,6 @@ class Dataset(abc.Sequence):
 
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
-
-    @staticmethod
-    def from_getitem_func(func, len, **kwargs):
-        class _Data:
-            def __len__(self):
-                return len
-
-            def __getitem__(self, item):
-                return func(item)
-
-        return Dataset(data=_Data(), **kwargs)
 
     def _multi_matching_indices(self, predicates, progress_bar=None):
         """Splits the dataset indices into disjoint subsets matching predicates.
@@ -322,11 +326,23 @@ def clear_hdd_cache(ds):
             os.remove(cache_path)
             print(f"Deleted {cache_path}")
     if isinstance(ds.data, Dataset):
-        ds.data.clear_hdd_cache()
+        clear_hdd_cache(ds.data)
     elif isinstance(ds.data, T.Sequence):
-        for ds in ds.data:
-            if isinstance(ds, Dataset):
-                ds.clear_hdd_cache()
+        for ds_ in ds.data:
+            if isinstance(ds_, Dataset):
+                clear_hdd_cache(ds_)
+
+
+def clean_up_dataset_cache(cache_dir, max_time_since_access: dt.timedelta):
+    to_delete = []
+    for dir in Path(cache_dir).iterdir():
+        file = next(dir.iterdir(), None)
+        if file is None or (vup.time_since_access(file) > max_time_since_access):
+            to_delete.append(dir)
+    if len(to_delete) > 0:
+        for dir in tqdm(to_delete,
+                        desc=f"Cleaning up dataset cache unused for {max_time_since_access}."):
+            shutil.rmtree(dir)
 
 
 class FieldsMap:
@@ -351,7 +367,7 @@ class MapDataset(Dataset):
 
     def __init__(self, dataset, func=lambda x: x, func_name=None, **kwargs):
         transform = 'map' + ('_' + func_name if func_name else '')
-        super().__init__(modifiers=transform, data=dataset, **kwargs)
+        super().__init__(change=transform, data=dataset, **kwargs)
         self.func = func
 
     def get_example(self, idx):
@@ -362,7 +378,7 @@ class EnumeratedDataset(Dataset):
     __slots__ = ("offset",)
 
     def __init__(self, dataset, offset=0, field_name="id", **kwargs):
-        super().__init__(modifiers=f'enumerated({offset})', data=dataset, **kwargs)
+        super().__init__(change=f'enumerated({offset})', data=dataset, **kwargs)
         self.offset = offset
         self.field_name = field_name
 
@@ -392,8 +408,9 @@ class CacheDataset(Dataset):
     def __init__(self, dataset, max_cache_size=np.inf, **kwargs):
         cache_size = min(len(dataset), max_cache_size)
         self._cache_all = cache_size == len(dataset)
-        modifier = "cache" if self._cache_all else f"(0..{cache_size - 1})"
-        super().__init__(modifiers=modifier, data=dataset, **kwargs)
+        change = ChangeInfo(id="cache" if self._cache_all else f"(0..{cache_size - 1})",
+                            data_change=False)
+        super().__init__(change=change, data=dataset, **kwargs)
         if self._cache_all:
             self._print("Caching whole dataset...")
             self._cached_data = [x for x in tqdm(dataset)]
@@ -414,7 +431,7 @@ class HDDAndRAMCacheDataset(Dataset):
     def __init__(self, dataset, cache_dir, chunk_size=100, **kwargs):
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = f"{cache_dir}/{self.identifier}.p"
+        cache_path = f"{cache_dir}/{self.data_identifier}.p"
         data = None
         if os.path.exists(cache_path):
             try:
@@ -447,19 +464,8 @@ class HDDAndRAMCacheDataset(Dataset):
                 # examples pickled in chunks because of memory constraints
                 for x in tqdm(to_chunks(data), desc="Saving dataset cache to HDD"):
                     pickle.dump(x, f, protocol=4)
-        super().__init__(modifiers="cache_hdd_ram", info=dataset.info, data=data, **kwargs)
-
-
-def clean_up_dataset_cache(cache_dir, max_time_since_access: dt.timedelta):
-    to_delete = []
-    for dir in Path(cache_dir).iterdir():
-        file = next(dir.iterdir(), None)
-        if file is None or (vup.time_since_access(file) > max_time_since_access):
-            to_delete.append(dir)
-    if len(to_delete) > 0:
-        for dir in tqdm(to_delete,
-                        desc=f"Cleaning up dataset cache unused for {max_time_since_access}."):
-            shutil.rmtree(dir)
+        super().__init__(change=ChangeInfo(id="cache_hdd_ram", data_change=False),
+                         info=dataset.info, data=data, **kwargs)
 
 
 class HDDCacheDataset(Dataset):
@@ -468,9 +474,10 @@ class HDDCacheDataset(Dataset):
 
     def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=4,
                  **kwargs):
-        super().__init__(modifiers='cache_hdd' + ('_s' if separate_fields else ''),
+        super().__init__(change=ChangeInfo(id='cache_hdd' + ('_s' if separate_fields else ''),
+                                           data_change=False),
                          data=dataset, **kwargs)
-        self.cache_dir = to_valid_path(Path(cache_dir) / self.identifier)
+        self.cache_dir = to_valid_path(Path(cache_dir) / self.data_identifier)
         self.separate_fields = separate_fields
         if len(dataset) == 0:
             warnings.warn(f"The dataset {dataset} is empty.")
@@ -485,7 +492,7 @@ class HDDCacheDataset(Dataset):
             ii = i * len(dataset) // consistency_check_sample_count
 
             if pickle.dumps(dataset[ii]) != pickle.dumps(self[ii]):
-                warnings.warn(f"Cache of the dataset {self.identifier} inconsistent." +
+                warnings.warn(f"Cache of the dataset {self.data_identifier} inconsistent." +
                               " Deleting old and creating new cache.")
                 self.delete_cache()
                 os.makedirs(self.cache_dir, exist_ok=False)
@@ -523,12 +530,12 @@ class HDDCacheDataset(Dataset):
 class InfoCacheDataset(Dataset):  # lazy
     def __init__(self, dataset, name_to_func, **kwargs):
         self.names_str = ', '.join(name_to_func.keys())
-        modifier = f"info_cache({self.names_str})"
         self.initialized = multiprocessing.Value('i', 0)  # must be before super
         info = NameDict(dataset.info or kwargs.get('info', dict()))
-        info.cache = NameDict(info.get('cache', None) or NameDict())
         self._info = None
-        super().__init__(modifiers=modifier, data=dataset, info=info, **kwargs)
+        change = ChangeInfo(f"info_cache({self.names_str})", data_change=False,
+                            info_change=tuple(name_to_func))
+        super().__init__(change=change, data=dataset, info=info, **kwargs)
         self.name_to_func = name_to_func
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
@@ -547,7 +554,7 @@ class InfoCacheDataset(Dataset):  # lazy
 
     def _compute(self):
         self._logger.info(f"{type(self).__name__}: computing/loading {self.names_str} for"
-                          + f" {self.data.identifier}")
+                          + f" {self.identifier}")
         info_cache = dict()
         for n, f in self.name_to_func.items():
             info_cache[n] = f(self.data)
@@ -556,8 +563,8 @@ class InfoCacheDataset(Dataset):  # lazy
     def _update_info_cache(self):
         with self.initialized.get_lock():
             if not self.initialized.value:  # lazy
-                if any(k not in self._info.cache for k in self.name_to_func):
-                    self._info.cache.update(self._compute())
+                if any(k not in self._info for k in self.name_to_func):
+                    self._info.update(self._compute())
                 self.initialized.value = True
 
 
@@ -590,20 +597,22 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
 class SubDataset(Dataset):
     __slots__ = ("_len", "_get_index")
 
-    def __init__(self, dataset, indices: T.Union[T.Sequence, T.Callable], **kwargs):
+    def __init__(self, dataset, indices: T.Union[T.Sequence, T.Callable], choice_name=None,
+                 **kwargs):
         # convert indices to smaller int type if possible
         if isinstance(indices, slice):
             self._len = len(dataset)
             start, stop, step = indices.indices(slice_len(indices, self._len))
             self._get_index = lambda i: start + step * i
-            modifier = f"[{start}:{stop}:{step if step != 0 else ''}]"
+            choice_name_ = f"[{start}:{stop}:{step if step != 0 else ''}]"
         else:
             self._len = len(indices)
             indices = _compress_indices(indices, len(dataset))
             self._get_index = lambda i: indices[i]
-            modifier = f"[indices_{_subset_hash(indices):x}]"
-        kwargs['modifiers'] = kwargs.pop('modifiers', modifier)
-        super().__init__(data=dataset, **kwargs)
+            choice_name_ = f"[indices_{_subset_hash(indices):x}]"
+        super().__init__(data=dataset,
+                         change=ChangeInfo(choice_name or choice_name_, data_change="indices"),
+                         **kwargs)
 
     def get_example(self, idx):
         return self.data[self._get_index(idx)]
@@ -619,8 +628,9 @@ class SubrangeDataset(Dataset):
         start, stop, step = slice_.indices(len(dataset))
         self.start, self.stop, self.step = start, stop, step
         self._len = slice_len(slice_, len(dataset))
-        modifier = f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]")
-        super().__init__(modifiers=[modifier], data=dataset, **kwargs)
+        change = ChangeInfo(
+            f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]"), data_change="indices")
+        super().__init__(data=dataset, change=change, **kwargs)
 
     def get_example(self, idx):
         return self.data[self.start + self.step * idx]
@@ -633,7 +643,8 @@ class RepeatDataset(Dataset):
     __slots__ = ("number_of_repeats",)
 
     def __init__(self, dataset, number_of_repeats, **kwargs):
-        super().__init__(modifiers=[f"repeat({number_of_repeats})"], data=dataset, **kwargs)
+        super().__init__(change=ChangeInfo(f"repeat({number_of_repeats})", data_change="indices"),
+                         data=dataset, **kwargs)
         self.number_of_repeats = number_of_repeats
 
     def get_example(self, idx):
@@ -663,8 +674,8 @@ class SampleDataset(Dataset):
         args = f"{seed}"
         if length is not None:
             args += f",{length}"
-        modifier = f"sample{'_r' if replace else ''}({args})"
-        super().__init__(modifiers=modifier, data=dataset, **kwargs)
+        change = ChangeInfo(f"sample{'_r' if replace else ''}({args})", data_change="indices")
+        super().__init__(data=dataset, change=change, **kwargs)
         self._len = length or len(dataset)
 
     def get_example(self, idx):
