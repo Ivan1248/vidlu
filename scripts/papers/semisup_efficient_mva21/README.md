@@ -1,10 +1,13 @@
+Running these scripts should reproduce experiments from "[A baseline for semi-supervised learning of efficient semantic segmentation models](https://arxiv.org/abs/2106.07075)". Some other data can be found [here](https://github.com/Ivan1248/semisup-seg-efficient),
+
+
 # Configuration check
 
-To test whether everything is set up properly, you can run 3 training configurations for 1 epoch with
+This runs 3 configurations for testing whether everything is set up properly:
 ```sh
 bash test_setup.sh
 ```
-You can use the `CUDA_VISIBLE_DEVICES` environment variable to choose a GPU.
+The `CUDA_VISIBLE_DEVICES` environment variable can be used to choose a GPU.
 
 # Experiments
 
