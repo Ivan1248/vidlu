@@ -22,6 +22,7 @@ from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
 from vidlu.utils.func import Empty, call_with_args_from_dict
 from vidlu.utils.misc import indent_print, query_user
 from vidlu.utils import debug
+import vidlu.torch_utils as vtu
 from vidlu.data import clean_up_dataset_cache
 import dirs
 
@@ -70,6 +71,22 @@ def make_experiment(args, dirs):
         call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
 
+@torch.no_grad()
+def eval_with_pop_stats(exp, stats_dataset):
+    with vtu.preserve_state(exp.trainer.model):
+        for m in exp.trainer.model.modules():
+            if "Norm" in type(m).__name__ and hasattr(m, "track_running_stats"):
+                m.momentum = None
+                m.track_running_stats = True
+                m.num_batches_tracked *= 0
+        exp.trainer.model.train()
+        print(f'\nComputing approximate population statistics...')
+        exp.trainer.eval(stats_dataset)
+        exp.trainer.model.eval()
+        print(f'\nEvaluating using approximate population statistics...')
+        exp.trainer.eval(exp.data.test)
+
+
 def train(args):
     if args.resume == "restart" \
             and not query_user("Are you sure you want to restart the experiment?",
@@ -97,12 +114,17 @@ def train(args):
             "restart", None) else 'Starting') + ' training...')
         training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
 
+        torch.cuda.empty_cache()
         exp.trainer.train(*training_datasets.values(), restart=False)
+
+        if args.eval_with_pop_stats:
+            eval_with_pop_stats(exp, exp.data.train)
 
         if not args.no_train_eval:
             print(f'\nEvaluating on training data ({", ".join(training_datasets.keys())})...')
             for name, ds in training_datasets.items():
                 exp.trainer.eval(ds)
+
         log_run('done')
 
     if args.profile:
@@ -173,6 +195,8 @@ def add_standard_arguments(parser, func):
                         help='The name of the file containing parameters.')
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
+    parser.add_argument("--eval_with_pop_stats", action='store_true',
+                        help="Computes actual population statistics for batchnorm layers.")
     # device
     parser.add_argument("-d", "--device", type=str, help="PyTorch device.",
                         default=None)

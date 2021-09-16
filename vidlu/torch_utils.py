@@ -1,6 +1,7 @@
 import contextlib
 import typing as T
 from pathlib import Path
+import copy
 
 import torch
 from torch import nn
@@ -70,6 +71,13 @@ def preserve_params(params):
     with torch.no_grad():
         for p, p_saved in param_param_saved:
             p.data = p_saved
+
+
+@contextlib.contextmanager
+def preserve_state(obj):
+    state = copy.deepcopy(obj.state_dict())
+    yield state
+    obj.load_state_dict(state)
 
 
 # tensor trees
