@@ -92,9 +92,9 @@ Note the example has some changes with respect to the default CIFAR-10 configura
 
 ## The framework
 
-Some of the main packages in the framework are `vidlu.data`, `vidlu.modules`, `vidlu.models`, `vidlu.training`, `vidlu.metrics`, `vidlu.factories`, `vidlu.configs`, `vidlu.utils` and `vidlu.experiment`. 
+Some of the main packages in the framework are `vidlu.data`, `vidlu.modules`, `vidlu.models`, `vidlu.training`, `vidlu.metrics`, `vidlu.factories`, `vidlu.configs`, `vidlu.utils` and `vidlu.experiment`.
 
-Most of the code here is rather generic except for concrete datasets in `vidlu.data.datasets`, hyperparameter configurations and other data in `vidlu.configs`, concrete models in `vidlu.models`, some modules in `vidlu.modules.components`, and `vidlu.experiments`, which applies the framework for training and evaluation.
+Most of the code here is generic except for concrete datasets in `vidlu.data.datasets`, hyperparameter configurations and other data in `vidlu.configs`, concrete models in `vidlu.models`, some modules in `vidlu.modules.components`, and `vidlu.experiments`, which applies the framework for training and evaluation.
 
 ### Data
 
@@ -182,7 +182,7 @@ def eu(..., flock_f=make_flock):
     ...
 
 from vidlu.utils.func import ArgTree as t
-au = argtree_partial(eu, fleet_f=t(load='coconut', swallow_f=t(type='african')))
+au = argtree_partial(eu, flock_f=t(load='coconut', swallow_f=t(type='african')))
 au()
 ```
 
