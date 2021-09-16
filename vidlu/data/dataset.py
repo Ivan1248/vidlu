@@ -18,6 +18,7 @@ import shutil
 from torchvision.datasets.utils import download_and_extract_archive
 import dataclasses as dc
 from functools import cached_property
+from enum import Enum
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
@@ -70,22 +71,50 @@ class StandardDownloadableDatasetMixin:
         (data_dir.parent / filename).rename(data_dir)
 
 
+class SeqChange(Enum):
+    order = "order"
+    removal = "remove"
+    repeat = "repeat"
+    addition = "add"
+
+
 @dc.dataclass
 class ChangeInfo:
-    id: str
-    data_change: T.Union[bool, T.Tuple[str], T.Literal["indices"]] = None
-    info_change: T.Union[bool, T.Tuple[str]] = None
+    """An object describing the kind of change between the original and the
+    modified dataset.
+
+    This is used for deciding whether a change affects data cache and info
+    cache. E.g. a data cache identifier should not change if the info is
+    modified..
+
+    Args:
+        name (str): The name of the change.
+        data_change (bool|Sequence[str, SequenceChange]): False indicattes no
+            data change. True indicates that if one does not want to express the
+            exact kinds of changes (the safest option to avoid invalid data
+            cache at a cost of more cache). A sequence can contain names of
+            changed fields and SequenceChange values. SequenceChange values
+            indicate changes of order, or removal, repeats or additions of
+            examples.
+        info_change (bool|Sequence[str]): Indicates info (field) changes in the
+            same way that `data_change` indicates example (field) changes,
+            except SequenceChange values are not supported since there is always
+            a single info instance per dataset.
+    """
+    name: str
+    data_change: T.Union[bool, T.Sequence[T.Union[str, SeqChange]]] = None
+    info_change: T.Union[bool, T.Sequence[str]] = None
 
     def __repr__(self):
-        return self.id
+        return self.name
 
 
-def default_change_info(ds, id, data_change=None, info_change=None):
+def auto_change_info(dataset, name, data_change=None, info_change=None):
     if data_change is None:
-        data_change = ds.data is None or ds.get_example != Dataset.get_example
+        data_change = dataset.data is None or dataset.get_example != Dataset.get_example
     if info_change is None:
-        info_change = ds.info != getattr(ds.data, "info", ds.info)
-    return ChangeInfo(id, data_change, info_change)
+        info_change = dataset.info != getattr(dataset.data, "info", dataset.info)
+    return ChangeInfo(name, data_change, info_change)
 
 
 class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
@@ -96,17 +125,15 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     from {0 .. len(self)-1}.
     """
 
-    def __init__(self, *, name: str = None, subset: str = None, info: T.Mapping = None, data=None,
-                 change: T.Union[ChangeInfo, str, T.Mapping] = None):
+    def __init__(self, *, name: str = None, subset: str = None, data=None, info: T.Mapping = None,
+                 data_change=None, info_change=None):
         self.name = name or getattr(data, 'name', None) or type(self).__name__
         if subset is not None:
             self.name = f"{self.name}-{subset}"
         self.info = NameDict(info or getattr(data, 'info', dict()))
         self.data = data
-        change = (dc.asdict(change) if isinstance(change, ChangeInfo) else
-                  dict(id=change) if isinstance(change, str) else
-                  dict(id=self.name) if change is None else change)
-        self.change_info = default_change_info(self, **change)
+        self.change_info = auto_change_info(self, name=self.name, data_change=data_change,
+                                            info_change=info_change)
 
     @cached_property
     def changes(self):
@@ -116,11 +143,11 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
 
     @cached_property
     def identifier(self):
-        return ".".join(c.id for c in self.changes)
+        return ".".join(c.name for c in self.changes)
 
     @cached_property
     def data_identifier(self):
-        return ".".join(c.id for c in self.changes if c.data_change is not False)
+        return ".".join(c.name for c in self.changes if c.data_change is not False)
 
     def __getitem__(self, idx, field=None):
         def element_fancy_index(d, key):
@@ -187,8 +214,6 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
             directory: The directory in which cached datasets are to be stored.
             separate_fields (bool): If True, record files are saved in separate files,
                 e.g. labels are stored separately from input examples.
-            unused_cleanup_time (datetime.timedelta): Time since last access for cached
-                dataset that needs to pass so that it is to be deleted.
             **kwargs: additional arguments for the Dataset initializer.
         """
         return HDDCacheDataset(self, directory, separate_fields, **kwargs)
@@ -261,7 +286,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         ds.map_fields(dict(x1=func1, ..., xn=funcn)) does the same as
         ds.map(lambda r: Record(x1=func1(r.x_1), ..., xn=funcn(r.xn), x(n+1)=identity, ...))
 
-        It is useful when using multiprocessing, which uses pickling, which
+        It is useful when using multiprocessing, which uses Pickle, and Pickle
         doesn't support pickling of lambdas.
         """
         return self.map(FieldsMap(field_to_func), func_name=func_name, **kwargs)
@@ -272,7 +297,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     def permute(self, seed=53, **kwargs):
         """Creates a permutation of the dataset."""
         indices = np.random.RandomState(seed=seed).permutation(len(self))
-        return SubDataset(self, indices, choice_name=F"permute({seed})", **kwargs)
+        return SubDataset(self, indices, choice_name=F"permute({seed})",
+                          data_change=[SeqChange.order], **kwargs)
 
     def repeat(self, number_of_repeats, **kwargs):
         """Creates a dataset with `number_of_repeats` times the length of the
@@ -292,8 +318,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     def join(self, *other, **kwargs):
         datasets = [self] + list(other)
         info = kwargs.pop('info', datasets[0].info)
-        name = f"join(" + ",".join(x.identifier for x in datasets) + ")"
-        return Dataset(name=name, info=info, data=ConcatDataset(datasets), **kwargs)
+        return Dataset(name=f"join(" + ",".join(x.identifier for x in datasets) + ")", info=info,
+                       data=ConcatDataset(datasets), **kwargs)
 
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
@@ -366,8 +392,8 @@ class MapDataset(Dataset):
     __slots__ = ("func",)
 
     def __init__(self, dataset, func=lambda x: x, func_name=None, **kwargs):
-        transform = 'map' + ('_' + func_name if func_name else '')
-        super().__init__(change=transform, data=dataset, **kwargs)
+        super().__init__(name='map' + ('_' + func_name if func_name else ''), data=dataset,
+                         **kwargs)
         self.func = func
 
     def get_example(self, idx):
@@ -378,7 +404,7 @@ class EnumeratedDataset(Dataset):
     __slots__ = ("offset",)
 
     def __init__(self, dataset, offset=0, field_name="id", **kwargs):
-        super().__init__(change=f'enumerated({offset})', data=dataset, **kwargs)
+        super().__init__(name=f'enumerated({offset})', data=dataset, **kwargs)
         self.offset = offset
         self.field_name = field_name
 
@@ -408,9 +434,8 @@ class CacheDataset(Dataset):
     def __init__(self, dataset, max_cache_size=np.inf, **kwargs):
         cache_size = min(len(dataset), max_cache_size)
         self._cache_all = cache_size == len(dataset)
-        change = ChangeInfo(id="cache" if self._cache_all else f"(0..{cache_size - 1})",
-                            data_change=False)
-        super().__init__(change=change, data=dataset, **kwargs)
+        super().__init__(name="cache" if self._cache_all else f"(0..{cache_size - 1})",
+                         data=dataset, data_change=False, **kwargs)
         if self._cache_all:
             self._print("Caching whole dataset...")
             self._cached_data = [x for x in tqdm(dataset)]
@@ -464,8 +489,8 @@ class HDDAndRAMCacheDataset(Dataset):
                 # examples pickled in chunks because of memory constraints
                 for x in tqdm(to_chunks(data), desc="Saving dataset cache to HDD"):
                     pickle.dump(x, f, protocol=4)
-        super().__init__(change=ChangeInfo(id="cache_hdd_ram", data_change=False),
-                         info=dataset.info, data=data, **kwargs)
+        super().__init__(name="cache_hdd_ram", data=data, info=dataset.info, data_change=False,
+                         **kwargs)
 
 
 class HDDCacheDataset(Dataset):
@@ -474,9 +499,8 @@ class HDDCacheDataset(Dataset):
 
     def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=4,
                  **kwargs):
-        super().__init__(change=ChangeInfo(id='cache_hdd' + ('_s' if separate_fields else ''),
-                                           data_change=False),
-                         data=dataset, **kwargs)
+        super().__init__(name='cache_hdd' + ('_s' if separate_fields else ''), data=dataset,
+                         data_change=False, **kwargs)
         self.cache_dir = to_valid_path(Path(cache_dir) / self.data_identifier)
         self.separate_fields = separate_fields
         if len(dataset) == 0:
@@ -533,9 +557,8 @@ class InfoCacheDataset(Dataset):  # lazy
         self.initialized = multiprocessing.Value('i', 0)  # must be before super
         info = NameDict(dataset.info or kwargs.get('info', dict()))
         self._info = None
-        change = ChangeInfo(f"info_cache({self.names_str})", data_change=False,
-                            info_change=tuple(name_to_func))
-        super().__init__(change=change, data=dataset, info=info, **kwargs)
+        super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
+                         data_change=False, info_change=tuple(name_to_func), **kwargs)
         self.name_to_func = name_to_func
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
@@ -610,9 +633,8 @@ class SubDataset(Dataset):
             indices = _compress_indices(indices, len(dataset))
             self._get_index = lambda i: indices[i]
             choice_name_ = f"[indices_{_subset_hash(indices):x}]"
-        super().__init__(data=dataset,
-                         change=ChangeInfo(choice_name or choice_name_, data_change="indices"),
-                         **kwargs)
+        super().__init__(name=choice_name or choice_name_, data=dataset,
+                         data_change=kwargs.pop("data_change", [SeqChange.removal]), **kwargs)
 
     def get_example(self, idx):
         return self.data[self._get_index(idx)]
@@ -628,9 +650,8 @@ class SubrangeDataset(Dataset):
         start, stop, step = slice_.indices(len(dataset))
         self.start, self.stop, self.step = start, stop, step
         self._len = slice_len(slice_, len(dataset))
-        change = ChangeInfo(
-            f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]"), data_change="indices")
-        super().__init__(data=dataset, change=change, **kwargs)
+        super().__init__(name=f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]"),
+                         data=dataset, data_change=[SeqChange.removal], **kwargs)
 
     def get_example(self, idx):
         return self.data[self.start + self.step * idx]
@@ -643,8 +664,8 @@ class RepeatDataset(Dataset):
     __slots__ = ("number_of_repeats",)
 
     def __init__(self, dataset, number_of_repeats, **kwargs):
-        super().__init__(change=ChangeInfo(f"repeat({number_of_repeats})", data_change="indices"),
-                         data=dataset, **kwargs)
+        super().__init__(name=f"repeat({number_of_repeats})", data=dataset,
+                         data_change=[SeqChange.repeat], **kwargs)
         self.number_of_repeats = number_of_repeats
 
     def get_example(self, idx):
@@ -659,23 +680,22 @@ class SampleDataset(Dataset):
 
     def __init__(self, dataset, length=None, replace=False, seed=53, **kwargs):
         length = length or len(dataset)
-        if length > len(dataset) and not replace:
-            raise ValueError("Cannot sample without replacement if `length` is larger than the "
-                             + " length of the original dataset.")
+        if length != len(dataset) and not replace:
+            raise ValueError("Cannot sample without replacement if `length` is different from the"
+                             + " original length.")
         rand = np.random.RandomState(seed=seed)
         if replace:
             indices = [rand.randint(0, len(dataset)) for _ in range(len(dataset))]
         else:
             indices = rand.permutation(len(dataset))[:length]
-            if length > len(dataset):
-                raise ValueError("A sample without replacement cannot be larger"
-                                 + " than the original dataset.")
         self._indices = _compress_indices(indices, len(dataset))
         args = f"{seed}"
         if length is not None:
             args += f",{length}"
-        change = ChangeInfo(f"sample{'_r' if replace else ''}({args})", data_change="indices")
-        super().__init__(data=dataset, change=change, **kwargs)
+        data_change = [SeqChange.order, SeqChange.removal, SeqChange.repeat] if replace else [
+            SeqChange.order]
+        super().__init__(name=f"sample{'_r' if replace else ''}({args})", data=dataset,
+                         data_change=data_change, **kwargs)
         self._len = length or len(dataset)
 
     def get_example(self, idx):
