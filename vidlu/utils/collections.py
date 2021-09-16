@@ -1,11 +1,12 @@
 import pickle
 import os
-from collections.abc import MutableMapping, Mapping
+import collections.abc as abc
+import typing as T
 from pathlib import Path
 import warnings
 
 
-class NameDict(MutableMapping):
+class NameDict(abc.MutableMapping):
     def __init__(self, *args, **kwargs):
         super().__init__()
         if len(args) > 1:
@@ -88,7 +89,7 @@ class SingleWriteDict(dict):
 
     def update(self, other=None, **kwargs):
         if other is not None:
-            for k, v in other.items() if isinstance(other, Mapping) else other:
+            for k, v in other.items() if isinstance(other, T.Mapping) else other:
                 self[k] = v
         for k, v in kwargs.items():
             self[k] = v
@@ -107,7 +108,7 @@ class SingleWriteDict(dict):
         return f'SingleWriteDict({dict.__repr__(self)})'
 
 
-class FileDict(MutableMapping):
+class FileDict(abc.MutableMapping):
     __slots__ = ("path", "load_proc", "save_proc", "_dict")
 
     def __init__(self, path: os.PathLike, load_proc=pickle.load, save_proc=pickle.dump,

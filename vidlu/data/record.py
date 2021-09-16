@@ -71,6 +71,9 @@ class Record(Sequence):  # Sized, Iterable len, iter
     def __getattr__(self, key):  # TODO: add __dir__
         return self[key]
 
+    def __dir__(self):
+        return self.keys()
+
     def __getitem__(self, key):
         """
         :param key: int or str or List[str]
