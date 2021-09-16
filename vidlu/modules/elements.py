@@ -155,7 +155,7 @@ class ModuleInverseError(RuntimeError):
     pass
 
 
-class InvertibleMixin:
+class InvertibleModuleMixin:
     # Note: reconstruction_tols is used in inverse check.
     # It can be overridden with a property.
     reconstruction_tols = dict(rtol=10, atol=1e-5)
@@ -168,18 +168,18 @@ class InvertibleMixin:
 
     @property
     def is_inverse(self: nn.Module) -> bool:
-        return self in InvertibleMixin._inverses
+        return self in InvertibleModuleMixin._inverses
 
     @property
     def inverse(self: nn.Module) -> nn.Module:
         try:
-            module_to_inv = InvertibleMixin._module_to_inverse
+            module_to_inv = InvertibleModuleMixin._module_to_inverse
             if self in module_to_inv and (inv_module := module_to_inv[self]()) is not None:
                 return inv_module
             inv_module = self.inverse_module()
             module_to_inv[self] = weakref.ref(inv_module)
             module_to_inv[inv_module] = weakref.ref(self)
-            InvertibleMixin._inverses.add(inv_module)
+            InvertibleModuleMixin._inverses.add(inv_module)
             inv_module.train(self.training)
             return inv_module
         except ModuleInverseError as e:
@@ -189,7 +189,7 @@ class InvertibleMixin:
                 f"The inverse for the module `{type(self)}` is not defined. Error: {e}")
 
     def inverse_module(self) -> nn.Module:
-        if type(self).inverse_forward is not InvertibleMixin.inverse_forward:
+        if type(self).inverse_forward is not InvertibleModuleMixin.inverse_forward:
             inverse_type = type(f"{type(self).__name__}Inverse", (Inverse,), {})
             return inverse_type(self)
         raise ModuleInverseError(f"`inverse_forward` is not defined for `{type(self)}`."
@@ -214,10 +214,10 @@ def zero_log_abs_det_jac(func_or_module_class):
     fm = func_or_module_class
     if inspect.isclass(fm):
         fm.forward = zero_log_abs_det_jac(fm.forward)
-        if fm.inverse_forward is InvertibleMixin.inverse_forward \
-                and fm.inverse_module is InvertibleMixin.inverse_module:
+        if fm.inverse_forward is InvertibleModuleMixin.inverse_forward \
+                and fm.inverse_module is InvertibleModuleMixin.inverse_module:
             raise RuntimeError("`inverse_forward` or `inverse_module` not defined.")
-        if fm.inverse_forward is not InvertibleMixin.inverse_forward:
+        if fm.inverse_forward is not InvertibleModuleMixin.inverse_forward:
             fm.inverse_forward = zero_log_abs_det_jac(fm.inverse_forward)
         return func_or_module_class
     else:
@@ -229,7 +229,7 @@ def zero_log_abs_det_jac(func_or_module_class):
         return wrapper
 
 
-class InitializableMixin:
+class InitializableModuleMixin:
     def initialize(self: nn.Module, *args, **kwargs):
         if len(*args) + len(**kwargs) != 0:
             y = self(*args, **kwargs)
@@ -244,7 +244,7 @@ class InitializableMixin:
 # Core Modules #####################################################################################
 
 @_replaces('Module')
-class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
+class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
     """An abstract module class that supports shape inference and checks
     whether the input is in-place modified in an undesired way.
 
@@ -297,6 +297,15 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             return self._mark_if_modified(super().__call__(*args, **kwargs), inp_to_ver)
         return super().__call__(*args, **kwargs)
 
+    def _run_forward_check_pre_hooks(self, *input, hooks):
+        for hook in hooks.values():
+            result = hook(self, input)
+            if result is not None:
+                if not isinstance(result, tuple):
+                    result = (result,)
+                input = result
+        return input
+
     def __call__(self, *input, **kwargs):
         """Modified to support shape inference and an in-place modification
         check.
@@ -317,16 +326,12 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
             >>> y = h(x)  # call with an in-place modification check
             >>> y = h(x)  # a normal call
         """
-        for hook in self._forward_check_pre_hooks.values():
-            result = hook(self, input)
-            if result is not None:
-                if not isinstance(result, tuple):
-                    result = (result,)
-                input = result
         try:
             if not self._built:
                 result = self._init_call(*input, **kwargs)
             elif not self._checked:  # checks are performed on the second input
+                input = self._run_forward_check_pre_hooks(*input,
+                                                          hooks=self._forward_check_pre_hooks)
                 result = self._check_call(*input, **kwargs)
             else:
                 result = super().__call__(*input, **kwargs)
@@ -437,7 +442,7 @@ class Module(nn.Module, SplittableMixin, InvertibleMixin, ABC):
         return super().load_state_dict(sd, strict=strict)
 
     def register_forward_check_pre_hook(self, hook: T.Callable[..., None]) -> hooks.RemovableHandle:
-        handle = hooks.RemovableHandle(self._forward_pre_hooks)
+        handle = hooks.RemovableHandle(self._forward_check_pre_hooks)
         self._forward_check_pre_hooks[handle.id] = hook
         return handle
 
