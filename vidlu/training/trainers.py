@@ -167,7 +167,9 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
     """A function for putting feature batches on the relevant device"""
 
     def _prepare(x):
-        return x.to(device=device, non_blocking=non_blocking)
+        if isinstance(x, torch.Tensor):
+            return x.to(device=device, non_blocking=non_blocking)
+        return x
 
     if isinstance(batch, feature_type):
         return _prepare(batch)
