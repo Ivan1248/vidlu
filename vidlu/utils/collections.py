@@ -76,7 +76,7 @@ class NameDict(abc.MutableMapping):
 
     def update(self, *args, **kwargs):
         for k, v in dict(*args, **kwargs).items():
-            setattr(self, k, v)
+            self.__dict__[k] = v
 
 
 class SingleWriteDict(dict):
