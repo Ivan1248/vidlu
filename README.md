@@ -135,13 +135,11 @@ Composite modules are designed to be "deeply" configurable: arguments of argumen
 
 `Engine` (based on [Ignite](https://github.com/pytorch/ignite)'s `Engine`) is used for running training or evaluation loops (the iteration step is an injected dependency). It raises events before and after the loop and the iteration step.
 
-`Trainer` defines a full machine learning algorithm. It has `train` and `eval` methods. Some of its more important attributes (components) are: `model`, `eval_batch_size` (E), `metrics` (E), `eval_step` (E), `loss` (L),  `batch_size` (L), `jitter` (L), `train_step` (L), `extensions` (L), `epoch_count` (O), `optimizer` (O), `lr_scheduler` (O), `data_loader_f` (D). (E) marks evaluation components, which do not affect training, (L) marks learning components, and (O) marks learning components mostly related to optimization.
+`Trainer` defines a full machine learning algorithm. It has `train` and `eval` methods. Some of its more important attributes (components) are: `model`, `eval_batch_size` (E), `metrics` (E), `eval_step` (E), `loss` (L),  `batch_size` (L), `jitter` (L), `train_step` (L), `extensions` (L), `epoch_count` (O), `optimizer` (O), `lr_scheduler` (O), `data_loader_f` (D). E denotes evaluation components, which do not affect training, L learning components, and O learning components mostly related to optimization.
 
 `ChecpointManager` is used for storing and loading the state of a trainer (and some other things) in the file system.
 
 `vidlu.training.steps` defines training and evaluation steps. Instances of step classes (inheriting `BaseStep`) have a `__call__` method that accepts a `Trainer` instance and a data batch. Training steps can be stateful and might need to define `state_dict` and `load_state_dict` methods. There are steps of different supervised, adversarial, semi-supervised, normalizing flow, and some hybrid algorithms.
-
-`vidlu.training.robustness` defines 
 
 ### Factories
 
