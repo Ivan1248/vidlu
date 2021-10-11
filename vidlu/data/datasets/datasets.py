@@ -317,16 +317,6 @@ class Cifar10(Dataset):
         class_names=["airplane", "car", "bird", "cat", "deer", "dog", "frog", "horse", "ship",
                      "truck"])
 
-    def download(self, data_dir):
-        datasets_dir = data_dir.parent
-        download_path = datasets_dir / "cifar-10-python.tar.gz"
-        print(f"Downloading dataset to {datasets_dir}")
-        download(url="https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
-                 output_path=download_path, md5='c58f30108f718f92721af3b95e74349a')
-        with tarfile.open(download_path, "r:gz") as tar:
-            tar.extractall(path=datasets_dir)
-        download_path.unlink()
-
     def __init__(self, data_dir, subset='trainval'):
         _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
@@ -349,6 +339,16 @@ class Cifar10(Dataset):
         self.x, self.y = map(to_shared_array, [x, y])
         super().__init__(subset=subset, info=Cifar10.info)
 
+    def download(self, data_dir):
+        datasets_dir = data_dir.parent
+        download_path = datasets_dir / "cifar-10-python.tar.gz"
+        print(f"Downloading dataset to {datasets_dir}")
+        download(url="https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
+                 output_path=download_path, md5='c58f30108f718f92721af3b95e74349a')
+        with tarfile.open(download_path, "r:gz") as tar:
+            tar.extractall(path=datasets_dir)
+        download_path.unlink()
+
     def get_example(self, idx):
         return _make_record(x=self.x[idx], y=self.y[idx])
 
@@ -362,8 +362,11 @@ class Cifar100(Dataset):
 
     def __init__(self, data_dir, subset='trainval'):
         _check_subsets(self.__class__, subset)
+        data_dir = Path(data_dir)
 
-        data = unpickle(f"{data_dir}/{'train' if subset == 'trainval' else subset}")
+        self.download_if_necessary(data_dir)
+
+        data = unpickle(data_dir / f"{'train' if subset == 'trainval' else subset}")
 
         h, w, ch = 32, 32, 3
         train_x = data['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
@@ -371,6 +374,16 @@ class Cifar100(Dataset):
 
         super().__init__(subset=subset, info=dict(class_count=100, problem='classification',
                                                   coarse_labels=data['coarse_labels']))
+
+    def download(self, data_dir):
+        datasets_dir = data_dir.parent
+        download_path = datasets_dir / "cifar-100-python.tar.gz"
+        print(f"Downloading dataset to {datasets_dir}")
+        download(url="https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz",
+                 output_path=download_path, md5='eb9058c3a382ffc7106e4002c42a8d85')
+        with tarfile.open(download_path, "r:gz") as tar:
+            tar.extractall(path=datasets_dir)
+        download_path.unlink()
 
     def get_example(self, idx):
         return _make_record(x=self.x[idx], y=self.y[idx])
@@ -915,7 +928,7 @@ class Cityscapes(Dataset):
         im_get = lambda: load_image(im_path, d)
         lab_get = lambda: load_segmentation_with_downsampling(
             lab_path, d if self.downsample_labels else 1, self._id_to_label)
-        return _make_record(x_=im_get, y_=lab_get)
+        return _make_record(x_=im_get, y_=lab_get)  # , id=str(self._images[idx].with_suffix("")))
 
     def __len__(self):
         return len(self._images)
