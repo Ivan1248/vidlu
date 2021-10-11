@@ -79,11 +79,13 @@ class TestDataset:
                 assert a['y'] == a['x'] ** 2
             assert repr(ds) == str(ds)
             assert len(ds[0]) == 2
+            assert ds.identifier == ds.name
 
         mds = ds.map(lambda a: Record(x=a.x, y=a.y ** 0.5), info={**ds.info, 'len': 20})
         assert mds.data == ds and 'len' in mds.info
-        assert (len(mds.identifier) > len(ds.identifier)
-                and mds.name[:len(ds.identifier)] == ds.identifier)
+        assert len(mds.identifier) > len(ds.identifier)
+        assert mds.identifier[:len(ds.identifier)] == ds.identifier
+        assert mds.name == mds.identifier[-len(mds.name):]
         for x, y in mds:
             assert y == (x ** 2) ** 0.5
 
@@ -154,7 +156,7 @@ class TestDataset:
         ds = ds.map(SubFirst(ds))
         dl = DataLoader(ds, num_workers=3)
         assert min(x for x in dl) == 0
-        assert ds.info.cache.first == lower
+        assert ds.info.first == lower
 
 
 # test_cache_lazy_info_hdd_parallel
@@ -164,7 +166,7 @@ class SubFirst:
         self.ds = ds
 
     def __call__(self, d):
-        return d - self.ds.info.cache.first
+        return d - self.ds.info.first
 
 
 def first(ds):

@@ -72,10 +72,10 @@ class StandardDownloadableDatasetMixin:
 
 
 class SeqChange(Enum):
-    order = "order"
-    removal = "remove"
-    repeat = "repeat"
-    addition = "add"
+    ORDER = "order"
+    REMOVAL = "removal"
+    REPEAT = "repeat"
+    ADDITION = "addition"
 
 
 @dc.dataclass
@@ -298,7 +298,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """Creates a permutation of the dataset."""
         indices = np.random.RandomState(seed=seed).permutation(len(self))
         return SubDataset(self, indices, choice_name=F"permute({seed})",
-                          data_change=[SeqChange.order], **kwargs)
+                          data_change=[SeqChange.ORDER], **kwargs)
 
     def repeat(self, number_of_repeats, **kwargs):
         """Creates a dataset with `number_of_repeats` times the length of the
@@ -558,7 +558,7 @@ class InfoCacheDataset(Dataset):  # lazy
         info = NameDict(dataset.info or kwargs.get('info', dict()))
         self._info = None
         super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
-                         data_change=False, info_change=tuple(name_to_func), **kwargs)
+                         data_change=False, info_change=list(name_to_func), **kwargs)
         self.name_to_func = name_to_func
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
@@ -634,7 +634,7 @@ class SubDataset(Dataset):
             self._get_index = lambda i: indices[i]
             choice_name_ = f"[indices_{_subset_hash(indices):x}]"
         super().__init__(name=choice_name or choice_name_, data=dataset,
-                         data_change=kwargs.pop("data_change", [SeqChange.removal]), **kwargs)
+                         data_change=kwargs.pop("data_change", [SeqChange.REMOVAL]), **kwargs)
 
     def get_example(self, idx):
         return self.data[self._get_index(idx)]
@@ -651,7 +651,7 @@ class SubrangeDataset(Dataset):
         self.start, self.stop, self.step = start, stop, step
         self._len = slice_len(slice_, len(dataset))
         super().__init__(name=f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]"),
-                         data=dataset, data_change=[SeqChange.removal], **kwargs)
+                         data=dataset, data_change=[SeqChange.REMOVAL], **kwargs)
 
     def get_example(self, idx):
         return self.data[self.start + self.step * idx]
@@ -665,7 +665,7 @@ class RepeatDataset(Dataset):
 
     def __init__(self, dataset, number_of_repeats, **kwargs):
         super().__init__(name=f"repeat({number_of_repeats})", data=dataset,
-                         data_change=[SeqChange.repeat], **kwargs)
+                         data_change=[SeqChange.REPEAT], **kwargs)
         self.number_of_repeats = number_of_repeats
 
     def get_example(self, idx):
@@ -692,8 +692,8 @@ class SampleDataset(Dataset):
         args = f"{seed}"
         if length is not None:
             args += f",{length}"
-        data_change = [SeqChange.order, SeqChange.removal, SeqChange.repeat] if replace else [
-            SeqChange.order]
+        data_change = [SeqChange.ORDER, SeqChange.REMOVAL, SeqChange.REPEAT] if replace else [
+            SeqChange.ORDER]
         super().__init__(name=f"sample{'_r' if replace else ''}({args})", data=dataset,
                          data_change=data_change, **kwargs)
         self._len = length or len(dataset)
