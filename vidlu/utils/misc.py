@@ -26,6 +26,16 @@ def slice_len(s, sequence_length):
     return max(0, (stop - start + (step - (1 if step > 0 else -1))) // step)
 
 
+# Deep attribute access ############################################################################
+
+def deep_getattr(namespace, path: str):
+    names = path.split('.')
+    obj = namespace[names[0]] if isinstance(namespace, T.Mapping) else getattr(namespace, names[0])
+    for name in names[1:]:
+        obj = getattr(obj, name)
+    return obj
+
+
 # Argument broadcasting ############################################################################
 
 def broadcast(obj: T.Union[object, T.Sequence], n: int, seq_type=T.Sequence) -> list:
