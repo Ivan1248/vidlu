@@ -86,7 +86,7 @@ class PhotoTPS20(SeqPertModel):
 
 class PhotoWarp1(SeqPertModel):
     def __init__(self, clamp, forward_arg_count=None, sigma=3):
-        super().__init__(warp=vmf.argtree_partial(vmi.SmoothWarp, smooth_f=t(sigma=sigma))(),
+        super().__init__(warp=vmf.tree_partial(vmi.SmoothWarp, smooth_f=t(sigma=sigma))(),
                          photometric=Photometric20(clamp, forward_arg_count=1),
                          forward_arg_count=forward_arg_count)
 
