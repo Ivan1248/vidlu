@@ -6,22 +6,25 @@ from pathlib import Path
 import warnings
 
 
+def _augment_key_error_message(dct, e, error_type=None):
+    if error_type is None:
+        error_type = type(e)
+    return error_type(f"{e.args[0]}. Available keys: {list(dct.keys())}", *e.args[1:])
+
+
 class NameDict(abc.MutableMapping):
     def __init__(self, *args, **kwargs):
         super().__init__()
         if len(args) > 1:
-            raise TypeError(
-                f"{type(self).__name__} expected at most 1 positional argument, got {len(args)}.")
+            raise TypeError(f"{type(self).__name__} got more than 1 positional argument.")
         self.update(*args, **kwargs)
 
     def __repr__(self):
-        arg_strings = [f'{name}={repr(value)}' for name, value in self._get_kwargs()]
+        arg_strings = [f'{name}={repr(value)}' for name, value in self.items()]
         return f"{type(self).__name__}({', '.join(arg_strings)})"
 
     def __eq__(self, other):
-        if not isinstance(other, type(self)):
-            return NotImplemented
-        return vars(self) == vars(other)
+        return vars(self) == vars(other) if type(other) == type(self) else NotImplemented
 
     def __contains__(self, key):
         return key in self.__dict__
@@ -30,7 +33,7 @@ class NameDict(abc.MutableMapping):
         try:
             return self.__dict__[name]
         except KeyError as e:
-            raise KeyError(f"{e}. Available keys: {list(self.keys())}")
+            raise _augment_key_error_message(self, e)
 
     def __setitem__(self, name, value):
         self.__dict__[name] = value
@@ -38,11 +41,11 @@ class NameDict(abc.MutableMapping):
     def __delitem__(self, name):
         del self.__dict__[name]
 
-    def __getattr__(self, key):
+    def __getattr__(self, name):
         try:
-            return self[key]
+            return self.__dict__[name]
         except KeyError as e:
-            raise AttributeError(f"The NameDict instance does not contain the key {key}. {e}.")
+            raise _augment_key_error_message(self, e, AttributeError)  # Must be AttributeError
 
     def __iter__(self):
         return iter(self.__dict__)
@@ -55,9 +58,6 @@ class NameDict(abc.MutableMapping):
 
     def __setstate__(self, state):
         self.__dict__ = state
-
-    def _get_kwargs(self):
-        return self.__dict__.items()
 
     def keys(self):
         return self.__dict__.keys()
@@ -75,8 +75,7 @@ class NameDict(abc.MutableMapping):
         return self.__dict__
 
     def update(self, *args, **kwargs):
-        for k, v in dict(*args, **kwargs).items():
-            self.__dict__[k] = v
+        self.__dict__.update(*args, **kwargs)
 
 
 class SingleWriteDict(dict):
