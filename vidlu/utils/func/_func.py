@@ -1,8 +1,10 @@
 import inspect
 from inspect import signature
 import functools
-import typing
+import typing as T
 import warnings
+
+from typeguard import check_argument_types
 
 from vidlu.utils import text
 from vidlu.utils import tree
@@ -20,6 +22,12 @@ class ArgHolder:
 
     def __init__(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
+
+    def bind(self, func):
+        return partial(func, *self.args, **self.kwargs)
+
+    def call(self, func):
+        return func(*self.args, **self.kwargs)
 
     def __repr__(self):
         args = ", ".join(repr(a) for a in self.args)
@@ -189,17 +197,53 @@ def tryable(func, default_value, error_type=Exception):
     return try_
 
 
-def pick_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
-    return {k: args_dict[k] for k, default in params(func).items()
-            if k in args_dict and assignment_cond(k, args_dict[k], default)}
+# Assignable arguments picking #####################################################################
+
+def _no_assignment_cond(k, v, default):
+    return True
 
 
-def assign_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
-    return partial(func, **pick_args_from_dict(func, args_dict, assignment_cond))
+TKwargsPolicy = T.Literal["error", "pick", "ignore"]
 
 
-def call_with_args_from_dict(func, args_dict, assignment_cond=lambda k, v, default: True):
-    return func(**pick_args_from_dict(func, args_dict, assignment_cond))
+def pick_assignable_args(func, args_dict, return_other=False, assignment_cond=None,
+                         kwargs_policy: TKwargsPolicy = "error"):
+    check_argument_types()
+    if assignment_cond is None:
+        assignment_cond = _no_assignment_cond
+    parameters = list(signature(func).parameters.items())
+    if len(parameters) == 0:
+        return (dict(), dict(args_dict)) if return_other else dict()
+    elif parameters[-1][1].kind == inspect.Parameter.VAR_KEYWORD:
+        if kwargs_policy == "error":
+            raise ValueError(f"func accepts unspecified keyword arguments, but {kwargs_policy=}"
+                             + f" does not allow it")
+        elif kwargs_policy == "pick_all":
+            return ({**args_dict}, dict()) if return_other else args_dict
+    assignable = {k: args_dict[k] for k, v in parameters
+                  if k in args_dict and assignment_cond(k, args_dict[k], v.default)}
+    if return_other:
+        other = {k: v for k, v in args_dict.items() if k not in assignable}
+        return assignable, other
+    return assignable
+
+
+def call_with_assignable_args(func, args_dict, return_other=False, assignment_cond=None,
+                              kwargs_policy: TKwargsPolicy = "error"):
+    a = pick_assignable_args(func, args_dict, return_other=return_other,
+                             assignment_cond=assignment_cond, kwargs_policy=kwargs_policy)
+    return (func(**a[0]), a[1]) if return_other else func(**a)
+
+
+def arg_picking(func, return_other=False, assignment_cond=None,
+                kwargs_policy: TKwargsPolicy = "error"):
+    @functools.wraps(func)
+    def wrapper(**ctx):
+        return call_with_assignable_args(func, ctx, return_other=return_other,
+                                         assignment_cond=assignment_cond,
+                                         kwargs_policy=kwargs_policy)
+
+    return wrapper
 
 
 # parameters/arguments #############################################################################
@@ -306,10 +350,10 @@ def type_checked(func):
         ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
         fail = False
         for name, type_ in func.__annotations__.items():
-            type_origin = typing.get_origin(type_)
+            type_origin = T.get_origin(type_)
             if type_origin is not None:
-                if type_origin is typing.Literal:
-                    if ba[name] not in typing.get_args(type_):
+                if type_origin is T.Literal:
+                    if ba[name] not in T.get_args(type_):
                         fail = True
             if fail or not isinstance(ba[name], type_):
                 val_str = str(ba[name])
@@ -347,7 +391,7 @@ def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__
     from inspect import signature
     name = name or text.to_pascal_case(func.__name__)  # PascalCase
     pnames = list(signature(func).parameters.keys())
-    if not isinstance(superclasses, typing.Sequence):
+    if not isinstance(superclasses, T.Sequence):
         superclasses = (superclasses,)
 
     call_pnames = pnames[0:call_params_count]

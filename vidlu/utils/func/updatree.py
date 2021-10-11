@@ -22,6 +22,7 @@ class UpdatreeBase(UpdatreeMixin, NameDict):
 class UpdatreeLeaf(UpdatreeMixin):
     """Node representing a value, but, since it inherits UpdatreeMixin, it
     requires an attribute with its name (defined in the parent) to already exist."""
+    __slots__ = ('item',)
 
     def __init__(self, value):
         self.value = value
@@ -30,13 +31,13 @@ class UpdatreeLeaf(UpdatreeMixin):
         return self.value
 
 
-class EscapedItem:
+class EscapedItem(UpdatreeMixin):
     __slots__ = ('item',)
 
     def __init__(self, item):
         self.item = item
 
-    def __call__(self):
+    def apply(self, obj):
         return self.item
 
 
@@ -123,7 +124,7 @@ class FuncTree(partial, UpdatreeBase):
                         self[k] = FuncTree(self[k])
                     self[k].update(v)
             elif isinstance(v, EscapedItem):
-                self[k] = v()
+                self[k] = v.item
             else:
                 self[k] = v
 
@@ -213,7 +214,7 @@ class ArgTree(UpdatreeBase):
         super().__init__(*args, **kwargs)
 
     def apply(self, func):
-        return argtree_partial(func, self)
+        return tree_partial(func, self)
 
     def update(self, *args, **kwargs):
         if len(args) > 1:
@@ -225,7 +226,7 @@ class ArgTree(UpdatreeBase):
             if isinstance(self[k], ArgTree) and isinstance(v, ArgTree):
                 self[k].update(v)
             elif callable(self[k]) and isinstance(v, ArgTree):
-                self[k] = argtree_partial(self[k], v)
+                self[k] = tree_partial(self[k], v)
             else:
                 self[k] = v
 
@@ -252,7 +253,7 @@ def _process_argtree_partial_args(*args, **kwargs):
     return func, tree
 
 
-def argtree_partial_(args, kwargs, partial_f=partial):
+def tree_partial_(args, kwargs, partial_f=partial):
     func, tree = _process_argtree_partial_args(*args, **kwargs)
 
     par = None
@@ -264,7 +265,7 @@ def argtree_partial_(args, kwargs, partial_f=partial):
         return par[k]
 
     kwargs = {
-        k: argtree_partial_((default_args(func)[k],), v, partial_f=partial_f)
+        k: tree_partial_((default_args(func)[k],), v, partial_f=partial_f)
         if isinstance(v, ArgTree)
         else v.item if isinstance(v, EscapedItem)
         else v.apply(get_param(k)) if isinstance(v, UpdatreeMixin)
@@ -273,5 +274,5 @@ def argtree_partial_(args, kwargs, partial_f=partial):
     return partial_f(func, **kwargs)
 
 
-def argtree_partial(*args, **kwargs):
-    return argtree_partial_(args, kwargs, partial_f=partial)
+def tree_partial(*args, **kwargs):
+    return tree_partial_(args, kwargs, partial_f=partial)
