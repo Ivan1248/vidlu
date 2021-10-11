@@ -1,4 +1,4 @@
-from vidlu.utils.func import params, Empty, ArgTree, argtree_partial
+from vidlu.utils.func import params, Empty, ArgTree, tree_partial
 
 
 class TrainerExtension:
@@ -23,7 +23,7 @@ class _AdversarialTrainingBase(TrainerExtension):
 
         self.attack = make_attack(self.attack_f)
         if isinstance(self.eval_attack_f, ArgTree):
-            self.eval_attack_f = argtree_partial(self.attack_f, self.eval_attack_f)
+            self.eval_attack_f = tree_partial(self.attack_f, self.eval_attack_f)
         self.eval_attack = make_attack(self.eval_attack_f or self.attack_f)
 
 

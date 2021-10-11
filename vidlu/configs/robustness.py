@@ -10,7 +10,7 @@ from vidlu.training.robustness import attacks
 from vidlu.training.robustness import perturbation as pert
 import vidlu.transforms.jitter as vtj
 import vidlu.utils.func as vuf
-from vidlu.utils.func import partial, ArgTree as t, argtree_partial, params
+from vidlu.utils.func import partial, ArgTree as t, tree_partial, params
 
 # Adversarial attacks
 
@@ -46,7 +46,7 @@ pmodel_attack_1 = partial(attacks.PertModelAttack,
 
 
 smooth_warp_attack = partial(attacks.PertModelAttack,
-                             pert_model_f=argtree_partial(vmi.SmoothWarp, smooth_f=t(sigma=5)),
+                             pert_model_f=tree_partial(vmi.SmoothWarp, smooth_f=t(sigma=5)),
                              initializer=lambda pmodel, x: torch.nn.init.normal_(
                                  pmodel.unsmoothed_flow, mean=0, std=40),
                              projection=None,

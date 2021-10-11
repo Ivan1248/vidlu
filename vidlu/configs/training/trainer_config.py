@@ -3,7 +3,7 @@ import torch
 import vidlu.training.extensions as te
 from vidlu.modules import get_submodule
 from vidlu.utils.collections import NameDict
-from vidlu.utils.func import params, partial, Required, ArgTree, argtree_partial
+from vidlu.utils.func import params, partial, Required, ArgTree, tree_partial
 
 
 # Optimizer maker
@@ -45,6 +45,11 @@ class OptimizerMaker:
             else tuple(p for p in model.parameters() if p not in params_lump)
         return self.optimizer_f([{'params': remaining_params}] + params, **self.kwargs)
 
+    def __repr__(self):
+        return f"OptimizerMaker(optimizer_f={repr(self.optimizer_f)}, params={repr(self.params)}," \
+               + f" kwargs={repr(self.kwargs)}," \
+               + f"ignore_remaining_params={self.ignore_remaining_params})"
+
 
 # Trainer config
 
@@ -64,7 +69,7 @@ def distribute_argtree_to_funcs(base_funcs, argtree_args):  # not used
                 found = True
         if not found:
             raise RuntimeError(f"No function has a parameter {k}.")
-    return [argtree_partial(f, argtree) if len(argtree) > 0 else f
+    return [tree_partial(f, argtree) if len(argtree) > 0 else f
             for f, argtree in zip(base_funcs, argtrees)]
 
 

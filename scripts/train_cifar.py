@@ -65,9 +65,9 @@ def get_experiment(resume=True, restart=False):
     first_ds = next(iter(data.values()))
 
     with indent_print('Initializing model...'):
-        model_f = vuf.argtree_partial(model_class,
-                                      **model_config,
-                                      head_f=partial(modules.components.ClassificationHead,
+        model_f = vuf.tree_partial(model_class,
+                                   **model_config,
+                                   head_f=partial(modules.components.ClassificationHead,
                                                      class_count=first_ds.info.class_count))
         model = model_f()
         init_input = next(iter(vd.DataLoader(first_ds, batch_size=1)))[0]

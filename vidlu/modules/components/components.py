@@ -13,7 +13,7 @@ from torch.nn import functional as F
 import vidlu.modules.elements as E
 from vidlu.modules import tensor_extra
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
-from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, argtree_partial
+from vidlu.utils.func import params, Reserved, default_args, Empty, ArgTree, tree_partial
 from vidlu.utils.collections import NameDict
 import vidlu.modules.utils as vmu
 
@@ -596,7 +596,7 @@ class LadderUpsampleBlend(E.Module):
         # resize is not defined in build because it depends on skip.shape
         x_up = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
         skip_proj = self.project(skip)
-        b = self.pre_blend(x_up, skip_proj)
+        b = self.pre_blend((x_up, skip_proj))
         return self.blend(b)
 
 
@@ -653,6 +653,8 @@ class KresoLadderModel(E.Module):
             defaults = default_args(default_args(up_blend_f).blend_block_f)
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
         self.lateral_preprocessing = lateral_preprocessing
+
+        a = E.Seq()
 
     def forward(self, x):
         context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
@@ -854,10 +856,10 @@ class DenseTransition(E.Seq):
 
 class DenseUnit(E.Seq):
     def __init__(self,
-                 block_f=argtree_partial(PreactBlock,
-                                         kernel_sizes=(1, 3),
-                                         width_factors=(4, 1),
-                                         act_f=ArgTree(inplace=True))):
+                 block_f=tree_partial(PreactBlock,
+                                      kernel_sizes=(1, 3),
+                                      width_factors=(4, 1),
+                                      act_f=ArgTree(inplace=True))):
         super().__init__(fork=E.Fork(skip=E.Identity(), block=block_f()), cat=E.Concat())
 
 
