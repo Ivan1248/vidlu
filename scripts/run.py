@@ -19,7 +19,7 @@ import _context  # vidlu, dirs
 from vidlu import factories
 import vidlu.experiments as ve
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
-from vidlu.utils.func import Empty, call_with_args_from_dict
+from vidlu.utils.func import Empty, call_with_assignable_args
 from vidlu.utils.misc import indent_print, query_user
 from vidlu.utils import debug
 import vidlu.torch_utils as vtu
@@ -68,7 +68,7 @@ def get_profiler():
 
 def make_experiment(args, dirs):
     return TrainingExperiment.from_args(
-        call_with_args_from_dict(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+        call_with_assignable_args(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
 
 
 @torch.no_grad()
@@ -100,7 +100,7 @@ def train(args):
 
     exp.logger.log("Resume command:\n\x1b[0;30;42m"
                    + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
-                   + f' "{args.trainer}" --params "{args.params}" -d "{args.device}" --metrics "{args.metrics}"'
+                   + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} --metrics "{args.metrics}"'
                    + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
     exp.logger.log(f"RNG seed: {args.seed}")
 
@@ -173,11 +173,11 @@ def test(args):
 
 # Argument parsing #################################################################################
 
-def make_stderr_yellow():
+def colorize_stderr():
     old_write_error = sys.stderr.write
 
     def write_error(m, *a, **k):
-        return old_write_error(f"\x1b[1;33m{m}\x1b[0m", *a, **k)
+        return old_write_error(f"\x1b[33m{m}\x1b[0m", *a, **k)
 
     sys.stderr.write = write_error
 
@@ -230,7 +230,7 @@ def add_standard_arguments(parser, func):
 
 
 if __name__ == "__main__":
-    make_stderr_yellow()
+    colorize_stderr()
 
     parser = argparse.ArgumentParser(description='Experiment running script')
     subparsers = parser.add_subparsers()
