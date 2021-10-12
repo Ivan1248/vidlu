@@ -326,8 +326,11 @@ class Trainer(Evaluator):
 
     def train(self, *datasets, restart=False):
         if self.jitter is not None:
+            def to_record(e):  # temporary solution
+                return Record(**dict(zip(["x", "y"], e)))
+
             jitters = broadcast(self.jitter, len(datasets))
-            datasets_jitt = [ds.map(self.jitter, func_name='jitter')
+            datasets_jitt = [ds.map(self.jitter, func_name='jitter').map(to_record)
                              for jitter, ds in zip(jitters, datasets)]
         else:
             datasets_jitt = datasets
