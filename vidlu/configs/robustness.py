@@ -183,6 +183,16 @@ phtps_attack_20_3 = partial(
              'mul_v.factor': [0.25, 2.]})),
 )
 
+ph3_attack = partial(
+    phtps_attack_20,
+    pert_model_f=partial(pert.Photometric3, clamp=False, forward_arg_count=1),
+    initializer=pert.UniformInit(
+        {'add_h.addend': [-1 / 6, 1 / 6],
+         'add_s.addend': [-0.2, 0.2],
+         'add_v.addend': [-0.1, 0.1],
+         'mul_v.factor': [0.25, 2.]}),
+)
+
 cutmix_attack_21 = partial(
     attacks.PertModelAttack,
     pert_model_f=partial(vmi.CutMix, mask_gen=vtj.BoxMaskGenerator(prop_range=0.5),
