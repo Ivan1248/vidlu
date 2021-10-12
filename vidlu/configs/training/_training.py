@@ -9,6 +9,8 @@ import vidlu.data as vd
 import vidlu.data.utils as vdu
 from vidlu.configs.robustness import *
 from .trainer_config import TrainerConfig, OptimizerMaker
+from vidlu.utils.func import partial
+from vidlu.modules import losses
 
 # Basic (train_step, eval_step)
 
@@ -168,6 +170,27 @@ semisup_cons_phtps20_seg = TrainerConfig(
     eval_step=ts.SemisupVATEvalStep(),
 )
 
+semisup_cons_ph3_seg = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(ph3_attack, output_to_target=lambda x: x, loss=losses.kl_div_ll)),
+    train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
+)
+
+semisup_contr_ph3_seg = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(ph3_attack, output_to_target=lambda x: x, loss=losses.kl_div_ll)),
+    train_step=ts.SemisupContrastiveStepBase(),
+    eval_step=ts.SemisupVATEvalStep(),
+)
+
+semisup_cons_tps20_seg = TrainerConfig(
+    partial(te.SemisupVAT,
+            attack_f=partial(tps_attack_20, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    train_step=ts.SemisupVATStep(),
+    eval_step=ts.SemisupVATEvalStep(),
+)
+
 semisup_cons_cutmix = TrainerConfig(
     partial(te.SemisupVAT,
             attack_f=partial(cutmix_attack_21, step_count=0, loss=losses.kl_div_ll,
@@ -305,21 +328,30 @@ swiftnet_cityscapes = TrainerConfig(
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
     batch_size=14,
-    eval_batch_size=4,  # 6
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
+    eval_batch_size=4,
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0,
+                                           scale_dist="log-uniform"),
+)
+
+swiftnet_mo_cityscapes = TrainerConfig(
+    swiftnet_cityscapes,
+    optimizer_f=OptimizerMaker(optim.Adam, [
+        dict(params=lambda m: m.wrapped.fine_tune_params(), lr=4e-4 / 4, weight_decay=2.5e-5 / 4)],
+                               lr=4e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
 )
 
 ddrnet_cityscapes = TrainerConfig(
     classification,
     optimizer_f=OptimizerMaker(optim.Adam,
-                               [dict(params=module_name, lr=4e-4, weight_decay=1e-4)
-                                for module_name in ['backbone.spp', 'backbone.final_layer']],
+                               [dict(params=['backbone.spp', 'backbone.final_layer'], lr=4e-4,
+                                     weight_decay=1e-4)],
                                lr=1e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=250,
     batch_size=14,
     eval_batch_size=4,  # 6
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0,
+                                           scale_dist="log-uniform"),
 )
 
 deeplabv2_cityscapes = TrainerConfig(
@@ -331,13 +363,15 @@ deeplabv2_cityscapes = TrainerConfig(
     epoch_count=250,
     batch_size=4,
     eval_batch_size=4,  # 6
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0),
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0,
+                                           scale_dist="log-uniform"),
 )
 
 swiftnet_cityscapes_halfres = TrainerConfig(
     swiftnet_cityscapes,
     batch_size=8,
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=1.5, overflow=0))
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=1.5, overflow=0,
+                                           scale_dist="log-uniform"))
 
 deeplabv2_cityscapes_halfres = TrainerConfig(
     swiftnet_cityscapes_halfres,
@@ -351,15 +385,8 @@ swiftnet_irevnet_hybrid_cityscapes = TrainerConfig(
     train_step=ts.DiscriminativeFlowSupervisedTrainStep(flow_end="backbone.backbone.concat",
                                                         gen_weight=1.),
     optimizer_f=partial(optim.Adam, lr=4e-4, betas=(0.9, 0.99), weight_decay=5e-4),
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(256, 256), max_scale=2, overflow=0),
-)
-
-swiftnet_mo_cityscapes = TrainerConfig(
-    swiftnet_cityscapes,
-    optimizer_f=OptimizerMaker(optim.Adam, [
-        dict(params=p, lr=1e-4, weight_decay=2.5e-5)
-        for p in ["wrapped.backbone", "wrapped.logits"]], lr=4e-4, betas=(0.9, 0.99),
-                               weight_decay=1e-4),
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(256, 256), max_scale=2, overflow=0,
+                                           scale_dist="log-uniform"),
 )
 
 swiftnet_camvid = TrainerConfig(
@@ -368,7 +395,8 @@ swiftnet_camvid = TrainerConfig(
     lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
     epoch_count=600,  # 600
     batch_size=12,
-    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=2, overflow='half'),
+    jitter=jitter.SegRandScaleCropPadHFlip(shape=(448, 448), max_scale=2, overflow='half',
+                                           scale_dist="log-uniform"),
 )
 
 semseg_basic = TrainerConfig(
