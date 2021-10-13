@@ -1,5 +1,7 @@
+import dis
 import typing as T
 
+import einops
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -204,6 +206,65 @@ def neg_soft_mIoU_l(logits, target, batch=False, weights=None):  # TODO
     return -metrics.classification_metrics(cm, 'mIoU')
 
 
+# Unsupervised losses $#############################################################################
+
+def _check_cross_correlation_inputs(a, b):
+    if any([len(s_a := tuple(a.shape)) != 2, len(s_b := tuple(b.shape)) != 2]):
+        raise RuntimeError(f"The inputs must be 2-D arrays, but have shapes {s_a} and {s_b}.")
+    if len(a) != len(b):
+        raise RuntimeError(f"Input sizes ({len(a)}, {len(b)}) do not match.")
+
+
+def cross_correlation(a, b, bias=False):
+    _check_cross_correlation_inputs(a, b)  # N×C
+    return (a.T @ b).div_(len(a) - 1 + int(bias))
+
+
+def _check_cov_input(x):
+    if x.ndim != 2:
+        raise RuntimeError(f"The input must be a 2-D array, but has the shape {tuple(x.shape)}.")
+
+
+def cov(x, bias=False):
+    _check_cov_input(x)  # N×C
+    x_c = x - x.mean(0, keepdim=True)
+    return (x_c.T @ x_c).div_(len(x_c) - 1 + int(bias))
+
+
+def normalized_identity_cross_correlation_l2_loss(a, b, lamb=1):
+    """Loss used in Barlow Twins, https://github.com/facebookresearch/barlowtwins"""
+    a, b = map(to_batch_of_vectors, (a, b))
+
+    a_norm, b_norm = [(x - x.mean(0)) / x.std(0) for x in [a, b]]  # NxD
+    return cross_correlation_square_l2_loss(a_norm, b_norm, lamb=lamb)
+
+
+def cross_correlation_square_l2_loss(a, b, lamb=1):
+    c = cross_correlation(a, b, bias=True)  # empirical feature cross-correlation matrix (C×C)
+    c.diagonal().sub_(1)
+    c.pow_(2)
+    return c.diagonal().sum() + lamb * _off_diagonal(c).sum()
+
+
+def vicreg_var_loss(x, var_thresh=1):
+    x = to_batch_of_vectors(x)
+    return torch.relu_(var_thresh - torch.std(x, dim=0, unbiased=True)).mean()
+
+
+def vicreg_cov_loss(x):
+    x = to_batch_of_vectors(x)
+    return _off_diagonal(cov(x).pow_(2)).sum().div_(x.shape[1])
+
+
+def vicreg_loss(a, b, var_thresh=1, coeff_v=25, coeff_i=25, coeff_c=1):
+    a, b = map(to_batch_of_vectors, (a, b))
+
+    v_a, v_b = [vicreg_var_loss(x, var_thresh=var_thresh) for x in [a, b]]
+    i = F.mse_loss(a, b, reduction="mean")
+    c_a, c_b = map(vicreg_cov_loss, [a, b])
+    return coeff_v * (v_a + v_b) + coeff_i * i + coeff_c * (c_a + c_b)
+
+
 # Adversarial training #############################################################################
 
 def _l2_normalize(d, eps=1e-8):
@@ -286,3 +347,25 @@ def input_image_nll(x, z, bin_count=256):
     loss_ladj = -Ladj.get(z)()
     loss_ll_z = -ll_z
     return (loss_ladj + loss_ll_z) / dim
+
+
+# Utilities
+
+def to_batch_of_vectors(x: torch.Tensor):
+    """Turns an (N, C, S1, S2, ...) array into a batch of vectors.
+
+    Args:
+        x: An (N, C, S1, S2, ...) array.
+
+
+    Returns:
+        Transposed and reshaped array with shape (N S1 S2 ..., C).
+    """
+    if x.ndim == 2:
+        return x
+    return einops.rearrange(x.view(*x.shape[:2], -1), 'n c s -> (n s) c')
+
+
+def _off_diagonal(x):
+    n = x.shape[0]
+    return x.flatten()[:-1].view(n - 1, n + 1)[:, 1:].flatten()
