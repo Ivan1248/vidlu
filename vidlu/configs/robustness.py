@@ -137,6 +137,18 @@ phtps_attack_20 = partial(
     step_count=0,
 )
 
+
+tps_attack_20 = partial(
+    attacks.PertModelAttack,
+    pert_model_f=partial(vmi.BackwardTPSWarp, label_interpolation_mode='nearest',
+                         label_padding_mode=-1),
+    initializer=pert.NormalInit({'offsets': (0, 0.1)}),
+    projection=None,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    step_size=0.01,
+    step_count=0,
+)
+
 phtps_attack_20_unif = partial(
     phtps_attack_20,
     initializer=pert.MultiInit(
