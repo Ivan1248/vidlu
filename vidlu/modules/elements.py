@@ -30,7 +30,7 @@ from vidlu.utils import tree
 
 import vidlu.modules.utils as vmu
 from vidlu.modules.deconv import FastDeconv
-from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj, Name as TeName
+from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 from vidlu.modules.utils import extract_tensors
 
 # Some of modules and functions from torch.nn are replaced with wrappers.
@@ -267,6 +267,45 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
     def mode(self):
         return Namespace(**self._mode, training=self.training)
 
+    def __call__(self, *input, **kwargs):
+        """Modified to support shape inference and an in-place modification
+        check.
+
+        The optional `build` method defines initialization based on the input
+        before the first `forward` call. The optional `post_build` method is
+        called after the first forward call.
+
+        The second time `__call__` is called, a check is performed whether the
+        input has been in-place modified by a parallel node and marks the output
+        for subsequent checks.
+
+        Example:
+            >>> h: Module = SomeModel()
+            >>> x = torch.randn((1, 3, 16, 16))
+            >>> y = h(x)  # call with shape inference with `_init_call`
+            >>> assert h.is_built()
+            >>> y = h(x)  # call with an in-place modification check
+            >>> y = h(x)  # a normal call
+        """
+        try:
+            if not self._built:
+                result = self._init_call(*input, **kwargs)
+            elif not self._checked:  # checks are performed on the second input
+                input = self._run_forward_check_pre_hooks(*input,
+                                                          hooks=self._forward_check_pre_hooks)
+                result = self._check_call(*input, **kwargs)
+            else:
+                result = super().__call__(*input, **kwargs)
+            # try_get_module_name_from_call_stack is slow
+            # return TeName.add(result, vmu.try_get_module_name_from_call_stack(self))
+            return result
+        except Exception as e:
+            name = vmu.try_get_module_name_from_call_stack(self)
+            error_message = f"Error in {name}, type {type(self).__module__}.{type(self).__qualname__}"
+            if self.is_inverse:
+                error_message += f" (inverse of {type(self.inverse).__qualname__})"
+            raise type(e)(f"{e.args[0]}\n{error_message}", *e.args[1:])
+
     def _init_call(self, *args, **kwargs):
         if self.training:
             warnings.warn("Consider turning off training mode by calling eval() before calling the"
@@ -305,47 +344,6 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
                     result = (result,)
                 input = result
         return input
-
-    def __call__(self, *input, **kwargs):
-        """Modified to support shape inference and an in-place modification
-        check.
-
-        The optional `build` method defines initialization based on the input
-        before the first `forward` call. The optional `post_build` method is
-        called after the first forward call.
-
-        The second time `__call__` is called, a check is performed whether the
-        input has been in-place modified by a parallel node and marks the output
-        for subsequent checks.
-
-        Example:
-            >>> h: Module = SomeModel()
-            >>> x = torch.randn((1, 3, 16, 16))
-            >>> y = h(x)  # call with shape inference with `_init_call`
-            >>> assert h.is_built()
-            >>> y = h(x)  # call with an in-place modification check
-            >>> y = h(x)  # a normal call
-        """
-        try:
-            if not self._built:
-                result = self._init_call(*input, **kwargs)
-            elif not self._checked:  # checks are performed on the second input
-                input = self._run_forward_check_pre_hooks(*input,
-                                                          hooks=self._forward_check_pre_hooks)
-                result = self._check_call(*input, **kwargs)
-            else:
-                result = super().__call__(*input, **kwargs)
-            # try_get_module_name_from_call_stack is slow
-            # return TeName.add(result, vmu.try_get_module_name_from_call_stack(self))
-            return result
-        except Exception as e:
-            name = vmu.try_get_module_name_from_call_stack(self)
-            error_message = f"Error in {name}, {type(self).__name__}"
-            if self.is_inverse:
-                inv_module = self.inverse
-                error_message += f" (inverse of {type(inv_module).__name__})"
-            print(error_message)
-            raise e
 
     def __getattr__(self, name: str) -> T.Union[torch.Tensor, nn.Module]:
         try:
@@ -554,9 +552,6 @@ class ModuleTable(Module):
         keys = [key for key in keys if not key.isdigit()]
         return keys
 
-    def __iter__(self):
-        return iter(self._modules.values())
-
 
 @_replaces('Sequential')
 class Seq(ModuleTable, nn.Sequential):
@@ -575,7 +570,7 @@ class Seq(ModuleTable, nn.Sequential):
         return Seq
 
     def forward(self, x):
-        modules = [m for m in self._modules.values()]
+        modules = [m for m in self.children()]
         cp_iter = iter(self._checkpoints or ())
         cp_range = next(cp_iter, None)
         i = 0
@@ -655,15 +650,14 @@ class Fork(ModuleTable):
         self.inverse_branch = 0 if inverse_branch is None else inverse_branch
 
     def forward(self, x):
-        return tuple(m(x) for m in self)
+        return tuple(m(x) for m in self.children())
 
     def inverse_forward(self, y):
         return self[self.inverse_branch].inverse(y)
 
 
 class Parallel(ModuleTable):
-    def forward(self, *inputs):
-        inputs = vmu.sole_tuple_to_varargs(inputs)
+    def forward(self, inputs: T.Tuple[torch.Tensor]):
         if len(self) == 1:
             return [self[0](x) for x in inputs]
         elif len(inputs) != len(self):
@@ -690,8 +684,7 @@ class ConditionalSelector(Module):
 
 
 class Merge(nn.Module):
-    def forward(self, *inputs):
-        inputs = vmu.sole_tuple_to_varargs(inputs)
+    def forward(self, inputs: T.Tuple[torch.Tensor]):
         result = []
         for x in inputs:
             (result.extend if isinstance(x, tuple) else result.append)(x)
@@ -703,8 +696,7 @@ class Reduce(Module):
         self.func = func
         super().__init__()
 
-    def forward(self, *inputs):
-        inputs = vmu.sole_tuple_to_varargs(inputs)
+    def forward(self, inputs: T.Tuple[torch.Tensor]):
         return reduce(self.func, inputs[1:], inputs[0].clone())
 
 
@@ -729,8 +721,7 @@ class Sum(Module):  # TODO: rename to "Add"
         super().__init__()
         self.inplace = inplace
 
-    def forward(self, *inputs):
-        inputs = vmu.sole_tuple_to_varargs(inputs)
+    def forward(self, inputs: T.Tuple[torch.Tensor]):
         shape = inputs[0].shape
         for oo in inputs[1:]:
             if oo.shape != shape:
@@ -754,12 +745,10 @@ class Concat(Module):
         super().__init__()
         self.dim, self.sizes = dim, None
 
-    def build(self, *inputs):
-        inputs = vmu.sole_tuple_to_varargs(inputs)
+    def build(self, inputs: T.Tuple[torch.Tensor]):
         self.sizes = [x.shape[self.dim] for x in inputs]
 
-    def forward(self, *inputs):
-        inputs = vmu.sole_tuple_to_varargs(inputs)
+    def forward(self, inputs: T.Tuple[torch.Tensor]):
         return torch.cat(inputs, self.dim)
 
     def inverse_module(self):
@@ -1187,7 +1176,7 @@ def _get_conv_padding(shape, padding_type, kernel_size, dilation, stride):
         out_shape = (shape + s - 1) // s  # minimal shape so that all input pixels are covered
         total_padding = (out_shape - 1) * s + kd - shape
         if np.any(odd := total_padding % 2):
-            warnings.warn(f"padding='same' does noot result in asymmetric padding like in "
+            warnings.warn(f"padding='same' does not result in asymmetric padding like in "
                           + f"Tensorflow. {total_padding=} will be increased to become even.")
             total_padding += odd
         padding = np.maximum(0, total_padding // 2)
