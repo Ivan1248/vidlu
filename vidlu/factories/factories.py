@@ -45,7 +45,7 @@ def get_extensions():
     return map(import_module, paths)
 
 
-extensions = {e.__name__: e for e in get_extensions()}
+extensions = NameDict({e.__name__: e for e in get_extensions()})
 
 
 # Factory messages #################################################################################
@@ -395,7 +395,7 @@ def short_symbols_for_get_trainer():
     from vidlu.utils.func import partial
     tc = ct  # backward compatibility
     t, ft, ot, it = vuf.ArgTree, vuf.FuncTree, vuf.ObjectUpdatree, vuf.IndexableUpdatree
-    return locals()
+    return {**locals(), **extensions}
 
 
 def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,

@@ -1,6 +1,6 @@
 # ViDLU: Vision Deep Learning Utilities
 
-A deep learning framework for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/) (work in progress).
+A deep learning framework for research with emphasis on computer vision, based on [PyTorch](https://pytorch.org/). Many parts are experimental or incomplete.
 
 [![Build Status](https://github.com/Ivan1248/Vidlu/workflows/build/badge.svg)](https://github.com/Ivan1248/Vidlu/actions)
 [![codecov](https://codecov.io/gh/Ivan1248/Vidlu/branch/master/graph/badge.svg)](https://codecov.io/gh/Ivan1248/Vidlu)
@@ -8,49 +8,52 @@ A deep learning framework for research with emphasis on computer vision, based o
 [![Documentation Status](https://readthedocs.org/projects/vidlu/badge/?version=latest)](https://vidlu.readthedocs.io/en/latest/?badge=latest)
 
 This repository contains
-1) a machine learning framework mostly based on PyTorch,
+
+1) a machine learning framework, mostly based on PyTorch,
 1) a set of datasets, models and training configurations (as part of the framework), and
 1) a set of scripts that use it.
 
 ## Setup
 
 **Without installing.**
-Make a local copy of the repository with
+You can make a local copy with
 
 ```sh
 git clone https://github.com/Ivan1248/vidlu.git
 ```
 
-Install dependencies listed in `requirements.txt`. If Pip is to be used, you can run
+Dependencies are listed in `requirements.txt` and can be installed with Pip:
 
 ```sh
-cd vidlu
 pip install -r requirements.txt
 ```
 
 **Pip installation.**
+Alternatively, you can run install the package with
 
-Alternatively, run
 ```sh
 pip install git+https://github.com/Ivan1248/Vidlu
 ```
+
+<!--
 or, if there is a local copy of the repository,
 ```sh
 pip install .
 ```
+-->
 
 ## Main scripts
 
-The `scripts` directory contains scripts that use <a href="#the-framework">the framework</a>. The main script for running experiments is `run.py` and `dirs.py` contains directory paths. 
+The `scripts` directory contains scripts that use [the framework](#the-framework). The main script for running experiments is `run.py` and `dirs.py` contains directory paths.
 
 ### Directory configuration
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
 
--   `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any ancestor directory of `dirs.py`, are included too. Dataset directories should be considered read-only.
--   `cache` is used for automatically caching data. It should preferably and be on an SSD. `datasets` can be on slower disks since original data is usually accessed through cache unless there was not enough space for caching.
--   `pretrained` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
--   `experiments` represents a directory that can contain experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `SAVED_STATES = experiments / "states"` is automatically created for storing intermediate and complete training states.
+- `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any ancestor directory of `dirs.py`, are included too. Dataset directories should be considered read-only.
+- `cache` is used for automatically caching data. It should preferably and be on an SSD. `datasets` can be on slower disks since original data is usually accessed through cache unless there was not enough space for caching.
+- `pretrained` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
+- `experiments` represents a directory that can contain experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `SAVED_STATES = experiments / "states"` is automatically created for storing intermediate and complete training states.
 
 #### Setup
 
@@ -71,9 +74,10 @@ If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASE
 
 ### Running experiments
 
-`scripts/run.py` is a general script for running experiments. 
+`scripts/run.py` is a general script for running experiments.
 
 The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or finished experiments can be continued/reevaluated using the `--resume` (`-r`) argument. The command can have the following structure:
+
 ```sh
 run.py train DATA INPUT_ADAPTER MODEL TRAINER [-h] [--params PARAMS] [--metrics METRICS] [-e EXPERIMENT_SUFFIX] [-r [{strict,?,best,restart}]]
 ```
@@ -81,13 +85,15 @@ run.py train DATA INPUT_ADAPTER MODEL TRAINER [-h] [--params PARAMS] [--metrics 
 There is also a `test` command that accepts almost the same arguments and can be used for standard evaluation or running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
 
 `scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
-Running `python train_cifar.py` is equivalent to running the following training with modified hyperparameters. 
+Running `python train_cifar.py` is equivalent to running the following training with modified hyperparameters.
+
 ```sh
 python run.py train \
     "Cifar10{trainval,test}" "id" \  # data
     "models.ResNetV1,backbone_f=t(depth=18,small_input=True,block_f=t(norm_f=None))" \  # model
     "ct.resnet_cifar,lr_scheduler_f=ConstLR,epoch_count=50,jitter=None"  # training
 ```
+
 Note the example has some changes with respect to the default CIFAR-10 configuration: disabled batchnorm, constant learning rate, 50 epochs, disabled jittering.
 
 ## The framework
@@ -100,22 +106,22 @@ Most of the code here is generic except for concrete datasets in `vidlu.data.dat
 
 `vidlu.data` defines types `Record`, `Dataset` and PyTorch `DataLoader`-based types. There are also many concrete datasets in `vidlu.data.datasets`.
 
-`Record` is an ordered key-value mapping that supports lazy evaluation of values. It can be useful when not all fields of dataset examples need to be loaded. 
+`Record` is an ordered key-value mapping that supports lazy evaluation of values. It can be useful when not all fields of dataset examples need to be loaded.
 
-`Dataset` is the base dataset class. It has a set of useful methods for manipulation and caching (advanced indexing, concatenation, `map`, `filter`, ...). 
+`Dataset` is the base dataset class. It has a set of useful methods for manipulation and caching (advanced indexing, concatenation, `map`, `filter`, ...).
 
 `DataLoader` inherits `DataLoader` from PyTorch and changes its `default_collate` so that it supports elements of type `Record`.
 
 ### Modules (model components) and models
 
-`vidlu.modules` contains implementations of various modules and functions (`elements`, `components`, `heads`, `losses`) and useful procedures for debugging, extending and manipulating modules. 
-\*The modules (inheriting `Module`) support shape inference like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet) (an initial run in necessary for initialization). 
+`vidlu.modules` contains implementations of various modules and functions (`elements`, `components`, `heads`, `losses`) and useful procedures for debugging, extending and manipulating modules.
+\*The modules (inheriting `Module`) support shape inference like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet) (an initial run in necessary for initialization).
 
 `try_get_module_name_from_call_stack` enables getting the name of the current module.
 
 `Seq` is an alternative for `Sequential` which supports splitting, joining, and other things. Many modules are based on it. `deep-split` (accepting a path to some inner module) and `deep_join` can work on composite models that are designed based on `Sequential`.
 
-`with_intermediate_outputs` can be used for extracting intrmediate outputs without changing the module. It uses `register_forward_hook` (and thus requires appropriately designed models).    
+`with_intermediate_outputs` can be used for extracting intrmediate outputs without changing the module. It uses `register_forward_hook` (and thus requires appropriately designed models).
 
 For many elementary modules which can be invertible, the `inverse` property returns its inverse module. The inverse is defined either via a `make_inverse` or `inverse_forward`. A `Seq` which consists of only invertible modules (like `Identity`, `Permute`, `FactorReshape`, ...) is automatically invertible. Without a change in the interface, invertible modules also support optional computation and propagation of the logarithm of volume change necessary for normalizing flows.
 
@@ -147,9 +153,11 @@ Composite modules are designed to be "deeply" configurable: arguments of argumen
 
 `get_prepared_data` accepts a string containing the names of the datasets (with subset names) and code of an arbitrary transformations applied to them (using `Dataset`'s methods, `vidlu.data.utils.dataset_ops`, `vidlu.transforms`, `torchvision.transforms`...). It also requires `datasets_dir` and `cache_dir`, which represent paths to root directories for datasets and cache. It returns a sequence of `Dataset` instances with the transformations applied. The returned `Dataset` instances also convert images and labels to PyTorch `Tensor` instances. They also scale images to range [0..1] and transpose them to the CHW format.
 
-`get_model` (among other arguments) accepts a string containing the name of the model and a list of arguments. The list of arguments is separated by a comma from the model name. The model name should be either (1) a symbol from `vidlu.models`, (2) a symbol reachable through module located in paths listed in the `VIDLU_EXTENSIONS` environment variable, (3) a Pytorch Hub identifier that can be given to `torch.hub.load`. The list of arguments can contain argument trees constructed by nesting calls to the `ArgTree` constructor (`t` is a short alias), or other appropriate `UpdaTree` classes. Some other arguments that `get_model` accepts are `input_adapter_str` (a string defining input pre-processing), `prep_dataset` (prepared dataset used for getting possible problem-specific information and inputs for model initialization) and `device`. 
+`get_model` (among other arguments) accepts a string containing the name of the model and a list of arguments. The list of arguments is separated by a comma from the model name. The model name should be either (1) a symbol from `vidlu.models`, (2) a symbol reachable through module located in paths listed in the `VIDLU_EXTENSIONS` environment variable, (3) a Pytorch Hub identifier that can be given to `torch.hub.load`. The list of arguments can contain argument trees constructed by nesting calls to the `ArgTree` constructor (`t` is a short alias), or other appropriate `UpdaTree` classes. Some other arguments that `get_model` accepts are `input_adapter_str` (a string defining input pre-processing), `prep_dataset` (prepared dataset used for getting possible problem-specific information and inputs for model initialization) and `device`.
 
 `get_trainer` accepts a string representing an argument list for the `TrainingConfig` constructor and a model. Keyword arguments can be defined as trees (appropriate instances of `UpdaTree` from `vidlu.utils.func`) that are used to update (without mutation) `TrainingConfig` elements and objects within.
+
+Custom modules can be made available in string expressions using [extensions](#extensions).
 
 ### Training configurations
 
@@ -161,12 +169,16 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Experiments
 
-`vidlu.experiment` defines a program for creating and running experiments. It uses `vidlu.factories` to create a `Trainer`, it defines training and evaluation loop actions such as evaluation of performance metrics from `vidlu.metrics`, printing, logging, checkpoint management, user interaction (command execution and training/evaluation step output inspection), and training time estimation. 
+`vidlu.experiment` defines a program for creating and running experiments. It uses `vidlu.factories` to create a `Trainer`, it defines training and evaluation loop actions such as evaluation of performance metrics from `vidlu.metrics`, printing, logging, checkpoint management, user interaction (command execution and training/evaluation step output inspection), and training time estimation.
+
+### Extensions
+
+Packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are added to the `vidlu.extensions` namespace with the prefix removed. They are also directly available for expressions for [factories in `vidlu.factories`](#factories).
 
 ### Commonly used utilities
 
-In many places in the code, some parameter names end with `_f`. 
-This means that the argument is not a final object but a factory (hence `_f`). E.g. `backbone_f()` should produce a `backbone`. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `argtree_partial` allows flexible modification of any set of parameters of nested functions. 
+In many places in the code, some parameter names end with `_f`.
+This means that the argument is not a final object but a factory (hence `_f`). E.g. `block_f()` should produce a `block` instance. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `tree_partial` (analogue of `functools.partial`) allows flexible functional modification of any set of parameters of nested functions.
 
 ```py
 
@@ -180,7 +192,7 @@ def eu(..., flock_f=make_flock):
     ...
 
 from vidlu.utils.func import ArgTree as t
-au = argtree_partial(eu, flock_f=t(load='coconut', swallow_f=t(type='african')))
+au = tree_partial(eu, flock_f=t(load='coconut', swallow_f=t(type='african')))
 au()
 ```
 
@@ -204,7 +216,6 @@ foo(baz_args=dict(swallow_type='african'))
 -->
 
 <!--
-
 
 ## Things (to be) done (currently not updated)
 
