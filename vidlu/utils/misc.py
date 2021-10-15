@@ -1,18 +1,19 @@
+import builtins
+import contextlib
+import gzip
+import hashlib
+import importlib.util
+import os
+import platform
 import select
 import sys
-import platform
-import os
-import hashlib
-from pathlib import Path
 import time
-import contextlib
-from multiprocessing.sharedctypes import RawArray
+import typing as T
+import warnings
 import weakref
 import zipfile
-import gzip
-import warnings
-import typing as T
-import builtins
+from multiprocessing.sharedctypes import RawArray
+from pathlib import Path
 
 from tqdm import tqdm
 import numpy as np
@@ -53,7 +54,6 @@ def broadcast(obj: T.Union[object, T.Sequence], n: int, seq_type=T.Sequence) -> 
 # Import module ####################################################################################
 
 def import_module(path):  # from morsic
-    import importlib
     spec = importlib.util.spec_from_file_location(Path(path).stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

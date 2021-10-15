@@ -1,9 +1,10 @@
 import warnings
-import traceback
 import sys
+import traceback
 from datetime import datetime
 import inspect
 from argparse import Namespace
+from IPython.core import ultratb
 
 # STATE - any state should be kept here ############################################################
 state = Namespace()
@@ -53,6 +54,23 @@ def crash_after(*args, format='%Y-%m-%d', message=None):
             f"crash_after is crashing because the time {crashtime} has passed.{message}")
     else:
         warnings.warn(f"This code will crash after {crashtime}.{message}")
+
+
+# Tracebacks
+
+def set_traceback_format(call_pdb=False, verbose=False):
+    sys.excepthook = ultratb.FormattedTB(mode='Verbose' if verbose else 'Plain',
+                                         color_scheme='Linux', call_pdb=call_pdb)
+
+
+def set_warnings_with_traceback():
+    def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
+        log = file if hasattr(file, 'write') else sys.stderr
+        traceback.print_stack(file=log)
+        log.write(warnings.formatwarning(message, category, filename, lineno, line))
+
+    warnings.showwarning = warn_with_traceback
+    # warnings.simplefilter("always")
 
 
 # Keeping a state associated with a line in code

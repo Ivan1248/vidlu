@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import shlex
 import time
+import traceback
 
 import torch
 import numpy as np
@@ -16,6 +17,7 @@ import numpy as np
 # noinspection PyUnresolvedReferences
 import _context  # vidlu, dirs
 
+import dirs
 from vidlu import factories
 import vidlu.experiments as ve
 from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
@@ -24,7 +26,6 @@ from vidlu.utils.misc import indent_print, query_user
 from vidlu.utils import debug
 import vidlu.torch_utils as vtu
 from vidlu.data import clean_up_dataset_cache
-import dirs
 
 
 def log_run(status):
@@ -73,6 +74,7 @@ def make_experiment(args, dirs):
 
 @torch.no_grad()
 def eval_with_pop_stats(exp, stats_dataset):
+    """Evaluates with an approximation of populations stats in batchnorms"""
     with vtu.preserve_state(exp.trainer.model):
         for m in exp.trainer.model.modules():
             if "Norm" in type(m).__name__ and hasattr(m, "track_running_stats"):
@@ -140,7 +142,7 @@ def train(args):
         clean_up_dataset_cache(dirs.cache / 'datasets', timedelta(days=cache_cleanup_time))
 
 
-def path(args):
+def get_path(args):
     e = make_experiment(args, dirs=dirs)
     print(e.cpman.experiment_dir)
 
@@ -172,14 +174,6 @@ def test(args):
 
 
 # Argument parsing #################################################################################
-
-def colorize_stderr():
-    old_write_error = sys.stderr.write
-
-    def write_error(m, *a, **k):
-        return old_write_error(f"\x1b[33m{m}\x1b[0m", *a, **k)
-
-    sys.stderr.write = write_error
 
 
 def add_standard_arguments(parser, func):
@@ -221,7 +215,7 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--deterministic", action='store_true',
                         help="Usage of deterministic operations.")
     # reporting, debugging
-    parser.add_argument("--debug", help="Enable autograd anomaly detection.", action='store_true')
+    parser.add_argument("--debug", help="", action='store_true')
     parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
     parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.",
                         action='store_true')
@@ -230,16 +224,14 @@ def add_standard_arguments(parser, func):
 
 
 if __name__ == "__main__":
-    colorize_stderr()
-
     parser = argparse.ArgumentParser(description='Experiment running script')
     subparsers = parser.add_subparsers()
 
     parser_train = subparsers.add_parser("train")
     add_standard_arguments(parser_train, train)
 
-    parser_path = subparsers.add_parser("path")
-    add_standard_arguments(parser_path, path)
+    parser_get_path = subparsers.add_parser("get_path")
+    add_standard_arguments(parser_get_path, get_path)
 
     parser_test = subparsers.add_parser("test")
     add_standard_arguments(parser_test, test)
@@ -247,6 +239,8 @@ if __name__ == "__main__":
                              help="Path of a module containing a run(Experiment) procedure.")
 
     args = parser.parse_args()
+
+    debug.set_traceback_format(call_pdb=args.debug, verbose=args.debug)
 
     with indent_print("Arguments:"):
         print(args)
@@ -269,16 +263,6 @@ if __name__ == "__main__":
                                                          and not frame.f_code.co_name[0] in "_<")
 
     if args.warnings_as_errors:
-        import traceback
-
-
-        def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
-            log = file if hasattr(file, 'write') else sys.stderr
-            traceback.print_stack(file=log)
-            log.write(warnings.formatwarning(message, category, filename, lineno, line))
-
-
-        warnings.showwarning = warn_with_traceback
-        # warnings.simplefilter("always")
+        debug.set_warnings_with_traceback()
 
     args.func(args)
