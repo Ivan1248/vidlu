@@ -15,21 +15,16 @@ This repository contains
 
 ## Setup
 
-**Without installing.**
-You can make a local copy with
-
+**No installattion.**
+You can make a local copy and install dependencies with
 ```sh
 git clone https://github.com/Ivan1248/vidlu.git
-```
-
-Dependencies are listed in `requirements.txt` and can be installed with Pip:
-
-```sh
+cd vidlu
 pip install -r requirements.txt
 ```
 
 **Pip installation.**
-Alternatively, you can run install the package with
+You can install the package with
 
 ```sh
 pip install git+https://github.com/Ivan1248/Vidlu
@@ -44,16 +39,18 @@ pip install .
 
 ## Main scripts
 
-The `scripts` directory contains scripts that use [the framework](#the-framework). The main script for running experiments is `run.py` and `dirs.py` contains directory paths.
+The "scripts" directory contains scripts that use [the framework](#the-framework). `run.py` can run experiments and `dirs.py` contains directory paths.
 
 ### Directory configuration
 
-`scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following paths:
+`scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following path variables:
 
-- `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets", where "&lt;ancestor>" is any ancestor directory of `dirs.py`, are included too. Dataset directories should be considered read-only.
-- `cache` is used for automatically caching data. It should preferably and be on an SSD. `datasets` can be on slower disks since original data is usually accessed through cache unless there was not enough space for caching.
-- `pretrained` represents a directory that can contain pre-trained parameters. It is set to the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
-- `experiments` represents a directory that can contain experiment results, processed data cache, and other generated data. is set to the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `SAVED_STATES = experiments / "states"` is automatically created for storing intermediate and complete training states.
+- `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets" are included too. "&lt;ancestor>" is any ancestor directory of `dirs.py`.
+- `cache` is used for automatically caching data. It should preferably be on an SSD, while original datasets can be on slower disks since data is usually accessed through cache.
+- `pretrained` points to a directory that can contain pre-trained parameters. It is takes the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
+- `experiments` points to a directory for experiment results. It takes the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
+
+There is also a `VIDLU_DATA` env. variable that can be used instead of the mentioned ones. See below.
 
 #### Setup
 
@@ -82,7 +79,7 @@ The `train` command is chosen by running `python run.py train ...`. It creates a
 run.py train DATA INPUT_ADAPTER MODEL TRAINER [-h] [--params PARAMS] [--metrics METRICS] [-e EXPERIMENT_SUFFIX] [-r [{strict,?,best,restart}]]
 ```
 
-There is also a `test` command that accepts almost the same arguments and can be used for standard evaluation or running a custom procedure that can optionally accept the `Experiment` instance as on of its arguments.
+There is also a `test` command that accepts almost the same arguments and can be used for standard evaluation or running a custom procedure that can optionally accept the `Experiment` instance as one of its arguments.
 
 `scripts/train_cifar.py` is a specific example where it is easier to tell what is happening.
 Running `python train_cifar.py` is equivalent to running the following training with modified hyperparameters.
