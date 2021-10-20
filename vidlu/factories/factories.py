@@ -1,10 +1,6 @@
-import datetime
-import os
 import re
-from pathlib import Path
 from argparse import Namespace
 import typing as T
-from warnings import warn
 
 import torch
 import numpy as np
@@ -20,32 +16,23 @@ from vidlu.utils.collections import NameDict
 import vidlu.utils.func as vuf
 from vidlu.utils.func import Reserved
 from vidlu.utils.func import partial
-from vidlu.utils.misc import import_module
+from vidlu.extensions import extensions
 
 from . import defaults
 
+
 # eval
-unsafe_eval = eval
+
+def factory_eval(expr: str, globals=None, locals=None):
+    try:
+        return eval(expr, globals, locals)
+    except NameError as e:
+        available_names = sorted([*(globals or {}).keys(), *(locals or {}).keys()])
+        raise NameError(f"{e.args[0]}. Available: {str(available_names)[1:-1]}.", *e.args[1:])
 
 
 def module_to_dict(module):
     return {k: v for k, v in vars(module).items() if not k.startswith("_")}
-
-
-# Extensions #######################################################################################
-
-def get_extensions():
-    paths = os.environ.get("VIDLU_EXTENSIONS", None)
-    if paths is None:
-        return []
-    paths = [Path(p) for p in paths.split(os.path.sep)]  # split on ':' (Linux)
-    for p in paths:
-        if not p.exists():
-            warn(f"Extension path {p} does not exist.")
-    return map(import_module, paths)
-
-
-extensions = NameDict({e.__name__: e for e in get_extensions()})
 
 
 # Factory messages #################################################################################
@@ -131,7 +118,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     data = []
     for name, options_str, subsets in name_options_subsets_tuples:
-        options = unsafe_eval(f'dict{options_str or "()"}', dict(Record=Record))
+        options = factory_eval(f'dict{options_str or "()"}', dict(Record=Record))
         pds = get_parted_dataset(name, **options)
         k = f"{name}{options_str or ''}"
         for s in subsets:
@@ -141,7 +128,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
         namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
                      **module_to_dict(vdu.dataset_ops)}
         namespace.update(vt=vt, Record=Record, d=[v for k, v in data])
-        values = unsafe_eval(transform_str, namespace)
+        values = factory_eval(transform_str, namespace)
         data = [((getattr(v, 'identifier', f'dataset{i}'), ''), v) for i, v in enumerate(values)]
     return data  # not dict since elements can repeat
 
@@ -217,15 +204,15 @@ def get_input_adapter(input_adapter_str, *, data_stats=None):
             stats = dict(mean=torch.from_numpy(data_stats.mean),
                          std=torch.from_numpy(data_stats.std))
         else:
-            stats = unsafe_eval("dict(" + input_adapter_str[len("standardize("):],
-                                {**vars(cds), **extensions})
+            stats = factory_eval("dict(" + input_adapter_str[len("standardize("):],
+                                 {**vars(cds), **extensions})
             stats = {k: torch.tensor(v) for k, v in stats.items()}
         return M.Func(imt.Standardize(**stats), imt.Destandardize(**stats))
     elif input_adapter_str == "id":  # min 0, max 1 is expected for images
         return M.Identity()
     else:
         try:
-            return unsafe_eval(input_adapter_str)
+            return factory_eval(input_adapter_str)
         except Exception as e:
             raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}, \n{e}")
     raise NotImplementedError()
@@ -271,21 +258,16 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
     if model_name[0] in "'\"":  # torch.hub
-        return unsafe_eval(f"torch.hub.load({model_str})")
+        return factory_eval(f"torch.hub.load({model_str})")
     elif hasattr(models, model_name):
         model_f = getattr(models, model_name)
     else:
-        for ext in extensions.values():
-            if model_name in vars(ext):
-                model_f = getattr(ext, model_name)
-                break
-        else:
-            model_f = unsafe_eval(model_name, namespace)
+        model_f = factory_eval(model_name, namespace)
     model_class = model_f
 
     argtree = defaults.get_model_argtree_for_problem(model_f, problem)
     if len(argtree_arg) != 0:
-        argtree.update(unsafe_eval(f"t({argtree_arg[0]})", namespace))
+        argtree.update(factory_eval(f"t({argtree_arg[0]})", namespace))
     model_f = argtree.apply(model_f)
     input_adapter = get_input_adapter(
         input_adapter_str, data_stats=(None if prep_dataset is None
@@ -403,7 +385,7 @@ def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,
     import vidlu.configs.training as ct
 
     default_config = ct.TrainerConfig(**defaults.get_trainer_args(dataset))  # empty
-    ah = unsafe_eval(f"vuf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
+    ah = factory_eval(f"vuf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
     config = ct.TrainerConfig(default_config, *ah.args)
     updatree = vuf.ObjectUpdatree(**ah.kwargs)
     config = updatree.apply(config)

@@ -146,7 +146,7 @@ Composite modules are designed to be "deeply" configurable: arguments of argumen
 
 ### Factories
 
-`vidlu.factories` contains the factories that can create model, data, learning, and evaluation components from strings (which can be provided through the command line). Note that it uses Python's `eval` extensively.
+`vidlu.factories` contains the factories that can create model, data, learning, and evaluation components from strings representing Python expressions (which can be provided through the command line). Note that it uses Python's `eval` extensively.
 
 `get_prepared_data` accepts a string containing the names of the datasets (with subset names) and code of an arbitrary transformations applied to them (using `Dataset`'s methods, `vidlu.data.utils.dataset_ops`, `vidlu.transforms`, `torchvision.transforms`...). It also requires `datasets_dir` and `cache_dir`, which represent paths to root directories for datasets and cache. It returns a sequence of `Dataset` instances with the transformations applied. The returned `Dataset` instances also convert images and labels to PyTorch `Tensor` instances. They also scale images to range [0..1] and transpose them to the CHW format.
 
@@ -170,7 +170,7 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Extensions
 
-Packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are added to the `vidlu.extensions` namespace with the prefix removed. They are also directly available for expressions for [factories in `vidlu.factories`](#factories).
+Packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded in with the prefix removed and available in the `extensions` dictionary in the `vidlu.extensions` module. They are also directly available for expression arguments for [factories in `vidlu.factories`](#factories).
 
 ### Commonly used utilities
 
