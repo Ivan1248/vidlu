@@ -112,7 +112,7 @@ Most of the code here is generic except for concrete datasets in `vidlu.data.dat
 ### Modules (model components) and models
 
 `vidlu.modules` contains implementations of various modules and functions (`elements`, `components`, `heads`, `losses`) and useful procedures for debugging, extending and manipulating modules.
-\*The modules (inheriting `Module`) support shape inference like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet) (an initial run in necessary for initialization).
+The modules (inheriting `Module`) support shape inference like in e.g. [MXNet](http://mxnet.incubator.apache.org/) and [MagNet](https://github.com/MagNet-DL/magnet) (an initial run in necessary for initialization).
 
 `try_get_module_name_from_call_stack` enables getting the name of the current module.
 
@@ -128,7 +128,7 @@ For many elementary modules which can be invertible, the `inverse` property retu
 
 Composite modules are designed to be "deeply" configurable: arguments of arguments that are factories/constructors for child modules can be modified. Names of such factory arguments usually end with `_f`. If a default argument is a function, its arguments can be accessed and modified using `vidlu.utils.func`, which relies on `inspect.signature` and `functools.partial`. `vidlu.utils.func` defines tree data structures and procedures that enable eays modification of deeply nested arguments.
 
-`vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet<sup>[1](#fn1)</sup>, Ladder-DenseNet<sup>[1](#fn1)</sup>.
+`vidlu.models` contains implementations of some models. Model classes are mostly wrappers around more general modules defined in `vidlu.modules.components` and heads defined in `vidlu.modules.heads`. They also perform initialization of parameters. Some implementad architectures are ResNet-v1, ResNet-v2, Wide ResNet, DenseNet, i-RevNet, SwiftNet, Ladder-DenseNet<sup>[1](#fn1)</sup>.
 
 <a name="fn1">1</a>: There might be some unintended differences to the original code.
 
@@ -140,7 +140,7 @@ Composite modules are designed to be "deeply" configurable: arguments of argumen
 
 `Trainer` defines a full machine learning algorithm. It has `train` and `eval` methods. Some of its more important attributes (components) are: `model`, `eval_batch_size` (E), `metrics` (E), `eval_step` (E), `loss` (L),  `batch_size` (L), `jitter` (L), `train_step` (L), `extensions` (L), `epoch_count` (O), `optimizer` (O), `lr_scheduler` (O), `data_loader_f` (D). E denotes evaluation components, which do not affect training, L learning components, and O learning components mostly related to optimization.
 
-`ChecpointManager` is used for storing and loading the state of a trainer (and some other things) in the file system.
+`CheckpointManager` is used for storing and loading the state of a trainer (and some other things) in the file system.
 
 `vidlu.training.steps` defines training and evaluation steps. Instances of step classes (inheriting `BaseStep`) have a `__call__` method that accepts a `Trainer` instance and a data batch. Training steps can be stateful and might need to define `state_dict` and `load_state_dict` methods. There are steps of different supervised, adversarial, semi-supervised, normalizing flow, and some hybrid algorithms.
 
@@ -154,7 +154,7 @@ Composite modules are designed to be "deeply" configurable: arguments of argumen
 
 `get_trainer` accepts a string representing an argument list for the `TrainingConfig` constructor and a model. Keyword arguments can be defined as trees (appropriate instances of `UpdaTree` from `vidlu.utils.func`) that are used to update (without mutation) `TrainingConfig` elements and objects within.
 
-Custom modules can be made available in string expressions using [extensions](#extensions).
+Custom modules can be made available for use in string expressions using [extensions](#extensions).
 
 ### Training configurations
 
@@ -170,7 +170,8 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Extensions
 
-Packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded in with the prefix removed and available in the `extensions` dictionary in the `vidlu.extensions` module. They are also directly available for expression arguments for [factories in `vidlu.factories`](#factories).
+Vidlu enables extensions using the [*naming convention* approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). Installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed.
+Extensions are also directly available for expression arguments for [factories in `vidlu.factories`](#factories).
 
 ### Commonly used utilities
 
