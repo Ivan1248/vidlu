@@ -4,6 +4,7 @@ import vidlu.training.extensions as te
 from vidlu.modules import get_submodule
 from vidlu.utils.collections import NameDict
 from vidlu.utils.func import params, partial, Required, ArgTree, tree_partial
+import functools
 
 
 # Optimizer maker
@@ -82,7 +83,8 @@ class TrainerConfig(NameDict):
                 d = dict(**x)
                 ext_args.extend(d.pop('extension_fs', ()))
                 all_kwargs.update(d)
-            elif issubclass(x.func if isinstance(x, partial) else x, te.TrainerExtension):
+            elif (isinstance(t := x.func if isinstance(x, functools.partial) else x, type)
+                  and issubclass(t, te.TrainerExtension)):
                 ext_args.append(x)
             else:
                 raise ValueError(f"Invalid argument type: {type(x).__name__}.")
