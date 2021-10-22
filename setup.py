@@ -17,9 +17,24 @@ def process_pillow_req(pillow_req):
     return pillow_req + " " + pillow_ver
 
 
-requirements = [r if not r.startswith("pillow") else process_pillow_req(r)
-                for r in Path('requirements.txt').read_text().splitlines()]
+def parse_requirements(text):
+    requirements = []
+    dependency_links = []
+    DEP_PREFIX = "--find-links"
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(DEP_PREFIX):
+            dependency_links.append(line[len(DEP_PREFIX):].strip())
+        elif line.startswith("pillow"):
+            requirements.append(process_pillow_req(line))
+        else:
+            requirements.append(line)
+    return requirements, dependency_links
+
+
+requirements, dependency_links = parse_requirements(Path('requirements.txt').read_text())
+
 requirements_optional = Path('requirements-optional.txt').read_text().splitlines()
 
 setup(name="vidlu", packages=find_packages(), install_requires=requirements,
-      extras_require={'full': requirements_optional})
+      dependency_links=dependency_links, extras_require={'full': requirements_optional})

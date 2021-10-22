@@ -17,6 +17,7 @@ This repository contains
 
 **No installattion.**
 You can make a local copy and install dependencies with
+
 ```sh
 git clone https://github.com/Ivan1248/vidlu.git
 cd vidlu
@@ -27,7 +28,7 @@ pip install -r requirements.txt
 You can install the package with
 
 ```sh
-pip install git+https://github.com/Ivan1248/Vidlu
+pip install git+https://github.com/Ivan1248/vidlu
 ```
 
 <!--
@@ -45,10 +46,10 @@ The "scripts" directory contains scripts that use [the framework](#the-framework
 
 `scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following path variables:
 
-- `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets" are included too. "&lt;ancestor>" is any ancestor directory of `dirs.py`.
-- `cache` is used for automatically caching data. It should preferably be on an SSD, while original datasets can be on slower disks since data is usually accessed through cache.
-- `pretrained` points to a directory that can contain pre-trained parameters. It is takes the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
-- `experiments` points to a directory for experiment results. It takes the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
+-   `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets" are included too. "&lt;ancestor>" is any ancestor directory of `dirs.py`.
+-   `cache` is used for automatically caching data. It should preferably be on an SSD, while original datasets can be on slower disks since data is usually accessed through cache.
+-   `pretrained` points to a directory that can contain pre-trained parameters. It is takes the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
+-   `experiments` points to a directory for experiment results. It takes the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
 
 There is also a `VIDLU_DATA` env. variable that can be used instead of the mentioned ones. See below.
 
@@ -170,7 +171,7 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Extensions
 
-Vidlu enables extensions using the [*naming convention* approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). Installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed.
+Vidlu enables extensions using the [_naming convention_ approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). Installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed.
 Extensions are also directly available for expression arguments for [factories in `vidlu.factories`](#factories).
 
 ### Commonly used utilities
