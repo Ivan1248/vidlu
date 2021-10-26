@@ -68,7 +68,7 @@ It might be easiest to create the following directory structure so that the dire
    └─ pretrained
 ```
 
-If the the "data" directory is not in some "&lt;ancestor>", either `VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS` need to be defined, or a single env. variable, `VIDLU_DATA` pointing to the "data" directory, can be defined.
+If the "data" directory is not in some "&lt;ancestor>", either one (`VIDLU_DATA` pointing to the "data" directory) or more (`VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`) env. variables have to be defined.
 
 ### Running experiments
 
