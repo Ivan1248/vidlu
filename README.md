@@ -15,7 +15,9 @@ This repository contains
 
 ## Setup
 
-**No installattion.**
+**Note:** `pip install` is usually not recommended outside a virtual environment. To install required packages, it is probably best to use the package manager that you usually use.
+
+**No installation.**
 You can make a local copy and install dependencies with
 
 ```sh
