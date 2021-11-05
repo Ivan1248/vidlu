@@ -304,8 +304,8 @@ class TrainingExperiment:
                     trainer.metrics.append(m())
 
             define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
-        except Exception as e:
-            raise e
+        except Exception:
+            raise
         finally:
             resuming_required = cpman.resuming_required
             if resuming_required:

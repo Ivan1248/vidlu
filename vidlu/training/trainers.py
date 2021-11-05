@@ -173,7 +173,7 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 
     if isinstance(batch, feature_type):
         return _prepare(batch)
-    elif isinstance(batch, (T.Mapping, Record)):
+    elif hasattr(type(batch), "items"):
         return type(batch)({k: _prepare(x) for k, x in batch.items()})
     elif isinstance(batch, BatchTuple):
         return BatchTuple(default_prepare_batch(b, feature_type, device, non_blocking)

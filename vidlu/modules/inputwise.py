@@ -12,7 +12,6 @@ from typeguard import check_argument_types
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
 import vidlu.modules.functional as vmf
-from vidlu.modules.utils import sole_tuple_to_varargs
 import vidlu.modules.components as vmc
 import vidlu.ops.image as voi
 
@@ -20,6 +19,8 @@ import vidlu.ops.image as voi
 class BatchParameter(torch.nn.Parameter):
     r"""A kind of Tensor that is to be considered a batch of parameters, i.e.
     each input example has its own parameter.
+
+    It is used for make perturbation modules slicable in the batch dimension.
 
     Args:
         data (Tensor): parameter tensor.
@@ -62,8 +63,7 @@ def pert_model_init(self, forward_arg_count):
         self.forward_arg_count = forward_arg_count
 
 
-def pert_model_forward(forward_arg_count, module, *args, **kwargs):
-    args = sole_tuple_to_varargs(args)
+def _pert_model_forward(forward_arg_count, module, args, **kwargs):
     n = forward_arg_count
     if len(args) + len(kwargs) == 1 or n == -1:  # everything fits
         result = module(*args, **kwargs)
@@ -94,13 +94,13 @@ class PertModelBase(E.Module):
         self.dummy_x = x.new_zeros(()).expand(x.shape)
         default_params = self.create_default_params(x)
         if (dp := set(default_params)) != (pd := set(self.param_defaults)):
-            raise TypeError(f"The names of parameters returned by `create_default_params` ({dp}) no"
+            raise TypeError(f"The names of parameters returned by `create_default_params` ({dp}) do"
                             f" not match the expected names per `param_defaults` ({pd}).")
         for k, v in default_params.items():
             setattr(self, k, BatchParameter(v, requires_grad=True))
 
     def __call__(self, *args, **kwargs):
-        return pert_model_forward(self.forward_arg_count, super().__call__, *args, **kwargs)
+        return _pert_model_forward(self.forward_arg_count, super().__call__, args, **kwargs)
 
     def create_default_params(self, x):
         return dict()
@@ -679,6 +679,7 @@ class CutMix(PertModelBase):
             warn("There has to be an even number of examples for the 'pairs' combination mode.")
         n = (len(x) + 1) // 2 if self.combination == 'pairs' else len(x)
         self.register_buffer('mask', self.mask_gen(n, tuple(x.shape[-2:]), device=x.device))
+        super().build(x)
 
     def _adapt_mask(self, x, mask):
         if len(x.shape) == 4:
@@ -687,10 +688,8 @@ class CutMix(PertModelBase):
 
     def forward(self, x, y=None, loss_mask=None):
         transform = cutmix_pairs_transform if self.combination == 'pairs' else cutmix_roll_transform
-        result = [None if a is None else
-                  transform(a, self._adapt_mask(a, self.mask))
-                  for a in [x, y, loss_mask]]
-        return result
+        return [None if a is None else transform(a, self._adapt_mask(a, self.mask))
+                for a in [x, y, loss_mask]]
 
 
 def pert_model_class(cls):

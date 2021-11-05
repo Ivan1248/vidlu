@@ -2,8 +2,8 @@
 Names of extension packages have to start with "vidlu_". This corresponds to the *naming convention*
 approach described here:
 https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention
-The prefix is removed when accessing the extension via `vidlu.extension.ext_name` if the name of the
-package is `vidlu_ext_name`.
+The prefix is removed when accessing the extension via `vidlu.extensions.extensions.ext_name` if
+the name of the package is `vidlu_ext_name`.
 
 For non-installed packages, add the path of the directory containing extensions to `PYTHONPATH`.
 ```PYTHONPATH="${PYTHONPATH}:/my/plugins/path"```

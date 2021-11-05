@@ -874,6 +874,29 @@ class CamVidSequences(Dataset):  # TODO
         return len(self._image_paths)
 
 
+_cityscapes_class_names = [
+    'road',  # 0
+    'sidewalk',  # 1
+    'building',  # 2
+    'wall',  # 3
+    'fence',  # 4
+    'pole',  # 5
+    'traffic light',  # 6
+    'traffic sign',  # 7
+    'vegetation',  # 7
+    'terrain',  # 9
+    'sky',  # 10
+    'person',  # 11
+    'rider',  # 12
+    'car',  # 13
+    'truck',  # 14
+    'bus',  # 15
+    'train',  # 16
+    'motorcycle',  # 17
+    'bicycle'  # 18
+]
+
+
 class Cityscapes(Dataset):
     subsets = ['train', 'val', 'test', 'train_extra']  # 'test' labels are invalid
     default_dir = 'Cityscapes'
@@ -894,7 +917,6 @@ class Cityscapes(Dataset):
             raise ValueError("downsampling must be greater or equal to 1.")
 
         self.downsampling, self.downsample_labels = downsampling, downsample_labels
-        self._shape = np.array([1024, 2048]) // downsampling
 
         subdirs = {x.name for x in im_data_dir.glob('*')}
         if 'leftImg8bit' in subdirs:

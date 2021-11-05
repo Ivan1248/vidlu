@@ -28,7 +28,7 @@ import vidlu.torch_utils as vtu
 from vidlu.data import clean_up_dataset_cache
 
 
-def log_run(status):
+def log_run(status, result=None):
     try:
         import fcntl
     except ImportError as ex:
@@ -44,6 +44,9 @@ def log_run(status):
             args = [a if i < 2 or len(a) == 0 or a[0] == '-' else f'"{a}"'
                     for i, a in enumerate(sys.argv)]
             runs_file.write(f"{prefix} {' '.join(args)}\n")
+            if result is not None:
+                runs_file.write(f"{result}\n")
+            runs_file.write(f"\n")
             fcntl.flock(runs_file, fcntl.LOCK_UN)
     except IOError as e:
         warnings.warn(str(e))
@@ -127,7 +130,8 @@ def train(args):
             for name, ds in training_datasets.items():
                 exp.trainer.eval(ds)
 
-        log_run('done')
+        print(exp.cpman.id_to_perf)
+        log_run('done', str(exp.cpman.id_to_perf))
 
     if args.profile:
         print(prof.key_averages().table(sort_by="self_cuda_time_total"))

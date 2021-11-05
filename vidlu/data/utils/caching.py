@@ -63,7 +63,7 @@ def add_pixel_stats_to_info_lazily(parted_dataset, cache_dir):
     pds = parted_dataset
 
     try:
-        stats_ds = pds.trainval if 'trainval' in pds else pds.train.join(pds.val)
+        stats_ds = pds.trainval if 'trainval' in pds.keys() else pds.train.join(pds.val)
     except KeyError:
         part_name, stats_ds = next(iter(pds.items()))
         warnings.warn('The parted dataset object has no "trainval" or "train" and "val" parts.'

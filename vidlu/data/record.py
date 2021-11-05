@@ -26,7 +26,7 @@ class LazyField:
         return self._value
 
 
-def _process_lazy_fields(args: dict):
+def _process_lazy_args(args: dict):
     return dict((k[:-1], LazyField(v)) if k.endswith('_') else (k, v) for k, v in args.items())
 
 
@@ -71,10 +71,10 @@ class Record(abc.Sequence):  # Sized, Iterable len, iter
         if len(args) > 1:
             raise ValueError("All arguments but the first one must be keyword arguments."
                              + " The optional positional argument can only be a Record or Mapping.")
-        dict_ = _process_lazy_fields(kwargs)
+        dict_ = _process_lazy_args(kwargs)
         if len(args) == 1:
             d = args[0]
-            dict_ = dict(d._dict if isinstance(d, Record) else _process_lazy_fields(d), **dict_)
+            dict_ = dict(d._dict if isinstance(d, Record) else _process_lazy_args(dict(d)), **dict_)
         self._dict = dict_
         if any(isinstance(k, int) for k in dict_.keys()):
             raise ValueError("Record keys must be non-ints.")
