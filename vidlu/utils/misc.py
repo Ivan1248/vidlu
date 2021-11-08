@@ -14,6 +14,7 @@ import weakref
 import zipfile
 from multiprocessing.sharedctypes import RawArray
 from pathlib import Path
+import copy
 
 from tqdm import tqdm
 import numpy as np
@@ -377,3 +378,54 @@ def check_arg_type(name, value, type_):
 def check_value_in(name, value, values: T.Collection):
     if value not in values:
         raise TypeError(f"{name} should have a value from {values}, not {value}.")
+
+
+# Typing ###########################################################################################
+
+
+class TypeOperationBase:
+    @classmethod
+    def __instancecheck__(cls, obj):
+        print(type(cls))
+        return cls.__subclasscheck__(cls, type(obj))
+
+
+class SubclassCheck(TypeOperationBase):
+    def __init__(self, check: T.Callable[[type], bool]):
+        self.__class__ = copy(self.__class__)
+        self.__class__.check = check
+
+    @classmethod
+    def __subclasscheck__(cls, subclass):
+        return cls.check(subclass)
+
+
+class TypeOperation(TypeOperationBase):
+    classes = None
+
+    def __init__(self, *classes):
+        self.__class__ = copy(self.__class__)
+        self.__class__.classes = classes
+
+    @classmethod
+    def __subclasscheck__(cls, subclass):
+        print(type(cls))
+        return issubclass(subclass, cls.classes)
+
+    @classmethod
+    def __instancecheck__(cls, obj):
+        print(type(cls))
+        return cls.__subclasscheck__(cls, type(obj))
+
+
+class Union(TypeOperationBase):
+    @classmethod
+    def __subclasscheck__(cls, subclass):
+        print(type(cls))
+        return issubclass(subclass, cls.classes)
+
+
+class Intersection(TypeOperationBase):
+    @classmethod
+    def __subclasscheck__(cls, subclass):
+        return all(issubclass(subclass, c) for c in cls.classes)
