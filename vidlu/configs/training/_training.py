@@ -1,5 +1,6 @@
 from torch import optim
 
+import vidlu.optim
 from vidlu.transforms import jitter
 from vidlu.optim.lr_schedulers import ScalableMultiStepLR, ScalableLR, CosineLR, QuarterCosLR
 import vidlu.training.steps as ts
@@ -105,43 +106,43 @@ semisup_cons_phtps20u = TrainerConfig(
 )
 
 semisup_cons_warp1 = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(smooth_warp_attack, step_count=0, loss=losses.kl_div_ll,
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(smooth_warp_attack, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phw2 = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(phw_attack_1, step_count=0, loss=losses.kl_div_ll,
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(phw_attack_1, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_noise = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phtps20_r1w = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,
-                                        loss=lambda p, c: losses.kl_div_ll(p.detach(), c),
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(phtps_attack_20, step_count=0,
+                     loss=lambda p, c: losses.kl_div_ll(p.detach(), c),
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(block_grad_on_clean=False),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phtps20_1wa = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(phtps_attack_20, step_count=0,
-                                        loss=lambda p, c: losses.kl_div_ll(p, c.detach()),
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(phtps_attack_20, step_count=0,
+                     loss=lambda p, c: losses.kl_div_ll(p, c.detach()),
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(block_grad_on_clean=False),
     eval_step=ts.SemisupVATEvalStep(),
 )
@@ -162,45 +163,36 @@ semisup_cons_phtps20_entmin_l = TrainerConfig(
     train_step=ts.SemisupVATStep(uns_loss_on_all=True, entropy_loss_coef=1),
 )
 
-semisup_cons_phtps20_seg = TrainerConfig(
-    partial(te.SemisupVAT,
-            attack_f=partial(phtps_attack_20, step_count=0, loss=losses.kl_div_ll,
-                             output_to_target=lambda x: x)),
-    train_step=ts.SemisupVATStep(),
-    eval_step=ts.SemisupVATEvalStep(),
-)
-
 semisup_cons_ph3_seg = TrainerConfig(
-    partial(te.SemisupVAT,
-            attack_f=partial(ph3_attack, output_to_target=lambda x: x, loss=losses.kl_div_ll)),
+    te.SemisupVAT,
+    attack_f=partial(ph3_attack, output_to_target=lambda x: x, loss=losses.kl_div_ll),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_contr_ph3_seg = TrainerConfig(
-    partial(te.SemisupVAT,
-            attack_f=partial(ph3_attack, output_to_target=lambda x: x, loss=losses.kl_div_ll)),
+    te.SemisupVAT,
+    attack_f=partial(ph3_attack, output_to_target=lambda x: x, loss=losses.kl_div_ll),
     train_step=ts.SemisupContrastiveStepBase(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_tps20_seg = TrainerConfig(
-    partial(te.SemisupVAT,
-            attack_f=partial(tps_attack_20, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(tps_attack_20, loss=losses.kl_div_ll, output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_cutmix = TrainerConfig(
-    partial(te.SemisupVAT,
-            attack_f=partial(cutmix_attack_21, step_count=0, loss=losses.kl_div_ll,
-                             output_to_target=lambda x: x)),
+    attack_f=partial(cutmix_attack_21, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
     eval_step=ts.SemisupVATEvalStep(),
 )
 
 semisup_cons_phtps20_seg_morsic = TrainerConfig(
-    semisup_cons_phtps20_seg,
+    semisup_cons_phtps20,
     data_loader_f=partial(
         vdu.simple_or_multi_data_loader,
         data_loader_f=vd.DataLoader,
@@ -213,40 +205,36 @@ semisup_cons_phtps20_seg_morsic = TrainerConfig(
 # Semi-supervised: mean teacher
 
 mean_teacher_custom_tps = TrainerConfig(
-    partial(
-        te.SemisupVAT, attack_f=partial(tps_warp_attack, step_count=0, loss=losses.kl_div_ll,
-                                        output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(tps_warp_attack, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherStep(),
 )
 
 mean_teacher_custom_tps_weaker = TrainerConfig(
-    partial(
-        te.SemisupVAT,
-        attack_f=partial(tps_warp_attack, initializer=pert.NormalInit({'offsets':
-                                                                           (0, 0.05)}),
-                         projection=None,
-                         step_count=0, loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(tps_warp_attack, initializer=init.NormalInit({'offsets': (0, 0.05)}),
+                     projection=None, step_count=0, loss=losses.kl_div_ll,
+                     output_to_target=lambda x: x),
     eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherStep(),
 )
 
 mean_teacher_custom_tps_more_weaker = TrainerConfig(
-    partial(
-        te.SemisupVAT,
-        attack_f=partial(tps_warp_attack, initializer=pert.NormalInit({'offsets': (0, 0.02)}),
-                         projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
-                         loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(tps_warp_attack, initializer=init.NormalInit({'offsets': (0, 0.02)}),
+                     projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
+                     loss=losses.kl_div_ll, output_to_target=lambda x: x),
     eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherStep(),
 )
 
 mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
-    partial(
-        te.SemisupVAT,
-        attack_f=partial(tps_warp_attack, initializer=pert.NormalInit({'offsets': (0, 0.02)}),
-                         projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
-                         loss=losses.kl_div_ll, output_to_target=lambda x: x)),
+    te.SemisupVAT,
+    attack_f=partial(tps_warp_attack, initializer=init.NormalInit({'offsets': (0, 0.02)}),
+                     projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
+                     loss=losses.kl_div_ll, output_to_target=lambda x: x),
     eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherStep(),
 )
@@ -331,6 +319,13 @@ swiftnet_cityscapes = TrainerConfig(
     eval_batch_size=4,
     jitter=jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0,
                                            scale_dist="log-uniform"),
+)
+
+swiftnet_lamb_cityscapes = TrainerConfig(
+    swiftnet_cityscapes,
+    optimizer_f=OptimizerMaker(vo.LambAdam,
+                               [dict(params='backbone.backbone', lr=1e-4, weight_decay=2.5e-5)],
+                               lr=4e-4, betas=(0.9, 0.99), weight_decay=1e-4),
 )
 
 swiftnet_mo_cityscapes = TrainerConfig(
