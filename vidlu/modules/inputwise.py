@@ -29,7 +29,7 @@ class BatchParameter(torch.nn.Parameter):
     """
 
     def __repr__(self):
-        return 'BatchParameter:\n' + repr(self.data)
+        return f'{type(self).__name__}:\n{repr(self.data)}'
 
     def __reduce_ex__(self, proto):
         param = BatchParameter(self.data, self.requires_grad)
@@ -111,11 +111,11 @@ class PertModelBase(E.Module):
         Args:
             full_size: If False, arrays (or scalars) of the minimum shape
                 necessary to compute the difference of parameters to their
-                default values are yielded. This can be useful for constraints
+                default values are returned. This can be useful for constraints
                 or regularization. If True, parameters like those used for
-                initialization of the module are yielded.
-            recurse (bool): if True, then yields parameters of this module
-                and all submodules. Otherwise, yields only default parameters
+                initialization of the module are returned.
+            recurse (bool): if True, then returns parameters of this module
+                and all submodules. Otherwise, returns only default parameters
                 for this module.
 
         Yields:

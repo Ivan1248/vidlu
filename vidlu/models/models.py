@@ -231,6 +231,7 @@ class IRevNet(ClassificationModel):
         for name, module in self.named_modules():
             if hasattr(module, 'inplace'):
                 module.inplace = True  # ResNet-10: 8312MiB, 6.30/s -> 6734MiB, 6.32/s
+        return True
 
 
 class MNISTNet(ClassificationModel):
@@ -304,7 +305,7 @@ class SwiftNet(SwiftNetBase):
         elif self.mem_efficiency >= 2:  # 6260MiB, 5.84/s
             for res_unit in self.backbone.backbone.bulk:
                 res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))
-
+        return True
 
 class SwiftNetIRevNet(SwiftNetBase):
     __init__ = partialmethod(SwiftNet.__init__,
@@ -315,6 +316,7 @@ class SwiftNetIRevNet(SwiftNetBase):
         set_all_inplace(self, self.mem_efficiency >= 1)
         if self.mem_efficiency >= 2:
             raise NotImplementedError()
+        return True
 
 
 class LadderDensenet(DiscriminativeModel):

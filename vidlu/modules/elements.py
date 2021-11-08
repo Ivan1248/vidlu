@@ -304,7 +304,9 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
             error_message = f"Error in {name}, type {type(self).__module__}.{type(self).__qualname__}"
             if self.is_inverse:
                 error_message += f" (inverse of {type(self.inverse).__qualname__})"
-            raise type(e)(f"{e.args[0]}\n{error_message}", *e.args[1:])
+            if len(e.args) > 0:
+                error_message = f"{e.args[0]}\n{error_message}"
+            raise type(e)(error_message, *e.args[max(1, len(e.args)):])
 
     def _init_call(self, *args, **kwargs):
         if self.training:
@@ -314,15 +316,15 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         if type(self).build != Module.build:
             self.build(*args, **kwargs)
             for c in self.children():
-                c.training = self.training
+                if c.training != self.training:
+                    c.train(self.training)
+        self._built = True
         if device is not None:
             self.to(device)
         if type(self).post_build != Module.post_build:
-            super().__call__(*args, **kwargs)
-            self.post_build(*args, **kwargs)
-            if device is not None:
-                self.to(device)
-        self._built = True
+            result = super().__call__(*args, **kwargs)
+            if self.post_build(*args, **kwargs):
+                return result
         return super().__call__(*args, **kwargs)
 
     def _check_call(self, *args, **kwargs):
@@ -400,16 +402,20 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
 
         Children modules will automatically get the training/evaluation state of the parent after
         running this.
+
+        Initialization will be performed automatically if an initialization method is provided.
         """
         pass
 
     def post_build(self, *args, **kwargs):
         """This is run after the first evaluation (if overridden).
         
-        Children modules will not automatically get the same training/evaluation state as the parent
-        after running this.
+        This methodt can be used for enabling efficiency modifications such as in-place computation
+        or gradient checkpointings.
+
+        This should not create new parameters, buffers, or modules.
         """
-        pass
+        return True
 
     # Modified standard nn.Module methods
 
