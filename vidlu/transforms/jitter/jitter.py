@@ -23,12 +23,12 @@ class Composition:
 
 class PhTPS20:
     def __init__(self):
-        from vidlu.training.robustness import attacks
         from vidlu.training.robustness import perturbation as pert
+        from vidlu.modules import init
         self.pert_model = pert.PhotoTPS20()
-        self.init = pert.MultiInit(
-            dict(tps=pert.NormalInit({'offsets': (0, 0.1)}),
-                 photometric=pert.UniformInit(
+        self.init = init.MultiInit(
+            dict(tps=init.NormalInit({'offsets': (0, 0.1)}),
+                 photometric=init.UniformInit(
                      {'module.add_v.addend': [-0.25, 0.25],
                       'module.mul_s.factor': [0.25, 2.],
                       'module.add_h.addend': [-0.1, 0.1],
@@ -117,7 +117,6 @@ class SegRandScaleCropPadHFlip(SegmentationJitter):
         x = vti.PadToShape(self.shape, value=self.image_pad_value)(xy[0])
         return (x,) if len(xy) == 1 else \
             (x, vti.PadToShape(self.shape, value=self.label_pad_value)(xy[1]))
-
 
 
 class RandAugment(ClassificationJitter):

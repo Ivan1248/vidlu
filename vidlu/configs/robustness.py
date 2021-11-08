@@ -1,5 +1,3 @@
-import copy
-
 import torch
 
 import vidlu.optim as vo
@@ -8,6 +6,7 @@ import vidlu.modules as vm
 from vidlu.modules import losses
 from vidlu.training.robustness import attacks
 from vidlu.training.robustness import perturbation as pert
+from vidlu.modules import init
 import vidlu.transforms.jitter as vtj
 import vidlu.utils.func as vuf
 from vidlu.utils.func import partial, ArgTree as t, tree_partial, params
@@ -86,7 +85,7 @@ morsic_tps_warp_attack = partial(attacks.PertModelAttack,
 
 def get_standard_pert_modeL_attack_params(param_to_bounds, param_to_initialization_params=None,
                                           param_to_step_size=None, step_size_factor=None,
-                                          initializer_f=pert.UniformInit,
+                                          initializer_f=init.UniformInit,
                                           projection_f=pert.ClampProjector):
     if (param_to_step_size is None) == (step_size_factor is None):
         raise RuntimeError("Either param_to_step_size or step_size should be provided.")
@@ -118,15 +117,15 @@ tps_warp_attack = partial(
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
-    initializer=pert.NormalInit({'offsets': (0, 0.1)}),
+    initializer=init.NormalInit({'offsets': (0, 0.1)}),
     projection=pert.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
 
 phtps_attack_20 = partial(
     attacks.PertModelAttack,
     pert_model_f=partial(pert.PhotoTPS20, clamp=False, forward_arg_count=3),
-    initializer=pert.MultiInit(
-        tps=pert.NormalInit({'offsets': (0, 0.1)}),
-        photometric=pert.UniformInit(
+    initializer=init.MultiInit(
+        tps=init.NormalInit({'offsets': (0, 0.1)}),
+        photometric=init.UniformInit(
             {'add_v.addend': [-0.25, 0.25],
              'mul_s.factor': [0.25, 2.],
              'add_h.addend': [-0.1, 0.1],
@@ -137,23 +136,49 @@ phtps_attack_20 = partial(
     step_count=0,
 )
 
+phtps_attack_20_d006 = partial(
+    phtps_attack_20,
+    initializer=init.MultiInit(
+        tps=init.NormalInit({'offsets': (0, 0.06)}),
+        photometric=init.UniformInit(
+            {'add_v.addend': [-0.25, 0.25],
+             'mul_s.factor': [0.25, 2.],
+             'add_h.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
+)
 
 tps_attack_20 = partial(
     attacks.PertModelAttack,
     pert_model_f=partial(vmi.BackwardTPSWarp, label_interpolation_mode='nearest',
                          label_padding_mode=-1),
-    initializer=pert.NormalInit({'offsets': (0, 0.1)}),
+    initializer=init.NormalInit({'offsets': (0, 0.1)}),
     projection=None,
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     step_size=0.01,
     step_count=0,
 )
 
+phtps_attack_20_rs = partial(
+    attacks.PertModelAttack,
+    pert_model_f=partial(pert.PhotoTPS20, clamp=False, projection="scale", forward_arg_count=3),
+    initializer=init.MultiInit(
+        tps=init.NormalInit({'offsets': (0, 0.1)}),
+        photometric=init.UniformInit(
+            {'add_v.addend': [-0.25, 0.25],
+             'mul_s.factor': [0.25, 2.],
+             'add_h.addend': [-0.1, 0.1],
+             'mul_v.factor': [0.25, 2.]})),
+    projection=None,
+    optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
+    step_size=0.01,  # 0.01 the image height/width
+    step_count=0,
+)
+
 phtps_attack_20_unif = partial(
     phtps_attack_20,
-    initializer=pert.MultiInit(
-        tps=pert.UniformInit({'offsets': (-0.1, 0.1)}),
-        photometric=pert.UniformInit(
+    initializer=init.MultiInit(
+        tps=init.UniformInit({'offsets': (-0.1, 0.1)}),
+        photometric=init.UniformInit(
             {'add_v.addend': [-0.25, 0.25],
              'mul_s.factor': [0.25, 2.],
              'add_h.addend': [-0.1, 0.1],
@@ -162,9 +187,9 @@ phtps_attack_20_unif = partial(
 
 phtps_attack_20_1 = partial(
     phtps_attack_20,
-    initializer=pert.MultiInit(
-        tps=pert.NormalInit({'offsets': (0, 0.02)}),
-        photometric=pert.UniformInit(
+    initializer=init.MultiInit(
+        tps=init.NormalInit({'offsets': (0, 0.02)}),
+        photometric=init.UniformInit(
             {'add_v.addend': [-0.25, 0.25],
              'mul_s.factor': [0.25, 2.],
              'add_h.addend': [-0.1, 0.1],
@@ -174,9 +199,9 @@ phtps_attack_20_1 = partial(
 phtps_attack_20_2 = partial(
     phtps_attack_20,
     pert_model_f=partial(pert.PhotoTPS3, clamp=False, forward_arg_count=3),
-    initializer=pert.MultiInit(
-        tps=pert.NormalInit({'offsets': (0, 0.1)}),
-        photometric=pert.UniformInit(
+    initializer=init.MultiInit(
+        tps=init.NormalInit({'offsets': (0, 0.1)}),
+        photometric=init.UniformInit(
             {'add_h.addend': [-1 / 6, 1 / 6],
              'add_s.addend': [-0.2, 0.2],
              'add_v.addend': [-0.1, 0.1],
@@ -186,9 +211,9 @@ phtps_attack_20_2 = partial(
 phtps_attack_20_3 = partial(
     phtps_attack_20,
     pert_model_f=partial(pert.PhotoTPS3, clamp=False, forward_arg_count=3),
-    initializer=pert.MultiInit(
-        tps=pert.NormalInit({'offsets': (0, 0.02)}),
-        photometric=pert.UniformInit(
+    initializer=init.MultiInit(
+        tps=init.NormalInit({'offsets': (0, 0.02)}),
+        photometric=init.UniformInit(
             {'add_h.addend': [-1 / 6, 1 / 6],
              'add_s.addend': [-0.2, 0.2],
              'add_v.addend': [-0.1, 0.1],
@@ -198,7 +223,7 @@ phtps_attack_20_3 = partial(
 ph3_attack = partial(
     phtps_attack_20,
     pert_model_f=partial(pert.Photometric3, clamp=False, forward_arg_count=1),
-    initializer=pert.UniformInit(
+    initializer=init.UniformInit(
         {'add_h.addend': [-1 / 6, 1 / 6],
          'add_s.addend': [-0.2, 0.2],
          'add_v.addend': [-0.1, 0.1],
@@ -218,9 +243,9 @@ cutmix_attack_21 = partial(
 phw_attack_1 = partial(
     attacks.PertModelAttack,
     pert_model_f=partial(pert.PhotoWarp1, sigma=5),
-    initializer=pert.MultiInit(
+    initializer=init.MultiInit(
         photometric=phtps_attack_20.initializer.photometric,
-        warp=pert.NormalInit({'unsmoothed_flow': (0, 25)})),
+        warp=init.NormalInit({'unsmoothed_flow': (0, 25)})),
     projection=None)
 
 
@@ -244,5 +269,5 @@ tps_warp_attack_weaker = partial(
     optim_f=partial(vo.ProcessedGradientDescent, process_grad=torch.sign),
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
-    initializer=pert.NormalInit({'offsets': (0, 0.03)}),
+    initializer=init.NormalInit({'offsets': (0, 0.03)}),
     projection=pert.ScalingProjector({'offsets': 0.03}, p=2, dim=-1))

@@ -15,9 +15,9 @@ class Projector:
 class ClampProjector(Projector):
     param_path_to_bounds: T.Mapping[str, T.Sequence[T.Union[float, torch.Tensor]]]
 
-    def __call__(self, pert_model, x):
+    def __call__(self, module, x):
         for path, bounds in self.param_path_to_bounds.items():
-            vo.clamp(vm.get_submodule(pert_model, path), *bounds, inplace=True)
+            vo.clamp(vm.get_submodule(module, path), *bounds, inplace=True)
 
 
 @dc.dataclass
@@ -26,9 +26,9 @@ class ScalingProjector(Projector):
     dim: T.Union[int, T.Sequence[int]] = -1
     p: int = 2
 
-    def __call__(self, pert_model, x):
+    def __call__(self, module, x):
         for path, radius in self.param_path_to_radius.items():
-            par = vm.get_submodule(pert_model, path)
+            par = vm.get_submodule(module, path)
             norm = par.norm(self.p, dim=self.dim, keepdim=True)
             par.mul_(torch.where(norm > radius, radius / norm, norm.new_ones(())))
 
@@ -37,6 +37,6 @@ class ScalingProjector(Projector):
 class CombinedProjector(Projector):
     projectors: T.List[Projector]
 
-    def __call__(self, pert_model, x):
+    def __call__(self, module, x):
         for proj in self.projectors:
-            proj(pert_model, x)
+            proj(module, x)
