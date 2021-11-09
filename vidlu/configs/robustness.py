@@ -2,14 +2,12 @@ import torch
 
 import vidlu.optim as vo
 import vidlu.modules.inputwise as vmi
-import vidlu.modules as vm
 from vidlu.modules import losses
 from vidlu.training.robustness import attacks
 from vidlu.training.robustness import perturbation as pert
-from vidlu.modules import init
+from vidlu.modules.utils import init, proj
 import vidlu.transforms.jitter as vtj
-import vidlu.utils.func as vuf
-from vidlu.utils.func import partial, ArgTree as t, tree_partial, params
+from vidlu.utils.func import partial, ArgTree as t, tree_partial
 
 # Adversarial attacks
 
@@ -86,7 +84,7 @@ morsic_tps_warp_attack = partial(attacks.PertModelAttack,
 def get_standard_pert_modeL_attack_params(param_to_bounds, param_to_initialization_params=None,
                                           param_to_step_size=None, step_size_factor=None,
                                           initializer_f=init.UniformInit,
-                                          projection_f=pert.ClampProjector):
+                                          projection_f=proj.ClampProjector):
     if (param_to_step_size is None) == (step_size_factor is None):
         raise RuntimeError("Either param_to_step_size or step_size should be provided.")
     if param_to_initialization_params is None:
@@ -118,7 +116,7 @@ tps_warp_attack = partial(
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
     initializer=init.NormalInit({'offsets': (0, 0.1)}),
-    projection=pert.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
+    projection=proj.ScalingProjector({'offsets': 0.1}, p=2, dim=-1))
 
 phtps_attack_20 = partial(
     attacks.PertModelAttack,
@@ -270,4 +268,4 @@ tps_warp_attack_weaker = partial(
     pert_model_f=partial(vmi.BackwardTPSWarp, control_grid_shape=(2, 2)),
     step_size=0.01,  # 0.01 the image height/width
     initializer=init.NormalInit({'offsets': (0, 0.03)}),
-    projection=pert.ScalingProjector({'offsets': 0.03}, p=2, dim=-1))
+    projection=proj.ScalingProjector({'offsets': 0.03}, p=2, dim=-1))

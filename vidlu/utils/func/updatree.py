@@ -1,7 +1,6 @@
 import copy
 import itertools
 import sys
-import typing as T
 
 from vidlu.utils.collections import NameDict
 from ._func import partial, params, default_args, is_empty

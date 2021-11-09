@@ -2,17 +2,6 @@ from torch import nn
 from torchvision.models.resnet import conv3x3
 import torch.utils.model_zoo as model_zoo
 
-__all__ = ['resnet_v2', 'resnet18_v2', 'resnet34_v2', 'resnet50_v2', 'resnet101_v2',
-           'resnet152_v2']
-
-model_urls = {
-    'resnet18_v2': '',
-    'resnet34_v2': '',
-    'resnet50_v2': '',
-    'resnet101_v2': '',
-    'resnet152_v2': '',
-}
-
 
 class BasicBlockV2(nn.Module):
     r"""BasicBlock V2 from

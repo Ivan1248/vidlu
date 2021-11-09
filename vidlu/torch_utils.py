@@ -2,6 +2,7 @@ import contextlib
 import typing as T
 from pathlib import Path
 import copy
+import difflib
 
 import torch
 from torch import nn

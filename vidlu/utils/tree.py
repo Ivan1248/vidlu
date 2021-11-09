@@ -6,7 +6,6 @@ type, or leaves, that are of any type.
 
 from collections import defaultdict
 import typing as T
-import itertools
 
 
 # Dictionary-like trees ############################################################################

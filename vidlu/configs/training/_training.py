@@ -1,8 +1,7 @@
 from torch import optim
 
-import vidlu.optim
 from vidlu.transforms import jitter
-from vidlu.optim.lr_schedulers import ScalableMultiStepLR, ScalableLR, CosineLR, QuarterCosLR
+from vidlu.optim.lr_schedulers import ScalableMultiStepLR, ScalableLR, CosineLR
 import vidlu.training.steps as ts
 import vidlu.training.extensions as te
 
@@ -12,6 +11,7 @@ from vidlu.configs.robustness import *
 from .trainer_config import TrainerConfig, OptimizerMaker
 from vidlu.utils.func import partial
 from vidlu.modules import losses
+from vidlu.modules.utils import proj
 
 # Basic (train_step, eval_step)
 
@@ -224,7 +224,7 @@ mean_teacher_custom_tps_weaker = TrainerConfig(
 mean_teacher_custom_tps_more_weaker = TrainerConfig(
     te.SemisupVAT,
     attack_f=partial(tps_warp_attack, initializer=init.NormalInit({'offsets': (0, 0.02)}),
-                     projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
+                     projection=proj.ScalingProjector({'offsets': 10}), step_count=0,
                      loss=losses.kl_div_ll, output_to_target=lambda x: x),
     eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherStep(),
@@ -233,7 +233,7 @@ mean_teacher_custom_tps_more_weaker = TrainerConfig(
 mean_teacher_custom_tps_more_weaker_clean_teacher = TrainerConfig(
     te.SemisupVAT,
     attack_f=partial(tps_warp_attack, initializer=init.NormalInit({'offsets': (0, 0.02)}),
-                     projection=pert.ScalingProjector({'offsets': 10}), step_count=0,
+                     projection=proj.ScalingProjector({'offsets': 10}), step_count=0,
                      loss=losses.kl_div_ll, output_to_target=lambda x: x),
     eval_step=ts.SemisupVATEvalStep(),
     train_step=ts.MeanTeacherStep(),

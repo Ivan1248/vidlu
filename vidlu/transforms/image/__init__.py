@@ -1,7 +1,5 @@
 import dataclasses as dc
 
-import torch
-
 import vidlu.utils.func as vuf
 from .format import *
 from .space import *

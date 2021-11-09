@@ -1,5 +1,5 @@
 from .elements import *
-from . functional import *
+from .functional import *
 from . import losses
 from . import functional
 from . import components

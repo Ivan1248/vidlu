@@ -6,8 +6,7 @@ import warnings
 
 from typeguard import check_argument_types
 
-from vidlu.utils import text
-from vidlu.utils import tree
+from vidlu.utils import text, tree
 from vidlu.utils.collections import NameDict
 
 
@@ -299,6 +298,7 @@ def find_default_arg(func, arg_name_or_path, recursive=True, return_tree=False):
                 result = find_default_arg(v, path)
                 if len(result) > 0:
                     found[k] = result
+    from .updatree import ArgTree
     found = ArgTree(found)
     return found.items() if return_tree else tree.flatten(found)
 

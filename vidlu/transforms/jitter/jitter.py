@@ -2,7 +2,6 @@ import dataclasses as dc
 import warnings
 import typing as T
 import torch
-from vidlu.utils.func import partial
 
 from vidlu.utils.func import compose
 import vidlu.transforms.image as vti
@@ -24,7 +23,7 @@ class Composition:
 class PhTPS20:
     def __init__(self):
         from vidlu.training.robustness import perturbation as pert
-        from vidlu.modules import init
+        from ...modules.utils import init
         self.pert_model = pert.PhotoTPS20()
         self.init = init.MultiInit(
             dict(tps=init.NormalInit({'offsets': (0, 0.1)}),

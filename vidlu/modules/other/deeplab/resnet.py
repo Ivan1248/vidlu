@@ -7,8 +7,6 @@
 
 from __future__ import absolute_import, print_function
 
-from collections import OrderedDict
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,9 +42,6 @@ class _ConvBnReLU(nn.Sequential):
 
         if relu:
             self.add_module("relu", nn.ReLU())
-
-
-from vidlu.torch_utils import checkpoint_fix
 
 
 class _Bottleneck(nn.Module):

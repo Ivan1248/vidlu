@@ -2,7 +2,6 @@ import pytest
 
 import random
 from vidlu import factories
-from vidlu.utils import tree
 
 
 def test_get_data_single(tmpdir):
