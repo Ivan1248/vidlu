@@ -32,7 +32,6 @@ class DatasetFactory:
         self.ds_name_lower_to_normal = {k.lower(): k for k in self.ds_to_info}
 
     def __call__(self, name: str, **kwargs):
-        name = name
         if name not in self.ds_to_info:
             if (name_fixed := self.ds_name_lower_to_normal.get(name.lower(), None)) is not None:
                 raise KeyError(f'No dataset has the name "{name}". Did you mean "{name_fixed}"?')
@@ -40,7 +39,6 @@ class DatasetFactory:
                            + f' Available datasets: {", ".join(self.ds_to_info.keys())}.')
         ds_info = self.ds_to_info[name]
 
-        subsets = ds_info.cls.subsets
         try:
             path_args = [vup.find_in_directories(self.datasets_dirs, ds_info.path)] \
                 if ds_info.path else []
@@ -48,6 +46,8 @@ class DatasetFactory:
             warnings.warn(f"{ds_info.path} directory for {ds_info.cls} not found in any of "
                           + f"{[str(p) for p in self.datasets_dirs]}")
             path_args = [self.datasets_dirs[0] / ds_info.path]
+
+        subsets = ds_info.cls.subsets
         if len(ds_info.cls.subsets) == 0:
             subsets = ['all']
             load = lambda s: ds_info.cls(*path_args, **{**ds_info.kwargs, **kwargs})

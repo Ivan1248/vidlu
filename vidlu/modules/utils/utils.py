@@ -52,6 +52,8 @@ def extract_tensors(*args, **kwargs):
     for a in itertools.chain(args, kwargs.values()):
         if isinstance(a, torch.Tensor):
             yield a
+        elif isinstance(a, str):
+            continue
         elif isinstance(a, T.Sequence):
             for x in extract_tensors(*a):
                 yield x
