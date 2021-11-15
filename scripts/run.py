@@ -124,14 +124,19 @@ def train(args):
 
         if args.eval_with_pop_stats:
             eval_with_pop_stats(exp, exp.data.train)
+        log_run('done', str(exp.cpman.id_to_perf))
 
         if not args.no_train_eval:
-            print(f'\nEvaluating on training data ({", ".join(training_datasets.keys())})...')
             for name, ds in training_datasets.items():
-                exp.trainer.eval(ds)
-
+                print(f'\nEvaluating on training data ({name})...')
+                try:
+                    exp.trainer.eval(ds)
+                except ValueError as e:
+                    if 'not enough values to unpack' in e.args[0]:
+                        warnings.warn(e.args[0])
+                    else:
+                        raise
         print(exp.cpman.id_to_perf)
-        log_run('done', str(exp.cpman.id_to_perf))
 
     if args.profile:
         print(prof.key_averages().table(sort_by="self_cuda_time_total"))
