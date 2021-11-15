@@ -47,10 +47,10 @@ class State(NameDict):
         self.update(**kwargs)
 
 
-class Engine(object):
+class EpochLoop(object):
     """Runs a given process_function over each batch and emits events..
 
-    Taken from Ignite (https://pytorch.org/ignite) and modified.
+    Taken from Ignite (https://pytorch.org/ignite, "class Engine") and modified.
 
     Args:
         iter_procedure (Callable): A procedure receiving a handle to the engine
@@ -70,7 +70,7 @@ class Engine(object):
             optimizer.step()
             return loss.item()
 
-        engine = Engine(train_and_store_loss)
+        engine = EpochLoop(train_and_store_loss)
         engine.run(data_loader)
     """
 
@@ -90,14 +90,11 @@ class Engine(object):
         self.iter_started = Event()
         self.iter_completed = Event()
 
-        if self.iter_procedure is None:
-            raise ValueError("Engine must be given a processing function in order to run.")
-
     def terminate(self):
-        """Sends a signal for comletely terminating the engine after the current iteration.
+        """Sends a signal for completely terminating after the current iteration.
         """
         self.logger.info(
-            "Terminate signaled. Engine will stop after current iteration is finished.")
+            "Terminate signaled. Epoch loop will stop after current iteration is finished.")
         self.should_terminate = True
 
     def terminate_epoch(self):
@@ -109,14 +106,16 @@ class Engine(object):
 
     def _run_once_on_dataset(self):
         for self.state.iteration, batch in enumerate(self.state.data_loader):
-            self.state.batch = batch
-            self.iter_started(self.state)
-            self.state.result = self.iter_procedure(self, batch)
-            self.iter_completed(self.state)
-            del self.state.batch, self.state.result
-            if self.should_terminate or self.should_terminate_epoch:
-                self.should_terminate_epoch = False
-                return True
+            try:
+                self.state.batch = batch
+                self.iter_started(self.state)
+                self.state.result = self.iter_procedure(self, batch)
+                self.iter_completed(self.state)
+                del self.state.batch, self.state.result
+            finally:
+                if self.should_terminate or self.should_terminate_epoch:
+                    self.should_terminate = self.should_terminate_epoch = False
+                    return True
 
     def run(self, data, max_epochs=1, restart=True):
         """Runs the `process_function` over the passed data.
@@ -135,7 +134,7 @@ class Engine(object):
 
         self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
 
-        self.logger.info(f"Engine run starting with max_epochs={max_epochs}.")
+        self.logger.info(f"Epoch loop run starting with max_epochs={max_epochs}.")
         with Stopwatch() as sw_total:
             self.started(self.state)
             if self.state.epoch + 1 >= max_epochs:
@@ -151,7 +150,7 @@ class Engine(object):
                 self.epoch_completed(self.state)
             self.completed(self.state)
         hours, mins, secs = _to_hours_mins_secs(sw_total.time)
-        self.logger.info(f"Engine run completed after {hours:02}:{mins:02}:{secs:02}.")
+        self.logger.info(f"Epoch loop run completed after {hours:02}:{mins:02}:{secs:02}.")
         return self.state
 
     def state_dict(self):
@@ -224,7 +223,7 @@ class Evaluator:
         def evaluation(engine, batch):
             return self._run_step(self.eval_step, batch, synchronize=self.eval_sync)
 
-        self.evaluation = Engine(evaluation)
+        self.evaluation = EpochLoop(evaluation)
         self.evaluation.started.add_handler(lambda _: self._reset_metrics())
         self.evaluation.epoch_completed.add_handler(lambda _: put_metrics_into_state())
         self.evaluation.iter_completed.add_handler(self._update_metrics)
@@ -310,7 +309,7 @@ class Trainer(Evaluator):
             lr_scheduler_f = partial(lr_scheduler_f, epoch_count=self.epoch_count)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
 
-        self.training = Engine(lambda e, b: self._run_step(self.train_step, b))
+        self.training = EpochLoop(lambda e, b: self._run_step(self.train_step, b))
         self.training.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
         self.training.iter_completed.add_handler(self._update_metrics)

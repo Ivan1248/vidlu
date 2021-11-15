@@ -64,7 +64,8 @@ def to_dhm_str(time):
 
 def define_training_loop_actions(
         trainer: Trainer, cpman: CheckpointManager, data, logger, main_metrics: T.Sequence[str],
-        eval_count=200, min_train_report_count=800, interact_shortcuts=dict(i='embed()'),
+        eval_count=200, min_train_report_count=800,
+        interact_shortcuts=dict(i='embed()', skip='loop.terminate()'),
         special_format={'mem': lambda v: f'{v}MiB', 'freq': lambda v: f'{v:.1f}/s'},
         line_width=120):
     sleepiness = 0
@@ -150,17 +151,21 @@ def define_training_loop_actions(
         if iter in report_iters:
             report_metrics(es, special_format=special_format)
 
-        interact(es)
+        interact(es, loop=trainer.training)
 
         if sleepiness > 0:
             time.sleep(sleepiness / es.batch_count)
 
     @trainer.evaluation.iter_completed.handler
     def on_eval_iteration_completed(es):
-        interact(es)
+        interact(es, loop=trainer.evaluation)
 
         if sleepiness > 0:
             time.sleep(sleepiness / es.batch_count)
+
+    @trainer.evaluation.epoch_started.handler
+    def on_eval_started(es):
+        interact(es, loop=trainer.evaluation)
 
     @trainer.evaluation.epoch_started.handler
     def on_eval_epoch_started(es):
@@ -179,8 +184,7 @@ def define_training_loop_actions(
         sleepiness = x
 
     # noinspection PyUnresolvedReferences
-    @trainer.evaluation.started.handler
-    def interact(es):
+    def interact(es, loop):
         if (optional_input := try_input()) is None:
             return
         from IPython import embed
