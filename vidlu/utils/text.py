@@ -256,14 +256,22 @@ class FormatTranslatorCascade:
             raise NoMatchError(f'Input "{x}" matches no input format.\n{messages}')
 
 
+def _insert_snake_underlines(identifier):
+    identifier = re.sub(r"([A-Z\d]+)([A-Z][a-z])", r'\1_\2', identifier)
+    return re.sub(r"([a-z])([A-Z])", r'\1_\2', identifier)
+
+
 def to_snake_case(identifier):
-    identifier = re.sub(r"([A-Z]+)([A-Z][a-z])", r'\1_\2', identifier)
-    identifier = re.sub(r"([a-z\d])([A-Z])", r'\1_\2', identifier)
-    return identifier.lower()
+    return _insert_snake_underlines(identifier).lower()
 
 
 def to_pascal_case(identifier):
-    return ''.join(x.title() for x in identifier.split('_'))
+    return ''.join(x[0].upper() + x[1:] for x in _insert_snake_underlines(identifier).split('_'))
+
+
+def to_camel_case(identifier):
+    identifier = to_pascal_case(identifier)
+    return identifier[0].lower() + identifier[1:]
 
 
 def common_prefix(strings):

@@ -43,3 +43,24 @@ def test_format_translator():
     assert translator("backbone.layer4.0.bn1.bias") == "backbone.unit3_0.norm0.orig.bias"
     translator = text.FormatTranslator(input_format[:-1] + ":(.*)}", output_format)
     assert translator("backbone.layer4.0.bn1.bias") == "backbone.unit3_0.norm0.orig.bias"
+
+
+def test_snake_case_pascal_case():
+    # examples from https://stackoverflow.com/questions/1993721/how-to-convert-pascalcase-to-pascal-case
+    examples = [
+        ('simpleTest', 'simple_test', 'SimpleTest'),
+        ('easy', 'easy', 'Easy'),
+        ('HTML', 'html', 'Html'),
+        ('simpleXML', 'simple_xml', 'SimpleXml'),
+        ('PDFLoad', 'pdf_load', 'PdfLoad'),
+        ('startMIDDLELast', 'start_middle_last', 'StartMiddleLast'),
+        ('AString', 'a_string', 'AString'),
+        ('Some4Numbers234', 'some4_numbers234', 'Some4Numbers234'),
+        ('TEST123String', 'test123_string', 'Test123String'),
+        ('ArraySpatial2D', 'array_spatial2d', 'ArraySpatial2d'),
+        ('ArraySpatial2d', 'array_spatial2d', 'ArraySpatial2d'),
+    ]
+    for input, snake, pascal in examples:
+        assert text.to_snake_case(input) == snake
+        assert text.to_pascal_case(snake) == pascal
+        assert text.to_pascal_case(input) == input[0].upper() + input[1:]
