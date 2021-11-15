@@ -79,13 +79,22 @@ class Record(abc.Sequence):  # Sized, Iterable len, iter
         if any(isinstance(k, int) for k in dict_.keys()):
             raise ValueError("Record keys must be non-ints.")
 
-    def __getitem__(self, key: T.Union[int, str, T.List[int], T.List[str]]):  # Mapping, Sequence
-        if isinstance(key, slice) or isinstance(key, abc.Sequence) and not isinstance(key, str):
-            keys = range(*key.indices(len(self))) if isinstance(key, slice) else key
-            return Record({k: self._dict[k] for k in keys})
+    def __getitem__(self, key: T.Union[int, str, T.Sequence[int], T.Sequence[str]]):
+        if isinstance(key, slice):
+            return self[list(range(*key.indices(len(self))))]
+        elif isinstance(key, abc.Sequence) and not isinstance(key, str):
+            if len(key) == 0:
+                return Record()
+            if isinstance(key[0], int):
+                all_keys = tuple(self.keys())
+                key = [all_keys[i] for i in key]
+            return Record({k: self._dict[k] for k in key})
         else:
             if isinstance(key, int):
                 key = tuple(self.keys())[key]
+            elif key not in self._dict:
+                raise KeyError(
+                    f'{repr(key)} is not among available keys: {", ".join(repr(k) for k in self._dict.keys())}.')
             val = self._dict[key]
             if isinstance(val, LazyField):
                 val = self._dict[key] = val(self)
@@ -140,13 +149,13 @@ class Record(abc.Sequence):  # Sized, Iterable len, iter
         return Record(self, **other._dict)
 
     def keys(self):  # Mapping
-        return RecordKeysView(self)
+        return self._dict.keys()
 
     def values(self):  # Mapping
-        return RecordValuesView(self)
+        return ListRecord(self)  # TODO
 
     def items(self):  # Mapping
-        return RecordItemsView(self)
+        return RecordItemsView(self)  # TODO
 
 
 class RecordView(Record):
@@ -155,7 +164,7 @@ class RecordView(Record):
         self._dict = record._dict
 
 
-class RecordKeysView(RecordView):
+class DictRecord(RecordView):
     def __iter__(self):
         return iter(self._dict.keys())
 
@@ -167,7 +176,7 @@ class RecordKeysView(RecordView):
         return f"{type(self).__name__}({fields})"
 
 
-class RecordValuesView(RecordView):
+class ListRecord(RecordView):
     def __iter__(self):
         return (self[k] for k in self._dict.keys())
 
