@@ -309,9 +309,6 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
             raise type(e)(error_message, *e.args[max(1, len(e.args)):])
 
     def _init_call(self, *args, **kwargs):
-        if self.training:
-            warnings.warn("Consider turning off training mode by calling eval() before calling the"
-                          + " module for the first time to avoid unwanted state change.")
         device = _try_get_device_from_args(*args, **kwargs)
         if type(self).build != Module.build:
             self.build(*args, **kwargs)
@@ -379,14 +376,22 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
 
     # Initialization with shape inference
 
-    def store_args(self, attribute_name='args', args=None):
-        """Can be called from the __init__ method after super().__init__ to
-        store the arguments that the constructor/initializer was called with."""
-        args = args if args is not None else class_initializer_locals_c()
-        if attribute_name in [None, '']:
-            self.__dict__.update(args)
-        else:
-            setattr(self, attribute_name, NameDict(args))
+    def get_args(self, args=None):
+        """Gets the arguments (and other local variables) of the calling method,
+        removes `self` and variables with names starting with non-letter
+        characters, and returns a NameDict.
+
+        It can be called from the __init__ method after super().__init__ to
+        store the arguments that the constructor/initializer was called with.
+
+        If no args is not provided, it takes the local variables of the most
+        derived subclass' __init__.
+        """
+        if args is None:
+            args = class_initializer_locals_c()
+        args = {k: v for k, v in args.items() if k[0].isalpha()}
+        args.pop('self', None)
+        return NameDict(args)
 
     @classmethod
     def _defines_build_or_post_build(cls):
@@ -782,7 +787,7 @@ class Split(Module):
 class Chunk(Module):
     def __init__(self, chunk_count: int, dim=1):
         super().__init__()
-        self.store_args(store_in_self=True)
+        self.__dict__.update(self.get_args(locals()))
 
     def forward(self, x):
         return x.chunk(self.chunk_count, dim=self.dim)
@@ -1211,7 +1216,7 @@ class Conv(WrappedModule):
         if bias is None:
             raise ValueError("The bias argument should be provided for the Conv module.")
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         self.orig = _dimensional_build("Conv", x, self.args)
@@ -1226,7 +1231,7 @@ class DeconvConv(WrappedModule):
             raise NotImplemented("padding_mode other than 'zeros' not supported.")
         del padding_mode
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         if self.args.in_channels is None:
@@ -1239,7 +1244,7 @@ class MaxPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1, return_indices=False,
                  ceil_mode=False):
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         self.orig = _dimensional_build("MaxPool", x, self.args)
@@ -1250,7 +1255,7 @@ class AvgPool(WrappedModule):
     def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
                  count_include_pad=True, divisor_override=None):
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         self.orig = _dimensional_build("AvgPool", x, self.args)
@@ -1261,7 +1266,7 @@ class ConvTranspose(WrappedModule):
     def __init__(self, out_channels, kernel_size, stride=1, padding=0, output_padding=1, groups=1,
                  bias=True, dilation=1, in_channels=None, device=None, dtype=None):
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         self.orig = _dimensional_build("ConvTranspose", x, self.args)
@@ -1271,7 +1276,7 @@ class ConvTranspose(WrappedModule):
 class Affine(WrappedModule):
     def __init__(self, out_features: int, bias=True, in_features=None):
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         self.args.in_features = self.args.in_features or np.prod(x.shape[1:])
@@ -1305,7 +1310,13 @@ class BatchNorm(WrappedModule):
     def __init__(self, eps=1e-5, momentum=0.1, affine=True, track_running_stats=True,
                  num_features=None, device=None, dtype=None):
         super().__init__(orig=None)
-        self.store_args()
+        self.args = self.get_args(locals())
+
+    def _init_call(self, *args, **kwargs):
+        if self.training:
+            warnings.warn("Consider turning off training mode by calling eval() before calling the"
+                          + " module for the first time to avoid unwanted state change.")
+        super()._init_call(*args, **kwargs)
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
@@ -1317,7 +1328,7 @@ class GhostBatchNorm(BatchNorm):
                  track_running_stats=True, num_features=None):
         super().__init__(eps=eps, momentum=momentum, affine=affine,
                          track_running_stats=track_running_stats, num_features=num_features)
-        self.store_args()
+        self.args = self.get_args(locals())
         self.running_mean = self.running_var = self.num_splits = None
 
     def build(self, x):

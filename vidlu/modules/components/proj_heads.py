@@ -8,7 +8,7 @@ class ConvProjHead(E.Seq):
                  norm_f=E.BatchNorm, act_f=E.ReLU):
         super().__init__()
         if any(d is None for d in dims):
-            self.store_args()
+            self.args = self.get_args(locals())
         else:
             self._build(dims, conv_f, norm_f, act_f)
             self._built = True

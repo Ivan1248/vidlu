@@ -577,7 +577,7 @@ class MorsicTPSWarp(PertModelBase):
                  interpolation_mode='bilinear', label_interpolation_mode='nearest',
                  label_padding_mode=-1):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         k = dict(device=x.device, dtype=x.dtype)
@@ -603,7 +603,7 @@ class TPSWarp(PertModelBase):
                  interpolation_mode='bilinear', label_interpolation_mode=None,
                  label_padding_mode=None, swap_src_dst=False, center_offsets=False):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         k = dict(device=x.device, dtype=x.dtype)

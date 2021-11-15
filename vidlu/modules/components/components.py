@@ -476,7 +476,7 @@ class ChannelMeanSplitter(E.Module):
 class SqueezeExcitation(E.Module):
     def __init__(self, channel, reduction=16, squeeze_f=nn.AdaptiveAvgPool2d, act_f=E.ReLU):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         a = self.args
@@ -513,7 +513,7 @@ class Resize(E.Module):
 
     def __init__(self, size=None, scale_factor=None, mode='nearest', align_corners=False):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def forward(self, x):
         a = self.args
@@ -909,7 +909,7 @@ class MDenseTransition(E.Seq):
                  noise_f=None,
                  pool_f=params(DenseTransition).pool_f):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         a = self.args
@@ -1153,7 +1153,7 @@ class AAEDiscriminator(E.Seq):
 class CouplingBaseR(E.Module):
     def __init__(self, first=False, block_f=PreactBlock):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
         if (w := params(block_f).width_factors[-1]) != 1:
             raise RuntimeError(f"`params(block_f).width_factors[-1]` should be 1, not {w}")
         self.baguette = self.block = None
@@ -1209,7 +1209,7 @@ class IRevNetUnit(E.Seq):
                  force_surjection=False,
                  coupling_f=AdditiveCouplingR):
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         a, ba = self.args, params(self.args.block_f)
@@ -1270,7 +1270,7 @@ class IRevNetBackbone(E.Seq):
                  no_final_postact=False):
         _check_block_args(block_f)
         super().__init__()
-        self.store_args()
+        self.args = self.get_args(locals())
 
     def build(self, x):
         a = self.args
