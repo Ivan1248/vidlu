@@ -731,7 +731,7 @@ def _prepare_semisup_batch(batch):
     x_u = None
     if isinstance(batch, BatchTuple):
         x_l, y_l, x_u = batch[0].x, batch[0].y, batch[1].x
-    elif isinstance(batch, Record) and 'x_u' in batch:
+    elif isinstance(batch, Record) and 'x_u' in batch.keys():
         x_l, y_l, x_u = batch.x_l, batch.y_l, batch.x_u
     else:
         x_l, y_l = batch.x, batch.y
