@@ -29,7 +29,7 @@ def numpy_collate(batch):
         raise TypeError(type(elem))
 
 
-class GeneralizableCollate:
+class ExtendableCollate:
     def __call__(self, batch):
         r"""Puts each data field into a tensor with outer dimension batch size"""
 
@@ -53,7 +53,7 @@ class GeneralizableCollate:
             return torch_collate(batch)
 
 
-class DefaultCollate(GeneralizableCollate):
+class DefaultCollate(ExtendableCollate):
     def __call__(self, batch):
         elem_type = type(batch[0])
         if hasattr(elem_type, 'collate'):
