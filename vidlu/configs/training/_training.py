@@ -194,10 +194,10 @@ semisup_cons_cutmix = TrainerConfig(
 semisup_cons_phtps20_seg_morsic = TrainerConfig(
     semisup_cons_phtps20,
     data_loader_f=partial(
-        vdu.simple_or_multi_data_loader,
-        data_loader_f=vd.DataLoader,
-        multi_data_loader_f=partial(vdu.morsic_semisup_data_loader,
-                                    labeled_multiplier=lambda l, u: int(max(1, u / l))),
+        vdu.auto_data_loader,
+        dl_f=vd.DataLoader,
+        multi_dl_f=partial(vdu.morsic_semisup_data_loader,
+                           labeled_multiplier=lambda l, u: int(max(1, u / l))),
         num_workers=2,
     ),
 )

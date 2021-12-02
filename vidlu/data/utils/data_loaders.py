@@ -4,7 +4,7 @@ import numpy as np
 import torch.utils.data as tud
 from typeguard import check_argument_types
 
-from vidlu.data import ZipDataLoader, DataLoader
+from vidlu.data import DataLoader, ZipDataLoader, CombinedDataLoader
 from vidlu.data.dataset import Dataset
 from vidlu.data.record import Record
 import vidlu.data.utils.samplers as samplers
@@ -23,6 +23,23 @@ class TDataLoaderF(T.Protocol):
 class TMultiDataLoaderF(T.Protocol):
     def __call__(self, datasets: _1_or_more(T.Sequence), data_loader_f: _1_or_more(TDataLoaderF),
                  **kwargs) -> T.Iterable: ...
+
+
+def make_data_loaders(data_loader_f, datasets, kwargs):
+    dataset_count = len(datasets)
+    data_loader_fs = broadcast(data_loader_f, dataset_count, seq_type=list)
+    kwargs = {k: broadcast(v, dataset_count, seq_type=list) for k, v in kwargs.items()}
+    data_loaders = [dl_f(ds, **{k: kwargs[k][i] for k in kwargs})
+                    for i, (ds, dl_f) in enumerate(zip(datasets, data_loader_fs))]
+    return data_loaders
+
+
+def combined_data_loader(*datasets, data_loader_f, collate_fn=None, primary_index='shortest',
+                         **kwargs):
+    data_loaders = make_data_loaders(data_loader_f, datasets, kwargs)
+    if not all(dl.collate_fn for dl in data_loaders):
+        raise ValueError("data_loader_f should have collate_fn=None.")
+    return CombinedDataLoader(*data_loaders, collate_fn=collate_fn, primary_index=primary_index)
 
 
 def zip_data_loader(*datasets: T.Sequence,
@@ -45,32 +62,23 @@ def zip_data_loader(*datasets: T.Sequence,
         `len(datasets[primary_ds_index]) / batch_size` batches (depending on
         the value of `drop_last)`.
     """
-    dataset_count = len(datasets)
-    data_loader_fs = broadcast(data_loader_f, dataset_count, seq_type=list)
-    kwargs = {k: broadcast(v, dataset_count, seq_type=list) for k, v in kwargs.items()}
-    data_loaders = [dl_f(ds, **{k: kwargs[k][i] for k in kwargs})
-                    for i, (ds, dl_f) in enumerate(zip(datasets, data_loader_fs))]
-    if not all([dl.drop_last for dl in data_loaders]):
-        raise ValueError("drop_last should be True.")
+    data_loaders = make_data_loaders(data_loader_f, datasets, kwargs)
+    if not all(dl.drop_last for dl in data_loaders):
+        raise ValueError("data_loader_f should have drop_last=True.")
     return ZipDataLoader(*data_loaders, primary_index=primary_index)
 
 
-def simple_or_zip_data_loader(*datasets,
-                              data_loader_f: TDataLoaderF = DataLoader,
-                              primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = 0,
-                              **kwargs):
+def auto_data_loader(*datasets,
+                     dl_f: TDataLoaderF = DataLoader,
+                     multi_dl_f: T.Union[TMultiDataLoaderF, T.Literal['zip', 'combine']] = 'zip',
+                     primary_index: T.Optional[T.Union[int, T.Literal['equal']]] = 0,
+                     **kwargs):
     check_argument_types()
-    return data_loader_f(*datasets, **kwargs) if len(datasets) == 1 else \
-        zip_data_loader(*datasets, data_loader_f=data_loader_f, primary_index=primary_index,
-                        **kwargs)
-
-
-def simple_or_multi_data_loader(*datasets,
-                                data_loader_f: TDataLoaderF = DataLoader,
-                                multi_data_loader_f: TMultiDataLoaderF,
-                                **kwargs):
-    return data_loader_f(*datasets, **kwargs) if len(datasets) == 1 else \
-        multi_data_loader_f(*datasets, data_loader_f=data_loader_f, **kwargs)
+    if isinstance(multi_dl_f, str):
+        multi_dl_f = zip_data_loader if multi_dl_f == 'zip' else combined_data_loader
+    return dl_f(*datasets, **kwargs) if len(datasets) == 1 else \
+        multi_dl_f(*datasets, data_loader_f=dl_f, primary_index=primary_index,
+                   **kwargs)
 
 
 def mixed_data_loader(*datasets: T.Sequence[Dataset],

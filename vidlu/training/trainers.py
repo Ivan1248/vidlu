@@ -204,7 +204,7 @@ class Evaluator:
     loss: T.Callable = Required
     prepare_batch: T.Callable = default_prepare_batch
     data_loader_f: vdu.TMultiDataLoaderF = partial(
-        vdu.simple_or_zip_data_loader, data_loader_f=DataLoader, num_workers=NUM_WORKERS,
+        vdu.auto_data_loader, dl_f=DataLoader, multi_dl_f='zip', num_workers=NUM_WORKERS,
         shuffle=True)
     deterministic: bool = False
     batch_size: int = 1
@@ -272,7 +272,6 @@ class Evaluator:
 
 
 # Trainer ##########################################################################################
-
 
 @dataclass
 class Trainer(Evaluator):
