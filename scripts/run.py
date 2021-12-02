@@ -267,9 +267,9 @@ if __name__ == "__main__":
     if args.debug:
         print("Debug: Autograd anomaly detection on.")
         torch.autograd.set_detect_anomaly(True)
-        debug.trace_calls(depth=122,
-                          filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
-                                                         and not frame.f_code.co_name[0] in "_<")
+        #debug.trace_calls(depth=122,
+        #                  filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
+        #                                                 and not frame.f_code.co_name[0] in "_<")
 
     if args.warnings_as_errors:
         debug.set_warnings_with_traceback()
