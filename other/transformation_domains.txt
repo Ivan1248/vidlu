@@ -1,0 +1,60 @@
+Transformation interface design
+
+Tensor and DomainTensor may also represent some other kind of input that is not a subtype of torch.Tensor.
+
+
+1. __init__(forward_arg_count), forward(args: Tensor | Tuple[Tensor]) -> Tensor|Tuple[Tensor]
+forward_arg_count (instance attribute) - number of arguments that the transformation is applied to. It indicates that inputs from index forward_arg_count are not to be transformed
+args - a list of PyTorch Tensors
++? forward uses positional arguments or a tuple, as is usally expected for PyTorch modules
+-! data domain depends on position and all previous n-1 positions must be transformed too if data from input n has to be transformed
+-! forward_arg_count is too rigid for choosing which domains are to be transformed and which are to be left unhanged
+
+2. forward(<named arguments>(, **other)?1)
++ signature contains domain information
+-? clients have to unpack outputs from the returned dictionary
+-? transformations are responsible for propagating inputs correctly
+-? typos in domain names can cause unnoticed errors
+- requires adapted Seq
+- composition requires extra logic because the output is a dict
+- some mechanism has to care about domains that are not accepted
+
+3. forward(x: DomainTensor) -> DomainTensor
++ implementation of simple transformations is simple
+-? the client cannot push multiple arrays through at the same time
+-? it might be more efficient for some transformations to accept multiple arrays at the same time
+- the client must convert inputs to appropriate domain types
+
+4. forward(args: Tuple[DomainTensor]) -> Tuple[DomainTensor]
+-? transformations are responsible for propagating inputs correctly
+- the client must convert Tensors to appropriate domain types
+
+---
+
+5. forward(arg_dict: Mapping[str, Tensor]) -> Mapping[str, Tensor], forward_single(d: str, x: Tensor) -> DomainTensor
+arg_dict - contains named inputs
+-? typos in domain names can cause unnoticed errors
+-? clients have to unpack outputs from the returned dictionary
+-? maybe more domain information than name might be necssary in some cases
+-? a mechanism for extending domains may need to be defined
+- transformations are responsible for propagating inputs correctly
+
+6. forward(arg_dict: Mapping[Domain, Tensor]) -> Mapping[Domain, Tensor], forward_single(d: Domain, x: Tensor) -> DomainTensor
+arg_dict - contains named inputs
++ can be defined for supertypes
+-? clients have to unpack outputs from the returned dictionary
+-? clients depend on domain types
+- transformations are responsible for propagating inputs correctly
+
+7. forward(args: Tuple[DomainTensor]) -> Tuple[DomainTensor], forward_single(x: DomainTensor) -> DomainTensor
+  . Additional functions can be used to convert between Dict[str, Tensor] and Tuple[DomainTensor] for standard domains
++ can be defined for supertypes
+-? clients depend on domain types
+-? tuple elements cannot be accessed by type
+- the client and transformations take care of converting to appropriate domain types
+
+8. __call__[T: Tuple[DomainTensor] | Mapping[str | Domain, Tensor]](args: T) -> T, forward(args: Tuple[DomainTensor]) -> Tuple[DomainTensor], forward_single(x: DomainTensor) -> DomainTensor
++ can be defined for supertypes
+-? forward must not receive the same input as __call__
+-? no single data format is chosen
+-? a mechanism for extending domains may need to be defined if one wants to use strings as keys

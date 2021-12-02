@@ -15,7 +15,7 @@ This repository contains
 
 ## Setup
 
-**Note:** `pip install` is usually not recommended outside a virtual environment. To install required packages, it is probably best to use the package manager that you usually use.
+**Note:** `pip install` is usually not recommended outside a virtual environment. To install the required packages, it is probably best to use the package manager that you usually use.
 
 **No installation.**
 You can make a local copy and install dependencies with
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 ```
 
 **Pip installation.**
-You can install the package with
+Alternatively, you can install the package with
 
 ```sh
 pip install git+https://github.com/Ivan1248/vidlu
