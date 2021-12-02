@@ -321,6 +321,15 @@ swiftnet_cityscapes = TrainerConfig(
                                            scale_dist="log-uniform"),
 )
 
+# 4 times smaller L2 regularization coefficient for semi-supervised learning
+swiftnet_cityscapes_semi = TrainerConfig(
+    swiftnet_cityscapes,
+    optimizer_f=OptimizerMaker(
+        optim.Adam,
+        [dict(params='backbone.backbone', lr=1e-4, weight_decay=2.5e-5 / 4)],
+        lr=4e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
+)
+
 swiftnet_lamb_cityscapes = TrainerConfig(
     swiftnet_cityscapes,
     optimizer_f=OptimizerMaker(vo.LambAdam,
