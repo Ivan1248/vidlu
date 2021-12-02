@@ -1,65 +1,60 @@
 from collections import defaultdict
 
+from vidlu.data.types import AABB, ClassAABBsOnImage
+from vidlu.data.data_loader import SingleDataLoader
+
 import numpy as np
 import cv2
 from tqdm import tqdm
 
-from vidlu.utils.loadsave import NumpyLoadSave, PickleLoadSave
 
-class_info_to_fmgr = dict(incidence=NumpyLoadSave,
-                          instances=PickleLoadSave,
-                          dist=NumpyLoadSave)
-
-
-def get_class_segment_boxes(y, classes):
-    image_instances = {c: [] for c in classes}
-    for c in classes:
-        mask = np.uint8(y == c)
-        num, masks = cv2.connectedComponents(mask)
-        for j in range(1, num):
-            component = masks == j
-            cols = np.where(np.any(component, axis=0))[0]  # W
-            rows = np.where(np.any(component, axis=1))[0]  # H
-            cols_min, cols_max = cols.min().item(), cols.max().item()
-            rows_min, rows_max = rows.min().item(), rows.max().item()
-            image_instances[c] += [[cols_min, cols_max, rows_min, rows_max]]
-    return {c: np.array(v, dtype=np.uint16) for c, v in image_instances.items()}
+def aabb_from_mask(mask):
+    x, y, w, h = cv2.boundingRect(mask.astype(np.uint8))
+    return AABB((x, y), size=(w, h))
 
 
-def segmentation_class_info(ds):
-    C = ds.info.class_count
-    class_dist = np.zeros((len(ds), C + 1), dtype=np.uint64)
-    instances = []
-    for i, example in enumerate(tqdm(ds, total=len(ds))):
-        y = example['y'].squeeze().numpy()
-        classes, counts = np.unique(y, return_counts=True)
-        class_dist[i, classes] += counts
-        instances.append(get_class_segment_boxes(y, classes))
-    incidence = class_dist.sum(0)
-    result = dict(incidence=incidence, instances=instances, dist=class_dist)
-    return result
+def get_segment_masks(mask):
+    segment_count, masks = cv2.connectedComponents(mask)
+    for i in range(1, segment_count):
+        yield masks == i
 
 
-def save_class_info(class_info, subset, suffix, ds_root):
-    for k, v in class_info.items():
-        class_info_to_fmgr[k].save(ds_root / f'class_{k}_{subset}{suffix}', v)
+def segmentation_to_class_aabbs(segmentation, classes=None):
+    # Based on code from Marin Oršić.
+    if classes is None:
+        classes = np.unique(segmentation)
+    classes = set(classes)
+    class_to_aabbs = {c: [aabb_from_mask(m) for m in get_segment_masks(np.uint8(segmentation == c))]
+                      for c in classes}
+    return ClassAABBsOnImage(class_to_aabbs, shape=tuple(segmentation.shape))
 
 
-def save_class_infos(subset_to_class_info, suffix, ds_root):
-    for subset, class_info in subset_to_class_info.items():
-        save_class_info(class_info, subset, suffix, ds_root)
+def _example_seg_class_info(example):
+    seg = example['seg_map']
+    present_classes, counts = np.unique(seg, return_counts=True)
+    return dict(classes=present_classes, counts=counts,
+                class_aabbs=segmentation_to_class_aabbs(seg, classes=present_classes))
 
 
-def load_class_info(subset, suffix, ds_root):
-    return {k: class_info_to_fmgr[k].load(ds_root / f'class_{k}_{subset}{suffix}')
-            for k in tqdm(class_info_to_fmgr.keys(), subset)}
+def seg_class_info(ds):
+    # Based on code from Marin Oršić.
+    class_freqs = np.zeros((len(ds), ds.info.class_count + 1), dtype=np.uint64)
+    class_segment_boxes = []
+
+    ds_infos = ds.map(_example_seg_class_info)
+
+    for i, d in enumerate(tqdm(SingleDataLoader(ds_infos, num_workers=4), total=len(ds),
+                               desc="segmentation_class_info")):
+        class_freqs[i, d['classes']] += d['counts'].astype(np.uint64)
+        class_segment_boxes.append(d['class_aabbs'])
+    global_class_freqs = class_freqs.sum(0)
+    return dict(class_freqs=class_freqs, class_segment_boxes=class_segment_boxes,
+                global_class_freqs=global_class_freqs)
 
 
-# from util
-def find_rare_indices(instances):
-    # instances = pickle.load(f)
-    class_to_indices = defaultdict(list)
-    for i, (k, v) in enumerate(instances.items()):
+def get_class_to_box_indices(class_segment_boxes):
+    result = defaultdict(list)
+    for i, (k, v) in enumerate(class_segment_boxes.items()):
         for c in v:
-            class_to_indices[c].append(i)
-    return class_to_indices
+            result[c].append(i)
+    return result
