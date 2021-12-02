@@ -223,12 +223,17 @@ def build_and_init_model(model, init_input, device):
     if device is not None:
         model.to(device)
         init_input = init_input.to(device)
-    if np.array(init_input.shape[-2:]).min() > 128:  # smaller input for faster initialization
+    if min(init_input.shape[-2:]) > 128:  # smaller input for faster initialization
         init_input = init_input[:, :, :128, :128]
     if hasattr(model, 'initialize'):
         model.initialize(init_input)
     else:
         vm.call_if_not_built(model, init_input)
+
+
+_func_short = dict(partial=partial, t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
+                   sot=vuf.StrictObjectUpdatree, it=vuf.IndexableUpdatree,
+                   sit=vuf.StrictIndexableUpdatree)
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
@@ -241,9 +246,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     from fractions import Fraction as Frac
 
     namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
-                     t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
-                     it=vuf.IndexableUpdatree, partial=partial, Reserved=Reserved, Frac=Frac,
-                     **extensions)
+                     Reserved=Reserved, Frac=Frac, **_func_short, **extensions)
 
     if prep_dataset is None:
         if problem is None or init_input is None:
@@ -376,8 +379,7 @@ def short_symbols_for_get_trainer():
     import vidlu.utils.func as vuf
     from vidlu.utils.func import partial
     tc = ct  # backward compatibility
-    t, ft, ot, it = vuf.ArgTree, vuf.FuncTree, vuf.ObjectUpdatree, vuf.IndexableUpdatree
-    return {**locals(), **extensions}
+    return {**locals(), **_func_short, **extensions}
 
 
 def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,
