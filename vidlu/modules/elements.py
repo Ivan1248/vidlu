@@ -300,6 +300,7 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
             # return TeName.add(result, vmu.try_get_module_name_from_call_stack(self))
             return result
         except Exception as e:
+            raise
             name = vmu.try_get_module_name_from_call_stack(self)
             error_message = f"Error in {name}, type {type(self).__module__}.{type(self).__qualname__}"
             if self.is_inverse:
@@ -1205,7 +1206,8 @@ class WrappedModule(Module):
         return self.orig(x)
 
     def __repr__(self):
-        return "W" + repr(self.orig)
+        return (f'<unbuilt {type(self).__name__} instance>' if self.orig is None else
+                f'{type(self).__name__}{repr(self.orig).strip(type(self.orig).__name__)}')
 
 
 # TODO: Make separate Conv*ds
@@ -1314,9 +1316,10 @@ class BatchNorm(WrappedModule):
 
     def _init_call(self, *args, **kwargs):
         if self.training:
-            warnings.warn("Consider turning off training mode by calling eval() before calling the"
-                          + " module for the first time to avoid unwanted state change.")
-        super()._init_call(*args, **kwargs)
+            warnings.warn("Consider turning off training mode (with .eval()) before calling"
+                          + f" {type(self).__name__} modules for the first time (for shape"
+                          + " inference) to avoid unwanted state change (updates of statistics).")
+        return super()._init_call(*args, **kwargs)
 
     def build(self, x):
         self.orig = _dimensional_build("BatchNorm", x, self.args, 'num_features')
