@@ -158,6 +158,10 @@ class Record(abc.Sequence):  # Sized, Iterable len, iter
         return RecordItemsView(self)  # TODO
 
 
+def arrange(r, field_names):
+    return Record({**r[field_names]._dict, **r._dict})
+
+
 class RecordView(Record):
     def __init__(self, record):
         super().__init__()
