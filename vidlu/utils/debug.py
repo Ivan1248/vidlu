@@ -15,28 +15,54 @@ state = Namespace()
 
 def trace_calls(depth=float('inf'),
                 filter_=lambda **k: True,
-                enter_action=lambda indent, frame, **k: print(
-                    " " * indent, frame.f_code.co_name,
+                enter_action=lambda depth, frame, **k: print(
+                    " " * (depth * 2), frame.f_code.co_name,
                     f"{frame.f_code.co_filename}:{frame.f_code.co_firstlineno}")):
-    indent = 0
+    max_depth, depth = depth, 0
 
-    def tracefunc(frame, event, arg):
-        nonlocal indent
-        if filter_(frame=frame, event=event, arg=arg) and indent < depth:
+    def trace_func(frame, event, arg):
+        nonlocal depth
+        # frame.f_trace_lines = False
+        if depth < max_depth:
             if event == "call":
-                indent += 2
+                depth += 1
                 if filter_(frame=frame, event=event, arg=arg):
-                    enter_action(frame=frame, event=event, arg=arg, indent=indent)
+                    enter_action(frame=frame, event=event, arg=arg, depth=depth)
             elif event == "return":
-                # print("<" + "-" * indent[0], "exit function", frame.f_code.co_name)
-                indent -= 2
-        return tracefunc
+                depth -= 1
+            return trace_func
+        return None
 
-    sys.setprofile(tracefunc)
+    sys.setprofile(trace_func)
+
+
+def trace_lines(depth=float('inf'),
+                filter_=lambda **k: True,
+                enter_action=lambda depth, frame, **k: print(
+                    " " * (depth * 2),
+                    f"{frame.f_code.co_filename}:{frame.f_code.co_name}:{frame.f_lineno}")):
+    max_depth, depth = depth, 0
+
+    def trace_func(frame, event, arg):
+        nonlocal depth
+        # frame.f_trace_lines = True
+        if depth < max_depth:
+            if event == "call":
+                depth += 1
+            elif event == "return":
+                depth -= 1
+            elif event == 'line':
+                if filter_(frame=frame, event=event, arg=arg):
+                    enter_action(frame=frame, event=event, arg=arg, depth=depth)
+            return trace_func
+        return None
+
+    sys.settrace(trace_func)
 
 
 def stop_tracing_calls():
     sys.setprofile(None)
+    sys.settrace(None)
 
 
 def crash_after(*args, format='%Y-%m-%d', message=None):
