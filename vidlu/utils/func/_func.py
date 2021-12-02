@@ -23,7 +23,7 @@ class ArgHolder:
         self.args, self.kwargs = args, kwargs
 
     def bind(self, func):
-        return partial(func, *self.args, **self.kwargs)
+        return Partial(func, *self.args, **self.kwargs)
 
     def call(self, func):
         return func(*self.args, **self.kwargs)
@@ -97,24 +97,27 @@ class Partial(functools.partial):
             raise AttributeError(f"{e}") from e
 
 
-def partial(*a, **k):
-    warnings.warn("partial deprecated. Use Partial.")
-    return Partial(*a, **k)
+partial = Partial
 
 
-class frozen_partial(partial):
-    """Like partial, but doesn't allow changing already chosen keyword
+class FrozenPartial(Partial):
+    """Like Partial, but doesn't allow changing already chosen keyword
     arguments.
 
-    Although `partial.__new__` looks like it should copy the `keywords`
-    attribute, this somehow works too: `partial(frozen_partial(f, x=2), x=3)`
+    Although `Partial.__new__` looks like it should copy the `keywords`
+    attribute, this somehow works too: `Partial(FrozenPartial(f, x=2), x=3)`
     """
 
     def __call__(self, *args, **kwargs):
         for k in kwargs.keys():
             if k in self.keywords:
                 raise RuntimeError(f"Parameter {k} is frozen and can't be overridden.")
-        return partial.__call__(self, *args, **kwargs)
+        return Partial.__call__(self, *args, **kwargs)
+
+
+def frozen_partial(*a, **k):
+    warnings.warn("frozen_partial deprecated. Use FrozenPartial.")
+    return FrozenPartial(*a, **k)
 
 
 # Empty, Reserved and Required - representing an unassigned variable ###############################
@@ -147,7 +150,7 @@ class Reserved(Empty):  # marker for parameters that shouldn't be assigned / are
                 warnings.warn(
                     f"The argument {k} is assigned although it should be marked `Reserved`."
                     + " The reserved argument might have been overridden with partial.")
-        return partial(func, **kwargs)
+        return Partial(func, **kwargs)
 
     @staticmethod
     def call(func, **kwargs):
@@ -313,7 +316,7 @@ def inherit_missing_args(parent_function):
     def decorator(func):
         inherited_args = {k: parent_default_args[k] for k, v in params(func).items()
                           if v is Empty and k in parent_default_args}
-        return partial(func, **inherited_args)
+        return Partial(func, **inherited_args)
 
     return decorator
 

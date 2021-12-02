@@ -3,7 +3,7 @@ import itertools
 import sys
 
 from vidlu.utils.collections import NameDict
-from ._func import partial, params, default_args, is_empty
+from ._func import Partial, params, default_args, is_empty
 
 
 # FuncTree #########################################################################################
@@ -58,17 +58,17 @@ def _extract_func_and_kwargs_for_functree(*funcs, **kwargs):
     return func, kw
 
 
-class FuncTree(partial, UpdatreeBase):
+class FuncTree(Partial, UpdatreeBase):
     nofunc = nofunc
 
     def __new__(cls, *args, **kwargs):
         func, kw = _extract_func_and_kwargs_for_functree(*args, **kwargs)
-        obj = partial.__new__(cls, func, **kw)
+        obj = Partial.__new__(cls, func, **kw)
         obj._func = obj.func
         return obj
 
     def __getattr__(self, key):
-        return self.keywords[key] if key in self.keywords else partial.__getattribute__(self, key)
+        return self.keywords[key] if key in self.keywords else Partial.__getattribute__(self, key)
 
     def __delitem__(self, key):
         del self.keywords[key]
@@ -99,7 +99,7 @@ class FuncTree(partial, UpdatreeBase):
         else:
             kwargs = {k: v.apply(params(func)[k]) if isinstance(v, UpdatreeMixin) else v
                       for k, v in self.keywords.items()}
-            return partial(func, **kwargs)
+            return Partial(func, **kwargs)
 
     def keys(self):
         return self.keywords.keys()
@@ -252,7 +252,7 @@ def _process_argtree_partial_args(*args, **kwargs):
     return func, tree
 
 
-def tree_partial_(args, kwargs, partial_f=partial):
+def tree_partial_(args, kwargs, partial_f=Partial):
     func, tree = _process_argtree_partial_args(*args, **kwargs)
 
     par = None
@@ -274,4 +274,4 @@ def tree_partial_(args, kwargs, partial_f=partial):
 
 
 def tree_partial(*args, **kwargs):
-    return tree_partial_(args, kwargs, partial_f=partial)
+    return tree_partial_(args, kwargs, partial_f=Partial)
