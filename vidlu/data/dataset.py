@@ -26,12 +26,11 @@ from tqdm import tqdm, trange
 from typeguard import check_argument_types
 
 import vidlu.utils.path as vup
-from vidlu.utils.misc import slice_len, query_user
+from vidlu.utils.misc import slice_len, query_user, pickle_sizeof
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
 
 from .record import Record
-from .misc import default_collate, pickle_sizeof
 
 
 # Helpers ######################################################################
@@ -150,19 +149,22 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         return ".".join(c.name for c in self.changes if c.data_change is not False)
 
     def __getitem__(self, idx, field=None):
-        def element_fancy_index(d, key):
-            if isinstance(key, (list, tuple)):
-                if isinstance(d, (list, tuple)):
-                    return type(d)(d[a] for a in key)
-                if type(d) is dict:
-                    return {k: d[k] for k in key}
-            return d[key]
+        if isinstance(idx, tuple):
+            idx, [field] = idx[0], idx[1:]
+
+        def element_fancy_index(r, key):
+            if isinstance(r, (dict, list, tuple)) and isinstance(key, list):
+                if isinstance(r, (list, tuple)):
+                    return type(r)(r[a] for a in key)
+                if type(r) is dict:
+                    return {k: r[k] for k in key}
+            return r[key]
 
         filter_fields = (lambda x: element_fancy_index(x, field)) if field is not None else None
 
         if isinstance(idx, slice):
             ds = SubrangeDataset(self, idx)
-        elif isinstance(idx, (T.Sequence, np.ndarray)):
+        elif isinstance(idx, (list, np.ndarray)):
             ds = SubDataset(self, idx)
         else:
             if idx < 0:
@@ -232,7 +234,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """
         return InfoCacheDataset(self, name_to_func, **kwargs)
 
-    def info_cache_hdd(self, name_to_func, directory, **kwargs):
+    def info_cache_hdd(self, name_to_func, directory, recompute=False, **kwargs):
         """Computes, adds, and caches dataset.info attributes. .
 
         It can be useful to automatically
@@ -246,7 +248,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
             directory: The directory in which info cache is to be stored.
             **kwargs: additional arguments for the Dataset initializer.
         """
-        return HDDInfoCacheDataset(self, name_to_func, directory, **kwargs)
+        return HDDInfoCacheDataset(self, name_to_func, directory, recompute=recompute, **kwargs)
 
     def matching_indices(self, predicate, progress_bar=None):
         """Returns the indices of elements matching the predicate."""
@@ -276,9 +278,16 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
             SubDataset(self, indices, choice_name=f'filter({func_name})', **kwargs)
             for indices, func_name in zip(indiceses, func_names)]
 
-    def map(self, func, *, func_name=None, **kwargs):
+    def map(self, func, *, func_name=None, unpack=False, **kwargs):
         """Creates a dataset with elements transformed with `func`."""
-        return MapDataset(self, func, func_name=func_name, **kwargs)
+        return MapDataset(self, func, func_name=func_name, unpack=unpack, **kwargs)
+
+    def map_unpack(self, func, *, func_name=None, **kwargs):
+        """Creates a dataset with elements transformed with `func`.
+
+        Elements are unpacked into function arguments using "*".
+        """
+        return MapDataset(self, func, func_name=func_name, unpack=True, **kwargs)
 
     def map_fields(self, field_to_func, *, func_name=None, **kwargs):
         """Creates a dataset with each element transformed with its function.
@@ -291,8 +300,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """
         return self.map(FieldsMap(field_to_func), func_name=func_name, **kwargs)
 
-    def enumerate(self, offset=0):
-        return EnumeratedDataset(self, offset=offset)
+    def enumerate(self):
+        return EnumerateDataset(self)
 
     def permute(self, seed=53, **kwargs):
         """Creates a permutation of the dataset."""
@@ -391,41 +400,41 @@ class FieldsMap:
 class MapDataset(Dataset):
     __slots__ = ("func",)
 
-    def __init__(self, dataset, func=lambda x: x, func_name=None, **kwargs):
-        super().__init__(name='map' + ('_' + func_name if func_name else ''), data=dataset,
-                         **kwargs)
+    def __init__(self, dataset, func=lambda x: x, func_name=None, unpack=False, **kwargs):
+        super().__init__(
+            name=f"map{'_' + func_name if func_name else ''}{'_unpack' if unpack else ''}",
+            data=dataset, **kwargs)
         self.func = func
-
-    def get_example(self, idx):
-        return self.func(self.data[idx])
-
-
-class EnumeratedDataset(Dataset):
-    __slots__ = ("offset",)
-
-    def __init__(self, dataset, offset=0, field_name="id", **kwargs):
-        super().__init__(name=f'enumerated({offset})', data=dataset, **kwargs)
-        self.offset = offset
-        self.field_name = field_name
+        self.unpack = unpack
 
     def get_example(self, idx):
         r = self.data[idx]
-        return type(r)(r, **{self.field_name: idx}) if isinstance(r, T.Mapping) \
-            else r + type(r)((idx,))
+        return self.func(*r) if self.unpack else self.func(r)
+
+
+class EnumerateDataset(Dataset):
+    __slots__ = ("offset",)
+
+    def __init__(self, dataset, **kwargs):
+        super().__init__(name=f'enumerate()', data=dataset, **kwargs)
+
+    def get_example(self, idx):
+        return idx, self.data[idx]
 
 
 class ZipDataset(Dataset):
-    def __init__(self, datasets, **kwargs):
+    def __init__(self, datasets, strict=False, **kwargs):
         if not all(len(d) == len(datasets[0]) for d in datasets):
             raise ValueError("All datasets must have the same length.")
-        super().__init__(name='zip[' + ','.join(x.identifier for x in datasets) + "]",
-                         data=datasets, **kwargs)
+        self.strict = strict
+        name = f"zip{'strict' if strict else ''}({','.join(x.identifier for x in datasets)})"
+        super().__init__(data=datasets, name=name, **kwargs)
 
     def get_example(self, idx):
         return tuple(d[idx] for d in self.data)
 
     def __len__(self):
-        return len(self.data[0])
+        return len(self.data[0]) if self.strict else min(len(d) for d in self.data)
 
 
 class CacheDataset(Dataset):
@@ -532,7 +541,7 @@ class HDDCacheDataset(Dataset):
             try:
                 with open(cache_path, 'rb') as cache_file:
                     return pickle.load(cache_file)
-            except (PermissionError, TypeError, EOFError, pickle.UnpicklingError):
+            except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError):
                 os.remove(cache_path)
         example = self.data[idx]
         if field is not None:
@@ -592,18 +601,21 @@ class InfoCacheDataset(Dataset):  # lazy
 
 
 class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
-    def __init__(self, dataset, name_to_func, cache_dir, **kwargs):
+    def __init__(self, dataset, name_to_func, cache_dir, recompute=False, **kwargs):
         super().__init__(dataset, name_to_func, **kwargs)
         self.cache_dir = Path(cache_dir)
         self.cache_file = to_valid_path(self.cache_dir / "info_cache" / self.identifier)
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+        self.recompute = recompute
 
     def _compute(self):
+        if self.recompute and self.cache_file.exists():
+            self.cache_file.unlink()
         if self.cache_file.exists():
             try:  # load
                 with self.cache_file.open('rb') as file:
                     return pickle.load(file)
-            except (PermissionError, TypeError):
+            except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError):
                 self.cache_file.unlink()
                 raise
         else:

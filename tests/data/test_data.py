@@ -89,6 +89,15 @@ class TestDataset:
         for x, y in mds:
             assert y == (x ** 2) ** 0.5
 
+    def test_dataset_funky_indexing(self):
+        for t in [dict, Record]:
+            data = [t(x=x, y=x ** 2, z=1) for x in range(20)]
+            ds = Dataset(name=f"ds_{t.__name__}", data=data)
+
+            mds = ds[:3, ['y', 'z']]
+            if t is Record:
+                assert mds == list(ds[:3, 1:])
+
     def test_dataset_split_join(self):
         ds = Dataset(name="SomeDataset2", data=list(range(5)))
         assert len(ds.filter(lambda x: x < 2)) == 2
