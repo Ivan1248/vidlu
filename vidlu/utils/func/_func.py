@@ -38,7 +38,7 @@ class ArgHolder:
 
 # Partial ##########################################################################################
 
-class partial(functools.partial):
+class Partial(functools.partial):
     """partial with a more informative error message and parameters accessible
     using the dot operator.
 
@@ -49,19 +49,18 @@ class partial(functools.partial):
     1x
     """
 
-    # def __new__(cls, func, /, *args, **keywords):
-    #     if not callable(func):
-    #         raise TypeError("the first argument must be callable")
-    #
-    #     # partial.__new__ uses hasattr(func, "func) instead, which would break
-    #     if isinstance(func, partial):
-    #         if "sigma" in keywords:
-    #             breakpoint()
-    #         args = func.args + args
-    #         keywords = {**func.keywords, **keywords}
-    #         func = func.func
-    #
-    #     return super().__new__(cls, func, *args, **keywords)
+    def __new__(cls, func, /, *args, **keywords):
+        """__new__ is redefined so that `Partial(functools.partial(foo, ...)).func == foo`"""
+        if not callable(func):
+            raise TypeError("the first argument must be callable")
+
+        # partial.__new__ uses hasattr(func, func) instead, which would break
+        if isinstance(func, functools.partial):
+            args = func.args + args
+            keywords = {**func.keywords, **keywords}
+            func = func.func
+
+        return super().__new__(cls, func, *args, **keywords)
 
     def __call__(self, *args, **kwargs):
         try:
@@ -96,6 +95,11 @@ class partial(functools.partial):
             return self[item]
         except KeyError as e:
             raise AttributeError(f"{e}") from e
+
+
+def partial(*a, **k):
+    warnings.warn("partial deprecated. Use Partial.")
+    return Partial(*a, **k)
 
 
 class frozen_partial(partial):
