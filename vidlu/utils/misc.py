@@ -15,6 +15,7 @@ import zipfile
 from multiprocessing.sharedctypes import RawArray
 from pathlib import Path
 import copy
+import pickle
 
 from tqdm import tqdm
 import numpy as np
@@ -429,3 +430,18 @@ class Intersection(TypeOperationBase):
     @classmethod
     def __subclasscheck__(cls, subclass):
         return all(issubclass(subclass, c) for c in cls.classes)
+
+
+# Serialization ####################################################################################
+
+def pickle_sizeof(obj):
+    """An alternative to `sys.getsizeof` which works for lazily initialized objects (e.g. objects of
+    type `vidlu.data.Record`) that can be much larger when pickled.
+
+    Args:
+        obj: the object to be pickled.
+
+    Returns:
+        int: the size of the pickled object in bytes.
+    """
+    return len(pickle.dumps(obj))
