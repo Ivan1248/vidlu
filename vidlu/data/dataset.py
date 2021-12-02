@@ -502,6 +502,20 @@ class HDDAndRAMCacheDataset(Dataset):
                          **kwargs)
 
 
+def objects_equal(a, b):
+    """pickle.dumps does not always give the same results and it seems to be more likely to give the
+    same result if elements are compared instead of whole objects at once."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, (Record, T.Mapping)):
+        a_items, b_items = a.items(), b.items()
+    elif isinstance(a, T.Sequence):
+        a_items, b_items = a, b
+    else:
+        a_items, b_items = [a], [b]
+    return all(pickle.dumps(ai) == pickle.dumps(bi) for ai, bi in zip(a_items, b_items))
+
+
 class HDDCacheDataset(Dataset):
     # Caches the whole dataset on HDD
     __slots__ = ('cache_dir', 'separate_fields', 'keys')
@@ -524,10 +538,10 @@ class HDDCacheDataset(Dataset):
         for i in range(consistency_check_sample_count):
             ii = i * len(dataset) // consistency_check_sample_count
 
-            if pickle.dumps(dataset[ii]) != pickle.dumps(self[ii]):
+            if not objects_equal(dataset[ii], self[ii]):
                 warnings.warn(f"Cache of the dataset {self.data_identifier} inconsistent." +
                               " Deleting old and creating new cache.")
-                self.delete_cache()
+                self.delete_cache(keep_directory=True)
                 os.makedirs(self.cache_dir, exist_ok=False)
                 break
 
@@ -556,8 +570,12 @@ class HDDCacheDataset(Dataset):
                            for k in self.keys})
         return self._get_example_or_field(idx)
 
-    def delete_cache(self):
-        shutil.rmtree(self.cache_dir)
+    def delete_cache(self, keep_directory=False):
+        if keep_directory:
+            for x in self.cache_dir.iterdir():
+                shutil.rmtree(x)
+        else:
+            shutil.rmtree(self.cache_dir)
 
 
 class InfoCacheDataset(Dataset):  # lazy
