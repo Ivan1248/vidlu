@@ -68,7 +68,7 @@ def get_experiment(resume=True, restart=False):
         model_f = vuf.tree_partial(model_class,
                                    **model_config,
                                    head_f=partial(modules.components.ClassificationHead,
-                                                     class_count=first_ds.info.class_count))
+                                                  class_count=first_ds.info.class_count))
         model = model_f()
         init_input = next(iter(vd.DataLoader(first_ds, batch_size=1)))[0]
         factories.build_and_init_model(model, init_input, device=device)

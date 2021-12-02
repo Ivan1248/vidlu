@@ -2,10 +2,11 @@ import numpy as np
 
 
 class KleinSum:
-    """An implementation of the higher-order modification of Neumaier improved
-    version of Kahan's algorithm for aggregating floats with less error.
+    """An implementation of the higher-order modification of Neumaier's improved
+    version of Kahan-Babuška's algorithm for aggregating floats with less error.
 
-    Based on https://en.wikipedia.org/wiki/Kahan_summation_algorithm.
+    Based on pseudocode from
+    https://en.wikipedia.org/wiki/Kahan_summation_algorithm.
 
     Example:
         >>> ks = KleinSum()

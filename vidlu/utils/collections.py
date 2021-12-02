@@ -13,6 +13,23 @@ def _augment_key_error_message(dct, e, error_type=None):
 
 
 class NameDict(abc.MutableMapping):
+    """
+
+    Keys equal to method names "get", "keys", "values", "items", "pop", "popitem", "clear",
+    "update", and "setdefault" cannot be used with the dot (attribute access) operator.
+
+    The `vars` function can be used to get the `dict` representation of a `NameDict` object.
+    >>> assert vars(nd) is nd.__dict__
+    >>> assert NameDict(vars(nd)) == nd
+
+    Implementations of such a type that inherit `dict` and define less methods can cause problems
+    with multiple inheritance. Example:
+    >>> class AttrDict(dict):
+    >>>     def __init__(self, *args, **kwargs):
+    >>>        dict.__init__(self, *args, **kwargs)
+    >>>        self.__dict__ = self
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__()
         if len(args) > 1:
@@ -35,15 +52,16 @@ class NameDict(abc.MutableMapping):
         except KeyError as e:
             raise _augment_key_error_message(self, e)
 
-    def __setitem__(self, name, value):
-        self.__dict__[name] = value
+    def __setitem__(self, key, value):
+        self.__dict__[key] = value
 
-    def __delitem__(self, name):
-        del self.__dict__[name]
+    def __delitem__(self, key):
+        del self.__dict__[key]
 
-    def __getattr__(self, name):
+    def __getattr__(self, key):
+        """This is defined just for better error messages."""
         try:
-            return self.__dict__[name]
+            return self.__dict__[key]
         except KeyError as e:
             raise _augment_key_error_message(self, e, AttributeError)  # Must be AttributeError
 
@@ -71,11 +89,14 @@ class NameDict(abc.MutableMapping):
     def pop(self, *args):
         return self.__dict__.pop(*args)
 
-    def as_dict(self):
-        return self.__dict__
-
     def update(self, *args, **kwargs):
         self.__dict__.update(*args, **kwargs)
+
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        dict.__init__(self, *args, **kwargs)
+        self.__dict__ = self
 
 
 class SingleWriteDict(dict):
