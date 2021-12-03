@@ -541,7 +541,7 @@ class HDDCacheDataset(Dataset):
             if not objects_equal(dataset[ii], self[ii]):
                 warnings.warn(f"Cache of the dataset {self.data_identifier} inconsistent." +
                               " Deleting old and creating new cache.")
-                self.delete_cache(keep_directory=True)
+                self.delete_cache(keep_dir=True)
                 os.makedirs(self.cache_dir, exist_ok=False)
                 break
 
@@ -570,8 +570,8 @@ class HDDCacheDataset(Dataset):
                            for k in self.keys})
         return self._get_example_or_field(idx)
 
-    def delete_cache(self, keep_directory=False):
-        if keep_directory:
+    def delete_cache(self, keep_dir=False):
+        if keep_dir:
             for x in self.cache_dir.iterdir():
                 shutil.rmtree(x)
         else:
