@@ -16,7 +16,7 @@ import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
 from torchvision.datasets.utils import download_and_extract_archive
 
-from .. import Dataset, Record
+from vidlu.data import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
 from vidlu.utils.misc import extract_zip
@@ -130,7 +130,7 @@ class WhiteNoise(Dataset):
     subsets = []
 
     def __init__(self, distribution='normal', mean=0, std=1, example_shape=(32, 32, 3), size=50000,
-                 seed=53):
+                 seed=53, key='image'):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
@@ -139,27 +139,29 @@ class WhiteNoise(Dataset):
         self._distribution = distribution
         self.mean = mean
         self.std = std
+        self.key = key
         super().__init__(name=f'WhiteNoise-{distribution}({mean},{std},{example_shape})',
                          subset=f'{seed}{size}', data=self._seeds)
 
     def get_example(self, idx):
         self._rand.seed(self._seeds[idx])
         if self._distribution == 'normal':
-            return _make_record(x=self._rand.randn(*self._shape) * self.std + self.mean, y=0)
+            return _make_record(**{self.key: self._rand.randn(*self._shape) * self.std + self.mean})
         elif self._distribution == 'uniform':
             d = 12 ** 0.5 / 2
             raise NotImplementedError("mean, std")
-            return _make_record(x=self._rand.uniform(-d, d, self._shape))
+            return _make_record(**{self.key: self._rand.uniform(-d, d, self._shape)})
 
 
 class RademacherNoise(Dataset):
     subsets = []
 
-    def __init__(self, shape=(32, 32, 3), size=50000, seed=53):
+    def __init__(self, shape=(32, 32, 3), size=50000, seed=53, key='image'):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
+        self.key = key
         super().__init__(
             name=f'RademacherNoise{shape}',
             subset=f'{seed}-{size}',
@@ -167,19 +169,19 @@ class RademacherNoise(Dataset):
 
     def get_example(self, idx):
         self._rand.seed(self._seeds[idx])
-        return _make_record(
-            x=self._rand.binomial(n=1, p=0.5, size=self._shape))
+        return _make_record(**{self.key: self._rand.binomial(n=1, p=0.5, size=self._shape)})
 
 
 class HBlobs(Dataset):
     subsets = []
 
-    def __init__(self, sigma=None, shape=(32, 32, 3), size=50000, seed=53):
+    def __init__(self, sigma=None, shape=(32, 32, 3), size=50000, seed=53, key='image'):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
         self._sigma = sigma or 1.5 * shape[0] / 32
+        self.key = key
         super().__init__(name=f'HBlobs({shape})', subset=f'{seed}-{size}', data=self._seeds)
 
     def get_example(self, idx):
@@ -188,20 +190,21 @@ class HBlobs(Dataset):
         x = self._rand.binomial(n=1, p=0.7, size=self._shape)
         x = gaussian(np.float32(x), sigma=self._sigma, multichannel=False)
         x[x < 0.75] = 0
-        return _make_record(x=x)
+        return _make_record(**{self.key: x})
 
 
 class Blank(Dataset):
     subsets = []
 
-    def __init__(self, value=0, shape=(32, 32, 3), size=50000):
+    def __init__(self, value=0, shape=(32, 32, 3), size=50000, key='image'):
         self._shape = shape
         self._len = size
         self.value = value
+        self.key = key
         super().__init__(name=f'Blank({shape},{value})', subset=f'{size}')
 
     def get_example(self, idx):
-        return _make_record(x=np.full(self._shape, self.value))
+        return _make_record(**{self.key: np.full(self._shape, self.value)})
 
     def __len__(self):
         return self._len
@@ -210,7 +213,7 @@ class Blank(Dataset):
 class DummyClassification(Dataset):
     subsets = []
 
-    def __init__(self, shape=(28, 28, 3), size=256):
+    def __init__(self, shape=(28, 28, 3), size=256, key='image'):
         self._shape = shape
         self._colors = [row for row in np.eye(3, 3) * 255]
         self._len = size
@@ -219,7 +222,8 @@ class DummyClassification(Dataset):
 
     def get_example(self, idx):
         color_idx = idx % len(self._colors)
-        return _make_record(x=np.ones(self._shape) * self._colors[color_idx], y=color_idx)
+        return _make_record(**{self.key: np.ones(self._shape) * self._colors[color_idx]},
+                            class_label=color_idx)
 
     def __len__(self):
         return self._len
@@ -236,7 +240,7 @@ class ImageFolder(Dataset):
                          info=dict(problem='images'))
 
     def get_example(self, idx):
-        return _make_record(x_=lambda: _load_image(self.data_dir / self._elements[idx]))
+        return _make_record(image_=lambda: _load_image(self.data_dir / self._elements[idx]))
 
 
 # Classification ###################################################################################
@@ -256,7 +260,7 @@ class MNIST(Dataset):
 
         x_path = data_dir / self._files['x_test' if subset == 'test' else 'x_train']
         y_path = data_dir / self._files['y_test' if subset == 'test' else 'y_train']
-        x, y = self.load_array(x_path, is_x=True), self.load_array(y_path, is_x=False)
+        x, y = self.load_array(x_path, is_image=True), self.load_array(y_path, is_image=False)
         self.x, self.y = map(to_shared_array, [x, y])
         super().__init__(subset=subset, info=dict(class_count=10, problem='classification'))
 
@@ -274,13 +278,13 @@ class MNIST(Dataset):
             download_path.unlink()
 
     @staticmethod
-    def load_array(path, is_x):
+    def load_array(path, is_image):
         with open(path, 'rb') as f:
-            return (np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 28, 28) if is_x
+            return (np.frombuffer(f.read(), np.uint8, offset=16).reshape(-1, 28, 28) if is_image
                     else np.frombuffer(f.read(), np.uint8, offset=8))
 
     def get_example(self, idx):
-        return _make_record(x=self.x[idx], y=self.y[idx])
+        return _make_record(image=self.x[idx], class_label=self.y[idx])
 
     def __len__(self):
         return len(self.y)
@@ -298,7 +302,7 @@ class SVHN(Dataset):
         super().__init__(subset=subset, info=dict(class_count=10, problem='classification'))
 
     def get_example(self, idx):
-        return _make_record(x=self.x[idx], y=self.y[idx])
+        return _make_record(image=self.x[idx], class_label=self.y[idx])
 
     def __len__(self):
         return len(self.x)
@@ -350,7 +354,7 @@ class Cifar10(Dataset):
         download_path.unlink()
 
     def get_example(self, idx):
-        return _make_record(x=self.x[idx], y=self.y[idx])
+        return _make_record(image=self.x[idx], class_label=self.y[idx])
 
     def __len__(self):
         return len(self.x)
@@ -386,7 +390,7 @@ class Cifar100(Dataset):
         download_path.unlink()
 
     def get_example(self, idx):
-        return _make_record(x=self.x[idx], y=self.y[idx])
+        return _make_record(image=self.x[idx], class_label=self.y[idx])
 
     def __len__(self):
         return len(self.x)
@@ -405,10 +409,7 @@ class DescribableTextures(Dataset):
 
     def get_example(self, idx):
         x, y = self.data[idx]
-        return _make_record(x=x, y=y)
-
-    def __len__(self):
-        return len(self.data)
+        return _make_record(image=x, class_label=y)
 
 
 class TinyImageNet(Dataset):
@@ -447,7 +448,7 @@ class TinyImageNet(Dataset):
 
     def get_example(self, idx):
         img_path, lab = self._examples[idx]
-        return _make_record(x_=lambda: _load_image(img_path), y=lab)
+        return _make_record(image_=lambda: _load_image(img_path), class_label=lab)
 
     def __len__(self):
         return len(self._examples)
@@ -490,8 +491,8 @@ class INaturalist2018(Dataset):
 
     def get_example(self, idx):
         img_path = self._data_dir / self._file_names[idx]
-        return _make_record(x_=load_image(img_path, self._downsampling),
-                            y=self._labels[idx])
+        return _make_record(image_=load_image(img_path, self._downsampling),
+                            class_label=self._labels[idx])
 
     def __len__(self):
         return len(self._labels)
@@ -535,7 +536,7 @@ class TinyImages(Dataset):
         if self.exclude_cifar:
             while self.in_cifar(idx):
                 idx = np.random.randint(79302017)
-        return _make_record(x_=lambda: self.load_image(idx), y=-1)
+        return _make_record(image_=lambda: self.load_image(idx), class_label=-1)
 
     def __len__(self):
         return 79302017
@@ -594,7 +595,8 @@ class ClassificationFolderDataset(Dataset):  # TODO
         targets (list): The class_index value for each image in the dataset
     """
 
-    def __init__(self, data_dir, load_func, extensions=None, is_valid_file=None, **kwargs):
+    def __init__(self, data_dir, load_func, extensions=None, is_valid_file=None, input_key='image',
+                 **kwargs):
         self.root = data_dir
         classes, class_name_to_idx = self._find_classes(data_dir)
         self.path_to_class = _read_classification_dataset(data_dir, class_name_to_idx, extensions,
@@ -603,6 +605,7 @@ class ClassificationFolderDataset(Dataset):  # TODO
             raise RuntimeError("Found 0 files in subfolders of: " + self.root
                                + "\nSupported extensions are: " + ",".join(extensions) + ".")
         self.load = load_func
+        self.input_key = input_key
         super().__init__(**kwargs)
         self.info.classes, self.info.class_name_to_idx = classes, class_name_to_idx
 
@@ -634,7 +637,7 @@ class ClassificationFolderDataset(Dataset):  # TODO
         """
         path, y = self.path_to_class[idx]
         x = self.load(path)
-        return _make_record(x_=x, y=y)
+        return _make_record(**{self.input_key: x}, class_label=y)
 
     def __len__(self):
         return len(self.path_to_class)
@@ -736,8 +739,9 @@ class ISUN(Dataset):
 
     def get_example(self, idx):
         return _make_record(
-            x_=lambda: np.array(_load_image(f"{self._images_dir}/{self._image_names[idx]}.jpg")),
-            y=-1)
+            image_=lambda: np.array(
+                _load_image(f"{self._images_dir}/{self._image_names[idx]}.jpg")),
+            class_label=-1)
 
     def __len__(self):
         return len(self._image_names)
@@ -761,8 +765,8 @@ class LSUN(Dataset):
 
     def get_example(self, idx):
         return _make_record(
-            x_=lambda: np.array(_load_image(f"{self._subset_dir}/{self._image_names[idx]}")),
-            y=-1)
+            image_=lambda: np.array(_load_image(f"{self._subset_dir}/{self._image_names[idx]}")),
+            class_label=-1)
 
     def __len__(self):
         return len(self._image_names)
@@ -828,8 +832,8 @@ class CamVid(Dataset):
         ip, lp = self._img_lab_list[idx]
         ds = self._downsampling
         return _make_record(
-            x_=lambda: load_image(ip, ds),
-            y_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label))
+            image_=lambda: load_image(ip, ds),
+            seg_map_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label))
 
     def __len__(self):
         return len(self._img_lab_list)
@@ -868,7 +872,7 @@ class CamVidSequences(Dataset):  # TODO
 
     def get_example(self, idx):
         image_path = self._image_paths[idx]
-        return _make_record(x_=lambda: load_image(image_path, self._downsampling))
+        return _make_record(image_=lambda: load_image(image_path, self._downsampling))
 
     def __len__(self):
         return len(self._image_paths)
@@ -950,7 +954,9 @@ class Cityscapes(Dataset):
         im_get = lambda: load_image(im_path, d)
         lab_get = lambda: load_segmentation_with_downsampling(
             lab_path, d if self.downsample_labels else 1, self._id_to_label)
-        return _make_record(x_=im_get, y_=lab_get)  # , id=str(self._images[idx].with_suffix("")))
+        return _make_record(image_=im_get,
+                            seg_map_=lab_get,
+                            name=str(self._images[idx].with_suffix("")))
 
     def __len__(self):
         return len(self._images)
@@ -1006,8 +1012,8 @@ class WildDash(Dataset):
             return lab
 
         return _make_record(
-            x_=partial(load_image, f"{path_prefix}{self._IMG_SUFFIX}", self._downsampling),
-            y_=load_lab)
+            image_=partial(load_image, f"{path_prefix}{self._IMG_SUFFIX}", self._downsampling),
+            seg_map_=load_lab)
 
     def __len__(self):
         return len(self._image_names)
@@ -1040,7 +1046,7 @@ class ICCV09(Dataset):
                 self._labels_dir / f"{name}.regions.txt", dtype=np.int8)
             return numpy_transforms.center_crop(lab, self._shape, fill=-1)
 
-        return _make_record(x_=load_img, y_=load_lab)
+        return _make_record(image_=load_img, seg_map_=load_lab)
 
     def __len__(self):
         return len(self._image_list)
@@ -1098,7 +1104,7 @@ class VOC2012Segmentation(Dataset):
                             force_rgb=False)).astype(np.int8)
             return numpy_transforms.center_crop(lab, [500] * 2, fill=-1)  # -1 ok?
 
-        return _make_record(x_=load_img, y_=load_lab)
+        return _make_record(image_=load_img, seg_map_=load_lab)
 
     def __len__(self):
         return len(self._image_list)
@@ -1228,8 +1234,8 @@ class VOC2012Segmentation(Dataset):
 #         ip, lp = self._img_lab_list[idx]
 #         # df = self._downsampling
 #         # return _make_record(
-#         #     x_=lambda: load_image_with_downsampling(ip, df),
-#         #     y_=lambda: load_segmentation_with_downsampling(lp, df, self.color_to_label))
+#         #     image_=lambda: load_image_with_downsampling(ip, df),
+#         #     seg_map_=lambda: load_segmentation_with_downsampling(lp, df, self.color_to_label))
 #
 #     def __len__(self):
 #         return len(self._img_lab_list)

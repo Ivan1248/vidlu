@@ -2,11 +2,11 @@ import argparse
 
 # noinspection PyUnresolvedReferences
 import _context
-from vidlu.data.misc import pickle_sizeof
+from vidlu.utils.misc import pickle_sizeof
 from vidlu.transforms import image
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
-from vidlu.factories import get_prepared_data
+from vidlu.factories import prepare_dataset, get_data
 
 import dirs
 
@@ -23,8 +23,8 @@ parser.add_argument('--jitter', type=str, default=None)
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-ds = get_prepared_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
-                       cache_dir=dirs.cache)[0]
+ds = prepare_dataset(get_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
+                              cache_dir=dirs.cache)[0])
 
 print("Name:", ds.name)
 print("Info:")

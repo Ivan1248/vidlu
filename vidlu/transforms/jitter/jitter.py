@@ -1,11 +1,16 @@
 import dataclasses as dc
+import inspect
 import warnings
 import typing as T
+from functools import partial
+
 import torch
 
 from vidlu.utils.func import compose
 import vidlu.transforms.image as vti
 import vidlu.modules as vm
+import vidlu.modules.pert as pert
+import vidlu.data.types as dt
 
 from .randaugment import RandAugment as PILRandAugment
 
@@ -46,12 +51,8 @@ class PhTPS20:
         return x, y
 
 
-class SegmentationJitter:
-    def __call__(self, x):
-        return self.apply(x)
-
-    def apply(self, x):
-        raise NotImplementedError()
+class SegmentationJitter(pert.PertModel):
+    pass
 
 
 class ClassificationJitter:
@@ -78,6 +79,16 @@ class ReplaceWithNoise(ClassificationJitter):
 
 ####################################################################################################
 
+def _args_repr(obj):
+    args = {k: getattr(obj, k) for k in inspect.signature(type(obj)).parameters.keys()}
+    args_str = ', '.join(f'{k}={repr(v)}' for k, v in args.items())
+    return f'{type(obj).__name__}({args_str})'
+
+
+def unsupported_error(tranform, x):
+    raise NotImplementedError(f'Domain {type(x)} not supported by {tranform}.')
+
+
 class CifarPadRandCropHFlip(ClassificationJitter):
     def apply_input(self, x):
         return compose(vti.Pad(4), vti.RandomCrop(x[0].shape[-2:]), vti.RandomHFlip())(x)
@@ -96,26 +107,42 @@ class SegRandCropHFlip(SegmentationJitter):
         return compose(vti.RandomCrop(self.crop_shape), vti.RandomHFlip())(tuple(x))
 
 
-@dc.dataclass
-class SegRandScaleCropPadHFlip(SegmentationJitter):
-    shape: tuple
-    max_scale: float
-    min_scale: float = None
-    overflow: object = 0
-    align_corners: bool = True
-    image_pad_value: T.Union[torch.Tensor, float, T.Literal['mean']] = 'mean'
-    label_pad_value = -1
-    scale_dist: vti.ScaleDistArg = "uniform"
+class SegRandScaleCropPadHFlip(pert.PertModel):
+    domain = dt.Spatial2D
+    supported = (dt.Image, dt.SegMap)
 
-    def apply(self, xy):
-        xy = vti.RandomScaleCrop(
+    def __init__(self,
+                 shape: tuple,
+                 max_scale: float,
+                 min_scale: float = None,
+                 overflow: object = 0,
+                 align_corners: bool = True,
+                 image_pad_value: T.Union[torch.Tensor, float, T.Literal['mean']] = 'mean',
+                 label_pad_value=-1,
+                 scale_dist: vti.ScaleDistArg = "uniform"):
+        super().__init__()
+        # arguments should be in __dict__ because of modification by command line arguments
+        self.__dict__.update(self.get_args(locals()))
+
+    def forward(self, inputs):
+        tindices = {ind: i for i, ind in
+                    enumerate([i for i, x in enumerate(inputs) if isinstance(x, dt.Spatial2D)])}
+        tran = tuple(inputs[i] for i in tindices.values())
+        tran = vti.RandomScaleCrop(
             shape=self.shape, max_scale=self.max_scale, min_scale=self.min_scale,
-            overflow=self.overflow, is_segmentation=(False, True), align_corners=self.align_corners,
-            scale_dist=self.scale_dist)(tuple(xy))
-        xy = vti.RandomHFlip()(xy)
-        x = vti.PadToShape(self.shape, value=self.image_pad_value)(xy[0])
-        return (x,) if len(xy) == 1 else \
-            (x, vti.PadToShape(self.shape, value=self.label_pad_value)(xy[1]))
+            overflow=self.overflow, align_corners=self.align_corners,
+            scale_dist=self.scale_dist)(tran)
+        tran = vti.RandomHFlip()(tran)
+        pad = partial(vti.pad_to_shape, shape=self.shape)
+        tran = [pad(x, value=self.image_pad_value) if isinstance(x, dt.Image) else
+                pad(x, value=self.label_pad_value) if isinstance(x, dt.SegMap) else
+                pad(x, value=0) if isinstance(x, dt.Spatial2D) else
+                x
+                for x in tran]
+        return tuple(tran[tindices[i]] if i in tindices else x for i, x in enumerate(inputs))
+
+    def __repr__(self):
+        return _args_repr(self)
 
 
 class RandAugment(ClassificationJitter):

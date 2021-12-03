@@ -3,13 +3,12 @@ from argparse import Namespace
 import typing as T
 
 import torch
-import numpy as np
 
 from vidlu import models, metrics
 import vidlu.modules as vm
 from vidlu.models import params as mparams
 import vidlu.data.utils as vdu
-from vidlu.data import DataLoader, Dataset
+from vidlu.data import DataLoader, Dataset, Record
 from vidlu.training import Trainer
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
@@ -17,6 +16,7 @@ import vidlu.utils.func as vuf
 from vidlu.utils.func import Reserved
 from vidlu.utils.func import partial
 from vidlu.extensions import extensions
+from vidlu.transforms.data_preparation import prepare_element
 
 from . import defaults
 
@@ -88,16 +88,6 @@ def parse_data_str(data_str):
 
 def get_data(data_str: str, datasets_dir, cache_dir=None) \
         -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
-    """
-
-    Args:
-        data_str (str): a string representing the datasets.
-        datasets_dir: directory with
-        cache_dir:
-
-    Returns:
-
-    """
     from vidlu import data
     from vidlu.data import Record
     import vidlu.transforms as vt
@@ -113,8 +103,10 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     get_parted_dataset = data.DatasetFactory(datasets_dir)
     if cache_dir is not None:
-        add_stats = partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir)
-        get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [add_stats])
+        get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [
+            partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
+            partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir)
+        ])
 
     data = []
     for name, options_str, subsets in name_options_subsets_tuples:
@@ -140,25 +132,9 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
-def get_data_preparation(dataset):
-    from vidlu.transforms.input_preparation import prepare_input_image, prepare_label
-    fields = tuple(dataset[0].keys())
-    if set('xy').issubset(fields):
-        return lambda ds: ds.map_fields(dict(x=prepare_input_image, y=prepare_label),
-                                        func_name='prepare')
-    elif fields == ('x',):
-        return lambda ds: ds.map_fields(dict(x=prepare_input_image), func_name='prepare_x')
-    raise ValueError(f"Unknown record format: {fields}.")
-
-
-def prepare_data(data):
-    datasets = [ds for _, ds in data]
-    preparers = [get_data_preparation(ds) for ds in datasets]
-    return tuple(prepare(ds) for prepare, ds in zip(preparers, datasets))
-
-
-def get_prepared_data(data_str: str, datasets_dir, cache_dir):
-    return prepare_data(get_data(data_str, datasets_dir, cache_dir))
+def prepare_dataset(dataset):
+    return dataset.map(lambda r: Record({k: prepare_element(v, k) for k, v in r.items()}),
+                       func_name='prepare')
 
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
@@ -171,7 +147,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     else:
         names = ['train', 'test']
 
-    datasets = get_prepared_data(data_str, datasets_dir, cache_dir)
+    datasets = [prepare_dataset(ds) for _, ds in get_data(data_str, datasets_dir, cache_dir)]
     named_datasets = NameDict(dict(zip(names, datasets)))
     print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
                                        for name, ds in named_datasets.items()))

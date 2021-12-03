@@ -19,9 +19,12 @@ def get_problem_from_dataset(dataset):
     if 'problem' not in dataset.info:
         raise ValueError("Unknown problem.")
     problem_type = get_problem_type(dataset.info.problem)
-    args = {k: tuple(dataset[0].y.shape) if k == "y_shape" else dataset.info[k]
-            for k in params(problem_type)}
-    return problem_type(**args)
+    if problem_type is SemanticSegmentation:
+        args = {k: tuple(dataset[0].seg_map.shape) if k == "y_shape" else dataset.info[k]
+                for k in params(problem_type)}
+        return problem_type(**args)
+    else:
+        return problem_type()
 
 
 # Model ############################################################################################

@@ -22,6 +22,14 @@ from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 
 # Training/evaluation steps ########################################################################
 
+def untag(x):
+    """Changes the type of an input from a vidlu.data.Domain subtype to torch.Tensor.
+
+    The original object is unchanged.
+    """
+    return x.as_subclass(torch.Tensor)
+
+
 @dc.dataclass
 class TrainerStep:  # TODO: use to reduce
     outputs: dict = dc.field(
@@ -46,20 +54,13 @@ class BaseStep:
 # Supervised
 @torch.no_grad()
 def _prepare_sup_batch(batch):
-    """Extracts labeled and unlabeled batches.
-
-    Args:
-        batch: See the code.
-
-    Returns:
-        x - inputs, y - labels
-    """
     if isinstance(batch, BatchTuple):
-        warn("The batch (batchTuple) consists of 2 batches.")
-        x, y = tuple(torch.cat(a, 0) for a in zip(*batch))
+        warn("The batch (BatchTuple instance) consists of {len(batch)} batches.")
+        return tuple(torch.cat(batches, 0) if isinstance(batches[0], torch.Tensor) else
+                     batches / (0 / 0)
+                     for batches in zip(*batch))
     else:
-        x, y = batch
-    return x, y
+        return batch
 
 
 def do_optimization_step(optimizer, loss):
@@ -78,22 +79,22 @@ def optimization_step(optimizer):
 @torch.no_grad()
 def supervised_eval_step(trainer, batch):
     trainer.model.eval()
-    x, y = _prepare_sup_batch(batch)
-    out = trainer.model(x)
+    x, y = _prepare_sup_batch(batch)[:2]
+    out = trainer.model(untag(x))
     loss = trainer.loss(out, y, reduction="mean")
     return NameDict(x=x, target=y, out=out, loss=loss.item())
 
 
 def _supervised_train_step_x_y(trainer, x, y):
     trainer.model.train()
-    out = trainer.model(x)
+    out = trainer.model(untag(x))
     loss = trainer.loss(out, y, reduction="mean")
     do_optimization_step(trainer.optimizer, loss)
     return NameDict(x=x, target=y, out=out, loss=loss.item())
 
 
 def supervised_train_step(trainer, batch):
-    x, y = _prepare_sup_batch(batch)
+    x, y = _prepare_sup_batch(batch)[:2]
     return _supervised_train_step_x_y(trainer, x, y)
 
 
@@ -105,16 +106,16 @@ class ClassifierEnsembleEvalStep:
     def __call__(self, trainer, batch):
         trainer.model.eval()
         x, y = batch
-        out = self.combine(model(x) for model in self.model_iter(trainer.model))
+        out = self.combine(model(untag(x)) for model in self.model_iter(trainer.model))
         loss = trainer.loss(out, y, reduction="mean")
         return NameDict(x=x, target=y, out=out, loss=loss.item())
 
 
 class IIDMonocularStep:
     def __call__(self, trainer, batch):
-        x, y = _prepare_sup_batch(batch)
+        x, y = _prepare_sup_batch(batch)[:2]
         trainer.model.train()
-        out = trainer.model(x)
+        out = trainer.model(untag(x))
         loss = trainer.loss(out, y, reduction="mean")
         do_optimization_step(trainer.optimizer, loss)
         return NameDict(x=x, target=y, out=out, loss=loss.item())
@@ -359,7 +360,7 @@ class SupervisedTrainMultiStep:
         x, y = batch
         for i in range(self.repeat_count):
             with vtu.norm_stats_tracking_off(trainer.model) if i == 0 else ctx.suppress():
-                out = trainer.model(x)
+                out = trainer.model(untag(x))
                 loss = trainer.loss(out, y, reduction="mean")
                 do_optimization_step(trainer.optimizer, loss)
                 if i == 0:
@@ -422,7 +423,7 @@ class SupervisedSlidingBatchTrainStep:
             with vtu.norm_stats_tracking_off(trainer.model) if i == starts[
                 0] else ctx.suppress():
                 inter_x, inter_y = [a[i:i + n] for a in (x, y)]
-                out = trainer.model(inter_x)
+                out = trainer.model(untag(inter_x))
                 loss = trainer.loss(out, inter_y, reduction="mean")
                 do_optimization_step(trainer.optimizer, loss)
                 result = result or NameDict(x=inter_x, target=inter_y, out=out, loss=loss.item())
@@ -455,7 +456,7 @@ class SupervisedTrainAcumulatedBatchStep:
         outputs = []
         total_loss = None
         for x, y in zip(xs, ys):
-            out = trainer.model(x)
+            out = trainer.model(untag(x))
             outputs.append(out)
             loss = trainer.loss(out, y, reduction="mean")
             if self.reduction == 'mean':
@@ -513,7 +514,7 @@ class AdversarialTrainStep:
         >>>                                   backward_callback=crc)
         >>> trainer.model.train()
         >>>
-        >>> out = trainer.model(x_p)
+        >>> out = trainer.model(untag(x_p))
         >>> loss_p = trainer.loss(out, y, reduction="mean")
         >>> do_optimization_step(trainer.optimizer, loss=loss_p)
         """
@@ -573,9 +574,9 @@ class AdversarialCombinedLossTrainStep:
         x_p, y_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
 
         trainer.model.train()
-        out_c = trainer.model(x)
+        out_c = trainer.model(untag(x))
         loss_c = trainer.loss(out_c, y_p, reduction="mean")
-        out_p = trainer.model(x_p)
+        out_p = trainer.model(untag(x_p))
         loss_p = (trainer.attack if self.use_attack_loss else trainer).loss(out_p, y,
                                                                             reduction="mean")
 
@@ -645,7 +646,7 @@ class AdversarialTrainMultiStep:
                 self.last_pert = x_p - x
 
         trainer.model.train()
-        out_p = trainer.model(x_p)
+        out_p = trainer.model(untag(x_p))
         loss_p = trainer.loss(out_p, y_p, reduction="mean")
         do_optimization_step(trainer.optimizer, loss_p)
 
@@ -665,7 +666,7 @@ class VATTrainStep:
         model.train()
         x, y = batch
 
-        out = model(x)
+        out = model(untag(x))
         loss = trainer.loss(out, y, reduction="mean")
         with torch.no_grad() if self.block_grad_for_clean else ctx.suppress():
             target = attack.output_to_target(out)  # usually the same as target.sogtmax(1)
@@ -674,7 +675,7 @@ class VATTrainStep:
         with vtu.switch_training(model, False) if self.attack_eval_model else ctx.suppress():
             with vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
                 x_p, y_p = attack.perturb(model, x, target)
-                out_p = model(x_p)
+                out_p = model(untag(x_p))
         loss_p = attack.loss(out_p, y_p, reduction="mean")
         loss = loss + self.alpha * loss_p
         loss_ent = vml.entropy_l(out_p, reduction="mean")
@@ -698,13 +699,13 @@ class PertConsistencyTrainStep:  # TODO
         model.train()
         x, y = batch
 
-        out = model(x)
+        out = model(untag(x))
         loss = trainer.loss(out, y, reduction="mean")
         with vtu.norm_stats_tracking_off(model) if not self.track_pert_bn_stats \
                 else ctx.suppress():
             with torch.no_grad():
                 x_p, y_p = trainer.pert_model(x, y)
-            out_p = model(x_p)
+            out_p = model(untag(x_p))
             target_p = out.detach() if self.stop_grad_for_clean else out
             loss_p = trainer.loss(out_p, target_p, reduction="mean")
             loss = loss.add(loss_p, alhpa=self.alpha)
@@ -728,14 +729,16 @@ def _prepare_semisup_batch(batch):
     Returns:
         x_l - labeled inputs, y_l - labeled labels, x_u - unlabeled inputs
     """
-    x_u = None
+    x_u = other = None
     if isinstance(batch, BatchTuple):
-        x_l, y_l, x_u = batch[0].x, batch[0].y, batch[1].x
-    elif isinstance(batch, Record) and 'x_u' in batch:
-        x_l, y_l, x_u = batch.x_l, batch.y_l, batch.x_u
+        if len(batch) != 2:
+            raise TypeError(f"Unsuported number of batches in BatchTuple: {len(batch)=} != 2")
+        (x_l, y_l), x_u, other = batch[0][:2], batch[1][0], (batch[0][2:], batch[1][1:])
+    elif len(batch) >= 3 and isinstance(batch[2], type(batch[0])):
+        (x_l, y_l, x_u), other = batch[:3], batch[3:]
     else:
-        x_l, y_l = batch.x, batch.y
-    return x_l, y_l, x_u
+        (x_l, y_l), other = batch[:2], batch[2:]
+    return x_l, y_l, x_u, other
 
 
 def _prepare_semisup_batch_s(batch, unsup_loss_on_all, joint_batch):
@@ -749,7 +752,7 @@ def _prepare_semisup_batch_s(batch, unsup_loss_on_all, joint_batch):
         unsup_loss_on_all: Whether the unsupervised batch `x_u` should include
             the supervised inputs `x_l`.
     """
-    x_l, y_l, x_u = _prepare_semisup_batch(batch)
+    x_l, y_l, x_u, other = _prepare_semisup_batch(batch)
     if joint_batch:
         x_all = x_l if x_u is None else torch.cat([x_l, x_u])
         if unsup_loss_on_all:
@@ -761,7 +764,7 @@ def _prepare_semisup_batch_s(batch, unsup_loss_on_all, joint_batch):
 
     if x_u is None and not unsup_loss_on_all:
         raise RuntimeError(f"uns_loss_on_all must be True if there is no unlabeled batch.")
-    return x_l, y_l, x_u, x_all
+    return x_l, y_l, x_u, x_all, other
 
 
 def _cons_output_to_target(out_uns, stop_grad, output_to_target):
@@ -818,7 +821,8 @@ class SemisupCleanTargetConsStepBase:
                                + "because the teacher does not equal the student")
         joint_batch = teacher is model and (not self.mem_efficient or self.uns_loss_on_all)
 
-        x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all, joint_batch)
+        x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all, joint_batch)[
+                               :4]
         loss_mask = 'create'
         perturb_x_u = lambda attack_target, loss_mask: _perturb(
             attack=attack, model=model, x=x_u, attack_target=attack_target,
@@ -829,8 +833,8 @@ class SemisupCleanTargetConsStepBase:
         with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
             # Supervised loss
             with torch.no_grad() if self.eval else ctx.suppress():
-                out_all = model(x_all) if joint_batch else None
-                out_l = out_all[:len(y_l)] if joint_batch else model(x_l)
+                out_all = model(untag(x_all)) if joint_batch else None
+                out_l = out_all[:len(y_l)] if joint_batch else model(untag(x_l))
                 loss_l = trainer.loss(out_l, y_l, reduction="mean")
                 if not self.eval and not joint_batch:  # back-propagates supervised loss sooner
                     loss_l.backward()
@@ -849,7 +853,7 @@ class SemisupCleanTargetConsStepBase:
             with torch.no_grad() if self.eval else ctx.suppress():
                 with ctx.suppress() if self.pert_bn_stats_updating else \
                         vtu.norm_stats_tracking_off(model):
-                    pert.out = model(pert.x)  # student output
+                    pert.out = model(untag(pert.x))  # student output
             with torch.no_grad() if self.eval else ctx.suppress():
                 loss_u = loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
                 loss = loss_l.add(loss_u, alpha=self.alpha)
@@ -880,7 +884,7 @@ class SemisupCleanTargetConsStepBase:
                     x_u, perturb_x_u, teacher, loss_mask)
             else:  # default
                 additional = dict()
-                out_u = teacher(x_u) if out_all is None else out_all[-len(x_u):]
+                out_u = teacher(untag(x_u)) if out_all is None else out_all[-len(x_u):]
         return out_u, loss_mask, additional
 
     def _run_pert_teacher_branch(self, x_u, perturb_x_u, teacher, loss_mask):
@@ -889,7 +893,7 @@ class SemisupCleanTargetConsStepBase:
                             loss_mask=loss_mask)
         with vtu.norm_stats_tracking_off(
                 teacher) if self.pert_bn_stats_updating else ctx.suppress():
-            pertt.out = teacher(pertt.x)
+            pertt.out = teacher(untag(pertt.x))
         additional.out_up = out_up = pertt.out
         additional.x_pt = pertt.x
         if len(out_up.squeeze().shape) > 2:  # dense, TODO: make more general
@@ -942,20 +946,24 @@ class SemisupContrastiveStepBase:
     repr_path: str = "backbone"
     proj_f: object = vmc.ConvProjHead
 
-    proj_heads: torch.nn.ModuleList = dc.field(init=False)
+    proj_heads: T.Union[torch.nn.ModuleList, dict] = dc.field(init=False, default_factory=dict)
 
-    def __post_init__(self):
-        self.proj_heads = nn.ModuleList()
+    # BYOL: wd=5e-7, setting the weight decay to zero may lead to unstable results (as in SimCLR)
 
     def __call__(self, trainer, batch):
         attack = trainer.attack
         model, teacher = self.get_student_and_teacher(trainer)
+        proj_heads_need_init = isinstance(self.proj_heads, dict)
 
-        if len(self.proj_heads) == 0:
+        if proj_heads_need_init:
+            state_dict = self.proj_heads
             asymmetric = (model is not teacher or not self.pert_both
                           or self.eval_mode_teacher or self.block_grad_on_clean)
             self.proj_heads = nn.ModuleList([self.proj_f(), self.proj_f()] if asymmetric else
                                             [self.proj_f()] * 2)
+            if len(state_dict) > 0:
+                self.proj_heads.load_state_dict(state_dict)
+
         model_proj, teacher_proj = [
             AdditionalHeadModule(m, self.repr_path, h, additional_head_only=True)
             for m, h in zip([model, teacher], self.proj_heads)]
@@ -964,7 +972,7 @@ class SemisupContrastiveStepBase:
             raise RuntimeError("Cannot run unlabeled and labeled examples in the same batch "
                                + "because the teacher does not equal the student")
 
-        x_l, y_l, x_u = _prepare_semisup_batch(batch)
+        x_l, y_l, x_u = _prepare_semisup_batch(batch)[:3]
         loss_mask = 'create'
         perturb_x_u = lambda attack_target, loss_mask: _perturb(
             attack=attack, model=model_proj, x=x_u, attack_target=attack_target,
@@ -975,7 +983,7 @@ class SemisupContrastiveStepBase:
         with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
             # Supervised loss
             with torch.no_grad() if self.eval else ctx.suppress():
-                out_l = model(x_l)
+                out_l = model(untag(x_l))
                 loss_l = trainer.loss(out_l, y_l, reduction="mean")
                 if not self.eval:  # back-propagates supervised loss sooner
                     loss_l.backward()
@@ -994,10 +1002,11 @@ class SemisupContrastiveStepBase:
             with torch.no_grad() if self.eval else ctx.suppress():
                 with ctx.suppress() if self.pert_bn_stats_updating else \
                         vtu.norm_stats_tracking_off(model_proj):
-                    pert.out = model_proj(pert.x)  # student output
+                    pert.out = untag(model_proj(pert.x))  # student output
             with torch.no_grad() if self.eval else ctx.suppress():
                 try:
-                    loss_u = self.loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
+                    loss_u = self.loss_cons(pert.out, pert.target)[
+                        pert.loss_mask >= 1 - 1e-6].mean()
                 except IndexError as e:
                     warn(e.args[0])
                     loss_u = self.loss_cons(pert.out, pert.target).mean()
@@ -1005,12 +1014,26 @@ class SemisupContrastiveStepBase:
                 if not self.eval:
                     loss.backward()
 
+            if proj_heads_need_init:
+                trainer.optimizer.zero_grad()
+                trainer.optimizer.add_param_group(
+                    dict(params=list(set(self.proj_heads.parameters()))))
+
         return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
                         x_u=x_u, x_p=pert.x, y_p=pert.target, out_u=out_u, out_p=pert.out,
                         **additional)
 
     def get_student_and_teacher(self, trainer):
         return [trainer.model] * 2
+
+    def state_dict(self):
+        return dict(p) if isinstance(p := self.proj_heads, dict) else p.state_dict()
+
+    def load_state_dict(self, state_dict):
+        if isinstance(self.proj_heads, dict):
+            self.proj_heads = dict(state_dict)
+        else:
+            self.proj_heads.load_state_dict(state_dict)
 
     def _get_teacher_out(self, teacher, x_u, perturb_x_u, loss_mask, out_all):
         with vtu.switch_training(teacher,
@@ -1020,7 +1043,7 @@ class SemisupContrastiveStepBase:
                     x_u, perturb_x_u, teacher, loss_mask)
             else:  # default
                 additional = dict()
-                out_u = teacher(x_u) if out_all is None else out_all[-len(x_u):]
+                out_u = teacher(untag(x_u)) if out_all is None else out_all[-len(x_u):]
         return out_u, loss_mask, additional
 
     def _run_pert_teacher_branch(self, x_u, perturb_x_u, teacher, loss_mask):
@@ -1029,7 +1052,7 @@ class SemisupContrastiveStepBase:
                             loss_mask=loss_mask)
         with vtu.norm_stats_tracking_off(
                 teacher) if self.pert_bn_stats_updating else ctx.suppress():
-            pertt.out = teacher(pertt.x)
+            pertt.out = teacher(untag(pertt.x))
         additional.out_up = out_up = pertt.out
         additional.x_pt = pertt.x
         if len(out_up.squeeze().shape) > 2:  # dense, TODO: make more general
@@ -1052,17 +1075,17 @@ class SemisupVATCorrEvalStep:
         model, attack = trainer.model, trainer.attack
         model.eval()
 
-        x_l, y_l, x_u = _prepare_semisup_batch(batch)
+        x_l, y_l, x_u = _prepare_semisup_batch(batch)[:3]
         assert x_u is None
         x = x_l
         x_c, uns_start = (x, 0)
 
-        out = model(x)
+        out = model(untag(x))
         out_uns, target_uns = _cons_output_to_target(
             out, uns_start, self.block_grad_on_clean, attack.output_to_target)
 
         x_p, y_p = attack.perturb(model, x_c, target_uns)
-        out_p = model(x_p)
+        out_p = model(untag(x_p))
 
         loss_p = attack.loss(out_p, y_p, reduction="mean")
         loss_l = trainer.loss(out_l := out[:len(x_l)], y_l, reduction="mean")
@@ -1082,8 +1105,8 @@ class SemisupVATCorrEvalStep:
 
                 out_c0 = out[uns_start:]  # clean logits before update (N×C)
                 out_p0 = out_p  # perturbed logits before update
-                out_c1 = model(x_c)
-                out_p1 = model(x_p)
+                out_c1 = model(untag(x_c))
+                out_p1 = model(untag(x_p))
 
                 dcp0 = out_c0 - out_p0
                 dcp1 = out_c1 - out_p1
@@ -1159,12 +1182,12 @@ class AdversarialEvalStep:
         x, y = batch
 
         with torch.no_grad():
-            out = trainer.model(x)
+            out = trainer.model(untag(x))
             loss = trainer.loss(out, y, reduction="mean")
 
         x_p, y_p = attack.perturb(trainer.model, x, None if self.virtual else y)
         with torch.no_grad():
-            out_p = trainer.model(x_p)
+            out_p = trainer.model(untag(x_p))
             loss_p = (
                 attack.loss(out_p, attack.output_to_target(out), reduction="mean") if self.virtual
                 else trainer.loss(out_p, y, reduction="mean"))
@@ -1185,7 +1208,7 @@ class AdversarialTargetedEvalStep:
         x, y = batch
 
         with torch.no_grad():
-            output = trainer.model(x)
+            output = trainer.model(untag(x))
             loss = trainer.loss(output, y, reduction="mean")
 
         result = dict()
@@ -1193,7 +1216,7 @@ class AdversarialTargetedEvalStep:
             t_var = torch.full_like(y, t)
             x_p = trainer.eval_attack.perturb(trainer.model, x, t_var)
             with torch.no_grad():
-                result[f"out_p{i}"] = trainer.model(x_p)
+                result[f"out_p{i}"] = trainer.model(untag(x_p))
                 result[f"loss_p_targ{i}"] = trainer.loss(result[f"out_p{i}"],
                                                          t_var, reduction="mean").item()
                 result[f"loss_p{i}"] = trainer.loss(result[f"out_p{i}"], y, reduction="mean").item()
@@ -1206,7 +1229,7 @@ class AdversarialTargetedEvalStep:
 def autoencoder_train_step(trainer, batch):
     trainer.model.train()
     x = batch[0]
-    x_r = trainer.model(x)
+    x_r = trainer.model(untag(x))
     loss = trainer.loss(x_r, x, reduction="mean")
     do_optimization_step(trainer.optimizer, loss)
     return NameDict(x_r=x_r, x=x, loss=loss.item())

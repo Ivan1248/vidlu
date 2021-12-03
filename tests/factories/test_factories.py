@@ -11,8 +11,8 @@ def test_get_data_single(tmpdir):
 
 def test_get_data_single_args(tmpdir):
     example_shape = (random.randint(1, 32),) * 2 + (3,)
-    data = factories.get_data(f"WhiteNoise(example_shape={example_shape}){{all}}", tmpdir)
-    assert data[0][0] == (f"WhiteNoise(example_shape={example_shape})", 'all')
+    data = factories.get_data(f"WhiteNoise(example_shape={example_shape},key='x'){{all}}", tmpdir)
+    assert data[0][0] == (f"WhiteNoise(example_shape={example_shape},key='x')", 'all')
     ds = data[0][1]
     assert ds[0].x.shape == example_shape
 

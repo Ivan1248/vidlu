@@ -24,7 +24,11 @@ def flow2rgb(flow):
 img = Image.open('image.jpg')
 images = [img]
 timages = []
-x = to_tensor(img).unsqueeze(0).cuda()
+x = to_tensor(img).unsqueeze(0)
+try:
+    x = x.cuda()
+except:
+    pass
 
 with torch.no_grad():
     c_src = vmf.uniform_grid_2d((2, 2)).view(-1, 2).unsqueeze(0).to(x.device)
@@ -71,7 +75,7 @@ x_warped = F.grid_sample(x, gridbw).squeeze_(1)
 
 from vidlu.modules.inputwise import TPSWarp
 
-warp = TPSWarp(forward=True, control_grid_shape=(2, 2), control_grid_align_corners=True)
+warp = TPSWarp(forward=True, control_grid_shape=(2, 2), control_grid_align_corners=True, align_corners=False)
 x_warped = warp(x)
 with torch.no_grad():
     warp.offsets.add_(offsets)

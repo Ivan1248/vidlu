@@ -1,12 +1,13 @@
-import warnings
 from numbers import Number
 import typing as T
 
+import torch
 from torch import Tensor
 import torch.nn.functional as nnF
 import numpy as np
 from typeguard import check_argument_types
 
+import vidlu.data.types as dt
 from vidlu.utils import num
 from vidlu.utils.func import partial
 from vidlu.utils.func import vectorize
@@ -38,9 +39,30 @@ ResizeSegmentation = func_to_module_class(resize_segmentation)
 @vectorize
 def pad(x, padding, mode='constant', value=0):
     if isinstance(padding, int):
-        padding = (padding,) * 4
-    additional_dims = (None,) * (4 - len(x.shape))
-    return nnF.pad(x[additional_dims], padding, mode=mode, value=value)[(0,) * len(additional_dims)]
+        padding = (padding,) * 4  # left, right, top, bottom
+    (le, ri, to, bo) = padding
+
+    if isinstance(x, torch.Tensor):
+        additional_dims = (None,) * (4 - len(x.shape))
+        if isinstance(x, dt.Image):
+            if value == 'mean':
+                value = x.mean((1, 2))
+            if len(value.shape) > 0:
+                value = value.view(*value.shape, *([1] * (len(x.shape) - len(value.shape))))
+                return nnF.pad(x[additional_dims] - value, padding, mode=mode, value=0)[
+                    (0,) * len(additional_dims)].add_(value)
+        else:
+            return nnF.pad(x[additional_dims], padding, mode=mode, value=value)[
+                (0,) * len(additional_dims)]
+    elif isinstance(x, dt.AABB):
+        return x + np.array([le, to])
+    elif isinstance(x, (dt.AABBsOnImage, dt.ClassAABBsOnImage)):
+        breakpoint()
+        "wh vs hw"
+        func = partial(pad, padding=padding, mode=mode, value=value)
+        return type(x.map(func, shape=x.shape + np.array([le + ri, to + bo])))
+    else:
+        raise TypeError(f"Unsupported type {type(x).__name__}.")
 
 
 Pad = func_to_module_class(pad)
@@ -51,23 +73,17 @@ def pad_to_shape(x, shape, mode='constant', value=0):
     if value == 'mean':
         value = x.mean((1, 2))
     padding = np.array(shape) - np.array(x.shape[-2:])
+    if np.any(padding < 0):
+        raise RuntimeError(f"`x` is to large ({tuple(x.shape)}) to be padded to {tuple(shape)}")
+
     if np.all(padding == 0):
         return x
-    elif np.any(padding < 0):
-        raise RuntimeError(f"`x` is to large ({tuple(x.shape)}) to be padded to {tuple(shape)}")
 
     to, le = tl = padding // 2
     bo, ri = padding - tl
     padding = (le, ri, to, bo)
 
-    additional_dims = (None,) * (4 - len(x.shape))
-    if isinstance(value, Tensor) and len(value.shape) > 0:
-        value = value.view(*value.shape, *([1] * (len(x.shape) - len(value.shape))))
-        return nnF.pad(x[additional_dims] - value, padding, mode=mode, value=0)[
-            (0,) * len(additional_dims)].add_(value)
-    else:
-        return nnF.pad(x[additional_dims], padding, mode=mode, value=value)[
-            (0,) * len(additional_dims)]
+    return pad(x, padding, mode, value)
 
 
 PadToShape = func_to_module_class(pad_to_shape)
@@ -86,7 +102,15 @@ def crop(x, location: tuple, shape: tuple):
         An array containing the cropped image.
     """
     (y0, x0), (h, w) = location, shape
-    return x[..., y0:y0 + h, x0:x0 + w]
+    if isinstance(x, torch.Tensor):
+        return x[..., y0:y0 + h, x0:x0 + w]
+    elif isinstance(x, dt.AABB):
+        raise NotImplementedError("clipping")
+        return x - np.array([x0, y0])
+    elif isinstance(x, dt.AABBsOnImage):
+        return x.map(partial(crop, location=location, shape=shape))
+    else:
+        raise TypeError(f"Unsupported type {type(x).__name__}.")
 
 
 Crop = func_to_module_class(crop)
@@ -94,9 +118,12 @@ Crop = func_to_module_class(crop)
 
 def paste_crop(x, crop, location):
     (y0, x0), (h, w) = location, crop.shape[-2:]
-    y = x.clone()
-    y[..., y0:y0 + h, x0:x0 + w] = crop
-    return y
+    if isinstance(x, torch.Tensor):
+        y = x.clone()
+        y[..., y0:y0 + h, x0:x0 + w] = crop
+        return y
+    else:
+        raise TypeError(f"Unsupported type {type(x).__name__}.")
 
 
 @vectorize
@@ -161,14 +188,12 @@ def _sample_random_scale(min, max, dist: ScaleDistArg = "uniform", rng=np.random
     return scale
 
 
-def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0, is_segmentation=False,
+def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
                       align_corners=None, scale_dist: ScaleDistArg = "uniform", rng=np.random):
     check_argument_types()
 
     multiple = isinstance(x, tuple)
     xs = x if multiple else (x,)
-    if isinstance(is_segmentation, bool):
-        is_segmentation = [is_segmentation] * len(xs)
 
     input_shape = xs[0].shape[-2:]
     if not all(a.shape[-2:] == input_shape for a in xs):
@@ -180,9 +205,9 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0, is_segmen
 
     shape = [d for d in
              np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int))]
-    xs = tuple((resize_segmentation if iss
-                else partial(resize, mode='bilinear', align_corners=align_corners))(x, shape=shape)
-               for x, iss in zip(xs, is_segmentation))
+    xs = tuple(resize_segmentation(x, shape=shape) if isinstance(x, dt.SegMap)
+               else resize(x, shape=shape, mode='bilinear', align_corners=align_corners)
+               for x in xs)
     return xs if multiple else xs[0]
 
 

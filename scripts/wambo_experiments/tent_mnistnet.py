@@ -25,8 +25,7 @@ data_dir = Path(tempfile.gettempdir()) / 'datasets'
 data_dir.mkdir(exist_ok=True)
 data_dir = data_dir / 'mnist'
 data = dict(train=MNIST(data_dir, 'trainval'), test=MNIST(data_dir, 'test'))
-prepare = factories.get_data_preparation(data['train'])  # convert to torch and [0, 1] range
-data = dict(**{k: prepare(v) for k, v in data.items()})
+data = dict(**{k: factories.prepare_dataset(v) for k, v in data.items()})
 
 
 # Model

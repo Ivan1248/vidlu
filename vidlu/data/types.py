@@ -87,7 +87,7 @@ class AABB(Spatial2D):
     The center of the first pixel is at (0.5, 0.5).
 
     Bounds are inclusive."""
-    __slots__ = 'min', 'size', 'exclusive'
+    __slots__ = 'min', 'size'
 
     def __init__(self, min, *, size=None, max=None):
         warnings.warn("(x, y) vs (y, x), why is Torch HW and not WH")
@@ -104,6 +104,9 @@ class AABB(Spatial2D):
 
     def __repr__(self):
         return f'{type(self).__name__}({tuple(self.min)}, {tuple(self.max)})'
+
+    def __eq__(self, other):
+        return np.all(self.min == other.min) and np.all(self.size == other.size)
 
     def __add__(self, translation):
         if not isinstance(translation, np.ndarray):
