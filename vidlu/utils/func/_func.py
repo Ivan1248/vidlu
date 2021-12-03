@@ -55,7 +55,7 @@ class Partial(functools.partial):
             raise TypeError("the first argument must be callable")
 
         # partial.__new__ uses hasattr(func, func) instead, which would break
-        if isinstance(func, functools.partial):
+        if isinstance(func, functools.partial) and not isinstance(func, FrozenPartial):
             args = func.args + args
             keywords = {**func.keywords, **keywords}
             func = func.func
@@ -100,13 +100,20 @@ class Partial(functools.partial):
 partial = Partial
 
 
-class FrozenPartial(Partial):
+class FrozenPartial(functools.partial):
     """Like Partial, but doesn't allow changing already chosen keyword
     arguments.
 
     Although `Partial.__new__` looks like it should copy the `keywords`
     attribute, this somehow works too: `Partial(FrozenPartial(f, x=2), x=3)`
     """
+
+    def __new__(cls, func, /, *args, **keywords):
+        """__new__ is redefined so that `Partial(functools.partial(foo, ...)).func == foo`"""
+        if not callable(func):
+            raise TypeError("the first argument must be callable")
+
+        return super().__new__(cls, func, *args, **keywords)
 
     def __call__(self, *args, **kwargs):
         for k in kwargs.keys():

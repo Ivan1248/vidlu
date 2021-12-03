@@ -36,5 +36,10 @@ requirements, dependency_links = parse_requirements(Path('requirements.txt').rea
 
 requirements_optional = Path('requirements-optional.txt').read_text().splitlines()
 
-setup(name="vidlu", version="0.2.0a", packages=find_packages(), install_requires=requirements,
-      dependency_links=dependency_links, extras_require={'full': requirements_optional})
+version = {}
+with open("vidlu/version.py") as fp:
+    exec(fp.read(), version)
+
+setup(name="vidlu", version=version['__version__'], packages=find_packages(),
+      install_requires=requirements, dependency_links=dependency_links,
+      extras_require={'full': requirements_optional})

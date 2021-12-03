@@ -36,8 +36,23 @@ class TestHardPartial:
 
         assert len(default_args(foo)) == 0
 
-    def test_hard_partial(self):
-        from vidlu.utils.func import frozen_partial
+    def test_partial(self):
+        from vidlu.utils.func import Partial
+
+        def foo(*a, **k):
+            pass
+
+        a = partial(foo, a=5)
+        ab = Partial(a, b=6)
+        assert ab.func is foo
+        assert ab.keywords == dict(a=5, b=6)
+        assert ab.args == ()
+
+        abc = Partial(ab, c=7)
+        assert abc.func is foo
+
+    def test_frozen_partial(self):
+        from vidlu.utils.func import FrozenPartial as frozen_partial
 
         def carry(a, coconut=4):
             return a * coconut ** 2
@@ -54,7 +69,7 @@ class TestHardPartial:
             f2(a=5)
 
         f4 = frozen_partial(f2, coconut=6)
-        assert f4.func == f2
+        assert f4.func is f2
         assert f4.keywords == dict(coconut=6)
         with pytest.raises(Exception):
             f4(coconut=1)

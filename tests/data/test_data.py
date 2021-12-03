@@ -96,7 +96,7 @@ class TestDataset:
 
             mds = ds[:3, ['y', 'z']]
             if t is Record:
-                assert mds == list(ds[:3, 1:])
+                assert list(mds) == list(ds[:3, 1:])
 
     def test_dataset_split_join(self):
         ds = Dataset(name="SomeDataset2", data=list(range(5)))
