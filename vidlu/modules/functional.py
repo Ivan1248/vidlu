@@ -1,4 +1,5 @@
 import typing as T
+from functools import partial
 
 import numpy as np
 import torch
@@ -267,3 +268,35 @@ def shuffle(x, dim):
     if not isinstance(dim, T.Sequence):
         dim = [dim]
     return x[[torch.randperm(s) if i in dim else np.s_[:] for i, s in enumerate(x.shape)]]
+
+
+def qkv(x, Wq, Wk, Wv):
+    mm = partial(torch.einsum, 'ntc, cd -> ntd')
+    return tuple(mm(x, W) for W in (Wq, Wk, Wv))
+
+
+def qkv_attention(q, k, v):
+    l = torch.einsum('ntd, nud -> ntu', q, k)
+    a = F.softmax(l, dim=-1)
+    return torch.einsum('ntu, nue -> nte', a, v)
+
+
+def attention(x, A):
+    return torch.einsum('ntu, nuc -> ntc', A, x)
+
+
+def qkv_self_attention(x, Wq, Wk, Wv):
+    q, k, v = qkv(x, Wq, Wk, Wv)
+    return qkv_attention(q, k, v)
+
+
+def multi_head_qkv_attention(q, k, v, Pqs, Pks, Pvs, Wo):
+    mm = partial(torch.einsum, 'ntc, cd -> ntd')
+    attn_outs = [qkv_attention(mm(q, Pq), mm(k, Pk), mm(v, Pv))
+                 for Pq, Pk, Pv in zip(Pqs, Pks, Pvs)]
+    return mm(torch.cat(attn_outs, dim=-1), Wo)
+
+
+def multi_head_qkv_self_attention(x, Pq, Pk, Pv, Pqs, Pks, Pvs, Wo):
+    q, k, v = qkv_self_attention(x, Pq, Pk, Pv)
+    return multi_head_qkv_attention(q, k, v, Pqs, Pks, Pvs, Wo)
