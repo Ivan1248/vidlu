@@ -43,8 +43,8 @@ class Array(torch.Tensor, Domain):
     def __new__(cls, obj):
         return obj[:].as_subclass(cls)
 
-    def check_validity(self):
-        pass
+    def check_validity(self, quick):
+        return True
 
     @classmethod
     def collate(cls, elements, general_collate=None):
@@ -56,16 +56,25 @@ class Spatial2D(Domain):
 
 
 class ArraySpatial2D(Array, Spatial2D):
-    def check_validity(self):
-        super().check_validity()
-        assert self.ndim in {3, 4}
-        assert self.min() >= 0 and self.max() <= 1
+    def check_validity(self, quick=False):
+        valid = super().check_validity(quick) and self.ndim in {3, 4}
+        if quick:
+            return valid
+        return valid and self.min() >= 0 and self.max() <= 1
 
 
 class Image(ArraySpatial2D):
-    def check_validity(self):
-        super().check_validity()
-        assert torch.is_floating_point(self)
+    # def __torch_function__(cls, func, types, args=(), kwargs=None):
+    #     result = super().__torch_function__(func, types, args=args, kwargs=kwargs)
+    #     try:
+    #         if result.shape[-3] > 4:
+    #             result = result.as_subclass(torch.Tensor)
+    #     except Exception:
+    #         pass
+    #     return result
+
+    def check_validity(self, quick=False):
+        return super().check_validity() and torch.is_floating_point(self)
 
 
 class HSVImage(ArraySpatial2D):
@@ -73,48 +82,60 @@ class HSVImage(ArraySpatial2D):
 
 
 class SegMap(ArraySpatial2D):
-    def check_validity(self):
-        super().check_validity()
-        assert not torch.is_floating_point(self)
+    def check_validity(self, quick=False):
+        return super().check_validity() and not torch.is_floating_point(self)
 
 
 class AABB(Spatial2D):
-    """Describes an axis-aligned bounding box.
+    """Represents an axis-aligned bounding box.
 
     The min and max attributes store horizontal-vertical coordinate pairs (x, y).
+    Bounds are considered to be on edges of the bounding box.
 
-    A bounding box that covers the first pixel has min=(0, 0), max=(1, 1), and size=(1, 1).
-    The center of the first pixel is at (0.5, 0.5).
-
-    Bounds are inclusive."""
-    __slots__ = 'min', 'size'
+    The center of the first pixel of an image is considered to be at (0.5, 0.5). A bounding box that
+    covers the first pixel of an image has min=(0, 0), max=(1, 1), and size=(1, 1) (size=(width, height).
+    """
+    __slots__ = 'min', 'max'
 
     def __init__(self, min, *, size=None, max=None):
-        warnings.warn("(x, y) vs (y, x), why is Torch HW and not WH")
         self.min = np.array(min)
-        self.size = np.array(max) - self.min if size is None else np.array(size)
+        self.max = self.min + np.array(size) if max is None else np.array(max)
 
     @property
-    def max(self):
-        return self.min + self.size
+    def size(self):
+        return self.max - self.min
 
     @property
     def center(self):
-        return self.min + self.size / 2
+        return (self.min + self.max) / 2
 
     def __repr__(self):
         return f'{type(self).__name__}({tuple(self.min)}, {tuple(self.max)})'
 
     def __eq__(self, other):
-        return np.all(self.min == other.min) and np.all(self.size == other.size)
+        return np.all(self.min == other.min) and np.all(self.max == other.max)
 
     def __add__(self, translation):
         if not isinstance(translation, np.ndarray):
             translation = np.array(translation)
-        return type(self)(min=self.min + translation, size=self.size)
+        return type(self)(min=self.min + translation, max=self.max + translation)
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    # def __rsub__(self, other):
+    #     return type(self)(min=other - self.min, max=other - self.max)
 
     def __mul__(self, scale):
-        return type(self)(min=self.min * scale, size=self.size * scale)
+        return type(self)(min=self.min * scale, max=self.max * scale)
+
+    __rmul__ = __mul__
+
+    def clip(self, min=None, max=None):
+        return type(self)(min=self.min.clip(min, max), max=self.max.clip(min, max))
+
+    def transpose(self):
+        return type(self)(min=list(reversed(self.min)), max=list(reversed(self.max)))
 
     @classmethod
     def collate(cls, elements):
@@ -141,13 +162,13 @@ class AABBsOnImage(list, AABBsOnImageCollection):
     def __repr__(self):
         return f"{type(self).__name__}({list.__repr__(self)}, shape={self.shape!r})"
 
-    def check_validity(self):
-        for x in self:
-            assert isinstance(x, AABB)
-        assert len(self.shape) == 2
+    def check_validity(self, quick=False):
+        return len(self.shape) == 2 and all(isinstance(x, AABB) for x in self)
 
     def map(self, func, shape=None):
-        return type(self)(map(func, self), shape=shape or self.shape)
+        if shape is None:
+            shape = self.shape
+        return type(self)(map(func, self), shape=shape)
 
 
 class ClassAABBsOnImage(dict, AABBsOnImageCollection):
@@ -161,44 +182,43 @@ class ClassAABBsOnImage(dict, AABBsOnImageCollection):
     def __repr__(self):
         return f"{type(self).__name__}({dict.__repr__(self)}, shape={self.shape!r})"
 
-    def check_validity(self):
-        for aabbs in self.values():
-            for x in aabbs:
-                assert isinstance(x, AABB)
-        assert len(self.shape) == 2
+    def check_validity(self, quick=False):
+        return (len(self.shape) == 2
+                and all(isinstance(x, AABB) for aabbs in self.values() for x in aabbs))
 
     def map(self, func, shape=None):
-        return type(self)({k: list(map(func, aabbs)) for k, aabbs in self.items()},
-                          shape=shape or self.shape)
+        if shape is None:
+            shape = self.shape
+        return type(self)({k: list(map(func, aabbs)) for k, aabbs in self.items()}, shape=shape)
 
 
 class ClassLabelLike(Array):
-    def check_validity(self):
-        super().check_validity()
-        assert self.ndim in {0, 1}
-        assert not torch.is_floating_point(self)
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim in {0, 1}
+                and not torch.is_floating_point(self))
 
 
 class ClassLabel(ClassLabelLike):
-    def check_validity(self):
-        super().check_validity()
-        assert self.ndim == 0
-        assert not torch.is_floating_point(self)
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and not torch.is_floating_point(self))
 
 
 class ClassDist(ClassLabelLike):
-    def check_validity(self):
-        super().check_validity()
-        assert self.ndim == 0
-        assert torch.is_floating_point(self)
-        assert torch.isclose(self.sum(), 1).item()
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and torch.is_floating_point(self)
+                and (quick or torch.isclose(self.sum(), 1).item()))
 
 
 class Float(Array, Domain):
-    def check_validity(self):
-        super().check_validity()
-        assert self.ndim == 0
-        assert torch.is_floating_point(self)
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and torch.is_floating_point(self))
 
 
 # Mapping from keys in snake case to Domain subclasses and vice versa
