@@ -114,6 +114,10 @@ class PertModel(E.Module):
                     f'Inputs of type {type(x)} are not supported by ({type(self)}).')
 
         result_tuple = super().__call__(inputs_tuple, **kwargs)
+
+        if not (tin := tuple(map(type, inputs_tuple))) == (tout := tuple(map(type, result_tuple))):
+            raise TypeError(f'Output types of do not match input types ({tin} != {tout}).')
+
         return result_tuple if inputs_tuple is inputs else type(inputs)(
             zip(inputs.keys(), result_tuple))
 
