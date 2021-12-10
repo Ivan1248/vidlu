@@ -542,12 +542,11 @@ class HDDCacheDataset(Dataset):
                 warnings.warn(f"Cache of the dataset {self.data_identifier} inconsistent." +
                               " Deleting old and creating new cache.")
                 self.delete_cache(keep_dir=True)
-                os.makedirs(self.cache_dir, exist_ok=False)
                 break
 
     def _get_example_cache_path(self, idx, field=None):
         path = f"{self.cache_dir}/{idx}"
-        return f"{path}_{field}.p" if field else path + '.p'
+        return Path(f"{path}_{field}.p" if field else path + '.p')
 
     def _get_example_or_field(self, idx, field=None):
         cache_path = self._get_example_cache_path(idx, field)
@@ -556,7 +555,7 @@ class HDDCacheDataset(Dataset):
                 with open(cache_path, 'rb') as cache_file:
                     return pickle.load(cache_file)
             except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError):
-                os.remove(cache_path)
+                cache_path.unlink()
         example = self.data[idx]
         if field is not None:
             example = example[field]
@@ -573,7 +572,10 @@ class HDDCacheDataset(Dataset):
     def delete_cache(self, keep_dir=False):
         if keep_dir:
             for x in self.cache_dir.iterdir():
-                shutil.rmtree(x)
+                if x.is_dir():
+                    shutil.rmtree(x)
+                else:
+                    x.unlink()
         else:
             shutil.rmtree(self.cache_dir)
 
