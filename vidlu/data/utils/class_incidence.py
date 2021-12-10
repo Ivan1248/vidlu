@@ -26,7 +26,7 @@ def segmentation_to_class_aabbs(segmentation, classes=None):
     classes = set(classes)
     class_to_aabbs = {c: [aabb_from_mask(m) for m in get_segment_masks(np.uint8(segmentation == c))]
                       for c in classes}
-    return ClassAABBsOnImage(class_to_aabbs, shape=tuple(segmentation.shape))
+    return ClassAABBsOnImage(class_to_aabbs, shape=list(reversed(segmentation.shape)))
 
 
 def _example_seg_class_info(example):
