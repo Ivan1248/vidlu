@@ -109,6 +109,10 @@ class AABB(Spatial2D):
     def center(self):
         return (self.min + self.max) / 2
 
+    @property
+    def area(self):
+        return np.prod(self.size)
+
     def __repr__(self):
         return f'{type(self).__name__}({tuple(self.min)}, {tuple(self.max)})'
 
@@ -123,7 +127,7 @@ class AABB(Spatial2D):
     def __sub__(self, other):
         return self + (-other)
 
-    # def __rsub__(self, other):
+    # def __rsub__(self, other):  # error
     #     return type(self)(min=other - self.min, max=other - self.max)
 
     def __mul__(self, scale):
@@ -136,6 +140,13 @@ class AABB(Spatial2D):
 
     def transpose(self):
         return type(self)(min=list(reversed(self.min)), max=list(reversed(self.max)))
+
+    def intersect(self, other, return_if_invalid=False):
+        result = type(self)(min=np.maximum(self.min, other.min),
+                            max=np.minimum(self.max, other.max))
+        if return_if_invalid:
+            return result
+        return result if result.size.min() >= 0 else None
 
     @classmethod
     def collate(cls, elements):
