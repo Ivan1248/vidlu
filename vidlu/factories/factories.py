@@ -237,29 +237,32 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
     if model_name[0] in "'\"":  # torch.hub
-        return factory_eval(f"torch.hub.load({model_str})")
-    elif hasattr(models, model_name):
-        model_f = getattr(models, model_name)
+        print(input_adapter_str)
+        assert input_adapter_str == 'id'
+        model = factory_eval(f"torch.hub.load({model_str})")
     else:
-        model_f = factory_eval(model_name, namespace)
-    model_class = model_f
+        if hasattr(models, model_name):
+            model_f = getattr(models, model_name)
+        else:
+            model_f = factory_eval(model_name, namespace)
+        model_class = model_f
 
-    argtree = defaults.get_model_argtree_for_problem(model_f, problem)
-    if len(argtree_arg) != 0:
-        argtree.update(factory_eval(f"t({argtree_arg[0]})", namespace))
-    model_f = argtree.apply(model_f)
-    input_adapter = get_input_adapter(
-        input_adapter_str, data_stats=(None if prep_dataset is None
-                                       else prep_dataset.info['pixel_stats']))
-    _print_args_messages('Model', model_class, model_f, {**argtree, 'input_adapter': input_adapter},
-                         verbosity=verbosity)
-    if "input_adapter" in vuf.params(model_f):
-        model = model_f(input_adapter=input_adapter)
-    else:
-        model = model_f()
-        if input_adapter_str != 'id':
-            model.register_forward_pre_hook(lambda m, x: input_adapter(*x))
-
+        argtree = defaults.get_model_argtree_for_problem(model_f, problem)
+        if len(argtree_arg) != 0:
+            argtree.update(factory_eval(f"t({argtree_arg[0]})", namespace))
+        model_f = argtree.apply(model_f)
+        input_adapter = get_input_adapter(
+            input_adapter_str, data_stats=(None if prep_dataset is None
+                                           else prep_dataset.info['pixel_stats']))
+        _print_args_messages('Model', model_class, model_f,
+                             {**argtree, 'input_adapter': input_adapter},
+                             verbosity=verbosity)
+        if "input_adapter" in vuf.params(model_f):
+            model = model_f(input_adapter=input_adapter)
+        else:
+            model = model_f()
+            if input_adapter_str != 'id':
+                model.register_forward_pre_hook(lambda m, x: input_adapter(*x))
     build_and_init_model(model, init_input, device)
     model.eval()
 
