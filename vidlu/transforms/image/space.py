@@ -18,8 +18,15 @@ from vidlu.modules.utils import func_to_module_class
 @vectorize
 def resize(x, shape=None, scale_factor=None, mode='nearest', align_corners=None):
     additional_dims = (None,) * (4 - len(x.shape))  # must be tuple, empty list doesn't work
-    return nnF.interpolate(x[additional_dims], size=shape, scale_factor=scale_factor, mode=mode,
-                           align_corners=align_corners)[(0,) * len(additional_dims)]
+    if isinstance(x, torch.Tensor):
+        return nnF.interpolate(x[additional_dims], size=shape, scale_factor=scale_factor, mode=mode,
+                               align_corners=align_corners)[(0,) * len(additional_dims)]
+    scale = shape / x.shape
+    if isinstance(x, dt.AABBsOnImageCollection):
+        return x.map(lambda bb: bb * scale, shape=shape)
+    elif isinstance(x, dt.AABB):
+        return x * scale
+    raise TypeError(f"Unsupported type: {type(x)}.")
 
 
 Resize = func_to_module_class(resize)
@@ -56,13 +63,11 @@ def pad(x, padding, mode='constant', value=0):
                 (0,) * len(additional_dims)]
     elif isinstance(x, dt.AABB):
         return x + np.array([le, to])
-    elif isinstance(x, (dt.AABBsOnImage, dt.ClassAABBsOnImage)):
-        breakpoint()
-        "wh vs hw"
-        func = partial(pad, padding=padding, mode=mode, value=value)
-        return type(x.map(func, shape=x.shape + np.array([le + ri, to + bo])))
+    elif isinstance(x, dt.AABBsOnImageCollection):
+        return x.map(lambda bb: bb + np.array([le, to]),
+                     shape=x.shape + np.array([le + ri, to + bo]))
     else:
-        raise TypeError(f"Unsupported type {type(x).__name__}.")
+        raise TypeError(f"Unsupported type: {type(x).__name__}.")
 
 
 Pad = func_to_module_class(pad)
@@ -102,13 +107,13 @@ def crop(x, location: tuple, shape: tuple):
         An array containing the cropped image.
     """
     (y0, x0), (h, w) = location, shape
+    aabb = dt.AABB(min=(x0, y0), size=(w, h))
     if isinstance(x, torch.Tensor):
         return x[..., y0:y0 + h, x0:x0 + w]
     elif isinstance(x, dt.AABB):
-        raise NotImplementedError("clipping")
-        return x - np.array([x0, y0])
-    elif isinstance(x, dt.AABBsOnImage):
-        return x.map(partial(crop, location=location, shape=shape))
+        return x.clip(max=aabb.max) - aabb.min
+    elif isinstance(x, dt.AABBsOnImageCollection):
+        return x.map(partial(crop, location=location, shape=shape), shape=aabb.size)
     else:
         raise TypeError(f"Unsupported type {type(x).__name__}.")
 
@@ -128,6 +133,9 @@ def paste_crop(x, crop, location):
 
 @vectorize
 def hflip(x: Tensor) -> Tensor:
+    if isinstance(x, dt.ClassAABBsOnImage):
+        return x.map(lambda bb: type(bb)(min=[x.shape[0] - bb.min[0], bb.min[1]],
+                                         max=[x.shape[0] - bb.max[0], bb.max[1]]))
     return x.flip(-1)  # CHW
 
 
@@ -160,7 +168,11 @@ def random_crop_args(x: T.Union[Tensor, T.Sequence], shape, overflow=0, rng=np.r
     return dict(location=num.round_to_int(p0), shape=feasible_shape)
 
 
-def random_crop(x: T.Union[Tensor, T.Sequence], shape, overflow=0, rng=np.random):
+def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.random):
+    return crop(x, **random_crop_args(x, shape, overflow=overflow, rng=rng))
+
+
+def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.random):
     return crop(x, **random_crop_args(x, shape, overflow=overflow, rng=rng))
 
 
@@ -189,24 +201,26 @@ def _sample_random_scale(min, max, dist: ScaleDistArg = "uniform", rng=np.random
 
 
 def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
-                      align_corners=None, scale_dist: ScaleDistArg = "uniform", rng=np.random):
+                      align_corners=None, scale_dist: ScaleDistArg = "uniform", rng=np.random,
+                      rand_crop=random_crop):
     check_argument_types()
 
     multiple = isinstance(x, tuple)
     xs = x if multiple else (x,)
 
     input_shape = xs[0].shape[-2:]
-    if not all(a.shape[-2:] == input_shape for a in xs):
+    if not all(tuple(a.shape[-2:] if isinstance(a, torch.Tensor) else a.shape[::-1]) == input_shape
+               for a in xs if isinstance(a, dt.Spatial2D)):
         raise RuntimeError("All inputs must have the same height and width.")
 
     scale = _sample_random_scale(min_scale, max_scale, dist=scale_dist, rng=rng)
 
-    xs = random_crop(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
+    xs = rand_crop(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
 
     shape = [d for d in
              np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int))]
-    xs = tuple(resize_segmentation(x, shape=shape) if isinstance(x, dt.SegMap)
-               else resize(x, shape=shape, mode='bilinear', align_corners=align_corners)
+    xs = tuple(resize_segmentation(x, shape=shape) if isinstance(x, dt.SegMap) else
+               resize(x, shape=shape, mode='bilinear', align_corners=align_corners)
                for x in xs)
     return xs if multiple else xs[0]
 
