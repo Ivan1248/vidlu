@@ -134,6 +134,13 @@ class Event:
             handler(*args, **kwargs)
 
 
+class HookEvent(Event):
+    def __call__(self, ctx):
+        for hook in self.handlers:
+            ctx = hook(ctx)
+        return ctx
+
+
 # Console ##########################################################################################
 
 def try_input(default=None):
