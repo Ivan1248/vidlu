@@ -43,7 +43,7 @@ def pds_add_info_lazily(parted_dataset, cache_dir, name, source_ds=None):
 
 def compute_pixel_stats(dataset, div255=False, progress_bar=False):
     pbar = partial(tqdm, desc='compute_pixel_stats') if progress_bar else lambda x: x
-    images = (np.array(r) for r in pbar(SingleDataLoader(dataset, num_workers=4)))
+    images = (np.array(r.image) for r in pbar(SingleDataLoader(dataset, num_workers=4)))
     mvn = np.array([(x.mean((0, 1)), x.var((0, 1)), np.prod(x.shape[:2])) for x in images])
     means, vars_, ns = [mvn[:, i] for i in range(3)]  # means, variances, pixel counts
     ws = ns / ns.sum()  # image weights (pixels in image / pixels in all images)
