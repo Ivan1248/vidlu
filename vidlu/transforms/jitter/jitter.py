@@ -109,7 +109,7 @@ class SegRandCropHFlip(SegmentationJitter):
 
 class SegRandScaleCropPadHFlip(pert.PertModel):
     domain = dt.Spatial2D
-    supported = (dt.Image, dt.SegMap)
+    supported = (dt.Image, dt.SegMap, dt.ClassAABBsOnImage)
 
     def __init__(self,
                  shape: tuple,
@@ -125,21 +125,21 @@ class SegRandScaleCropPadHFlip(pert.PertModel):
         self.__dict__.update(self.get_args(locals()))
 
     def forward(self, inputs):
-        tindices = {ind: i for i, ind in
-                    enumerate([i for i, x in enumerate(inputs) if isinstance(x, dt.Spatial2D)])}
-        tran = tuple(inputs[i] for i in tindices.values())
-        tran = vti.RandomScaleCrop(
+        filt = {ind: i for i, ind in
+                enumerate([i for i, x in enumerate(inputs) if isinstance(x, dt.Spatial2D)])}
+        d = tuple(inputs[i] for i in filt)
+        d = vti.RandomScaleCrop(
             shape=self.shape, max_scale=self.max_scale, min_scale=self.min_scale,
             overflow=self.overflow, align_corners=self.align_corners,
-            scale_dist=self.scale_dist)(tran)
-        tran = vti.RandomHFlip()(tran)
+            scale_dist=self.scale_dist)(d)
+        d = vti.RandomHFlip()(d)
         pad = partial(vti.pad_to_shape, shape=self.shape)
-        tran = [pad(x, value=self.image_pad_value) if isinstance(x, dt.Image) else
-                pad(x, value=self.label_pad_value) if isinstance(x, dt.SegMap) else
-                pad(x, value=0) if isinstance(x, dt.Spatial2D) else
-                x
-                for x in tran]
-        return tuple(tran[tindices[i]] if i in tindices else x for i, x in enumerate(inputs))
+        d = [pad(x, value=self.image_pad_value) if isinstance(x, dt.Image) else
+             pad(x, value=self.label_pad_value) if isinstance(x, dt.SegMap) else
+             pad(x, value=0) if isinstance(x, dt.Spatial2D) else
+             x
+             for x in d]
+        return tuple(d[filt[i]] if i in filt else x for i, x in enumerate(inputs))
 
     def __repr__(self):
         return _args_repr(self)
