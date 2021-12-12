@@ -17,12 +17,12 @@ class Initializer:
         self.__dict__ = dict(state)
 
     def register_as_pre_forward_hook(self, module, repeat=False):
-        def hook(module, input, output):
+        def hook(module, input):
             if not repeat:
                 handle.remove()
             self(module, input)
 
-        handle = module.register_forward_hook(hook)
+        handle = module.register_forward_pre_hook(hook)
         return handle
 
 
@@ -67,7 +67,7 @@ class MultiInit(Initializer):
         return self[item]
 
     def register_as_pre_forward_hook(self, module, repeat=False):
-        def hook(module, input, output):
+        def hook(module, input):
             if not repeat:
                 handle.remove()
             if isinstance(self.initializers, T.Mapping):
@@ -77,5 +77,5 @@ class MultiInit(Initializer):
                 for init in self.initializers:
                     init.register_as_pre_forward_hook(module)
 
-        handle = module.register_forward_hook(hook)
+        handle = module.register_forward_pre_hook(hook)
         return handle
