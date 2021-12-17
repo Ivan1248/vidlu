@@ -12,7 +12,7 @@ class LRScheduler(lr_scheduler._LRScheduler):
 
 
 class ScalableMultiStepLR(lr_scheduler.MultiStepLR):
-    """Set the learning rate of each parameter group to the initial lr decayed
+    """Sets the learning rate of each parameter group to the initial lr decayed
     by gamma once the number of epoch reaches one of the milestones. When
     last_epoch=-1, sets initial lr as lr.
 

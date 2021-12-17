@@ -275,12 +275,16 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         before the first `forward` call. The optional `post_build` method is
         called after the first forward call.
 
+        Hooks (including "forward-pre" hooks) behave normally because they are
+        called called after the `build` method is run. However sumbodules may
+        not be built at the time when "forward-pre" hooks are run.
+
         The second time `__call__` is called, a check is performed whether the
         input has been in-place modified by a parallel node and marks the output
         for subsequent checks.
 
         Example:
-            >>> h: Module = SomeModel()
+            >>> h: Module = SomeModule()
             >>> x = torch.randn((1, 3, 16, 16))
             >>> y = h(x)  # call with shape inference with `_init_call`
             >>> assert h.is_built()
@@ -320,7 +324,7 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         if device is not None:
             self.to(device)
         if type(self).post_build != Module.post_build:
-            result = super().__call__(*args, **kwargs)
+            result = super().__call__(*args, **kwargs)  # hooks are not called before building
             if self.post_build(*args, **kwargs):
                 return result
         return super().__call__(*args, **kwargs)
