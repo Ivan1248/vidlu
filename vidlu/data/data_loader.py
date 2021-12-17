@@ -24,8 +24,9 @@ class DataLoader(tud.DataLoader):
 
 class SingleDataLoader(tud.DataLoader):
     def __init__(self, dataset, num_workers=0, pin_memory=False, drop_last=False, timeout=0,
-                 multiprocessing_context=None, *, prefetch_factor=4, persistent_workers=False):
-        warnings.warn("uncomment DataLoader arguments")
+                 multiprocessing_context=None, *, prefetch_factor=None, persistent_workers=False):
+        if prefetch_factor is None:
+            prefetch_factor = 2 if num_workers == 0 else 4
         super().__init__(dataset, batch_size=1, collate_fn=lambda x: x, num_workers=num_workers,
                          pin_memory=pin_memory, drop_last=drop_last, timeout=timeout,
                          multiprocessing_context=multiprocessing_context,
