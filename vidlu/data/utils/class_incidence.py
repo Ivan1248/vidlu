@@ -36,14 +36,13 @@ def _example_seg_class_info(example):
                 class_aabbs=segmentation_to_class_aabbs(seg, classes=present_classes))
 
 
-def seg_class_info(ds):
+def seg_class_info(ds, num_workers=4):
     # Based on code from Marin Oršić.
     class_freqs = np.zeros((len(ds), ds.info.class_count + 1), dtype=np.uint64)
     class_segment_boxes = []
 
     ds_infos = ds.map(_example_seg_class_info)
-
-    for i, d in enumerate(tqdm(SingleDataLoader(ds_infos, num_workers=4), total=len(ds),
+    for i, d in enumerate(tqdm(SingleDataLoader(ds_infos, num_workers=num_workers), total=len(ds),
                                desc="segmentation_class_info")):
         class_freqs[i, d['classes']] += d['counts'].astype(np.uint64)
         class_segment_boxes.append(d['class_aabbs'])
