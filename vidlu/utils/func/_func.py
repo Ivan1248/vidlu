@@ -344,14 +344,20 @@ def keyfilter(func, d, factory=dict):
 
 # Decorators #######################################################################################
 
-def vectorize(func):
-    @functools.wraps(func)
-    def wrapper(x, *a, **k):
-        if isinstance(x, tuple):
-            return tuple(func(x_, *a, **k) for x_ in x)
-        return func(x, *a, **k)
+def vectorize(func=None, /, *, n=1):
+    def wrap(func):
+        @functools.wraps(func)
+        def wrapper(*a, **k):
+            if isinstance(a[0], tuple):
+                a_multi, a_single = a[:n], a[n:]
+                return tuple(func(*am, *a_single, **k) for am in zip(*a_multi))
+            return func(*a, **k)
 
-    return wrapper
+        return wrapper
+
+    if func is None:
+        return wrap
+    return wrap(func)
 
 
 def type_checked(func):
