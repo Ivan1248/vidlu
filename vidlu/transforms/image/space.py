@@ -209,7 +209,7 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
     xs = x if multiple else (x,)
 
     input_shape = xs[0].shape[-2:]
-    if not all(tuple(a.shape[-2:] if isinstance(a, torch.Tensor) else a.shape[::-1]) == input_shape
+    if not all(tuple(a.shape[-2:] if isinstance(a, torch.Tensor) else a.shape) == input_shape
                for a in xs if isinstance(a, dt.Spatial2D)):
         raise RuntimeError("All inputs must have the same height and width.")
 
