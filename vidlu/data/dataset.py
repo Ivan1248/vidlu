@@ -646,11 +646,12 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
             except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError,
                     ValueError):
                 self.cache_file.unlink()
-                raise
-            if objects_equal(check, self._compute_check_data()):
-                return info_cache
+                warnings.warn("Error loading cache. The cache file will have to be recreated.")
             else:
-                self.cache_file.unlink()
+                if objects_equal(check, self._compute_check_data()):
+                    return info_cache
+                else:
+                    self.cache_file.unlink()
         info_cache = super()._compute()
         check = self._compute_check_data()
         try:  # store
