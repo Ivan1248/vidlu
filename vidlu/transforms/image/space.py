@@ -26,7 +26,7 @@ def resize(x, shape=None, scale_factor=None, mode='nearest', align_corners=None)
         return x.map(lambda bb: bb * scale, shape=shape)
     elif isinstance(x, dt.AABB):
         return x * scale
-    raise TypeError(f"Unsupported type: {type(x)}.")
+    raise TypeError(f"Unsupported type {type(x)}.")
 
 
 Resize = func_to_module_class(resize)
@@ -67,7 +67,7 @@ def pad(x, padding, mode='constant', value=0):
         return x.map(lambda bb: bb + np.array([le, to]),
                      shape=x.shape + np.array([le + ri, to + bo]))
     else:
-        raise TypeError(f"Unsupported type: {type(x).__name__}.")
+        raise TypeError(f"Unsupported type {type(x).__name__}.")
 
 
 Pad = func_to_module_class(pad)
@@ -94,8 +94,7 @@ def pad_to_shape(x, shape, mode='constant', value=0):
 PadToShape = func_to_module_class(pad_to_shape)
 
 
-@vectorize
-def crop(x, location: tuple, shape: tuple):
+def crop(x, aabb):
     """Crops an image.
 
     Args:
@@ -106,29 +105,17 @@ def crop(x, location: tuple, shape: tuple):
     Returns:
         An array containing the cropped image.
     """
-    (y0, x0), (h, w) = location, shape
-    aabb = dt.AABB(min=(x0, y0), size=(w, h))
     if isinstance(x, torch.Tensor):
-        return x[..., y0:y0 + h, x0:x0 + w]
+        return x[..., aabb.min[0]:aabb.max[0], aabb.min[1]:aabb.max[1]]
     elif isinstance(x, dt.AABB):
         return x.clip(max=aabb.max) - aabb.min
     elif isinstance(x, dt.AABBsOnImageCollection):
-        return x.map(partial(crop, location=location, shape=shape), shape=aabb.size)
+        return x.map(partial(crop, aabb), shape=aabb.size)
     else:
         raise TypeError(f"Unsupported type {type(x).__name__}.")
 
 
 Crop = func_to_module_class(crop)
-
-
-def paste_crop(x, crop, location):
-    (y0, x0), (h, w) = location, crop.shape[-2:]
-    if isinstance(x, torch.Tensor):
-        y = x.clone()
-        y[..., y0:y0 + h, x0:x0 + w] = crop
-        return y
-    else:
-        raise TypeError(f"Unsupported type {type(x).__name__}.")
 
 
 @vectorize
@@ -156,24 +143,41 @@ def _resolve_padding(input_padding: T.Union[Number, str, T.Sequence], shape: T.S
     return np.array(result)
 
 
-def random_crop_args(x: T.Union[Tensor, T.Sequence], shape, overflow=0, rng=np.random):
-    input_shape, shape = np.array(x[0].shape[-2:]), np.array(shape)
+def random_crop_box(image_shape, shape, overflow=0, rng=np.random):
+    input_shape, shape = np.array(image_shape[-2:]), np.array(shape)
     overflow = _resolve_padding(overflow, shape)
     p0 = rng.rand(2) * (input_shape - shape) - overflow / 2
-    p1 = p0 + shape
-    p0 = np.maximum(p0, 0, out=p0)  # in-place
-    p1 = np.minimum(p1, input_shape, out=p1)
+    return dt.AABB(min=p0, size=shape).clip(min=(0, 0), max=input_shape).map(num.round_to_int)
 
-    feasible_shape = num.round_to_int(p1 - p0)
-    return dict(location=num.round_to_int(p0), shape=feasible_shape)
+
+def random_overlapping_crop_box(image_shape, shape, aabbs, overflow=0,
+                                min_overlap_proportion=1e-6, rng=np.random):
+    areas = np.array([b.area for b in aabbs])
+    if len(aabbs) == 0 or sum(areas) == 0:
+        return random_crop_box(image_shape, shape, overflow=overflow, rng=rng)
+    for _ in range(100):
+        result = random_crop_box(image_shape, shape, overflow=overflow, rng=rng)
+        overlaps = np.array([result.intersect(b).area for b in aabbs])
+        if np.max(np.nan_to_num(overlaps / areas)) > min_overlap_proportion:
+            break
+    return result
+
+
+@vectorize(n=2)
+def rare_class_random_overlapping_crop_box(x: T.Union[Tensor, T.Sequence], class_to_aabbs, shape,
+                                           rare_classes, overflow=0,
+                                           min_overlap_proportion=1e-6, rng=np.random):
+    aabbs = []
+    for c in rare_classes:
+        aabbs.extend(class_to_aabbs[c])
+    return random_overlapping_crop_box(x, shape=shape, overflow=overflow, aabbs=aabbs,
+                                       min_overlap_proportion=min_overlap_proportion, rng=rng)
 
 
 def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.random):
-    return crop(x, **random_crop_args(x, shape, overflow=overflow, rng=rng))
-
-
-def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.random):
-    return crop(x, **random_crop_args(x, shape, overflow=overflow, rng=rng))
+    if isinstance(x, tuple):
+        image = next(a for a in x if isinstance(a, dt.ArraySpatial2D))
+    return vectorize(crop)(x, random_crop_box(image.shape, shape, overflow=overflow, rng=rng))
 
 
 RandomCrop = func_to_module_class(random_crop)
