@@ -1,6 +1,4 @@
 import typing as T
-import warnings
-import collections
 
 import torch
 from torch.utils.data.dataloader import default_collate as torch_collate
@@ -89,15 +87,20 @@ class SegMap(ArraySpatial2D):
 class AABB(Spatial2D):
     """Represents an axis-aligned bounding box.
 
-    The min and max attributes store horizontal-vertical coordinate pairs (x, y).
     Bounds are considered to be on edges of the bounding box.
 
     The center of the first pixel of an image is considered to be at (0.5, 0.5). A bounding box that
-    covers the first pixel of an image has min=(0, 0), max=(1, 1), and size=(1, 1) (size=(width, height).
+    covers the first pixel of an image has min=(0, 0), max=(1, 1), and size=(1, 1)
+    (size=(height, width).
+
+    Recommended convention. The min and max attributes store row-column/height-width coordinate
+    pairs. This corresponds to the shapes of arrays representing images and matrices in PyTorch,
+    OpenCV and ImageIO, but does not correspond to the `size` attribute of PIL `Image`s and OpenCV
+    `Point`s.
     """
     __slots__ = 'min', 'max'
 
-    def __init__(self, min, *, size=None, max=None):
+    def __init__(self, min, *, max=None, size=None):
         self.min = np.array(min)
         self.max = self.min + np.array(size) if max is None else np.array(max)
 
@@ -114,7 +117,7 @@ class AABB(Spatial2D):
         return np.prod(self.size)
 
     def __repr__(self):
-        return f'{type(self).__name__}({tuple(self.min)}, {tuple(self.max)})'
+        return f'{type(self).__name__}(min={tuple(self.min)}, max={tuple(self.max)})'
 
     def __eq__(self, other):
         return np.all(self.min == other.min) and np.all(self.max == other.max)
@@ -134,6 +137,9 @@ class AABB(Spatial2D):
         return type(self)(min=self.min * scale, max=self.max * scale)
 
     __rmul__ = __mul__
+
+    def map(self, func):
+        return AABB(min=func(self.min), max=func(self.max))
 
     def clip(self, min=None, max=None):
         return type(self)(min=self.min.clip(min, max), max=self.max.clip(min, max))
