@@ -185,6 +185,7 @@ semisup_cons_tps20_seg = TrainerConfig(
 )
 
 semisup_cons_cutmix = TrainerConfig(
+    te.SemisupVAT,
     attack_f=partial(cutmix_attack_21, step_count=0, loss=losses.kl_div_ll,
                      output_to_target=lambda x: x),
     train_step=ts.SemisupVATStep(),
