@@ -55,8 +55,9 @@ class BaseStep:
 @torch.no_grad()
 def _prepare_sup_batch(batch):
     if isinstance(batch, BatchTuple):
-        warn("The batch (BatchTuple instance) consists of {len(batch)} batches.")
+        warn(f"The batch (BatchTuple instance) consists of {len(batch)} batches.")
         return tuple(torch.cat(batches, 0) if isinstance(batches[0], torch.Tensor) else
+                     sum(batches, []) if isinstance(batches[0], list) else
                      batches / (0 / 0)
                      for batches in zip(*batch))
     else:
