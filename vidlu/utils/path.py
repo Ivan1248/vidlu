@@ -59,7 +59,10 @@ def get_size(path):
     for dirpath, dirnames, filenames in os.walk(path):
         for f in filenames:
             fp = os.path.join(dirpath, f)
-            total_size += os.path.getsize(fp)
+            try:
+                total_size += os.path.getsize(fp)
+            except FileNotFoundError as e:  # the file has just been deleted
+                pass
     return total_size
 
 
