@@ -76,20 +76,27 @@ def make_experiment(args, dirs):
 
 
 @torch.no_grad()
-def eval_with_pop_stats(exp, stats_dataset):
+def approximate_pop_stats(exp, stats_dataset):
     """Evaluates with an approximation of populations stats in batchnorms"""
+
+    def hook(module, input):
+        module.training = True
+
+    hooks = []
     with vtu.preserve_state(exp.trainer.model):
         for m in exp.trainer.model.modules():
             if "Norm" in type(m).__name__ and hasattr(m, "track_running_stats"):
+                m.reset_running_stats()
+                # m.num_batches_tracked.zero_()
                 m.momentum = None
                 m.track_running_stats = True
-                m.num_batches_tracked *= 0
-        exp.trainer.model.train()
+                m.training = True
+                hooks.append(m.register_forward_pre_hook(hook))
         print(f'\nComputing approximate population statistics...')
         exp.trainer.eval(stats_dataset)
+        for h in hooks:
+            h.remove()
         exp.trainer.model.eval()
-        print(f'\nEvaluating using approximate population statistics...')
-        exp.trainer.eval(exp.data.test)
 
 
 def train(args):
@@ -123,10 +130,13 @@ def train(args):
         exp.trainer.train(*training_datasets.values(), restart=False)
 
         if args.eval_with_pop_stats:
-            eval_with_pop_stats(exp, exp.data.train)
+            approximate_pop_stats(exp, exp.data.train)
+            print(f'\nEvaluating using approximate population statistics...')
+            exp.trainer.eval(exp.data.test)
+
         log_run('done', str(exp.cpman.id_to_perf))
 
-        if not args.no_train_eval:
+        if not args.no_train_eval and args.train_eval:
             for name, ds in training_datasets.items():
                 print(f'\nEvaluating on training data ({name})...')
                 try:
@@ -167,8 +177,11 @@ def test(args):
         module_name, proc_name, *_ = *module_arg.split(':'), None
         if proc_name is None:
             proc_name = 'run'
-
-        module = importlib.import_module(module_name)
+        from vidlu.factories import extensions
+        if module_name in extensions:
+            module = extensions[module_name]
+        else:
+            module = importlib.import_module(module_name)
         if ',' in proc_name:
             proc_name, args_str = proc_name.split(",", 1)
             result = eval(f"{proc_name}({args_str})", vars(module), locals())
@@ -219,6 +232,8 @@ def add_standard_arguments(parser, func):
                         help="Skip testing before training.")
     parser.add_argument("--no_train_eval", action='store_true',
                         help="No evaluation on the training set.")
+    parser.add_argument("--train_eval", action='store_true',
+                        help="Evaluation on the training set.")
     parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: int(time()) %% 100.")
     parser.add_argument("--deterministic", action='store_true',
