@@ -15,11 +15,11 @@ import multiprocessing
 import datetime as dt
 from pathlib import Path
 import shutil
+
 from torchvision.datasets.utils import download_and_extract_archive
 import dataclasses as dc
 from functools import cached_property
 from enum import Enum
-from functools import partial
 
 import numpy as np
 from torch.utils.data.dataset import ConcatDataset
@@ -30,6 +30,7 @@ import vidlu.utils.path as vup
 from vidlu.utils.misc import slice_len, query_user, pickle_sizeof
 from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
+from vidlu.utils.storage import DefaultCompressor
 
 from .record import Record
 
@@ -506,15 +507,18 @@ class HDDAndRAMCacheDataset(Dataset):
 def objects_equal(a, b):
     """pickle.dumps does not always give the same results and it seems to be more likely to give the
     same result if elements are compared instead of whole objects at once."""
-    if type(a) is not type(b):
+    import PIL.Image as pimg
+    if type(a) is not type(b) and not (isinstance(a, pimg.Image) and isinstance(b, pimg.Image)):
         return False
     if isinstance(a, (Record, T.Mapping)):
-        a_items, b_items = a.items(), b.items()
-    elif isinstance(a, T.Sequence):
-        a_items, b_items = a, b
-    else:
-        a_items, b_items = [a], [b]
-    return all(pickle.dumps(ai) == pickle.dumps(bi) for ai, bi in zip(a_items, b_items))
+        return (a.keys() == b.keys()) and all(objects_equal(a[k], b[k]) for k in a.keys())
+    elif isinstance(a, (list, tuple)):
+        return all(objects_equal(ai, bi) for ai, bi in zip(a, b))
+    elif isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
+        return np.all(a == b)
+    elif isinstance(a, pimg.Image) and isinstance(b, pimg.Image):
+        return a.mode == b.mode and objects_equal(np.array(a), np.array(b))
+    return pickle.dumps(a) == pickle.dumps(b)
 
 
 class HDDCacheDataset(Dataset):
@@ -522,7 +526,7 @@ class HDDCacheDataset(Dataset):
     __slots__ = ('cache_dir', 'separate_fields', 'keys')
 
     def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=4,
-                 **kwargs):
+                 compressor_f=DefaultCompressor, **kwargs):
         super().__init__(name='cache_hdd' + ('_s' if separate_fields else ''), data=dataset,
                          data_change=False, **kwargs)
         self.cache_dir = to_valid_path(Path(cache_dir) / self.data_identifier)
@@ -530,6 +534,7 @@ class HDDCacheDataset(Dataset):
         if len(dataset) == 0:
             warnings.warn(f"The dataset {dataset} is empty.")
             return
+        self.compressor = compressor_f()
         if separate_fields:
             if not isinstance(dataset[0], Record):
                 raise ValueError(
@@ -549,20 +554,38 @@ class HDDCacheDataset(Dataset):
         path = f"{self.cache_dir}/{idx}"
         return Path(f"{path}_{field}.p" if field else path + '.p')
 
-    def _get_example_or_field(self, idx, field=None):
+    def _save(self, cache_path, obj):
+        with open(cache_path, 'wb') as cache_file:
+            cobj = self.compressor.compress(obj)
+            pickle.dump(cobj, cache_file, protocol=4)
+
+    def _load(self, cache_path):
+        with open(cache_path, 'rb') as cache_file:
+            cobj = pickle.load(cache_file)
+            return self.compressor.decompress(cobj)
+
+    def _get_example_or_field(self, idx, field=None, check=False):
         cache_path = self._get_example_cache_path(idx, field)
         if os.path.exists(cache_path):
             try:
-                with open(cache_path, 'rb') as cache_file:
-                    return pickle.load(cache_file)
-            except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError):
-                cache_path.unlink()
-        example = self.data[idx]
+                return self._load(cache_path)
+            except (
+                    PermissionError, TypeError, EOFError, AttributeError,
+                    pickle.UnpicklingError) as e:
+                print(f"HDDCacheDataset dataset cache loading error: {e}. File: {cache_path}")
+                try:
+                    cache_path.unlink()
+                except FileNotFoundError as e:
+                    pass
+                return self._get_example_or_field(idx, field, check=True)
+
+        obj = self.data[idx]
         if field is not None:
-            example = example[field]
-        with open(cache_path, 'wb') as cache_file:
-            pickle.dump(example, cache_file, protocol=4)
-        return example
+            obj = obj[field]
+        self._save(cache_path, obj)
+        if check:
+            self._load(cache_path)
+        return obj
 
     def get_example(self, idx):
         if self.separate_fields:  # TODO: improve for small non-lazy fields

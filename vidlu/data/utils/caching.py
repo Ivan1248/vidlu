@@ -76,7 +76,7 @@ def _get_training_dataset(parted_dataset):
 def add_pixel_stats_to_info_lazily(parted_dataset, cache_dir):
     stats_ds = _get_training_dataset(parted_dataset)
     ds_with_info = stats_ds.info_cache_hdd(NameDict(pixel_stats=_compute_pixel_stats_d), cache_dir,
-                                           simplify_dataset=lambda ds: ds[:16])
+                                           simplify_dataset=lambda ds: ds[:4])
 
     def cache_transform(ds):
         return ds.info_cache(
@@ -90,7 +90,7 @@ def add_segmentation_class_info_lazily(parted_dataset, cache_dir):
         if 'seg_map' not in ds[0].keys():
             return ds
         ds = ds.info_cache_hdd(NameDict(seg_class_info=seg_class_info), cache_dir, recompute=False,
-                               simplify_dataset=lambda ds: ds[:16])
+                               simplify_dataset=lambda ds: ds[:4])
         return ds.enumerate().map_unpack(
             lambda i, r: Record(r,
                                 class_seg_boxes=ds.info.seg_class_info['class_segment_boxes'][i]))
@@ -108,6 +108,7 @@ def cache_data_lazily(parted_dataset, cache_dir, min_free_space=20 * 2 ** 30):
         size = len(ds) * elem_size
         free_space = shutil.disk_usage(cache_dir).free
         cached_size = path.get_size(ds_cached.cache_dir)
+
         if cached_size > size * 0.1 or free_space + cached_size - size >= min_free_space:
             return ds_cached
         else:

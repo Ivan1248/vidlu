@@ -10,7 +10,7 @@ from typeguard import check_argument_types
 
 from vidlu.utils.path import create_file_atomic
 from vidlu.utils.func import params
-from vidlu.utils.loadsave import TorchLoadSave, JsonLoadSave, TextLoadSave
+from vidlu.utils.storage import TorchLoadSave, JsonLoadSave, TextLoadSave
 
 
 class _Smallest(float):  # float inheritance needed storing as JSON
@@ -158,8 +158,8 @@ class CheckpointManager(object):
                                    + f" {self.experiment_dir}.")
         elif mode == "start":
             if self.resuming_required:
-                raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}. If"
-                                   + " you want to use this ID anyway, pass `mode='resume'`.")
+                raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}."
+                                   + " You can resume or restart.")
         elif mode != "resume_or_start":
             raise ValueError(f"Argument {mode=} does not match {ModeArg}.")
 
