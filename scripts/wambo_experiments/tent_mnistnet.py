@@ -60,7 +60,7 @@ trainer = Trainer(
     model=model,
     extend_output=vct.classification_extend_output,
     loss=nn.CrossEntropyLoss(),
-    train_step=ts.AdversarialTrainStep(),
+    train_step=ts.AdversarialStep(),
     # no attack is used during training (the training is not adversarial)
     eval_step=ts.AdversarialEvalStep(),
     epoch_count=40,

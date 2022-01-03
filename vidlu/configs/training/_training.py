@@ -30,13 +30,13 @@ classification = TrainerConfig(
 adversarial = TrainerConfig(
     te.AdversarialTraining,
     eval_step=ts.AdversarialEvalStep(),
-    train_step=ts.AdversarialTrainStep(),
+    train_step=ts.AdversarialStep(),
 )
 
 adversarial_combined = TrainerConfig(
     te.AdversarialTraining,
     eval_step=ts.AdversarialEvalStep(),
-    train_step=ts.AdversarialCombinedLossTrainStep(),
+    train_step=ts.AdversarialCombinedLossStep(),
 )
 
 # Adversarial training

@@ -538,7 +538,7 @@ def perturb_iterative_with_perturbation_model(
     stop_on_success = stop_mask is not None
     loss_fn, reg_loss_fn = loss_fn if isinstance(loss_fn, T.Sequence) else (loss_fn, None)
     if loss_mask is None:
-        loss_mask = x.new_tensor(0., dtype=torch.bool).expand(len(x))
+        loss_mask = x.as_subclass(torch.Tensor).new_tensor(0., dtype=torch.bool).expand(len(x))
     backward_callback = backward_callback or (lambda _: None)
     optim = optim_f(pert_model.parameters()) if step_count > 0 else None  # init
     if stop_on_success:  # support for early stopping (example-wise and location-wise)
@@ -564,7 +564,7 @@ def perturb_iterative_with_perturbation_model(
                 for a, a_p in [(x, x_p), (y, y_p), (loss_mask, loss_mask_p)]]
 
         with vtu.switch_requires_grad(model, compute_model_grads):
-            out = model(x_p)
+            out = model(x_p).as_subtype(torch.Tensor)
             unred_loss = apply_loss_mask(loss_fn(out, y_p), loss_mask_p)
             loss, reg_loss, loss_no_mask = _reduce_losses(
                 unred_loss=unred_loss,
