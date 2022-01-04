@@ -39,7 +39,7 @@ class Other(Domain):
 
 class Array(torch.Tensor, Domain):
     def __new__(cls, obj):
-        return obj[:].as_subclass(cls)
+        return obj[...].as_subclass(cls)
 
     def check_validity(self, quick):
         return True
