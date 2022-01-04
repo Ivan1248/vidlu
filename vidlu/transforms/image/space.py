@@ -54,13 +54,12 @@ def pad(x, padding, mode='constant', value=0):
         if isinstance(x, dt.Image):
             if value == 'mean':
                 value = x.mean((1, 2))
-            if len(value.shape) > 0:
+            if hasattr(value, 'shape') and len(value.shape) > 0:
                 value = value.view(*value.shape, *([1] * (len(x.shape) - len(value.shape))))
                 return nnF.pad(x[additional_dims] - value, padding, mode=mode, value=0)[
                     (0,) * len(additional_dims)].add_(value)
-        else:
-            return nnF.pad(x[additional_dims], padding, mode=mode, value=value)[
-                (0,) * len(additional_dims)]
+        return nnF.pad(x[additional_dims], padding, mode=mode, value=value)[
+            (0,) * len(additional_dims)]
     elif isinstance(x, dt.AABB):
         return x + np.array([le, to])
     elif isinstance(x, dt.AABBsOnImageCollection):
