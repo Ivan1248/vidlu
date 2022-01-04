@@ -83,20 +83,19 @@ def approximate_pop_stats(exp, stats_dataset):
         module.training = True
 
     hooks = []
-    with vtu.preserve_state(exp.trainer.model):
-        for m in exp.trainer.model.modules():
-            if "Norm" in type(m).__name__ and hasattr(m, "track_running_stats"):
-                m.reset_running_stats()
-                # m.num_batches_tracked.zero_()
-                m.momentum = None
-                m.track_running_stats = True
-                m.training = True
-                hooks.append(m.register_forward_pre_hook(hook))
-        print(f'\nComputing approximate population statistics...')
-        exp.trainer.eval(stats_dataset)
-        for h in hooks:
-            h.remove()
-        exp.trainer.model.eval()
+    for m in exp.trainer.model.modules():
+        if "Norm" in type(m).__name__ and hasattr(m, "track_running_stats"):
+            m.reset_running_stats()
+            m.momentum = None
+            m.track_running_stats = True
+            m.training = True
+            hooks.append(m.register_forward_pre_hook(hook))
+
+    print(f'\nComputing approximate population statistics...')
+    exp.trainer.eval(stats_dataset)
+    for h in hooks:
+        h.remove()
+    exp.trainer.model.eval()
 
 
 def train(args):
@@ -130,9 +129,10 @@ def train(args):
         exp.trainer.train(*training_datasets.values(), restart=False)
 
         if args.eval_with_pop_stats:
-            approximate_pop_stats(exp, exp.data.train)
-            print(f'\nEvaluating using approximate population statistics...')
-            exp.trainer.eval(exp.data.test)
+            with vtu.preserve_state(exp.trainer.model):
+                approximate_pop_stats(exp, exp.data.train)
+                print(f'\nEvaluating using approximate population statistics...')
+                exp.trainer.eval(exp.data.test)
 
         log_run('done', str(exp.cpman.id_to_perf))
 
