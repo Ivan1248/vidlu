@@ -19,19 +19,19 @@ def get_problem_from_dataset(dataset):
     if 'problem' not in dataset.info:
         raise ValueError("Unknown problem.")
     problem_type = get_problem_type(dataset.info.problem)
+    kwargs = dict()
     if problem_type is SemanticSegmentation:
-        args = {k: tuple(dataset[0].seg_map.shape) if k == "y_shape" else dataset.info[k]
-                for k in params(problem_type)}
-        return problem_type(**args)
-    else:
-        return problem_type()
+        kwargs["y_shape"] = tuple(dataset[0].seg_map.shape)
+    kwargs.update({k: dataset.info[k] for k in inspect.signature(problem_type).parameters.keys() if
+                   k not in kwargs})
+    return problem_type(**kwargs)
 
 
 # Model ############################################################################################
 
 def get_model_argtree_for_problem(model_class, problem):
     from vidlu.modules import components
-    
+
     if inspect.isclass(model_class):
         if issubclass(model_class, DiscriminativeModel):
             if type(problem) is Classification:
