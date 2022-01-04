@@ -1,3 +1,4 @@
+import warnings
 from numbers import Number
 import typing as T
 
@@ -150,26 +151,27 @@ def random_crop_box(image_shape, shape, overflow=0, rng=np.random):
 
 
 def random_overlapping_crop_box(image_shape, shape, aabbs, overflow=0,
-                                min_overlap_proportion=1e-6, rng=np.random):
+                                min_overlap_proportion=1e-6, rng=np.random,
+                                number_of_tries=100):
     areas = np.array([b.area for b in aabbs])
     if len(aabbs) == 0 or sum(areas) == 0:
         return random_crop_box(image_shape, shape, overflow=overflow, rng=rng)
-    for _ in range(100):
+    for _ in range(number_of_tries):
         result = random_crop_box(image_shape, shape, overflow=overflow, rng=rng)
-        overlaps = np.array([result.intersect(b).area for b in aabbs])
+        overlaps = np.array(
+            [max([0, result.intersect(b, return_if_invalid=True).area]) for b in aabbs])
         if np.max(np.nan_to_num(overlaps / areas)) > min_overlap_proportion:
             break
     return result
 
 
-@vectorize(n=2)
-def rare_class_random_overlapping_crop_box(x: T.Union[Tensor, T.Sequence], class_to_aabbs, shape,
-                                           rare_classes, overflow=0,
-                                           min_overlap_proportion=1e-6, rng=np.random):
+# @vectorize(n=2)
+def rare_class_random_overlapping_crop_box(image_shape, shape, class_to_aabbs, rare_classes,
+                                           overflow=0, min_overlap_proportion=1e-6, rng=np.random):
     aabbs = []
     for c in rare_classes:
-        aabbs.extend(class_to_aabbs[c])
-    return random_overlapping_crop_box(x, shape=shape, overflow=overflow, aabbs=aabbs,
+        aabbs.extend(class_to_aabbs.get(c, []))
+    return random_overlapping_crop_box(image_shape, shape=shape, overflow=overflow, aabbs=aabbs,
                                        min_overlap_proportion=min_overlap_proportion, rng=rng)
 
 
@@ -182,6 +184,26 @@ def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.
 
 
 RandomCrop = func_to_module_class(random_crop)
+
+
+def random_crop_overlapping(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0,
+                            rare_classes=(), rng=np.random):
+    assert isinstance(x, tuple)
+    image = next((a for a in x if isinstance(a, dt.ArraySpatial2D)), None)
+    if image is None:
+        raise RuntimeError("Image not found.")
+    class_to_aabbs = next((a for a in x if isinstance(a, dt.ClassAABBsOnImage)), None)
+
+    if class_to_aabbs is None:
+        class_to_aabbs = dict()
+        warnings.warn("class_to_aabbs not found.")
+    elif class_to_aabbs.shape is None:
+        breakpoint()
+    image_shape = image.shape
+    aabb = rare_class_random_overlapping_crop_box(
+        image_shape, shape=shape, class_to_aabbs=class_to_aabbs, rare_classes=rare_classes,
+        overflow=overflow, rng=rng)
+    return vectorize(crop)(x, aabb)
 
 
 def random_hflip(x: Tensor, p=0.5, rng=np.random) -> Tensor:
@@ -207,7 +229,7 @@ def _sample_random_scale(min, max, dist: ScaleDistArg = "uniform", rng=np.random
 
 def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
                       align_corners=None, scale_dist: ScaleDistArg = "uniform", rng=np.random,
-                      rand_crop=random_crop):
+                      rand_crop_fn=random_crop):
     check_argument_types()
 
     multiple = isinstance(x, tuple)
@@ -220,7 +242,7 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
 
     scale = _sample_random_scale(min_scale, max_scale, dist=scale_dist, rng=rng)
 
-    xs = rand_crop(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
+    xs = rand_crop_fn(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
 
     shape = [d for d in
              np.minimum(np.array(shape), (np.array(xs[0].shape[-2:]) * scale + 0.5).astype(int))]
