@@ -176,6 +176,8 @@ def rare_class_random_overlapping_crop_box(x: T.Union[Tensor, T.Sequence], class
 def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.random):
     if isinstance(x, tuple):
         image = next(a for a in x if isinstance(a, dt.ArraySpatial2D))
+    else:
+        image = x
     return vectorize(crop)(x, random_crop_box(image.shape, shape, overflow=overflow, rng=rng))
 
 
