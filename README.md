@@ -46,18 +46,13 @@ The "scripts" directory contains scripts that use [the framework](#the-framework
 
 ### Directory configuration
 
-`scripts/dirs.py` is a module that determines directory paths needed for running experiments. It contains the following path variables:
+`scripts/dirs.py` searches for and stores directory paths for datasets, cache, results and other data in the following variables:
+-   `datasets: list[Path]` can point to multiple directories, each of which can contain dataset directories.
+-   `cache: Path` points to a directory for caching data.
+-   `pretrained: Path` points to a directory for pre-trained parameters.
+-   `experiments: Path` points to a directory for experiment results. The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
 
--   `datasets` is a list of paths that contain datasets. If the env. variable `VIDLU_DATASETS` is defined, it is taken as the first path. If found to exist, "&lt;ancestor>/datasets" and "&lt;ancestor>/data/datasets" are included too. "&lt;ancestor>" is any ancestor directory of `dirs.py`.
--   `cache` is used for automatically caching data. It should preferably be on an SSD, while original datasets can be on slower disks since data is usually accessed through cache.
--   `pretrained` points to a directory that can contain pre-trained parameters. It is takes the value of the `VIDLU_PRETRAINED` env. variable (if defined) or "&lt;ancestor>/data/pretrained" (if found).
--   `experiments` points to a directory for experiment results. It takes the value of the `VIDLU_EXPERIMENTS` env. variable (if defined) or "&lt;ancestor>/data/experiments" (if found). The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
-
-There is also a `VIDLU_DATA` env. variable that can be used instead of the mentioned ones. See below.
-
-#### Setup
-
-It might be easiest to create the following directory structure so that the directories can be found automatically by `dirs.py`. Symbolic links can be useful.
+It might be easiest to create the following directory structure. Symbolic links can be useful.
 
 ```sh
 <ancestor>
@@ -70,13 +65,17 @@ It might be easiest to create the following directory structure so that the dire
    └─ pretrained
 ```
 
-If the "data" directory is not in some "&lt;ancestor>", either one (`VIDLU_DATA` pointing to the "data" directory) or more (`VIDLU_DATASETS`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`) env. variables have to be defined.
+"&lt;ancestor&gt;/data" is found automatically if "&lt;ancestor&gt;" is an ancestor directory of `dirs.py`. Otherwise, the environment variable `VIDLU_DATA` should point to the "data" directory.
+
+The "cache" directory should preferably be on an SSD. "datasets" and other directories, can be a slower disk. Data from "datasets" is not accessed after being cached.
+
+Alternatively, the paths can be defined through multiple environment variables: `VIDLU_DATASETS`, `VIDLU_CACHE`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`.
 
 ### Running experiments
 
 `scripts/run.py` is a general script for running experiments.
 
-The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or finished experiments can be continued/reevaluated using the `--resume` (`-r`) argument. The command can have the following structure:
+The `train` command is chosen by running `python run.py train ...`. It creates an `Experiment` instance from command line arguments and directory paths from `dirs.py`. The `Experiment` constructor creates a `Trainer` instance using factories from `vidlu.factories`. The `train` command runs evaluation and training. Interrupted or completed experiments can be continued/reevaluated using the `--resume` (`-r`) argument. The command can have the following structure:
 
 ```sh
 run.py train DATA INPUT_ADAPTER MODEL TRAINER [-h] [--params PARAMS] [--metrics METRICS] [-e EXPERIMENT_SUFFIX] [-r [{strict,?,best,restart}]]
