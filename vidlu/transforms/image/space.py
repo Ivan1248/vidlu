@@ -186,12 +186,12 @@ def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.
 RandomCrop = func_to_module_class(random_crop)
 
 
-def random_crop_overlapping(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0,
-                            rare_classes=(), rng=np.random):
-    assert isinstance(x, tuple)
+def random_crop_overlapping(x: tuple, shape, overflow=0, rare_classes=(), rng=np.random):
+    check_argument_types()
     image = next((a for a in x if isinstance(a, dt.ArraySpatial2D)), None)
     if image is None:
         raise RuntimeError("Image not found.")
+
     class_to_aabbs = next((a for a in x if isinstance(a, dt.ClassAABBsOnImage)), None)
 
     if class_to_aabbs is None:
