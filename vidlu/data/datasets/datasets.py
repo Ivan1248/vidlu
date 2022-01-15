@@ -14,7 +14,6 @@ from scipy.io import loadmat
 import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
-from torchvision.datasets.utils import download_and_extract_archive
 
 from vidlu.data import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
@@ -833,15 +832,16 @@ class CamVid(Dataset):
         ds = self._downsampling
         return _make_record(
             image_=lambda: load_image(ip, ds),
-            seg_map_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label))
+            seg_map_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label),
+            name=ip)
 
     def __len__(self):
         return len(self._img_lab_list)
 
 
 class CamVidSequences(Dataset):  # TODO
-    subsets = ['0006R0', '0016E5', '0001TP', 'Seq05VD']  # 0001TP and Seq05VD contain the test set
-    subset_to_size = {'0006R0': 3001, '0016E5': 8251, '0001TP': 3691, 'Seq05VD': 5101}
+    subset_to_size = {'06R0': 3001, '16E5': 8251, '01TP': 3691, 'Seq05VD': 5101}
+    subsets = list(subset_to_size.keys())  # 01TP and Seq05VD contain the test set
     default_dir = 'CamVid-sequences'
 
     def download(self, data_dir):
@@ -872,7 +872,8 @@ class CamVidSequences(Dataset):  # TODO
 
     def get_example(self, idx):
         image_path = self._image_paths[idx]
-        return _make_record(image_=lambda: load_image(image_path, self._downsampling))
+        return _make_record(image_=lambda: load_image(image_path, self._downsampling),
+                            name=image_path)
 
     def __len__(self):
         return len(self._image_paths)
@@ -1083,13 +1084,6 @@ class VOC2012Segmentation(Dataset):
         self._image_list = (sets_dir / f'{subset}.txt').read_text().splitlines()
 
         super().__init__(subset=subset, info=self.info)
-
-    def download(self, data_dir: Path, remove_finished=True):
-        url = self.info['url']
-        filename = Path(url).name
-        download_and_extract_archive(url, data_dir.parent, filename=filename, md5=self.info['md5'],
-                                     remove_finished=remove_finished)
-        (data_dir.parent / filename).rename(data_dir)
 
     def get_example(self, idx):
         name = self._image_list[idx]
