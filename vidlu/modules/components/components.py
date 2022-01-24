@@ -524,6 +524,39 @@ class Resize(E.Module):
                              align_corners=a.align_corners)
 
 
+class MultiScaleEnsemble(E.Module):
+    def __init__(self, module_f, scales=(1,), weights=None, interp_mode='bilinear',
+                 align_corners=False):
+        super().__init__()
+        self.args = self.get_args(locals())
+        self.module = module_f()
+
+    def forward(self, x):
+        a = self.args
+        xs = [x if s == 1 else
+              F.interpolate(x, scale_factor=s, mode=a.interp_mode, align_corners=a.align_corners)
+              for s in a.scales]
+        ys = tuple(map(self.module, xs))
+        del xs
+        shape = ys[0].shape[-2:]
+        ys = [ys[0]] + [
+            F.interpolate(y, size=shape, mode=a.interp_mode, align_corners=a.align_corners)
+            for y in ys[1:]]
+        # for x, y in zip(xs, ys):
+        #     from vidlu.utils.presentation import show_segmentation_prediction
+        #     show_segmentation_prediction(y, x)
+        if a.weights is None:
+            y = ys[0]
+            for z in ys:
+                y += z
+            y.div_(len(ys))
+        else:
+            y = ys[0].mul_(a.weights[0]) if a.weights[0] != 1 else ys[0]
+            for z, w in zip(ys[1:], a.weights[1:]):
+                y.add_(z, alpha=w) if w != 1 else y.add_(z)
+        return y
+
+
 # Pyramid pooling ##################################################################################
 
 
