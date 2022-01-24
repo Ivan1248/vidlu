@@ -1,3 +1,4 @@
+import os
 import warnings
 from argparse import Namespace
 from vidlu.utils.func import partial
@@ -120,7 +121,8 @@ def define_training_loop_actions(
         time_left = time_left_training + (1 - es.epoch / es.max_epochs) * (eval_count * eval_time)
         info_str = (f"Epoch {es.epoch + 1}/{es.max_epochs}:"
                     + f" {es.batch_count} batches,"
-                    + f" lr=({', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())})")
+                    + f" lr=({', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())}),"
+                    + f" devices={{{os.environ.get('CUDA_VISIBLE_DEVICES', '0')}}}")
         if epoch_time > 0:
             info_str += f", left {to_dhm_str(time_left)} ({to_dhm_str(time_left_training)} training)"
         logger.log(info_str)
