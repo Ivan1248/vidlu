@@ -345,6 +345,7 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 # noinspection PyUnresolvedReferences
 def short_symbols_for_get_trainer():
     import math
+    import os
     from torch import optim
     import vidlu.optim.lr_schedulers as lr
     from vidlu.modules import losses
