@@ -1,3 +1,4 @@
+import copy
 import typing as T
 from vidlu.utils.func import partial
 import dataclasses as dc
@@ -288,7 +289,7 @@ class Trainer(Evaluator):
     optimizer_f: InitVar[T.Callable] = None  # optimization; vidlu.optim
     lr_scheduler_f: InitVar[T.Callable] = ConstLR  # optimization; vidlu.optim.lr_schedulers
     jitter: T.Callable = None  # learning
-    train_step: T.Callable = Required  # learning; vidlu.training.steps
+    train_step: T.Optional[T.Callable] = Required  # learning; vidlu.training.steps
     extension_fs: InitVar[T.Sequence[T.Callable]] = ()  # learning
 
     optimizer: T.Any = dc.field(init=False)
@@ -296,6 +297,10 @@ class Trainer(Evaluator):
     extensions: T.Sequence[TrainerExtension] = dc.field(init=False)
 
     def __post_init__(self, optimizer_f, lr_scheduler_f, extension_fs):
+        if self.eval_step is None and hasattr(self.train_step, 'eval'):
+            self.eval_step = copy.copy(self.train_step)
+            self.eval_step.eval = True
+
         super().__post_init__()
 
         self.optimizer = optimizer_f(
