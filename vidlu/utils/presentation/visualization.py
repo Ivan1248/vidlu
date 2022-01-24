@@ -26,11 +26,25 @@ def colorize_segmentation(seg, colors):
 
 ####
 
-def show_batch(x):
+def show_batch(x, nrows=None, ncols=None):
+    if x.shape[1] not in (1, 3):
+        if nrows is None:
+            nrows = len(x)
+        x = x.view(-1, *x.shape[2:])
     from torchvision.utils import make_grid
-    grid = make_grid(x, nrow=len(x)//int(len(x) ** 0.5))
+    grid = make_grid(x, nrow=nrows or (len(x) // (ncols or int(len(x) ** 0.5))))
     plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
     plt.show()
+
+
+def show_segmentation_prediction(y, x=None):
+    nrows = class_count = y.shape[1]
+    y = y.view(-1, 1, *y.shape[2:]).repeat_interleave(3, dim=1)
+    if x is not None:
+        x = x.repeat_interleave(class_count, dim=0)
+        y *= x
+        del x
+    return show_batch(y, nrows=nrows)
 
 
 def composef(images, fmt):
