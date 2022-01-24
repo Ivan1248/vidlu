@@ -12,6 +12,7 @@ name_to_url.update({
         'https://github.com/Ivan1248/semisup-seg-efficient/releases/download/pre-trained-dl/deeplabv1_resnet101-coco.pth',
     'hardnet68':
         'https://github.com/PingoLH/Pytorch-HarDNet/blob/master/hardnet68.pth?raw=True'
+    #hardnet-petite? https://github.com/Ivan1248/FCHarDNet
 })
 # name_to_url['resnetv2-18'] = \
 #    "https://github.com/Ivan1248/semisup-seg-efficient/releases/download/pre-trained-dl/resnetv2_18.pth"

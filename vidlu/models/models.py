@@ -307,6 +307,7 @@ class SwiftNet(SwiftNetBase):
                 res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))
         return True
 
+
 class SwiftNetIRevNet(SwiftNetBase):
     __init__ = partialmethod(SwiftNet.__init__,
                              backbone_f=partial(irevnet_backbone, no_final_postact=True))

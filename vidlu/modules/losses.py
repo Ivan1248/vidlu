@@ -1,3 +1,4 @@
+import functools
 import typing as T
 
 import einops
@@ -157,6 +158,17 @@ def probs_sqr_l2_dist_ll(logits, target_logits):
 
 
 # Confidence thresholding ##########################################################################
+
+def conf_thresh(loss, kind):
+    if kind != 'class-probs':
+        raise NotImplementedError()
+
+    @functools.wraps(loss)
+    def wrapper(logits, target, conf_thresh, **kwargs):
+        return loss(logits, target, **kwargs) * (target.max(1).values >= conf_thresh)
+
+    return wrapper
+
 
 def conf_thresh_kl_div_l(logits, target, conf_thresh):
     """

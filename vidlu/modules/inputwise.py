@@ -15,6 +15,9 @@ import vidlu.modules.functional as vmf
 import vidlu.modules.components as vmc
 import vidlu.ops.image as voi
 
+#
+# REMOVE THIS FILE AND USE pert.py INSTEAD
+#
 
 class BatchParameter(torch.nn.Parameter):
     r"""A kind of Tensor that is to be considered a batch of parameters, i.e.
@@ -602,6 +605,7 @@ class TPSWarp(PertModelBase):
                  control_grid_align_corners=False, align_corners=True, padding_mode='zeros',
                  interpolation_mode='bilinear', label_interpolation_mode=None,
                  label_padding_mode=None, swap_src_dst=False, center_offsets=False):
+        # control_grid_align_corners=False puts control points into centers of image tiles
         super().__init__()
         self.args = self.get_args(locals())
 
