@@ -38,8 +38,9 @@ class PhTPS20:
                       'module.add_h.addend': [-0.1, 0.1],
                       'module.mul_v.factor': [0.25, 2.]})))
 
-    def __call__(self, x):
-        x, y = x
+    def __call__(self, inputs):
+        (x, y), put_back = pick(lambda a: isinstance(a, dt.ArraySpatial2D), inputs)
+        assert isinstance(x, dt.Image) and isinstance(y, dt.SegMap)
         x_ = x.unsqueeze(0)
         with torch.no_grad():
             if not vm.is_built(self.pert_model):
@@ -47,8 +48,11 @@ class PhTPS20:
                 for p in self.pert_model.parameters():
                     p.requires_grad = False
             self.init(self.pert_model, x_)
-        x = self.pert_model(x_).squeeze(0)
-        return x, y
+        if isinstance(y, dt.ClassLabel):
+            x = self.pert_model(x_).squeeze(0)
+        else:
+            x, y = self.pert_model((x, y))
+        return put_back((x, y))
 
 
 class SegmentationJitter(pert.PertModel):
@@ -107,6 +111,16 @@ class SegRandCropHFlip(SegmentationJitter):
         return compose(vti.RandomCrop(self.crop_shape), vti.RandomHFlip())(tuple(x))
 
 
+def pick(cond, inputs):
+    # TODO: replace filt with indices?
+    filt = {ind: i for i, ind in enumerate([i for i, x in enumerate(inputs) if cond(x)])}
+
+    def put_back(outputs):
+        return tuple(outputs[filt[i]] if i in filt else x for i, x in enumerate(inputs))
+
+    return tuple(inputs[i] for i in filt), put_back
+
+
 class SegRandScaleCropPadHFlip(pert.PertModel):
     domain = dt.Spatial2D
     supported = (dt.Image, dt.SegMap, dt.ClassAABBsOnImage)
@@ -119,16 +133,15 @@ class SegRandScaleCropPadHFlip(pert.PertModel):
                  align_corners: bool = True,
                  image_pad_value: T.Union[torch.Tensor, float, T.Literal['mean']] = 'mean',
                  label_pad_value=-1,
+                 random_scale_crop_f=vti.RandomScaleCrop,
                  scale_dist: vti.ScaleDistArg = "uniform"):
         super().__init__()
         # arguments should be in __dict__ because of modification by command line arguments
         self.__dict__.update(self.get_args(locals()))
 
     def forward(self, inputs):
-        filt = {ind: i for i, ind in
-                enumerate([i for i, x in enumerate(inputs) if isinstance(x, dt.Spatial2D)])}
-        d = tuple(inputs[i] for i in filt)
-        d = vti.RandomScaleCrop(
+        d, put_back = pick(lambda x: isinstance(x, dt.Spatial2D), inputs)
+        d = self.random_scale_crop_f(
             shape=self.shape, max_scale=self.max_scale, min_scale=self.min_scale,
             overflow=self.overflow, align_corners=self.align_corners,
             scale_dist=self.scale_dist)(d)
@@ -139,7 +152,7 @@ class SegRandScaleCropPadHFlip(pert.PertModel):
              pad(x, value=0) if isinstance(x, dt.Spatial2D) else
              x
              for x in d]
-        return tuple(d[filt[i]] if i in filt else x for i, x in enumerate(inputs))
+        return put_back(d)
 
     def __repr__(self):
         return _args_repr(self)
