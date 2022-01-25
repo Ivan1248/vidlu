@@ -270,13 +270,16 @@ class EarlyStoppingMixin:
 
 
 class DummyAttack(OptimizingAttack):
-    def _perturb(self, model, x, y=None, loss_mask=None, backward_callback=None):
-        out, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
-        if backward_callback is not None:
-            backward_callback(AttackState(x=x, y=y, loss_mask=loss_mask, out=out, x_adv=x,
-                                          loss_sum=loss_s.item(), grad=grad, loss=None,
-                                          reg_loss_sum=0))
-        return x
+    def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
+        return lambda *x: x[0] if isinstance(x, tuple) and len(x) == 1 else x  # TODO
+
+    # def _perturb(self, model, x, y=None, loss_mask=None, backward_callback=None):
+    #     out, loss_s, grad = self._get_output_and_loss_s_and_grad(model, x, y)
+    #     if backward_callback is not None:
+    #         backward_callback(AttackState(x=x, y=y, loss_mask=loss_mask, out=out, x_adv=x,
+    #                                       loss_sum=loss_s.item(), grad=grad, loss=None,
+    #                                       reg_loss_sum=0))
+    #     return x
 
 
 # GradientSignAttack ###############################################################################
