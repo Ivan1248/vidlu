@@ -86,7 +86,8 @@ def define_training_loop_actions(
                 with np.printoptions(precision=2, threshold=20 if is_validation else 4,
                                      linewidth=line_width, floatmode='maxprec_equal',
                                      suppress=True):
-                    return (f"{v:.4f}".lstrip('0') if isinstance(v, float) else
+                    return (f"{v:.4f}".lstrip('0') if isinstance(v, float) and v > 1e-3 else
+                            f"{v:.2e}" if isinstance(v, float) else
                             f"\n{v}" if isinstance(v, np.ndarray) and v.ndim > 1 else
                             str(v).replace('0.', '.'))
 
