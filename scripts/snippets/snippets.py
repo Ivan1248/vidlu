@@ -22,7 +22,7 @@ visualization.view_predictions(
 
 visualization.view_predictions(
     data.train_u.map(lambda r, trainer=trainer: (
-        [x:=r.x.permute(1, 2, 0).detach().cpu().numpy(), x[:,:, 0]])),
+        [x := r.x.permute(1, 2, 0).detach().cpu().numpy(), x[:, :, 0]])),
     infer=lambda x, trainer=trainer: trainer.model(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
         1).squeeze().int().cpu().numpy())
@@ -780,3 +780,77 @@ def view_perturbed_inputs(state, **kwargs):
 
 
 view_perturbed_inputs(**locals())
+
+
+# semi-supervised consistency
+
+def run(state, data, prefix=''):
+    import torch
+    import vidlu.utils.presentation as vup
+    import vidlu.transforms.image as vti
+    import numpy as np
+    from pathlib import Path
+    import os
+
+    outs = state.result.out_u, state.result.out_p
+    xs = state.result.x_u, state.result.x_p
+
+    outs = [vup.colorize_segmentation(out.cpu().argmax(1) + 1, torch.tensor(
+        vup.normalize_colors(data.test.info.class_colors, insert_zeros=True))).permute(0, 3, 1, 2)
+            for out in outs]
+
+    def to_image(x):
+        return vti.numpy_to_pil(
+            (x.clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+
+    xs, outs = [[[to_image(a) for a in x] for x in ims] for ims in [xs, outs]]
+
+    x_u, x_p = xs
+    out_u, out_p = outs
+
+    dir = Path.home() / 'images'
+    os.makedirs(dir, exist_ok=True)
+
+    for i, (x_u_, out_u_, x_p_, out_p_) in enumerate(zip(x_u, out_u, x_p, out_p)):
+        x_u_.save(dir / f'{prefix}{i:04}x_u.png')
+        x_p_.save(dir / f'{prefix}{i:04}x_p.png')
+        out_u_.save(dir / f'{prefix}{i:04}out_u.png')
+        out_p_.save(dir / f'{prefix}{i:04}out_p.png')
+
+
+run(state, data, 'pascal')
+
+
+# supervised
+
+def run(state, data, prefix=''):
+    import torch
+    import vidlu.utils.presentation as vup
+    import vidlu.transforms.image as vti
+    import numpy as np
+    from pathlib import Path
+    import os
+
+    out = state.result.out.cpu().argmax(1) + 1
+    target = state.result.target.cpu()
+    x = state.result.x
+
+    out, target = [vup.colorize_segmentation(y, torch.tensor(
+        vup.normalize_colors(data.test.info.class_colors, insert_zeros=True))).permute(0, 3, 1, 2)
+                   for y in [out, target]]
+
+    def to_image(x):
+        return vti.numpy_to_pil(
+            (x.clamp(0, 1).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8))
+
+    imageses = [[to_image(b) for b in a] for a in [x, out, target]]
+
+    dir = Path.home() / 'images'
+    os.makedirs(dir, exist_ok=True)
+
+    for i, (x_, out_, target_) in enumerate(zip(*imageses)):
+        x_.save(dir / f'{prefix}{i:04}x.png')
+        out_.save(dir / f'{prefix}{i:04}out.png')
+        target_.save(dir / f'{prefix}{i:04}targ.png')
+
+run(state, data, 'pascal')
