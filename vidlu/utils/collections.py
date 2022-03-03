@@ -1,9 +1,11 @@
+import collections
 import pickle
 import os
 import collections.abc as abc
 import typing as T
 from pathlib import Path
 import warnings
+import shutil
 
 
 def _augment_key_error_message(dct, e, error_type=None):
@@ -132,16 +134,17 @@ class FileDict(abc.MutableMapping):
     __slots__ = ("path", "load_proc", "save_proc", "_dict")
 
     def __init__(self, path: os.PathLike, load_proc=pickle.load, save_proc=pickle.dump,
-                 error_on_corrupt_file=False):
+                 load_in_init=False,
+                 corrupt_file_action: T.Union[T.Literal['delete', 'error']] = 'error'):
         self.path = Path(path)
         self.load_proc, self.save_proc = load_proc, save_proc
         self._dict = dict()
-        if self.path.exists():
+        if load_in_init and self.path.exists():
             try:
                 self.load()
             except (EOFError, RuntimeError) as e:
                 message = f"Error loading FileDict from file {self.path}: {e}"
-                if error_on_corrupt_file:
+                if corrupt_file_action == 'error':
                     raise EOFError(message) from e
                 else:
                     self.path.unlink()
@@ -207,3 +210,53 @@ class FileDict(abc.MutableMapping):
     def save(self):
         with open(self.path, "wb") as file:
             self.save_proc(self._dict, file)
+
+
+class FSDict(collections.UserDict):
+    def __init__(self, path=None):
+        super().__init__()
+        from .storage.compressors import DefaultCompressor
+        self.compressor = DefaultCompressor()
+        self.path = path
+        os.makedirs(path, exist_ok=True)
+
+    def delete(self):
+        shutil.rmtree(self.path, ignore_errors=True)
+
+    def _get_path(self, key):
+        return self.path / key
+
+    def _path_to_key(self, path):
+        return path.name
+
+    def _save(self, cache_path, obj):
+        with open(cache_path, 'wb') as cache_file:
+            cobj = self.compressor.compress(obj)
+            pickle.dump(cobj, cache_file, protocol=4)
+
+    def _load(self, cache_path):
+        with open(cache_path, 'rb') as cache_file:
+            cobj = pickle.load(cache_file)
+            return self.compressor.decompress(cobj)
+
+    def __getitem__(self, key):
+        return self._load(self._get_path(key))
+
+    def __setitem__(self, key, value):
+        self._save(self._get_path(key), value)
+
+    def __delitem__(self, key):
+        self._get_path(key).unlink()
+
+    def update(self, d):
+        for k, v in d.items():
+            self[k] = v
+
+    def keys(self):
+        return list(map(self._path_to_key, self.path.iterdir()))
+
+    def __contains__(self, key):
+        return self._get_path(key).exists()
+
+    def __len__(self):
+        return len(self.keys())
