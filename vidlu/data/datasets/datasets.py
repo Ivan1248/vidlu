@@ -14,7 +14,7 @@ from scipy.io import loadmat
 import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
-
+import torchvision.datasets.utils as tvdu
 from vidlu.data import Dataset, Record
 from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
@@ -79,8 +79,7 @@ def load_image(path, downsampling):
     return img
 
 
-def load_segmentation_with_downsampling(path, downsampling, id_to_label=None,
-                                        dtype=np.int8):
+def load_segmentation(path, downsampling, id_to_label=None, dtype=np.int8):
     """Loads and optionally translates segmentation labels.
 
     Args:
@@ -832,7 +831,7 @@ class CamVid(Dataset):
         ds = self._downsampling
         return _make_record(
             image_=lambda: load_image(ip, ds),
-            seg_map_=lambda: load_segmentation_with_downsampling(lp, ds, self.color_to_label),
+            seg_map_=lambda: load_segmentation(lp, ds, self.color_to_label),
             name=ip)
 
     def __len__(self):
@@ -953,7 +952,7 @@ class Cityscapes(Dataset):
         lab_path = self._labels_dir / self._labels[idx]
         d = self.downsampling
         im_get = lambda: load_image(im_path, d)
-        lab_get = lambda: load_segmentation_with_downsampling(
+        lab_get = lambda: load_segmentation(
             lab_path, d if self.downsample_labels else 1, self._id_to_label)
         return _make_record(image_=im_get,
                             seg_map_=lab_get,
@@ -1054,7 +1053,9 @@ class ICCV09(Dataset):
 
 
 class VOC2012Segmentation(Dataset):
-    subsets = ['train', 'val', 'trainval', 'test']
+    subset_to_size = {'train': 1464, 'val': 1449, 'test': None, 'trainval': 2913,
+                      'train_aug': 10582}
+    subsets = tuple(subset_to_size.keys())
     default_dir = 'VOCdevkit'
     subdir = 'VOC2012'
     info = dict(
@@ -1068,7 +1069,11 @@ class VOC2012Segmentation(Dataset):
                       (107, 142, 35), (152, 251, 152), (70, 130, 180), (220, 20, 60), (255, 0, 0),
                       (0, 0, 142), (0, 0, 70), (0, 60, 100), (0, 80, 100), (0, 0, 230), (0, 0, 230),
                       (0, 0, 230), (119, 11, 32)],
-        url='http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
+        url=r'http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
+        aug_urls=dict(  # train_aug is a superset of train and does not overlap with val
+            labels=r'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/SegmentationClassAug.zip',
+            train_list=r'http://raw.githubusercontent.com/hfslyc/AdvSemiSeg/master/dataset/voc_list/train_aug.txt',
+        ),
         md5='6cd6e144f989b92b3379bac3b3de84fd')
 
     def __init__(self, data_dir, subset='train'):
@@ -1078,12 +1083,25 @@ class VOC2012Segmentation(Dataset):
         self.download_if_necessary(data_dir)
 
         data_subdir = data_dir / self.subdir
-        sets_dir = data_subdir / 'ImageSets/Segmentation'
         self._images_dir = data_subdir / 'JPEGImages'
-        self._labels_dir = data_subdir / 'SegmentationClass'
+        if subset == 'train_aug':
+            self.download_aug(data_subdir)
+            sets_dir = data_subdir / 'ImageSets/SegmentationAug'
+            self._labels_dir = data_subdir / 'SegmentationClassAug'
+        else:
+            sets_dir = data_subdir / 'ImageSets/Segmentation'
+            self._labels_dir = data_subdir / 'SegmentationClass'
         self._image_list = (sets_dir / f'{subset}.txt').read_text().splitlines()
 
         super().__init__(subset=subset, info=self.info)
+
+    def download_aug(self, root_dir):
+        tvdu.download_and_extract_archive(self.info['aug_urls']['labels'], root_dir,
+                                          remove_finished=True)
+        lists_dir = root_dir / 'ImageSets' / 'SegmentationAug'
+        os.makedirs(lists_dir, exist_ok=True)
+        if not (file_path := lists_dir / f'train_aug.txt').exists():
+            download(self.info['aug_urls'][f'train_list'], file_path)
 
     def get_example(self, idx):
         name = self._image_list[idx]
@@ -1093,9 +1111,8 @@ class VOC2012Segmentation(Dataset):
             return tvtf.center_crop(img, [500] * 2)
 
         def load_lab():
-            lab = np.array(
-                _load_image(self._labels_dir / f"{name}.png",
-                            force_rgb=False)).astype(np.int8)
+            lab = np.array(_load_image(self._labels_dir / f"{name}.png", force_rgb=False)) \
+                .astype(np.int8)
             return numpy_transforms.center_crop(lab, [500] * 2, fill=-1)  # -1 ok?
 
         return _make_record(image_=load_img, seg_map_=load_lab)
