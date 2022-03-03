@@ -56,7 +56,7 @@ def log_run(status, result=None):
 
 def fetch_remote_experiment(args, dirs):
     dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args)))
-    cmd = ["rsync", "-azvO", "--relative", "--delete", f"{args.remote_experiments}:{dir}/",
+    cmd = ["rsync", "-azvLO", "--relative", "--delete", f"{args.remote}:{dir}/",
            f"/"]
     print("Running " + " ".join(cmd))
     result = subprocess.run(cmd)
@@ -104,7 +104,7 @@ def train(args):
                                timeout=30, default='y'):
         exit()
 
-    if args.remote_experiments and args.resume not in [None, "restart"]:
+    if args.remote and args.resume not in [None, "restart"]:
         fetch_remote_experiment(args, dirs)
 
     exp = make_experiment(args, dirs=dirs)
@@ -220,8 +220,8 @@ def add_standard_arguments(parser, func):
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
                              + " with the same configuration.")
-    parser.add_argument("--remote_experiments", type=str, default=None,
-                        help="Identifier of experiment directory to copy the state from for resuming")
+    parser.add_argument("--remote", type=str, default=None,
+                        help="Network identifier of another computer to resume experiments from.")
     parser.add_argument("-r", "--resume", action='store', nargs="?",
                         choices=["strict", "?", "best", "restart"], default=None, const="strict",
                         help="Resume training from checkpoint of the same experiment. "
