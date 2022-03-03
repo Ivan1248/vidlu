@@ -209,7 +209,7 @@ def build_and_init_model(model, init_input, device):
 
 _func_short = dict(partial=partial, t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
                    sot=vuf.StrictObjectUpdatree, it=vuf.IndexableUpdatree,
-                   sit=vuf.StrictIndexableUpdatree)
+                   sit=vuf.StrictIndexableUpdatree, torch=torch)
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
