@@ -27,18 +27,18 @@ sns.set(font_scale=2.5)
 sns.set(font_scale=3, rc={'text.usetex': True})
 plt.rcParams['text.latex.preamble'] = [r'\usepackage{bm}']
 
-samples = 200
+num_samples = 200
 n_labeled = 3
-X, Y = tuple(map(torch.from_numpy, make_moons(n_samples=samples, noise=8e-2, random_state=args.seed, shuffle=True)))
+X, Y = tuple(map(torch.from_numpy, make_moons(n_samples=num_samples, noise=8e-2, random_state=args.seed, shuffle=True)))
 X = X.float()
-n_val = int(samples * .8)
+n_val = int(num_samples * .8)
 ignore_index = 2
 
 data_train = {
-    'X': X[:, 0][:int(samples * .8)],
-    'Y': X[:, 1][:int(samples * .8)],
-    'data': X[:int(samples * .8)],
-    'class': Y[:int(samples * .8)],
+    'X': X[:, 0][:int(num_samples * .8)],
+    'Y': X[:, 1][:int(num_samples * .8)],
+    'data': X[:int(num_samples * .8)],
+    'class': Y[:int(num_samples * .8)],
 }
 data_train['class'][n_labeled:-n_labeled] = ignore_index
 
@@ -51,10 +51,10 @@ data_train['sizes'] = torch.tensor(data_train['size'])[data_train['class']]
 print(data_train['class'][data_train['class'].ne(ignore_index)])
 
 data_val = {
-    'X': X[:, 0][int(samples * .8):],
-    'Y': X[:, 1][int(samples * .8):],
-    'data': X[int(samples * .8):],
-    'class': Y[int(samples * .8):],
+    'X': X[:, 0][int(num_samples * .8):],
+    'Y': X[:, 1][int(num_samples * .8):],
+    'data': X[int(num_samples * .8):],
+    'class': Y[int(num_samples * .8):],
     'size': [500, 500]
 }
 data_val['sizes'] = torch.tensor(data_val['size'])[data_val['class']]
@@ -184,20 +184,13 @@ def generate_plot(model, data, title):
 
 
 generate_plot(model, data_train, title=None)
+
+plt.show()
+
+print(f"{converged=}{loss.item()=}")
+print(args.xlabel, args.ylabel)
+
 path = Path(f'/mnt/d/dump/semi_toy_{title.replace(" ", "_")}.pdf')
 path.parent.mkdir(exist_ok=True)
 
-ax = plt.gca()
-print(f"{converged=}{loss.item()=}")
-#plt.title(args.xlabel, color='black' if converged else 'r')
-# ax.set_ylabel(args.ylabel)
-print(args.xlabel, args.ylabel)
-
-# ax.set_axis_off()
-
-# plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
-# plt.margins(0, 0)
-# plt.gca().xaxis.set_major_locator(plt.NullLocator())
-# plt.gca().yaxis.set_major_locator(plt.NullLocator())
 plt.savefig(path, bbox_inches='tight', pad_inches=0)
-# plt.show()
