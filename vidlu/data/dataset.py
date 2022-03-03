@@ -69,7 +69,7 @@ class StandardDownloadableDatasetMixin:
         download_and_extract_archive(url, data_dir.parent, filename=filename,
                                      md5=self.info.get("md5", None),
                                      remove_finished=remove_archive)
-        (data_dir.parent / filename).rename(data_dir)
+        # (data_dir.parent / filename).rename(data_dir)
 
 
 class SeqChange(Enum):
@@ -523,9 +523,10 @@ def objects_equal(a, b):
 
 class HDDCacheDataset(Dataset):
     # Caches the whole dataset on HDD
+    # TODO: add version check instead of consistency check?
     __slots__ = ('cache_dir', 'separate_fields', 'keys')
 
-    def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=4,
+    def __init__(self, dataset, cache_dir, separate_fields=True, consistency_check_sample_count=1,
                  compressor_f=DefaultCompressor, **kwargs):
         super().__init__(name='cache_hdd' + ('_s' if separate_fields else ''), data=dataset,
                          data_change=False, **kwargs)
@@ -541,8 +542,9 @@ class HDDCacheDataset(Dataset):
                     f"If `separate_fields == True`, the element type must be `Record`.")
             self.keys = list(self.data[0].keys())
         os.makedirs(self.cache_dir, exist_ok=True)
+
         for i in range(consistency_check_sample_count):
-            ii = i * len(dataset) // consistency_check_sample_count
+            ii = (i + 1) * len(dataset) // (consistency_check_sample_count + 1)
 
             if not objects_equal(dataset[ii], self[ii]):
                 warnings.warn(f"Cache of the dataset {self.data_identifier} inconsistent." +
@@ -569,13 +571,13 @@ class HDDCacheDataset(Dataset):
         if os.path.exists(cache_path):
             try:
                 return self._load(cache_path)
-            except (
-                    PermissionError, TypeError, EOFError, AttributeError,
-                    pickle.UnpicklingError) as e:
-                print(f"HDDCacheDataset dataset cache loading error: {e}. File: {cache_path}")
+            except (PermissionError, TypeError, EOFError, AttributeError,
+                    pickle.UnpicklingError, Exception) as e:
+                print(f"HDDCacheDataset cache file invalid: {e}. File: {cache_path}")
                 try:
                     cache_path.unlink()
                 except FileNotFoundError as e:
+                    print(f"HDDCacheDataset cache deletion error: {e}. File: {cache_path}")
                     pass
                 return self._get_example_or_field(idx, field, check=True)
 
