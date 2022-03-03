@@ -122,7 +122,7 @@ def numpy_to_pil(npimg, mode=None):
         PIL Image: Image converted to PIL Image.
     """
     if not is_numpy_image(npimg):
-        raise TypeError(f'img should be an ndarray image. Got {type(npimg)}.')
+        raise TypeError(f'img should be an ndarray image. Got {type(npimg)} with shape {npimg.shape}.')
 
     if npimg.shape[2] == 1:
         expected_mode = None

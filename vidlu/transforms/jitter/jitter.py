@@ -33,14 +33,13 @@ class PhTPS20:
         self.init = init.MultiInit(
             dict(tps=init.NormalInit({'offsets': (0, 0.1)}),
                  photometric=init.UniformInit(
-                     {'module.add_v.addend': [-0.25, 0.25],
-                      'module.mul_s.factor': [0.25, 2.],
-                      'module.add_h.addend': [-0.1, 0.1],
-                      'module.mul_v.factor': [0.25, 2.]})))
+                     {'add_v.addend': [-0.25, 0.25],
+                      'mul_s.factor': [0.25, 2.],
+                      'add_h.addend': [-0.1, 0.1],
+                      'mul_v.factor': [0.25, 2.]})))
 
     def __call__(self, inputs):
-        (x, y), put_back = pick(lambda a: isinstance(a, dt.ArraySpatial2D), inputs)
-        assert isinstance(x, dt.Image) and isinstance(y, dt.SegMap)
+        (x, y), put_back = pick(lambda a: isinstance(a, (dt.ArraySpatial2D, dt.ClassLabel)), inputs)
         x_ = x.unsqueeze(0)
         with torch.no_grad():
             if not vm.is_built(self.pert_model):

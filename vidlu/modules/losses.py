@@ -82,6 +82,12 @@ def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"
     return _apply_reduction(result, reduction=reduction, mask=target != ignore_index)
 
 
+def crossentropy(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"):
+    check_argument_types()
+    result = (torch.einsum("nc...,nc...->n...", -torch.log(probs), target.transpose(-1, 1)))
+    return _apply_reduction(result, reduction=reduction)
+
+
 def crossentropy_l(logits, target):
     if target.dim() == logits.dim() - 1:
         return nll_loss_l(logits, target)
@@ -108,7 +114,7 @@ def rev_crossentropy_ll(target_logits, logits):
 
 def kl_div_l(logits, target, log_target=False):
     if target.dim() == logits.dim() - 1:
-        return nll_loss_l(logits, target)
+        return nll_loss_l(logits, target, log_target=log_target)
     return F.kl_div(torch.log_softmax(logits, 1), target, reduction='none',
                     log_target=log_target).sum(1)
 

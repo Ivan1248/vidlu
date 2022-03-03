@@ -1,6 +1,6 @@
 import torchvision.models as tvm
 from pathlib import Path
-from vidlu.utils.misc import download_if_not_downloaded, download
+from vidlu.utils.misc import download_if_not_downloaded
 from vidlu.utils.path import read_lines
 import re
 
