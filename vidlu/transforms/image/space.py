@@ -152,7 +152,7 @@ def random_crop_box(image_shape, shape, overflow=0, rng=np.random):
 
 def random_overlapping_crop_box(image_shape, shape, aabbs, overflow=0,
                                 min_overlap_proportion=1e-6, rng=np.random,
-                                number_of_tries=100):
+                                none_on_fail=False, number_of_tries=100):
     areas = np.array([b.area for b in aabbs])
     if len(aabbs) == 0 or sum(areas) == 0:
         return random_crop_box(image_shape, shape, overflow=overflow, rng=rng)
@@ -161,16 +161,19 @@ def random_overlapping_crop_box(image_shape, shape, aabbs, overflow=0,
         overlaps = np.array(
             [max([0, result.intersect(b, return_if_invalid=True).area]) for b in aabbs])
         if np.max(np.nan_to_num(overlaps / areas)) > min_overlap_proportion:
-            break
-    return result
+            return result
+    return None if none_on_fail else result
 
 
 # @vectorize(n=2)
 def rare_class_random_overlapping_crop_box(image_shape, shape, class_to_aabbs, rare_classes,
-                                           overflow=0, min_overlap_proportion=1e-6, rng=np.random):
+                                           preselect_instance=False, overflow=0,
+                                           min_overlap_proportion=1e-6, rng=np.random):
     aabbs = []
     for c in rare_classes:
         aabbs.extend(class_to_aabbs.get(c, []))
+    if preselect_instance:
+        aabbs = rng.choice(aabbs, 1)
     return random_overlapping_crop_box(image_shape, shape=shape, overflow=overflow, aabbs=aabbs,
                                        min_overlap_proportion=min_overlap_proportion, rng=rng)
 
@@ -186,7 +189,8 @@ def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.
 RandomCrop = func_to_module_class(random_crop)
 
 
-def random_crop_overlapping(x: tuple, shape, overflow=0, rare_classes=(), rng=np.random):
+def random_crop_overlapping(x: tuple, shape, overflow=0, rare_classes=(), preselect_instance=False,
+                            rng=np.random):
     check_argument_types()
     image = next((a for a in x if isinstance(a, dt.ArraySpatial2D)), None)
     if image is None:
@@ -202,7 +206,7 @@ def random_crop_overlapping(x: tuple, shape, overflow=0, rare_classes=(), rng=np
     image_shape = image.shape
     aabb = rare_class_random_overlapping_crop_box(
         image_shape, shape=shape, class_to_aabbs=class_to_aabbs, rare_classes=rare_classes,
-        overflow=overflow, rng=rng)
+        preselect_instance=preselect_instance, overflow=overflow, rng=rng)
     return vectorize(crop)(x, aabb)
 
 
