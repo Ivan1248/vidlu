@@ -1,8 +1,10 @@
 import contextlib as ctx
 import dataclasses as dc
+import numbers
+import os
+
 from vidlu.utils.func import partial
 import typing as T
-from torch import nn
 import copy
 from warnings import warn
 
@@ -622,6 +624,7 @@ class AdversarialCombinedLossStep:
         return NameDict(x=x, out=out_c, target=y, loss=loss_c.item(), x_p=x_p, out_p=out_p,
                         loss_p=loss_p.item())
 
+
 @dc.dataclass
 class AdversarialEvalStep:
     virtual: bool = False
@@ -796,7 +799,7 @@ def _prepare_semisup_batch(batch):
     Returns:
         x_l - labeled inputs, y_l - labeled labels, x_u - unlabeled inputs
     """
-    x_u = other = None
+    x_u = None
     if isinstance(batch, BatchTuple):
         if len(batch) != 2:
             raise TypeError(f"Unsuported number of batches in BatchTuple: {len(batch)=} != 2")
@@ -846,12 +849,16 @@ def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_mo
     """Applies corresponding perturbations to the input, unsupervised target, and validity mask.
     Also computes the prediction in the perturbed input."""
     if loss_mask == 'create':
-        loss_mask = torch.ones_like(attack_target[:, 0, ...])
+        loss_mask = torch.ones_like(untag(x)[:, 0, ...])
     with vtu.switch_training(model, False) if attack_eval_model else \
             vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
         pmodel = attack(model, x, attack_target, loss_mask=loss_mask)
-        x_p, target_p, loss_mask_p = pmodel(x, attack_target, loss_mask)
-    return NameDict(x=x_p, target=target_p, loss_mask=loss_mask_p.detach(), pmodel=pmodel)
+        if loss_mask is None:
+            (x_p, target_p), loss_mask_p = pmodel(x, attack_target), None
+        else:
+            x_p, target_p, loss_mask_p = pmodel(x, attack_target, loss_mask)
+        loss_mask_p_dict = dict() if loss_mask_p is None else dict(loss_mask=loss_mask_p.detach())
+    return NameDict(x=x_p, target=target_p, **loss_mask_p_dict, pmodel=pmodel)
 
 
 @dc.dataclass
@@ -890,7 +897,7 @@ class SemisupCleanTargetConsStepBase:
 
         x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all, joint_batch)[
                                :4]
-        loss_mask = 'create'
+        loss_mask = None if len(y_l.shape) + 1 < len(x_l.shape) else 'create'
         perturb_x_u = lambda attack_target, loss_mask: _perturb(
             attack=attack, model=model, x=x_u, attack_target=attack_target,
             attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
@@ -921,8 +928,10 @@ class SemisupCleanTargetConsStepBase:
                 with ctx.suppress() if self.pert_bn_stats_updating else \
                         vtu.norm_stats_tracking_off(model):
                     pert.out = model(untag(pert.x))  # student output
-            with torch.no_grad() if self.eval else ctx.suppress():
-                loss_u = loss_cons(pert.out, pert.target)[pert.loss_mask >= 1 - 1e-6].mean()
+
+                loss_u = loss_cons(pert.out, pert.target)
+                loss_u = (
+                    loss_u if loss_mask is None else loss_u[pert.loss_mask >= 1 - 1e-6]).mean()
                 loss = loss_l.add(loss_u, alpha=self.alpha)
                 with ctx.suppress() if self.entropy_loss_coef else torch.no_grad():  # memory saving
                     loss_ent = vml.entropy_l(pert.out).mean()
@@ -983,6 +992,74 @@ SemisupVATTrainStep = SemisupVATStep  # TODO: delete
 class SemisupVATEvalStep(SemisupVATStep):
     eval: bool = True
     uns_loss_on_all: bool = True
+
+
+@dc.dataclass
+class SemisupTwoWayOneCleanConsStep:
+    alpha: float = 1
+    attack_eval_model: bool = False  # intentionally false to avoid overfitting
+    pert_bn_stats_updating: bool = False
+    uns_loss_on_all: bool = None
+    entropy_loss_coef: float = 0
+    loss_cons: T.Optional[T.Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
+    eval_mode_clean: bool = False
+    mem_efficient: bool = True  # TODO: replace with ~joint_batch
+    eval: bool = False
+
+    def __call__(self, trainer, batch):
+        attack = trainer.attack
+        model = trainer.model
+        loss_cons, output_to_target = self._get_cons_loss_and_output_to_target(attack)
+
+        uns_loss_on_all = self.eval if self.uns_loss_on_all is None else self.uns_loss_on_all
+        joint_batch = not self.mem_efficient or uns_loss_on_all
+
+        x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, uns_loss_on_all, joint_batch)[:4]
+        loss_mask = None if len(y_l.shape) + 1 < len(x_l.shape) else 'create'
+        perturb_x_u = lambda attack_target, loss_mask: _perturb(
+            attack=attack, model=model, x=x_u, attack_target=attack_target,
+            attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
+
+        model.eval() if self.eval else model.train()  # teacher always in eval mode
+
+        with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
+            with torch.no_grad() if self.eval else ctx.suppress():
+                # Supervised loss
+                out_all = model(untag(x_all)) if joint_batch else None
+                out_l = out_all[:len(y_l)] if joint_batch else model(untag(x_l))
+                loss_l = trainer.loss(out_l, y_l, reduction="mean")
+                if not self.eval and not joint_batch:  # back-propagates supervised loss sooner
+                    loss_l.backward()
+                    loss_l = loss_l.detach()
+
+                # Unsupervised loss
+                with vtu.switch_training(model,
+                                         False) if self.eval_mode_clean else ctx.suppress():
+                    out_u = model(untag(x_u)) if out_all is None else out_all[-len(x_u):]
+                pert = perturb_x_u(attack_target=output_to_target(out_u), loss_mask=loss_mask)
+                del pert.pmodel  # memory saving
+
+                with ctx.suppress() if self.pert_bn_stats_updating else \
+                        vtu.norm_stats_tracking_off(model):
+                    pert.out = model(untag(pert.x))  # student output
+
+                loss_u = loss_cons(pert.out, pert.target)
+                loss_u = (
+                    loss_u if loss_mask is None else loss_u[pert.loss_mask >= 1 - 1e-6]).mean()
+                loss = loss_l.add(loss_u, alpha=self.alpha)
+                with ctx.suppress() if self.entropy_loss_coef else torch.no_grad():  # memory saving
+                    loss_ent = vml.entropy_l(pert.out).mean()
+                    if self.entropy_loss_coef:
+                        loss.add_(loss_ent, alpha=self.entropy_loss_coef)
+                if not self.eval:
+                    loss.backward()
+
+        return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
+                        x_u=x_u, x_p=pert.x, y_p=pert.target, out_u=out_u, out_p=pert.out,
+                        loss_ent=loss_ent.item())
+
+    def _get_cons_loss_and_output_to_target(self, attack):
+        return self.loss_cons or attack.loss, attack.output_to_target
 
 
 class AdditionalHeadModule(vm.Seq):
@@ -1238,6 +1315,57 @@ class MeanTeacherStep(SemisupCleanTargetConsStepBase):
             self.ema_teacher.load_state_dict(state_dict)
 
 
+@dc.dataclass
+class SemisupMultiScaleTeacherStep(SemisupCleanTargetConsStepBase):
+    scales: T.Sequence[numbers.Number] = (1, 0.75, 1 / 0.75)
+    loss_cons: T.Optional[T.Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = vml.nll_loss_l
+    conf_thresh: float = 0.
+    pre_trained_teacher: T.Optional[T.Union[os.PathLike, str, nn.Module]] = None
+    eval_mode_teacher: bool = True  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    cache_dir: T.Optional[str] = None
+
+    teacher: T.Optional[T.Union[nn.Module, dict]] = None  # NOT USED!!!!!!!!!!!!!!!!!!!!!
+
+    def get_student_and_teacher(self, trainer):
+        from vidlu.modules.special import FileCachedModule
+        from pathlib import Path
+        model = trainer.model
+        if self.teacher is None:
+            if isinstance(self.pre_trained_teacher, (os.PathLike, str)):
+                if isinstance(self.pre_trained_teacher, str) and self.pre_trained_teacher[0] == '$':
+                    teacher_path = os.environ[self.pre_trained_teacher[1:]]
+                else:
+                    teacher_path = self.pre_trained_teacher
+                teacher = copy.deepcopy(model)
+                params = torch.load(teacher_path)
+                teacher.load_state_dict(params)
+            else:
+                teacher = model if self.pre_trained_teacher is None else self.pre_trained_teacher
+            teacher_p = vm.Seq(model=teacher, softmax=nn.Softmax(1))
+            teacher_mse = vm.Seq(
+                msens=vmc.MultiScaleEnsemble(lambda: teacher_p, scales=self.scales,
+                                             interp_mode='bilinear'))
+            if self.cache_dir is not None and teacher is not model:
+                cache_path = Path(self.cache_dir) / str(
+                    abs(hash((teacher_path, tuple(self.scales)))))
+                os.makedirs(cache_path.parent, exist_ok=True)
+                teacher_mse = FileCachedModule(teacher_mse, path=cache_path)
+            self.teacher = teacher_mse
+        return model, self.teacher
+
+    def _get_cons_loss_and_output_to_target(self, attack):
+        if self.conf_thresh > 0:
+            def output_to_target_fn(x):
+                max_, argmax = torch.max(x, dim=1)
+                argmax[max_ <= self.conf_thresh] = -1
+                return argmax
+        else:
+            output_to_target_fn = partial(torch.argmax, dim=1)
+
+        output_to_target = partial(_cons_output_to_target, stop_grad=self.block_grad_on_clean,
+                                   output_to_target=output_to_target_fn)
+        return self.loss_cons, output_to_target
+
 
 # Autoencoder
 
@@ -1248,59 +1376,3 @@ def autoencoder_train_step(trainer, batch):
     loss = trainer.loss(x_r, x, reduction="mean")
     do_optimization_step(trainer.optimizer, loss)
     return NameDict(x_r=x_r, x=x, loss=loss.item())
-
-
-'''
-# GAN
-
-class GANTrainStep:
-    @lru_cache(1)
-    def _get_real_labels(self, batch_size):
-        return torch.ones(batch_size, device=self.model.device)
-
-    @lru_cache(1)
-    def _get_fake_labels(self, batch_size):
-        return torch.zeros(batch_size, device=self.model.device)
-
-    def __call__(self, trainer, batch):
-        """Copied from ignite/examples/gan/dcgan and modified"""
-        trainer.model.train()
-        real = batch[0]
-        batch_size = real.shape[0]
-        real_labels = self._get_real_labels(batch_size)
-
-        # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z))) ##########
-        discriminator, generator = trainer.model.discriminator, trainer.model.generator
-        discriminator.zero_grad()
-
-        # training discriminator with real
-        output = discriminator(real)
-        errD_real = trainer.loss(output, real_labels, reduction="mean")  # torch.nn.BCELoss()
-        D_real = output.mean().item()
-        errD_real.backward()
-
-        fake = generator(trainer.model.sample_z(batch_size))
-
-        # training discriminator with fake
-        output = discriminator(fake.detach())
-        errD_fake = trainer.loss(output, self._get_fake_labels(batch_size)).mean()
-        D_fake1 = output.mean().item()
-        errD_fake.backward()
-
-        trainer.optimizer['D'].step()
-
-        # (2) Update G network: maximize log(D(G(z))) ##########################
-        generator.zero_grad()
-
-        # Update generator.
-        # We want to make a step that will make it more likely that D outputs "real"
-        output = discriminator(fake)
-        errG = trainer.loss(output, real_labels).mean()
-        D_fake2 = output.mean().item()
-
-        errG.backward()
-        trainer.optimizer['G'].step()
-
-        return NameDict(errD=(errD_real + errD_fake).item(), errG=errG.item(), D_real=D_real,
-                        D_fake1=D_fake1, D_fake2=D_fake2)
-'''
