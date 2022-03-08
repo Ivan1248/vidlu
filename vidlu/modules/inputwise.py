@@ -15,6 +15,7 @@ import vidlu.modules.functional as vmf
 import vidlu.modules.components as vmc
 import vidlu.ops.image as voi
 
+
 #
 # REMOVE THIS FILE AND USE pert.py INSTEAD
 #
@@ -543,7 +544,9 @@ def _warp(x, grid, y=None, mask=None, interpolation_mode='bilinear', padding_mod
     pm, lpm = ['zeros' if m == 0 else m for m in [padding_mode, label_padding_mode]]
     _warp_func = _forward_warp if forward else _grid_sample_p
 
-    x_p = None if x is None else _warp_func(x, grid, mode=interpolation_mode, padding_mode=pm,
+    grid_x, grid_y = grid if isinstance(grid, tuple) else (grid, grid)
+
+    x_p = None if x is None else _warp_func(x, grid_x, mode=interpolation_mode, padding_mode=pm,
                                             align_corners=align_corners)
 
     if y is None:
@@ -557,9 +560,9 @@ def _warp(x, grid, y=None, mask=None, interpolation_mode='bilinear', padding_mod
             result.append(z)
         else:
             continous = 'float' in f'{z.dtype}'
-            z_p = (z if continous else z.to(grid.dtype))
+            z_p = (z if continous else z.to(grid_y.dtype))
             single_channel = z.dim() == 3
-            z_p = _warp_func(z_p[:, None, ...] if single_channel else z_p, grid,
+            z_p = _warp_func(z_p[:, None, ...] if single_channel else z_p, grid_y,
                              mode=interpolation_mode if continous else label_interpolation_mode,
                              padding_mode=padding_mode if continous else lpm,
                              align_corners=align_corners)
@@ -636,8 +639,13 @@ class TPSWarp(PertModelBase):
         if self.args.swap_src_dst:
             c_src, c_dst = c_dst, c_src
 
-        grid = (vmf.tps_grid_from_points if self.args.forward else
-                vmf.backward_tps_grid_from_points)(c_src, c_dst, size=x.shape)
+        grid_func = (vmf.tps_grid_from_points if self.args.forward else
+                     vmf.backward_tps_grid_from_points)
+
+        grid = grid_func(c_src, c_dst, size=x.shape)
+        if y is not None and y.shape[-2:] != x.shape[-2:]:
+            grid = (grid, grid_func(c_src, c_dst, size=y.shape))
+
         return _warp(x, y=y, mask=mask, grid=grid,
                      **{k: self.args[k]
                         for k in ['interpolation_mode', 'padding_mode',
