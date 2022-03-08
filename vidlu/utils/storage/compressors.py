@@ -74,6 +74,8 @@ class PILCompressor(Compressor):
 
 
 class DefaultCompressor(Compressor):
+    # TODO: torchvision.io.encode_png
+
     def compress(self, obj):
         compressor = (NumpyCompressor() if isinstance(obj, np.ndarray) else
                       PILCompressor() if isinstance(obj, pimg.Image) else
