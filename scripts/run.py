@@ -240,6 +240,7 @@ def add_standard_arguments(parser, func):
                         help="Usage of deterministic operations.")
     # reporting, debugging
     parser.add_argument("--debug", help="", action='store_true')
+    parser.add_argument("--print_calls", help="", action='store_true')
     parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
     parser.add_argument("--warnings_as_errors", help="Raise errors instead of warnings.",
                         action='store_true')
@@ -282,9 +283,10 @@ if __name__ == "__main__":
     if args.debug:
         print("Debug: Autograd anomaly detection on.")
         torch.autograd.set_detect_anomaly(True)
-        # debug.trace_calls(depth=122,
-        #                  filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
-        #                                                 and not frame.f_code.co_name[0] in "_<")
+    if args.print_calls:
+        debug.trace_calls(depth=122,
+                          filter_=lambda frame, *a, **k: "vidlu" in frame.f_code.co_filename
+                                                         and not frame.f_code.co_name[0] in "_<")
 
     if args.warnings_as_errors:
         debug.set_warnings_with_traceback()
