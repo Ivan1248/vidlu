@@ -219,7 +219,7 @@ def get_device(device_str):
 
 def get_experiment_name(training_args):
     a = training_args
-    learner_name = to_valid_path(f"{a.model}/{a.trainer}"
+    learner_name = to_valid_path(f"{a.input_adapter}/{a.model}/{a.trainer}"
                                  + (f"/{a.params}" if a.params else ""), split_long_names=True)
     expsuff = a.experiment_suffix or "_"
     experiment_id = f'{a.data}/{learner_name}/{expsuff}'
