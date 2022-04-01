@@ -177,7 +177,7 @@ class HBlobs(Dataset):
         # lambda: np.random.binomial(n=1, p=0.5, size=(ood_num_examples, 3, 32, 32)) * 2 - 1
         self._shape = shape
         self._rand = np.random.RandomState(seed=seed)
-        self._seeds = self._rand.randint(1, size=(size,))
+        self._seeds = self._rand.randint(2 ** 31, size=(size,))
         self._sigma = sigma or 1.5 * shape[0] / 32
         self.key = key
         super().__init__(name=f'HBlobs({shape})', subset=f'{seed}-{size}', data=self._seeds)
