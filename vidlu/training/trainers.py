@@ -265,7 +265,7 @@ class Evaluator:
         return output
 
     def eval(self, *datasets, batch_size=None):
-        dl_kwargs = dict(drop_last=False, batch_size=batch_size or self.batch_size)
+        dl_kwargs = dict(drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
         if self.deterministic:
             dl_kwargs.update(deterministic_data_loader_args())
         data_loader = self.data_loader_f(*datasets, **dl_kwargs)
