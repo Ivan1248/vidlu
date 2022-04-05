@@ -756,7 +756,10 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
     def __post_init__(self):
         super().__post_init__()
         if self.projection is None:
-            self.projection = lambda *_: None
+            def noprojection(*args):
+                return None
+
+            self.projection = noprojection
         elif not callable(self.projection):
             self.projection = default_projection(eps=self.projection, clip_bounds=self.clip_bounds)
 
