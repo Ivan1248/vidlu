@@ -183,6 +183,10 @@ def grid_2d_points_to_indices(grid_points, shape, grid_low=0., grid_high=1.):
 
 # Thin plate spline warp ###########################################################################
 
+def linalg_solve(A, B):
+    return torch.linalg.solve(A.float(), B.float()).to(A.dtype)
+
+
 def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     """Fits a 1D thin plate spline and supports batch inputs.
 
@@ -195,24 +199,25 @@ def _tps_fit(c_src_v, lamb=0., reduced=False, eps=1e-6):
     def phi(x):
         return x.pow(2).mul(x.abs().add(eps).log())
 
+    k = dict(dtype=c_src_v.dtype, device=c_src_v.device)
     batch_shape, n = c_src_v.shape[:-2], c_src_v.shape[-2]
 
     P = phi(d(c_src_v, c_src_v))
 
-    Phi = P if lamb == 0 else P + torch.eye(n, device=c_src_v.device).unsqueeze(0) * lamb
+    Phi = P if lamb == 0 else P + torch.eye(n, **k).unsqueeze(0) * lamb
 
-    C = torch.ones((*batch_shape, n, 3), device=c_src_v.device)
+    C = torch.ones((*batch_shape, n, 3), **k)
     C[..., 1:] = c_src_v[..., :2]
 
-    v = torch.zeros((*batch_shape, n + 3), device=c_src_v.device)
+    v = torch.zeros((*batch_shape, n + 3), **k)
     v[..., :n] = c_src_v[..., -1]
 
-    L = torch.zeros((*batch_shape, n + 3, n + 3), device=c_src_v.device)
+    L = torch.zeros((*batch_shape, n + 3, n + 3), **k)
     L[..., :n, :n] = Phi
     L[..., :n, -3:] = C
     L[..., -3:, :n] = C.transpose(-1, -2)
 
-    theta = torch.linalg.solve(L, v.unsqueeze(-1))  # p has structure w,a
+    theta = linalg_solve(L, v.unsqueeze(-1))  # p has structure w,a
     return theta[..., 1:] if reduced else theta
 
 
