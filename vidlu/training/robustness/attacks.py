@@ -743,6 +743,10 @@ class PertModelRandPerturber(BasePerturber):
         return pert_model
 
 
+def _noprojection(*_):
+    return None
+
+
 @dataclass
 class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
     pert_model_f: vmi.PertModelBase = partial(vmi.Add, ())
@@ -756,10 +760,7 @@ class PertModelAttack(OptimizingAttack, EarlyStoppingMixin):
     def __post_init__(self):
         super().__post_init__()
         if self.projection is None:
-            def noprojection(*args):
-                return None
-
-            self.projection = noprojection
+            self.projection = _noprojection
         elif not callable(self.projection):
             self.projection = default_projection(eps=self.projection, clip_bounds=self.clip_bounds)
 
