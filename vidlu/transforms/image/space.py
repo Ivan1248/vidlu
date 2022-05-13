@@ -125,6 +125,16 @@ def crop(x, aabb):
 Crop = func_to_module_class(crop)
 
 
+def center_crop(x, shape):
+    shape = np.array(shape)
+    orig_shape = np.array(x.shape[-2:])
+    aabb = dt.AABB(min=(orig_shape - shape) // 2, size=shape)
+    return crop(x, aabb)
+
+
+CenterCrop = func_to_module_class(center_crop)
+
+
 @vectorize
 def hflip(x: Tensor) -> Tensor:
     if isinstance(x, dt.ClassAABBsOnImage):
