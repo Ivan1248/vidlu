@@ -7,9 +7,7 @@ textwidth_pt = 412.56497 * scale
 
 
 def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
-    # Modified https://gist.github.com/martijnvermaat/b5fe45124049b1e8e037
-    r"""
-    Configures Matplotlib so saved figures can be used in LaTeX documents.
+    r"""Configures Matplotlib so saved figures can be used in LaTeX documents.
     Uses the sans-serif TeX Gyre Heros font (Helvetica), also for math.
 
     Arguments:
@@ -37,6 +35,7 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     - Example IPython Notebook and LaTeX document.
     - Document dependencies (tex-gyre, dvipng, ...).
     Based on: http://damon-is-a-geek.com/publication-ready-the-first-time-beautiful-reproducible-plots-with-matplotlib.html
+    Based on: https://gist.github.com/martijnvermaat/b5fe45124049b1e8e037
     """
 
     def figsize(width_fraction=1.0):
@@ -64,7 +63,7 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     # rcParams['font.sans-serif'] = ['tgheros']
     # rcParams['font.serif'] = ['cm10']
     rcParams['text.usetex'] = True
-    matplotlib.rcParams['text.latex.unicode'] = True
+    # matplotlib.rcParams['text.latex.unicode'] = True
     rcParams['text.latex.preamble'] = r"""
         \usepackage[T1]{fontenc}
         \usepackage{amsmath}
