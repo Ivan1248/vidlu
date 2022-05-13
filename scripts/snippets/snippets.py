@@ -853,4 +853,34 @@ def run(state, data, prefix=''):
         out_.save(dir / f'{prefix}{i:04}out.png')
         target_.save(dir / f'{prefix}{i:04}targ.png')
 
-run(state, data, 'pascal')
+
+run(state, data, 'cs')
+
+
+# activaition sizes
+
+
+def run(trainer):
+    import torch
+    import vidlu.modules.elements as E
+    import vidlu.modules.utils as vmu
+
+    def visualize_features(x):
+        import matplotlib.pyplot as plt
+        plt.imshow(x.detach().cpu()[:3, ...].permute(1, 2, 0).numpy())
+        plt.show()
+
+    for m in trainer.model.modules():
+        if True or isinstance(m, E.Sum):
+            def hook(module, inputs):
+                shapes = []
+                for x in vmu.extract_tensors(inputs):
+                    shapes.append(x.shape)
+                    if x.shape[-1] == 1:
+                        breakpoint()
+                print(" ".join(map(str, shapes)))
+
+            vmu.hooks.register_self_removing(m.register_forward_pre_hook, hook)
+
+
+run(trainer)
