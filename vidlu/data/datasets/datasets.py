@@ -1076,18 +1076,20 @@ class VOC2012Segmentation(Dataset):
         ),
         md5='6cd6e144f989b92b3379bac3b3de84fd')
 
-    def __init__(self, data_dir, subset='train'):
+    def __init__(self, data_dir, subset='train', pad=False):
         _check_subsets(self.__class__, subset)
         data_dir = Path(data_dir)
+        self.pad = pad
 
         self.download_if_necessary(data_dir)
 
         data_subdir = data_dir / self.subdir
         self._images_dir = data_subdir / 'JPEGImages'
         if subset == 'train_aug':
-            self.download_aug(data_subdir)
             sets_dir = data_subdir / 'ImageSets/SegmentationAug'
             self._labels_dir = data_subdir / 'SegmentationClassAug'
+            if not sets_dir.exists():
+                self.download_aug(data_subdir)
         else:
             sets_dir = data_subdir / 'ImageSets/Segmentation'
             self._labels_dir = data_subdir / 'SegmentationClass'
@@ -1108,12 +1110,13 @@ class VOC2012Segmentation(Dataset):
 
         def load_img():
             img = _load_image(self._images_dir / f"{name}.jpg")
-            return tvtf.center_crop(img, [500] * 2)
+            return tvtf.center_crop(img, [500] * 2) if self.pad else img
 
         def load_lab():
             lab = np.array(_load_image(self._labels_dir / f"{name}.png", force_rgb=False)) \
                 .astype(np.int8)
-            return numpy_transforms.center_crop(lab, [500] * 2, fill=-1)  # -1 ok?
+            return numpy_transforms.center_crop(lab, [500] * 2,
+                                                fill=-1) if self.pad else lab  # -1 ok?
 
         return _make_record(image_=load_img, seg_map_=load_lab)
 
