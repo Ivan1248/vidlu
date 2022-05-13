@@ -74,18 +74,25 @@ Pad = func_to_module_class(pad)
 
 
 @vectorize
-def pad_to_shape(x, shape, mode='constant', value=0):
+def pad_to_shape(x, shape, mode='constant', value: T.Union[int, T.Literal['mean']] = 0,
+                 alignment: T.Literal['center', 'tl', 'tr', 'bl', 'br'] = 'center'):
+    check_argument_types()
+
     if value == 'mean':
         value = x.mean((1, 2))
     padding = np.array(shape) - np.array(x.shape[-2:])
     if np.any(padding < 0):
-        raise RuntimeError(f"`x` is to large ({tuple(x.shape)}) to be padded to {tuple(shape)}")
+        raise RuntimeError(f"`x` is too large ({tuple(x.shape)}) to be padded to {tuple(shape)}")
 
     if np.all(padding == 0):
         return x
 
-    to, le = tl = padding // 2
-    bo, ri = padding - tl
+    if alignment == 'center':
+        to, le = tl = padding // 2
+        bo, ri = padding - tl
+    else:
+        bo, ri = padding[0] * int(alignment[0] == 't'), padding[1] * int(alignment[1] == 'l')
+        to, le = padding[0] - bo, padding[1] - ri
     padding = (le, ri, to, bo)
 
     return pad(x, padding, mode, value)
