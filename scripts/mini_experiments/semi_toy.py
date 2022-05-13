@@ -29,7 +29,9 @@ plt.rcParams['text.latex.preamble'] = [r'\usepackage{bm}']
 
 num_samples = 200
 n_labeled = 3
-X, Y = tuple(map(torch.from_numpy, make_moons(n_samples=num_samples, noise=8e-2, random_state=args.seed, shuffle=True)))
+X, Y = tuple(map(torch.from_numpy,
+                 make_moons(n_samples=num_samples, noise=8e-2, random_state=args.seed,
+                            shuffle=True)))
 X = X.float()
 n_val = int(num_samples * .8)
 ignore_index = 2
@@ -82,6 +84,10 @@ def ce(x, y):
     return -y.softmax(dim=1).mul(x.log_softmax(dim=1)).sum(-1).mean()
 
 
+def ent(x, y):
+    return -x.softmax(dim=1).mul(x.log_softmax(dim=1)).sum(-1).mean()
+
+
 def init_weights(m):
     if type(m) == nn.Linear:
         torch.nn.init.xavier_uniform_(m.weight)
@@ -121,9 +127,9 @@ for i in range(epochs):
         out_c = out_c.detach() if detach_clean else out_c
         out_p = out_p.detach() if detach_pert else out_p
         loss_un = div_fn(out_p, out_c)
-        loss = loss_sup + loss_un
-    #lr = (epochs - i) / args.epochs
-    #(loss * lr).backward()
+        loss = loss_sup + loss_un # + 1e-2*sum(p.pow(2).sum() for p in model.parameters() if len(p.shape)>1)
+    # lr = (epochs - i) / args.epochs
+    # (loss * lr).backward()
     loss.backward()
     optimizer.step()
     optimizer.zero_grad()
@@ -161,7 +167,8 @@ def generate_plot(model, data, title):
         ly = torch.linspace(ymin, ymax, steps=steps)
         xx0, xx1 = torch.meshgrid(lx, ly)
         grid = torch.stack((xx0.flatten(), xx1.flatten()), dim=1)
-        values = model(grid.to(device)).softmax(dim=1)[..., 0].reshape((steps, steps)).data.to('cpu')
+        values = model(grid.to(device)).softmax(dim=1)[..., 0].reshape((steps, steps)).data.to(
+            'cpu')
     cmap_bg = sns.diverging_palette(220, 16, n=9, l=70, as_cmap=True, center='light')
     cmap = sns.color_palette(["#aa2211", "#1177aa", "#ffffff"])
     plt.contourf(xx0, xx1, values, cmap=cmap_bg)
@@ -190,7 +197,7 @@ plt.show()
 print(f"{converged=}{loss.item()=}")
 print(args.xlabel, args.ylabel)
 
-path = Path(f'/mnt/d/dump/semi_toy_{title.replace(" ", "_")}.pdf')
+path = Path(f'd:/dump/semi_toy_{title.replace(" ", "_")}.pdf')
 path.parent.mkdir(exist_ok=True)
 
 plt.savefig(path, bbox_inches='tight', pad_inches=0)

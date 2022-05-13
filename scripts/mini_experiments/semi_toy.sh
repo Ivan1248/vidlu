@@ -49,3 +49,12 @@ python semi_toy.py --detach_pert --div_fn kl --xlabel "\$D(h(\bm x), \langle h(\
 #python semi_toy.py --detach_pert --div_fn rkl --xlabel "\$D(\langle h(\tilde{\bm x})\rangle, h(\bm x))$"
 python semi_toy.py --detach_pert --detach_clean --div_fn kl --xlabel "sup. only"
 #python semi_toy.py --detach_pert --detach_clean --div_fn rkl --xlabel "sup. only 2"
+
+# EntMin
+#python semi_toy.py --div_fn ent --ylabel ent --xlabel "\$D(h(\bm x), h(\tilde{\bm x}))$"
+#python semi_toy.py --div_fn rkl --ylabel rKL --xlabel "\$D(h(\tilde{\bm x}), p)$"
+#python semi_toy.py --detach_clean --div_fn ent --xlabel "\$D(\langle h(\bm x)\rangle, h(\tilde{\bm x}))$"
+#python semi_toy.py --detach_clean --div_fn rkl  --xlabel "\$D(h(\tilde{\bm x}), \langle h(\bm x)\rangle)$"
+#python semi_toy.py --detach_pert --div_fn ent --xlabel "\$D(h(\bm x), \langle h(\tilde{\bm x})\rangle)$"
+#python semi_toy.py --detach_pert --div_fn rkl --xlabel "\$D(\langle h(\tilde{\bm x})\rangle, h(\bm x))$"
+#python semi_toy.py --detach_pert --detach_clean --div_fn ent --xlabel "sup. only"
