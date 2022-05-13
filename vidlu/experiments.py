@@ -167,10 +167,6 @@ def define_training_loop_actions(
             time.sleep(sleepiness / es.batch_count)
 
     @trainer.evaluation.epoch_started.handler
-    def on_eval_started(es):
-        interact(es, loop=trainer.evaluation)
-
-    @trainer.evaluation.epoch_started.handler
     def on_eval_epoch_started(es):
         nonlocal inter_epoch_time
         inter_epoch_time = inter_epoch_sw.time
