@@ -267,6 +267,13 @@ def param_count(func) -> int:
     return len(signature(func).parameters)
 
 
+def positional_param_count(func) -> int:
+    if not callable(func):
+        raise ValueError("The argument should be a function.")
+    return sum(1 for param in signature(func).parameters.values() if
+               param.kind == param.POSITIONAL_OR_KEYWORD)
+
+
 def default_args(func) -> NameDict:
     return NameDict({k: v.default for k, v in signature(func).parameters.items()
                      if v.default is not Empty})
