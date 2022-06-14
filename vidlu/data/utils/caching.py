@@ -8,10 +8,9 @@ import numpy as np
 from tqdm import tqdm
 
 from vidlu.data import DatasetFactory
-from vidlu.data.record import Record
+from vidlu.data.record import Record, LazyField
 from vidlu.utils import path
-from vidlu.utils.collections import NameDict
-from vidlu.data.utils.class_incidence import seg_class_info
+from vidlu.data.utils import class_incidence
 from vidlu.data.data_loader import SingleDataLoader
 
 
@@ -65,22 +64,23 @@ def _compute_pixel_stats_d(ds):
 def _get_training_dataset(parted_dataset):
     pds = parted_dataset
     try:
-        stats_ds = pds.trainval if 'trainval' in pds.keys() else pds.train.join(pds.val)
-    except KeyError:
+        keys = [k for k in pds.keys() if 'train' in k or 'val' in k]  # hardcoded
+        stats_ds = pds[keys[0]].join(*[pds[k] for k in keys[1:]])
+    except IndexError:
         part_name, stats_ds = next(iter(pds.items()))
-        warnings.warn('The parted dataset object has no "trainval" or "train" and "val" parts.'
+        warnings.warn('The parted dataset object has no parts with "train" or "val" in the name.'
                       + f' "{part_name}" is used instead.')
     return stats_ds
 
 
 def add_pixel_stats_to_info_lazily(parted_dataset, cache_dir):
     stats_ds = _get_training_dataset(parted_dataset)
-    ds_with_info = stats_ds.info_cache_hdd(NameDict(pixel_stats=_compute_pixel_stats_d), cache_dir,
+    ds_with_info = stats_ds.info_cache_hdd(dict(pixel_stats=_compute_pixel_stats_d), cache_dir,
                                            simplify_dataset=lambda ds: ds[:4])
 
     def cache_transform(ds):
         return ds.info_cache(
-            NameDict(pixel_stats=partial(_get_info, source_ds=ds_with_info, name='pixel_stats')))
+            dict(pixel_stats=partial(_get_info, source_ds=ds_with_info, name='pixel_stats')))
 
     return _map_record(cache_transform, parted_dataset)
 
@@ -89,11 +89,19 @@ def add_segmentation_class_info_lazily(parted_dataset, cache_dir):
     def cache_transform(ds):
         if 'seg_map' not in ds[0].keys():
             return ds
-        ds = ds.info_cache_hdd(NameDict(seg_class_info=seg_class_info), cache_dir, recompute=False,
-                               simplify_dataset=lambda ds: ds[:4])
-        return ds.enumerate().map_unpack(
-            lambda i, r: Record(r,
-                                class_seg_boxes=ds.info.seg_class_info['class_segment_boxes'][i]))
+
+        def add_seg_class_info(example):
+            info = LazyField(partial(class_incidence.example_seg_class_info, example))
+            return Record(classes_=lambda: info()['classes'],
+                          class_incidences_=lambda: info()['class_incidences'],
+                          class_aabbs_=lambda: info()['class_aabbs'])
+
+        return ds.map(lambda r: r.join(add_seg_class_info(r)))
+        # ds = ds.info_cache_hdd(dict(seg_class_info=seg_class_info), cache_dir, recompute=False,
+        #                        simplify_dataset=lambda ds: ds[:4])
+        # return ds.enumerate().map_unpack(
+        #     lambda i, r: Record(
+        #         r, class_seg_boxes_=lambda: ds.info.seg_class_info['class_segment_boxes'][i]))
 
     return _map_record(cache_transform, parted_dataset)
 
