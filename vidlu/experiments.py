@@ -192,7 +192,7 @@ def define_training_loop_actions(
         try:
             state = es
             cmd = interact_shortcuts.get(optional_input, optional_input)
-            print(f"Variables: " + ", ".join(locals().keys()))
+            print(f"Iteration: {es.iteration}, namespace: " + ", ".join(locals().keys()))
             exec(cmd)
         except Exception as e:
             print(f'Cannot execute "{optional_input}". Error:\n{e}.')
