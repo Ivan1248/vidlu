@@ -11,7 +11,7 @@ from typeguard import check_argument_types
 import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
-from vidlu.modules.other import mnistnet
+from vidlu.modules.other import mnistnet, convnext
 from vidlu.models.utils import ladder_input_names, set_all_inplace
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
@@ -133,6 +133,27 @@ def irevnet_backbone(init_stride=2, group_lengths=(6, 16, 72, 6),
                                no_final_postact=no_final_postact)
 
 
+def convnext_backbone(name=None, depths=None, dims=None, backbone_f=convnext.ConvNeXtBackbone,
+                      weights=None, **kwargs):
+    if name is None:
+        if depths is None or dims is None:
+            raise RuntimeError("Either size or depths and dims should be provided.")
+    elif name == 'tiny':
+        depths = [3, 3, 9, 3]
+        dims = [96, 192, 384, 768]
+    else:
+        raise ValueError(f"Invalid argument value: {name=}")
+    result = backbone_f(depths=depths, dims=dims, **kwargs)
+    if weights is not None:
+        url = convnext.model_urls[weights]
+        state_dict = torch.hub.load_state_dict_from_url(url=url, map_location='cpu',
+                                                        check_hash=True)
+        state_dict = {k: v for k, v in state_dict['model'].items()
+                      if not k.startswith('norm') and not k.startswith('head')}
+        result.load_state_dict(state_dict)
+    return result
+
+
 # Models ###########################################################################################
 
 class Model(M.Module):
@@ -247,7 +268,8 @@ class SwiftNetBase(SegmentationModel):
                  head_f=vmc.heads.SegmentationHead,
                  input_adapter=None,
                  init=initialization.kaiming_resnet,
-                 laterals=None,  # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
+                 laterals=ladder_input_names,
+                 # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  stage_count=None,
                  mem_efficiency=1):
@@ -264,15 +286,13 @@ class SwiftNetBase(SegmentationModel):
         self.stage_count = stage_count
 
     def build(self, x):
-        should_check = self.laterals is not None
-        if self.laterals is None or callable(self.laterals):
+        if callable(self.laterals):
             vm.call_if_not_built(self.backbone, x)
-            self.laterals = self.laterals(self.backbone) if callable(self.laterals) else \
-                ladder_input_names(self.backbone)
+            self.laterals = self.laterals(self.backbone)
         if self.stage_count is not None:
             self.laterals = self.laterals[-self.stage_count:]
-        if should_check and self.stage_count not in [None, len(self.laterals)]:
-            warn(f"{self.stage_count=} is different from {len(self.laterals)=}.")
+            if self.stage_count != len(self.laterals):
+                warn(f"{self.stage_count=} is different from {len(self.laterals)=}.")
 
         backbone = self.backbone
         self.backbone = vmc.KresoLadderModel(
@@ -316,6 +336,17 @@ class SwiftNetIRevNet(SwiftNetBase):
         super().post_build()
         set_all_inplace(self, self.mem_efficiency >= 1)
         if self.mem_efficiency >= 2:
+            raise NotImplementedError()
+        return True
+
+
+class SwiftNetConvNeXt(SwiftNetBase):
+    __init__ = partialmethod(SwiftNet.__init__, backbone_f=convnext_backbone, init=None,
+                             laterals=('stages.0', 'stages.1', 'stages.2'), mem_efficiency=0)
+
+    def post_build(self, *args, **kwargs):
+        super().post_build()
+        if self.mem_efficiency > 0:
             raise NotImplementedError()
         return True
 
