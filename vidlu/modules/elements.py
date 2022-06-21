@@ -364,10 +364,14 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
     def _mark_if_modified(self, out, inp_to_ver):
         if isinstance(out, torch.Tensor):
             return mark_modified(out, out._version != inp_to_ver.get(out, out._version))
+        elif isinstance(out, str):
+            return out
         elif isinstance(out, T.Sequence):
             return type(out)(self._mark_if_modified(o, inp_to_ver) for o in out)
         elif isinstance(out, T.Mapping):
             return type(out)((k, self._mark_if_modified(o, inp_to_ver)) for k, o in out.items())
+        else:
+            return out
 
     def _check_modified(self, *args, **kwargs):
         """Checks whether the input is not in-place modified.
