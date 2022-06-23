@@ -19,7 +19,7 @@ def one_hot(indices: torch.Tensor, c: int, dtype=None):
     """
     y_flat = indices.view(-1, 1)
     return (torch.zeros(y_flat.shape[0], c, dtype=dtype, device=indices.device)
-            .scatter_(1, y_flat, 1).view(*indices.shape, -1))
+            .scatter_(1, y_flat, 1).view(*indices.shape, c))
 
 
 def clamp(x, min, max, inplace=False):
