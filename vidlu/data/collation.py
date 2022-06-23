@@ -1,11 +1,10 @@
 import inspect
-import pickle
 import typing as T
-
+import dataclasses as dc
 import numpy as np
 from torch.utils.data.dataloader import default_collate as torch_collate
 
-from .record import Record
+from .record import Record, LazyField
 import vidlu.data.types as dt
 
 
@@ -29,6 +28,10 @@ def numpy_collate(batch):
         raise TypeError(type(elem))
 
 
+class MultiSizeBatch(tuple):
+    pass
+
+
 class ExtendableCollate:
     def __call__(self, batch):
         r"""Puts each data field into a tensor with outer dimension batch size"""
@@ -42,18 +45,23 @@ class ExtendableCollate:
         elif isinstance(elem, tuple) and hasattr(elem, '_fields'):  # namedtuple
             return elem_type(*(self(samples) for samples in zip(*batch, strict=True)))
         elif isinstance(elem, T.Sequence):
-            # check to make sure that the elements in batch have consistent size
             it = iter(batch)
             elem_size = len(next(it))
             if not all(len(elem) == elem_size for elem in it):
-                raise RuntimeError('each element in list of batch should be of equal size')
-            transposed = zip(*batch, strict=True)
-            return [self(samples) for samples in transposed]
+                return MultiSizeBatch(batch)
+            try:
+                transposed = zip(*batch, strict=True)
+            except TypeError as e:
+                transposed = zip(*batch)
+            return elem_type([self(samples) for samples in transposed])
         else:
             return torch_collate(batch)
 
 
+@dc.dataclass
 class DefaultCollate(ExtendableCollate):
+    evaluate_lazy_data: bool = False
+
     def __call__(self, batch):
         elem_type = type(batch[0])
         if hasattr(elem_type, 'collate'):
@@ -65,7 +73,11 @@ class DefaultCollate(ExtendableCollate):
             except NotImplementedError:
                 pass
         if elem_type is Record:
-            return Record(self(tuple(dict(d.items()) for d in batch)))
+            batch_dicts = tuple((dict(r.items()) for r in batch) if self.evaluate_lazy_data else
+                                (r.dict_ for r in batch))
+            return Record(self(batch_dicts))
+        elif elem_type is LazyField:
+            return LazyField(lambda: self(tuple(x() for x in batch)))
         elif isinstance(batch[0], dt.AABBsOnImage):
             return batch
         return super().__call__(batch)
