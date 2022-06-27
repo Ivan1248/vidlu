@@ -15,7 +15,7 @@ args = parser.parse_args()
 get_data = vdu.CachingDatasetFactory(
     dirs.datasets, dirs.cache,
     [partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=dirs.cache)])
-pds = get_data(args.ds)
+datasets, *_ = get_data(args.ds)
 
-for k, ds in pds.items():
+for ds in datasets:
     clear_hdd_cache(ds)

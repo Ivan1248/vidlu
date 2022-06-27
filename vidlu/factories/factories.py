@@ -86,13 +86,34 @@ def parse_data_str(data_str):
     return name_options_subsets_tuples
 
 
+def apply_default_transforms(datasets, cache_dir):
+    # TODO: de-hardcode
+    default_transforms = [  # partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
+        partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
+        partial(vdu.cache_data_lazily, cache_dir=cache_dir)]
+    for i, ds in datasets:
+        for transform in default_transforms:
+            ds = transform(ds)
+        datasets[i] = ds
+    return datasets
+
+
+def evaluate_data_transforms_string(datasets, transform_str):
+    import vidlu.transforms as vt
+    import torchvision.transforms.functional_tensor as tvt
+    import vidlu.modules.functional as vmf
+
+    # TODO: improve names if necessary
+    namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
+                 **module_to_dict(vdu.dataset_ops)}
+    namespace.update(vt=vt, Record=Record, d=datasets)
+    return factory_eval(transform_str, namespace)
+
+
 def get_data(data_str: str, datasets_dir, cache_dir=None) \
         -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
     from vidlu import data
     from vidlu.data import Record
-    import vidlu.transforms as vt
-    import torchvision.transforms.functional_tensor as tvt
-    import vidlu.modules.functional as vmf
 
     if ':' in data_str:
         data_str, transform_str = data_str.split(':', 1)
@@ -101,28 +122,24 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     name_options_subsets_tuples = parse_data_str(data_str)
 
-    get_parted_dataset = data.DatasetFactory(datasets_dir)
-    if cache_dir is not None:
-        get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [
-            partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
-            partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir)
-        ])
+    get_dataset = data.DatasetFactory(datasets_dir)
 
-    data = []
+    keys = []
+    datasets = []
     for name, options_str, subsets in name_options_subsets_tuples:
         options = factory_eval(f'dict{options_str or "()"}', dict(Record=Record))
-        pds = get_parted_dataset(name, **options)
-        k = f"{name}{options_str or ''}"
-        for s in subsets:
-            data.append(((k, s), getattr(pds, s)))
+        full_name = f"{name}{options_str or ''}"
+        for subset in subsets:
+            ds = get_dataset(name, subset=subset, **options)
+            keys.append((full_name, subset))
+            datasets.append(ds)
+
+    datasets = apply_default_transforms(datasets, cache_dir=cache_dir)
 
     if transform_str is not None:  # TODO: improve names if necessary
-        namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
-                     **module_to_dict(vdu.dataset_ops)}
-        namespace.update(vt=vt, Record=Record, d=[v for k, v in data])
-        values = factory_eval(transform_str, namespace)
-        data = [((getattr(v, 'identifier', f'dataset{i}'), ''), v) for i, v in enumerate(values)]
-    return data  # not dict since elements can repeat
+        datasets = evaluate_data_transforms_string(datasets, transform_str)
+
+    return datasets, keys, transform_str
 
 
 get_data.help = \
@@ -147,7 +164,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
     else:
         names = ['train', 'test']
 
-    datasets = [prepare_dataset(ds) for _, ds in get_data(data_str, datasets_dir, cache_dir)]
+    datasets = [prepare_dataset(ds) for ds in get_data(data_str, datasets_dir, cache_dir)[0]]
     named_datasets = NameDict(dict(zip(names, datasets)))
     print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
                                        for name, ds in named_datasets.items()))
@@ -231,7 +248,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         problem = problem or defaults.get_problem_from_dataset(prep_dataset)
 
     if init_input is None and prep_dataset is not None:
-        init_input = next(iter(DataLoader(prep_dataset, batch_size=2)))[0]
+        init_input = next(iter(DataLoader([prep_dataset[0]] * 2, batch_size=2)))[0]
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
@@ -252,8 +269,8 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
             argtree.update(factory_eval(f"t({argtree_arg[0]})", namespace))
         model_f = argtree.apply(model_f)
         input_adapter = get_input_adapter(
-            input_adapter_str, data_stats=(None if prep_dataset is None
-                                           else prep_dataset.info['pixel_stats']))
+            input_adapter_str, data_stats=prep_dataset.info[
+                'pixel_stats'] if input_adapter_str == 'standardize' else None)
         _print_args_messages('Model', model_class, model_f,
                              {**argtree, 'input_adapter': input_adapter},
                              verbosity=verbosity)
@@ -286,23 +303,23 @@ get_model.help = \
 
 def _parse_parameter_translation_string(params_str):
     dst_re = fr'\w+(?:\.\w+)*'
-    src_re = fr'(\w+(?:\/\w+)*)?{dst_re}'
+    src_re = fr'([\w\/]*)?{dst_re}'
     regex = re.compile(
-        fr'(?P<transl>[\w]+)(?::(?P<src>{src_re})?(?:->(?P<dst>{dst_re}))?)?:(?P<name>.+)')
+        fr'(?P<transl>\w+)(?::(?P<src>{src_re})?(?:->(?P<dst>{dst_re}))?)?:(?P<name>.+)')
     m = regex.fullmatch(params_str.strip())
     if m is None:
         regex = re.compile(
-            fr'(?P<transl>[\w]+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<name>.+))?')
+            fr'(?P<transl>\w+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<name>.+))?')
         m = regex.fullmatch(params_str.strip())
     if m is None:
         # raise ValueError(
         #     f'{params_str=} does not match the pattern "translator[[<src>]][-><dst>][:<name>]".'
         #     + " <src> supports indexing nested dictionaries by putting commas between keys.")
         raise ValueError(
-            f'{params_str=} does not match the pattern "translator[:[<src>][-><dst>]]:<name>".'
+            f'{params_str=} does not match the pattern "<translator>[[<src>]][-><dst>]:<name>".'
             + ' <src> supports indexing nested dictionaries by putting "/" between keys.')
     p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'name']})
-    *src_dict, src = p1.src.split(",")
+    *src_dict, src = p1.src.split("/")
     return Namespace(translator=p1.transl, src_dict=src_dict, src_module=src, dest_module=p1.dst,
                      name=p1.name)
 

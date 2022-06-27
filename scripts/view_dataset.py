@@ -23,8 +23,8 @@ parser.add_argument('--jitter', type=str, default=None)
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-[(name, ds)] = get_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
-                        cache_dir=dirs.cache)
+[[ds], [name], _] = get_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
+                          cache_dir=dirs.cache)
 ds = prepare_dataset(ds)
 
 print("Name:", ds.identifier, f'({" ".join(name)})')
