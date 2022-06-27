@@ -1,36 +1,141 @@
+import os
+from abc import ABC
 from collections import abc
 from functools import reduce
 import typing as T
+import multiprocessing
 
 import vidlu.utils.func as vuf
 
 
 # Record
 
+class _NoValue:
+    pass
+
 
 class LazyField:
     __slots__ = "_get", "_value"
 
     def __init__(self, get):
-        if vuf.param_count(get) not in [0, 1]:
+        if vuf.positional_param_count(get) not in [0, 1]:
             raise ValueError("get should be a callable with either 0 (simple lazy evaluation) or 1"
-                             + " parameter (in case of referring back to the 'Record' object).")
+                             + "positional parameter (for referring back to the 'Record' object).")
         self._get = get
-        self._value = None
+        self._value = _NoValue
 
-    def __call__(self, record):
+    def __call__(self, record=None):
         """Although the Record instance discards the LazyField instance after calling it,
         we cache the value in case some other Record instance uses it too."""
-        if self._value is None:
-            self._value = self._get() if vuf.param_count(self._get) == 0 else self._get(record)
+        if self._value is _NoValue:
+            self._value = self._get() if vuf.positional_param_count(self._get) == 0 else self._get(
+                record)
         return self._value
 
 
-def _process_lazy_args(args: dict):
-    return dict((k[:-1], LazyField(v)) if k.endswith('_') else (k, v) for k, v in args.items())
+def _process_lazy_arg(k, v):
+    return (k[:-1], LazyField(v)) if k.endswith('_') else (k, v)
 
 
-class Record(abc.Sequence):  # Sized, Iterable len, iter
+def _process_lazy_args(d):
+    if isinstance(d, RecordBase):
+        return d.dict_
+    if not isinstance(d, T.Mapping):
+        d = dict(d)
+    return dict(_process_lazy_arg(k, v) for k, v in d.items())
+
+
+def _check_key(record, key, error_type=KeyError):
+    if key not in record.dict_:
+        raise error_type(f'{repr(key)} not in available keys: {str(list(record.keys()))[1:-1]}')
+
+
+class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
+    __slots__ = "dict_"
+
+    def __init__(self, *args, **kwargs):
+        if len(args) > 1:
+            raise ValueError("All arguments but the first one must be keyword arguments."
+                             + " The optional positional argument can only be a Record or Mapping.")
+        self.dict_ = _process_lazy_args(kwargs)
+        if len(args) == 1:
+            self.dict_ = dict(_process_lazy_args(args[0]), **self.dict_)
+        if any(isinstance(k, int) for k in self.dict_.keys()):
+            raise ValueError("Record keys must be non-ints.")
+        if int(os.environ.get('VIDLU_EAGER_RECORD', '0'))==1:
+            self.evaluate()
+            if 'classes' in self.keys() and self.classes[0] is None:
+                breakpoint()
+
+    def __getitem__(self, key):
+        _check_key(self, key, KeyError)
+        val = self.dict_[key]
+        if isinstance(val, LazyField):
+            val = self.dict_[key] = val(self)
+        return val
+
+    def __setitem__(self, key, value):
+        self.dict_.__setitem__(*_process_lazy_arg(key, value))
+
+    def __len__(self):  # Sized
+        return len(self.dict_)
+
+    def __getattr__(self, key):  # namespace
+        _check_key(self, key, AttributeError)
+        return self[key]
+
+    def __eq__(self, other):
+        if isinstance(other, RecordBase):
+            return self.dict_ == other.dict_
+        else:
+            return all(a == b for a, b in zip(self.items(), other.items()))
+
+    def __getstate__(self):  # evaluates everything
+        return {k: v for k, v in self.items()}
+
+    def __setstate__(self, state):
+        self.dict_ = state
+
+    def __str__(self):
+        return self._to_string(str)
+
+    def __repr__(self):
+        return self._to_string(repr)
+
+    def evaluate(self):
+        for k in self.keys():
+            _ = self[k]
+
+    def is_evaluated(self, key):
+        return not isinstance(self.dict_[key], LazyField)
+
+    def join(self, other: 'RecordBase', *others, overwrite=False):  # sequence
+        if len(others) > 0:
+            return reduce(lambda a, b: a.join(b, overwrite=overwrite), [self, other, *others])
+        if not overwrite and any(a in self.keys() for a in other.keys()):
+            raise ValueError("Sets of field names should be disjoint if `overwrite == False`.")
+        return Record(self, **other.dict_)
+
+    def update(self, other):  # Mapping
+        self.dict_.update(_process_lazy_args(other))
+
+    def keys(self):  # Mapping
+        return self.dict_.keys()
+
+    def values(self):  # Mapping
+        return ListRecordView(self)  # TODO
+
+    def items(self):  # Mapping
+        return ItemsRecordView(self)  # TODO
+
+    def _to_string(self, func=repr):
+        fields = ", ".join(
+            [f"{k}={func(self[k])}" if type(self).is_evaluated(self, k) else f"{k}=<unevaluated>"
+             for k in self.keys()])
+        return f"{type(self).__name__}({fields})"
+
+
+class Record(RecordBase, abc.Sequence):  # Sized, Iterable len, iter
     r"""
     An immutable sequence (supports numeric indexes) that behaves as a mapping
     as well (supports string keys) and supports the dot operator for accessing
@@ -65,20 +170,6 @@ class Record(abc.Sequence):  # Sized, Iterable len, iter
         Record(d=2, b=<unevaluated>)
     """
 
-    __slots__ = "_dict"
-
-    def __init__(self, *args, **kwargs):
-        if len(args) > 1:
-            raise ValueError("All arguments but the first one must be keyword arguments."
-                             + " The optional positional argument can only be a Record or Mapping.")
-        dict_ = _process_lazy_args(kwargs)
-        if len(args) == 1:
-            d = args[0]
-            dict_ = dict(d._dict if isinstance(d, Record) else _process_lazy_args(dict(d)), **dict_)
-        self._dict = dict_
-        if any(isinstance(k, int) for k in dict_.keys()):
-            raise ValueError("Record keys must be non-ints.")
-
     def __getitem__(self, key: T.Union[int, str, T.Sequence[int], T.Sequence[str]]):
         if isinstance(key, slice):
             return self[list(range(*key.indices(len(self))))]
@@ -88,89 +179,39 @@ class Record(abc.Sequence):  # Sized, Iterable len, iter
             if isinstance(key[0], int):
                 all_keys = tuple(self.keys())
                 key = [all_keys[i] for i in key]
-            return Record({k: self._dict[k] for k in key})
-        else:
-            if isinstance(key, int):
-                key = tuple(self.keys())[key]
-            elif key not in self._dict:
-                raise KeyError(
-                    f'{repr(key)} is not among available keys: {", ".join(repr(k) for k in self._dict.keys())}.')
-            val = self._dict[key]
-            if isinstance(val, LazyField):
-                val = self._dict[key] = val(self)
-            return val
+            return Record({k: self.dict_[k] for k in key})
+        elif isinstance(key, int):
+            key = tuple(self.keys())[key]
+        return super().__getitem__(key)
 
-    def __len__(self):  # Sized
-        return len(self._dict)
+    def __iter__(self):  # Sequence (returns values)
+        return iter(self.values())
 
     def __contains__(self, item):  # Mapping
         raise TypeError("`in` operator not supported. Use the `values` or the `keys` method.")
 
-    def __iter__(self):  # Sequence (returns values)
-        # raise TypeError("`in` operator not supported. Use the `values` or the `keys` method.")
-        return iter(self.values())
 
-    def __getattr__(self, key):  # namespace
-        return self[key]
+class DictRecord(RecordBase, abc.Mapping):  # Sized, Iterable len, iter
+    def __iter__(self):
+        return iter(self.dict_.keys())
 
-    def __eq__(self, other):
-        return all(a == b for a, b in zip(self.items(), other.items()))
-
-    def __getstate__(self):  # evaluates everything
-        return {k: v for k, v in self.items()}
-
-    def __setstate__(self, state):
-        self._dict = state
-
-    def _to_string(self, func=repr):
-        fields = ", ".join(
-            [f"{k}={func(self[k])}" if type(self).is_evaluated(self, k) else f"{k}=<unevaluated>"
-             for k in self.keys()])
-        return f"{type(self).__name__}({fields})"
-
-    def __str__(self):
-        return self._to_string(str)
-
-    def __repr__(self):
-        return self._to_string(repr)
-
-    def evaluate(self):
-        for k in self.keys():
-            _ = self[k]
-
-    def is_evaluated(self, key):
-        return not isinstance(self._dict[key], LazyField)
-
-    def join(self, other: 'Record', *others, overwrite=False):
-        if len(others) > 0:
-            return reduce(lambda a, b: a.join(b, overwrite=overwrite), [self, other, *others])
-        if not overwrite and any(a in self.keys() for a in other.keys()):
-            raise ValueError("Sets of field names should be disjoint if `overwrite == False`.")
-        return Record(self, **other._dict)
-
-    def keys(self):  # Mapping
-        return self._dict.keys()
-
-    def values(self):  # Mapping
-        return ListRecord(self)  # TODO
-
-    def items(self):  # Mapping
-        return RecordItemsView(self)  # TODO
+    def __contains__(self, item):
+        return any(v == item for v in self)
 
 
 def arrange(r, field_names):
-    return Record({**r[field_names]._dict, **r._dict})
+    return Record({**r[field_names].dict_, **r.dict_})
 
 
 class RecordView(Record):
     def __init__(self, record):
         super().__init__()
-        self._dict = record._dict
+        self.dict_ = record.dict_
 
 
-class DictRecord(RecordView):
+class DictRecordView(RecordView):
     def __iter__(self):
-        return iter(self._dict.keys())
+        return iter(self.dict_.keys())
 
     def __contains__(self, item):
         return any(v == item for v in self)
@@ -180,9 +221,9 @@ class DictRecord(RecordView):
         return f"{type(self).__name__}({fields})"
 
 
-class ListRecord(RecordView):
+class ListRecordView(RecordView):
     def __iter__(self):
-        return (self[k] for k in self._dict.keys())
+        return (self[k] for k in self.dict_.keys())
 
     def __contains__(self, item):
         return any(v == item for v in self)
@@ -194,9 +235,9 @@ class ListRecord(RecordView):
         return f"{type(self).__name__}({fields})"
 
 
-class RecordItemsView(RecordView):
+class ItemsRecordView(RecordView):
     def __iter__(self):
-        return ((k, self[k]) for k in self._dict.keys())
+        return ((k, self[k]) for k in self.dict_.keys())
 
     def __contains__(self, item):
         return any(v == item for v in self)

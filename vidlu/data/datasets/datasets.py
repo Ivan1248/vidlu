@@ -7,6 +7,7 @@ import os
 import shutil
 import warnings
 from vidlu.utils.func import partial
+import typing as T
 
 import PIL.Image as pimg
 import numpy as np
@@ -15,7 +16,7 @@ import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
 import torchvision.datasets.utils as tvdu
-from vidlu.data import Dataset, Record
+from vidlu.data import Dataset, Record, class_mapping
 from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
 from vidlu.utils.misc import extract_zip
@@ -30,11 +31,21 @@ IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tif
 # Helper functions
 
 
-def _load_image(path, force_rgb=True):
+def _load_image(path, force_rgb=True, dtype=None):
+    """Loads an image or segmentation.
+
+    Args:
+        path: Image file path.
+        force_rgb: Whether to convert to RGB or keep the original
+            representation, i.e. single channel.
+
+    Returns:
+        np.ndarray
+    """
     img = pimg.open(path)
     if force_rgb and img.mode != 'RGB':
         img = img.convert('RGB')
-    return img
+    return img if dtype is None else img.astype(dtype)
 
 
 def _rescale(img, factor, interpolation=pimg.BILINEAR):
@@ -51,7 +62,15 @@ def _make_record(**kwargs):
     return Record(**{k: array_to_image(k, v) for k, v in kwargs.items()})
 
 
-def _check_subsets(dataset_class, subset):
+def _make_sem_seg_record(im_path, lab_path, id_to_label=None, downsampling=1,
+                         downsample_labels=False, name=None):
+    im_get = lambda: load_image(im_path, downsampling)
+    lab_get = lambda: load_segmentation(lab_path, downsampling if downsample_labels else 1,
+                                        id_to_label)
+    return _make_record(image_=im_get, seg_map_=lab_get, name=name)
+
+
+def _check_subset(dataset_class, subset):
     if subset not in dataset_class.subsets:
         raise ValueError(f"Invalid subset name for {dataset_class.__name__}.")
 
@@ -70,13 +89,29 @@ def _check_size(*images, size, name=None):
                                + f" ({len(labels)}) does not equal {size}.")
 
 
-def load_image(path, downsampling):
+def load_image(path, downsampling=1):
     if not isinstance(downsampling, int):
         raise ValueError("`downsampling` must be an `int`.")
     img = _load_image(path)
     if downsampling > 1:
         img = tvtf.resize(img, tuple(np.flip(img.size) // downsampling), pimg.BILINEAR)
     return img
+
+
+def remap_segmentation(lab: np.ndarray, id_to_label=None):
+    if len(lab.shape) == 3:  # for rgb labels
+        scalarizer = np.array([256 ** 2, 256, 1])
+        u, inv = np.unique(lab.reshape(-1, 3).dot(scalarizer), return_inverse=True)
+        id_to_label = {np.array(k).dot(scalarizer): v for k, v in id_to_label.items()}
+        return np.array([id_to_label.get(k, -1) for k in u], dtype=lab.dtype)[inv].reshape(
+            lab.shape[:2])
+    elif len(id_to_label) > 140:  # faster for great numbers of distinct labels
+        u, inv = np.unique(lab, return_inverse=True)
+        return np.array([id_to_label.get(k, k) for k in u], dtype=lab.dtype)[inv].reshape(lab.shape)
+    else:  # faster for small numbers of distinct labels
+        for id_, lb in id_to_label.items():
+            lab[lab == id_] = lb
+        return lab
 
 
 def load_segmentation(path, downsampling, id_to_label=None, dtype=np.int8):
@@ -87,35 +122,22 @@ def load_segmentation(path, downsampling, id_to_label=None, dtype=np.int8):
         downsampling: (int) an integer larger than 1.
         id_to_label: (dict, optional) a dictionary for translating labels. Keys
             can be tuples (if colors are translated to integers) or integers.
-        dtype: output element type.
+        dtype: label element data type. It should be a signed integer when
+            there is an "ignore" class (-1).
 
     Returns:
         A 2D array.
     """
-    if id_to_label is None:
-        id_to_label = dict()
     if not isinstance(downsampling, int):
         raise ValueError("`downsampling` must be an `int`.")
 
     lab = _load_image(path, force_rgb=False)
+    lab = np.array(lab, dtype=dtype)
     if downsampling > 1:
         lab = tvtf.resize(lab, tuple(np.flip(lab.size) // downsampling), pimg.NEAREST)
-
-    if len(lab.getbands()) != 1:  # for rgb labels
-        lab = np.array(lab)
-        scalarizer = np.array([256 ** 2, 256, 1])
-        u, inv = np.unique(lab.reshape(-1, 3).dot(scalarizer), return_inverse=True)
-        id_to_label = {np.array(k).dot(scalarizer): v for k, v in id_to_label.items()}
-        return np.array([id_to_label.get(k, -1)
-                         for k in u], dtype=dtype)[inv].reshape(lab.shape[:2])
-    elif len(id_to_label) > 140:  # faster for great numbers of distinct labels
-        lab = np.array(lab)
-        u, inv = np.unique(lab, return_inverse=True)
-        return np.array([id_to_label.get(k, k) for k in u], dtype=dtype)[inv].reshape(lab.shape)
-    else:  # faster for small numbers of distinct labels
-        lab = np.array(lab, dtype=dtype)
-        for id_, lb in id_to_label.items():
-            lab[lab == id_] = lb
+    if id_to_label:
+        return remap_segmentation(lab, id_to_label)
+    else:
         return lab
 
 
@@ -230,15 +252,15 @@ class DummyClassification(Dataset):
 # ImageFolder
 
 class ImageFolder(Dataset):
-    def __init__(self, data_dir, subset='all'):
-        self.data_dir = Path(data_dir)
-        subset_dir = self.data_dir if subset == 'all' else self.data_dir / subset
+    def __init__(self, root, subset='all'):
+        self.root = Path(root)
+        subset_dir = self.root if subset == 'all' else self.root / subset
         self._elements = sorted(p.name for p in subset_dir.iterdir())
-        super().__init__(name=f"imageFolder{self.data_dir.name}", subset=subset,
+        super().__init__(name=f"imageFolder{self.root.name}", subset=subset,
                          info=dict(problem='images'))
 
     def get_example(self, idx):
-        return _make_record(image_=lambda: _load_image(self.data_dir / self._elements[idx]))
+        return _make_record(image_=lambda: _load_image(self.root / self._elements[idx]))
 
 
 # Classification ###################################################################################
@@ -246,28 +268,28 @@ class ImageFolder(Dataset):
 
 class MNIST(Dataset):
     subsets = ['trainval', 'test']
-    default_dir = 'MNIST'
+    default_root = 'MNIST'
     _files = dict(x_train='train-images-idx3-ubyte', y_train='train-labels-idx1-ubyte',
                   x_test='t10k-images-idx3-ubyte', y_test='t10k-labels-idx1-ubyte')
 
-    def __init__(self, data_dir, subset='trainval'):
-        _check_subsets(self.__class__, subset)
-        data_dir = Path(data_dir)
+    def __init__(self, root, subset='trainval'):
+        _check_subset(self.__class__, subset)
+        root = Path(root)
 
-        self.download_if_necessary(data_dir)
+        self.download_if_necessary(root)
 
-        x_path = data_dir / self._files['x_test' if subset == 'test' else 'x_train']
-        y_path = data_dir / self._files['y_test' if subset == 'test' else 'y_train']
+        x_path = root / self._files['x_test' if subset == 'test' else 'x_train']
+        y_path = root / self._files['y_test' if subset == 'test' else 'y_train']
         x, y = self.load_array(x_path, is_image=True), self.load_array(y_path, is_image=False)
         self.x, self.y = map(to_shared_array, [x, y])
         super().__init__(subset=subset, info=dict(class_count=10, problem='classification'))
 
-    def download(self, data_dir):
+    def download(self, root):
         url_base = 'http://yann.lecun.com/exdb/mnist/'
-        print(f"Downloading dataset to {data_dir}")
-        data_dir.mkdir(exist_ok=True)
+        print(f"Downloading dataset to {root}")
+        root.mkdir(exist_ok=True)
         for p in type(self)._files.values():
-            final_path = data_dir / p
+            final_path = root / p
             download_path = final_path.with_suffix('.gz')
             download(url=url_base + p + '.gz', output_path=download_path)
             with gzip.open(download_path, 'rb') as gz:
@@ -290,12 +312,12 @@ class MNIST(Dataset):
 
 class SVHN(Dataset):
     subsets = ['trainval', 'test']
-    default_dir = 'SVHN'
+    default_root = 'SVHN'
 
-    def __init__(self, data_dir, subset='trainval'):
-        _check_subsets(self.__class__, subset)
+    def __init__(self, root, subset='trainval'):
+        _check_subset(self.__class__, subset)
         ss = 'train' if subset == 'trainval' else subset
-        data = loadmat(Path(data_dir) / (ss + '_32x32.mat'))
+        data = loadmat(Path(root) / (ss + '_32x32.mat'))
         self.x, self.y = data['X'], np.remainder(data['y'], 10)
         super().__init__(subset=subset, info=dict(class_count=10, problem='classification'))
 
@@ -313,36 +335,36 @@ def unpickle(file):
 
 class Cifar10(Dataset):
     subsets = ['trainval', 'test']  # TODO: use original subset names
-    default_dir = 'cifar-10-batches-py'
+    default_root = 'cifar-10-batches-py'
     info = dict(
         class_count=10, problem='classification', in_ram=True,
         class_names=["airplane", "car", "bird", "cat", "deer", "dog", "frog", "horse", "ship",
                      "truck"])
 
-    def __init__(self, data_dir, subset='trainval'):
-        _check_subsets(self.__class__, subset)
-        data_dir = Path(data_dir)
+    def __init__(self, root, subset='trainval'):
+        _check_subset(self.__class__, subset)
+        root = Path(root)
 
-        self.download_if_necessary(data_dir)
+        self.download_if_necessary(root)
 
         h, w, ch = 32, 32, 3
         if subset == 'trainval':
             x, y = [], []
             for i in range(1, 6):
-                data = unpickle(data_dir / f'data_batch_{i}')
+                data = unpickle(root / f'data_batch_{i}')
                 x.append(data['data'])
                 y += data['labels']
             x = np.vstack(x).reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
             y = np.array(y, dtype=np.int8)
         else:  # ss == 'test':
-            data = unpickle(data_dir / 'test_batch')
+            data = unpickle(root / 'test_batch')
             x = data['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
             y = np.array(data['labels'], dtype=np.int8)
         self.x, self.y = map(to_shared_array, [x, y])
         super().__init__(subset=subset, info=Cifar10.info)
 
-    def download(self, data_dir):
-        datasets_dir = data_dir.parent
+    def download(self, root):
+        datasets_dir = root.parent
         download_path = datasets_dir / "cifar-10-python.tar.gz"
         print(f"Downloading dataset to {datasets_dir}")
         download(url="https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz",
@@ -360,15 +382,15 @@ class Cifar10(Dataset):
 
 class Cifar100(Dataset):
     subsets = ['trainval', 'test']
-    default_dir = 'cifar-100-python'
+    default_root = 'cifar-100-python'
 
-    def __init__(self, data_dir, subset='trainval'):
-        _check_subsets(self.__class__, subset)
-        data_dir = Path(data_dir)
+    def __init__(self, root, subset='trainval'):
+        _check_subset(self.__class__, subset)
+        root = Path(root)
 
-        self.download_if_necessary(data_dir)
+        self.download_if_necessary(root)
 
-        data = unpickle(data_dir / f"{'train' if subset == 'trainval' else subset}")
+        data = unpickle(root / f"{'train' if subset == 'trainval' else subset}")
 
         h, w, ch = 32, 32, 3
         train_x = data['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
@@ -377,8 +399,8 @@ class Cifar100(Dataset):
         super().__init__(subset=subset, info=dict(class_count=100, problem='classification',
                                                   coarse_labels=data['coarse_labels']))
 
-    def download(self, data_dir):
-        datasets_dir = data_dir.parent
+    def download(self, root):
+        datasets_dir = root.parent
         download_path = datasets_dir / "cifar-100-python.tar.gz"
         print(f"Downloading dataset to {datasets_dir}")
         download(url="https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz",
@@ -397,12 +419,12 @@ class Cifar100(Dataset):
 class DescribableTextures(Dataset):
     subsets = ['trainval', 'test']
 
-    def __init__(self, data_dir, subset='trainval'):
-        _check_subsets(self.__class__, subset)
+    def __init__(self, root, subset='trainval'):
+        _check_subset(self.__class__, subset)
         ss = 'train' if subset == 'trainval' else subset
         super().__init__(subset=ss, info=dict(class_count=47),
-                         data=dset.ImageFolder(f"{data_dir}/images"))
-        self.data = dset.ImageFolder(f"{data_dir}/images")
+                         data=dset.ImageFolder(f"{root}/images"))
+        self.data = dset.ImageFolder(f"{root}/images")
         raise NotImplementedError("DescribableTexturesDataset not implemented")
 
     def get_example(self, idx):
@@ -412,15 +434,15 @@ class DescribableTextures(Dataset):
 
 class TinyImageNet(Dataset):
     subsets = ['train', 'val', 'test']
-    default_dir = 'tiny-imagenet-200'
+    default_root = 'tiny-imagenet-200'
 
-    def __init__(self, data_dir, subset='trainval'):
-        _check_subsets(self.__class__, subset)
-        data_dir = Path(data_dir)
+    def __init__(self, root, subset='trainval'):
+        _check_subset(self.__class__, subset)
+        root = Path(root)
 
-        with open(data_dir / "wnids.txt") as fs:
+        with open(root / "wnids.txt") as fs:
             class_names = [l.strip() for l in fs.readlines()]
-        subset_dir = data_dir / subset
+        subset_dir = root / subset
 
         self._examples = []
 
@@ -454,21 +476,21 @@ class TinyImageNet(Dataset):
 
 class INaturalist2018(Dataset):
     subsets = 'train', 'val', 'test'
-    default_dir = 'iNaturalist2018'
+    default_root = 'iNaturalist2018'
 
     url = "https://github.com/visipedia/inat_comp"
     categories = ("http://www.vision.caltech.edu/~gvanhorn/datasets/" +
                   "inaturalist/fgvc5_competition/categories.json.tar.gz")
 
-    def __init__(self, data_dir, subset='train', superspecies='all', downsampling=1):
+    def __init__(self, root, subset='train', superspecies='all', downsampling=1):
         # TODO: use superspecies parameter
-        _check_subsets(self.__class__, subset)
-        data_dir = Path(data_dir)
-        self._data_dir = data_dir
+        _check_subset(self.__class__, subset)
+        root = Path(root)
+        self._root = root
 
         self._downsampling = downsampling
 
-        with open(f"{data_dir}/{subset}2018.json") as fs:
+        with open(f"{root}/{subset}2018.json") as fs:
             info = json.loads(fs.read())
         self._file_names = [x['file_name'] for x in info['images']]
         if 'annotations' in info.keys():
@@ -477,18 +499,18 @@ class INaturalist2018(Dataset):
             self._labels = np.full(shape=len(self._file_names), fill_value=-1)
 
         info = dict(class_count=8142, problem='classification')
-        categories_path = data_dir / "categories.json"
+        categories_path = root / "categories.json"
         if categories_path.exists():
             with open(categories_path) as fs:
                 info['class_to_categories'] = json.loads(fs.read())
         else:
-            warnings.warn(f"categories.json containing category names is missing from {data_dir}."
+            warnings.warn(f"categories.json containing category names is missing from {root}."
                           + f" It can be obtained from {INaturalist2018.categories}")
 
         super().__init__(subset=subset, info=info)
 
     def get_example(self, idx):
-        img_path = self._data_dir / self._file_names[idx]
+        img_path = self._root / self._file_names[idx]
         return _make_record(image_=load_image(img_path, self._downsampling),
                             class_label=self._labels[idx])
 
@@ -500,11 +522,11 @@ class TinyImages(Dataset):
     # Taken (and slightly modified) from
     # https://github.com/hendrycks/outlier-exposure/blob/master/utils/tinyimages_80mn_loader.py
     subsets = []
-    default_dir = 'tiny-images'
+    default_root = 'tiny-images'
 
-    def __init__(self, data_dir, exclude_cifar=False, cifar_indexes_file=None):
+    def __init__(self, root, exclude_cifar=False, cifar_indexes_file=None):
         def load_image(idx):
-            with open(f'{data_dir}/tiny_images.bin', "rb") as data_file:
+            with open(f'{root}/tiny_images.bin', "rb") as data_file:
                 data_file.seek(idx * 3072)
                 data = data_file.read(3072)
                 return np.fromstring(data, dtype='uint8').reshape((32, 32, 3), order="F")
@@ -540,16 +562,16 @@ class TinyImages(Dataset):
         return 79302017
 
 
-def _read_classification_dataset(data_dir, class_name_to_idx, extensions=None, is_valid_file=None):
+def _read_classification_dataset(root, class_name_to_idx, extensions=None, is_valid_file=None):
     path_to_class = []
-    data_dir = Path(data_dir)
+    root = Path(root)
     if not ((extensions is None) ^ (is_valid_file is None)):
         raise ValueError(
             "Both extensions and is_valid_file cannot be None or not None at the same time")
     if extensions is not None:
         is_valid_file = lambda x: x.lower().endswith(extensions)
     for target in sorted(class_name_to_idx.keys()):
-        d = data_dir / target
+        d = root / target
         if not d.is_dir():
             continue
         for root, _, fnames in sorted(os.walk(d)):
@@ -593,11 +615,11 @@ class ClassificationFolderDataset(Dataset):  # TODO
         targets (list): The class_index value for each image in the dataset
     """
 
-    def __init__(self, data_dir, load_func, extensions=None, is_valid_file=None, input_key='image',
+    def __init__(self, root, load_func, extensions=None, is_valid_file=None, input_key='image',
                  **kwargs):
-        self.root = data_dir
-        classes, class_name_to_idx = self._find_classes(data_dir)
-        self.path_to_class = _read_classification_dataset(data_dir, class_name_to_idx, extensions,
+        self.root = root
+        classes, class_name_to_idx = self._find_classes(root)
+        self.path_to_class = _read_classification_dataset(root, class_name_to_idx, extensions,
                                                           is_valid_file)
         if len(self.path_to_class) == 0:
             raise RuntimeError("Found 0 files in subfolders of: " + self.root
@@ -608,11 +630,11 @@ class ClassificationFolderDataset(Dataset):  # TODO
         self.info.classes, self.info.class_name_to_idx = classes, class_name_to_idx
 
     @staticmethod
-    def _find_classes(data_dir):
+    def _find_classes(root):
         """Finds the class folders in a dataset.
 
         Args:
-            data_dir (string): Root directory path.
+            root (string): Root directory path.
 
         Returns:
             tuple: (classes, class_to_idx) where classes are relative to (dir),
@@ -621,7 +643,7 @@ class ClassificationFolderDataset(Dataset):  # TODO
         Ensures:
             No class is a subdirectory of another.
         """
-        classes = [d.name for d in os.scandir(data_dir) if d.is_dir()]
+        classes = [d.name for d in os.scandir(root) if d.is_dir()]
         classes.sort()
         class_name_to_idx = {classes[i]: i for i in range(len(classes))}
         return classes, class_name_to_idx
@@ -688,7 +710,7 @@ class ImageNet(ImageClassificationFolderDataset):  # TODO
         targets (list): The class_index value for each image in the dataset
     """
     subsets = ["train", "val"]
-    default_dir = 'tiny-images'
+    default_root = 'tiny-images'
 
     def __init__(self, root, subset='train', **kwargs):
         # TODO: use subset parameter
@@ -718,18 +740,18 @@ class ISUN(Dataset):
     # https://github.com/matthias-k/pysaliency/blob/master/pysaliency/external_datasets.py
     # TODO: labels, problem
     subsets = ['train', 'val', 'test']
-    default_dir = 'iSUN'
+    default_root = 'iSUN'
 
-    def __init__(self, data_dir, subset='train'):
-        _check_subsets(self.__class__, subset)
-        self._images_dir = f'{data_dir}/images'
+    def __init__(self, root, subset='train'):
+        _check_subset(self.__class__, subset)
+        self._images_dir = f'{root}/images'
         subset = {
             'train': 'training',
             'val': 'validation',
             'test': 'testing'
         }[subset]
 
-        data_file = f'{data_dir}/{subset}.mat'
+        data_file = f'{root}/{subset}.mat'
         data = loadmat(data_file)[subset]
         self._image_names = [d[0] for d in data['image'][:, 0]]
 
@@ -749,12 +771,12 @@ class ISUN(Dataset):
 class LSUN(Dataset):
     # TODO: labels, replace with LSUNDatasetNew
     subsets = ['test']
-    default_dir = 'LSUN'
+    default_root = 'LSUN'
 
-    def __init__(self, data_dir, subset='train'):
+    def __init__(self, root, subset='train'):
         _check_subsets(self.__class__, subset)
 
-        self._subset_dir = f'{data_dir}/{subset}'
+        self._subset_dir = f'{root}/{subset}'
         self._image_names = [
             os.path.relpath(x, start=self._subset_dir)
             for x in glob.glob(f'{self._subset_dir}/**/*.webp', recursive=True)
@@ -775,7 +797,7 @@ class LSUN(Dataset):
 
 class CamVid(Dataset):
     subsets = ['train', 'val', 'test']
-    default_dir = 'CamVid'
+    default_root = 'CamVid'
     class_groups_colors = {
         'Sky': {'Sky': (128, 128, 128)},
         'Buliding': {'Building': (128, 0, 0)},
@@ -800,28 +822,28 @@ class CamVid(Dataset):
         class_colors=[next(iter(v.values())) for v in class_groups_colors.values()],
         url="https://github.com/Ivan1248/CamVid/archive/master.zip")
 
-    def download(self, data_dir):
-        datasets_dir = Path(data_dir).parent
+    def download(self, root):
+        datasets_dir = Path(root).parent
         download_path = datasets_dir / "CamVid.zip"
         download(url=self.info["url"], output_path=download_path)
         print(f"Extracting dataset to {datasets_dir}")
         extract_zip(download_path, datasets_dir)
-        shutil.move(datasets_dir / 'CamVid-master', data_dir)
+        shutil.move(datasets_dir / 'CamVid-master', root)
         download_path.unlink()
 
-    def __init__(self, data_dir, subset='train', downsampling=1):
-        _check_subsets(self.__class__, subset)
+    def __init__(self, root, subset='train', downsampling=1):
+        _check_subset(self.__class__, subset)
         if downsampling < 1:
             raise ValueError("downsampling must be greater or equal to 1.")
 
-        data_dir = Path(data_dir)
-        self.download_if_necessary(data_dir)
+        root = Path(root)
+        self.download_if_necessary(root)
 
         self._downsampling = downsampling
 
-        img_dir, lab_dir = data_dir / '701_StillsRaw_full', data_dir / 'LabeledApproved_full'
+        img_dir, lab_dir = root / '701_StillsRaw_full', root / 'LabeledApproved_full'
         self._img_lab_list = [(str(img_dir / f'{name}.png'), str(lab_dir / f'{name}_L.png'))
-                              for name in (data_dir / f'{subset}.txt').read_text().splitlines()]
+                              for name in (root / f'{subset}.txt').read_text().splitlines()]
         super().__init__(
             subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
             info=self.info)
@@ -841,22 +863,22 @@ class CamVid(Dataset):
 class CamVidSequences(Dataset):  # TODO
     subset_to_size = {'06R0': 3001, '16E5': 8251, '01TP': 3691, 'Seq05VD': 5101}
     subsets = list(subset_to_size.keys())  # 01TP and Seq05VD contain the test set
-    default_dir = 'CamVid-sequences'
+    default_root = 'CamVid-sequences'
 
-    def download(self, data_dir):
+    def download(self, root):
         raise NotImplementedError()
 
-    def __init__(self, data_dir, subset, downsampling=1):
-        _check_subsets(self.__class__, subset)
+    def __init__(self, root, subset, downsampling=1):
+        _check_subset(self.__class__, subset)
         if downsampling < 1:
             raise ValueError("downsampling must be greater or equal to 1.")
 
-        data_dir = Path(data_dir)
-        self.download_if_necessary(data_dir)
+        root = Path(root)
+        self.download_if_necessary(root)
 
         self._downsampling = downsampling
 
-        self._image_paths = list((data_dir / subset).iterdir())
+        self._image_paths = list((root / subset).iterdir())
         _check_size(self._image_paths, size=self.subset_to_size[subset],
                     name=f"{type(self).__name__}-{subset}")
 
@@ -902,73 +924,126 @@ _cityscapes_class_names = [
 
 
 class Cityscapes(Dataset):
+    default_root = 'Cityscapes'
     subsets = ['train', 'val', 'test', 'train_extra']  # 'test' labels are invalid
-    default_dir = 'Cityscapes'
     subset_to_size = dict(train=2975, val=500, test=1525, train_extra=19998)
-    info = dict(problem='semantic_segmentation', class_count=19,
-                class_names=[l.name for l in cslabels if l.trainId >= 0],
-                class_colors=[l.color for l in cslabels if l.trainId >= 0],
-                in_ram=False)  # vup.get_partition(data_dir) == 'tmpfs'
+    info = Record(problem='semantic_segmentation', class_count=19,
+                  class_names=[l.name for l in cslabels if l.trainId >= 0],
+                  class_colors=[l.color for l in cslabels if l.trainId >= 0])
+    id_to_label = {l.id: l.trainId for l in cslabels}
 
-    def __init__(self, data_dir, subset='train', label_kind=None, downsampling=1,
+    def __init__(self, root, subset='train', label_kind=None, downsampling=1,
                  downsample_labels=True):
         if label_kind is None:
             label_kind = 'gtCoarse' if subset == 'train_extra' else 'gtFine'
-        data_dir = Path(data_dir)
-        im_data_dir = data_dir / subset if subset == 'train_extra' else data_dir
-        _check_subsets(self.__class__, subset)
-        if downsampling < 1:
-            raise ValueError("downsampling must be greater or equal to 1.")
+        root = Path(root)
+        img_root = root / subset if subset == 'train_extra' else root
+        _check_subset(self.__class__, subset)
 
         self.downsampling, self.downsample_labels = downsampling, downsample_labels
 
-        subdirs = {x.name for x in im_data_dir.glob('*')}
-        if 'leftImg8bit' in subdirs:
-            images_dir, labels_dir = 'leftImg8bit', label_kind
-            img_suffix, lab_suffix = "_leftImg8bit.png", f"_{label_kind}_labelIds.png"
-            self._id_to_label = {l.id: l.trainId for l in cslabels}
-        elif 'rgb' in subdirs:  # IK's format
-            images_dir, labels_dir, img_suffix, lab_suffix = 'rgb', 'labels', ".ppm", ".png"
-            self._id_to_label = {**{i: i for i in range(19)}, 19: -1}
-        else:
-            raise RuntimeError(f"Invalid directory structure in {im_data_dir}: {subdirs=}.")
+        images_dir, labels_dir = 'leftImg8bit', label_kind
+        img_suffix, lab_suffix = "_leftImg8bit.png", f"_{label_kind}_labelIds.png"
 
-        self._images_dir = im_data_dir / images_dir / subset
-        self._labels_dir = data_dir / labels_dir / subset
+        self.image_dir = img_root / images_dir / subset
+        self.label_dir = root / labels_dir / subset
 
-        self._images = list(sorted([
-            x.relative_to(self._images_dir) for x in self._images_dir.glob('*/*')]))
-        self._labels = [str(x)[:-len(img_suffix)] + lab_suffix for x in self._images]
-
-        _check_size(self._images, size=self.subset_to_size[subset],
-                    name=f"{type(self).__name__}-{subset}")
+        self.image_paths = list(sorted([
+            x.relative_to(self.image_dir) for x in self.image_dir.glob('*/*')]))
+        self.label_paths = [str(x)[:-len(img_suffix)] + lab_suffix for x in self.image_paths]
 
         super().__init__(
             subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
             info=self.info)
 
+        _check_size(self.image_paths, size=self.subset_to_size[subset], name=self.name)
+
     def get_example(self, idx):
-        im_path = self._images_dir / self._images[idx]
-        lab_path = self._labels_dir / self._labels[idx]
-        d = self.downsampling
-        im_get = lambda: load_image(im_path, d)
-        lab_get = lambda: load_segmentation(
-            lab_path, d if self.downsample_labels else 1, self._id_to_label)
-        return _make_record(image_=im_get,
-                            seg_map_=lab_get,
-                            name=str(self._images[idx].with_suffix("")))
+        return _make_sem_seg_record(
+            self.image_dir / self.image_paths[idx], self.label_dir / self.label_paths[idx],
+            name=str(self.image_paths[idx].with_suffix("")), id_to_label=self.id_to_label,
+            downsampling=self.downsampling, downsample_labels=self.downsample_labels)
 
     def __len__(self):
-        return len(self._images)
+        return len(self.image_paths)
+
+
+# class Cityscapes35(Cityscapes):
+#     id_to_label = {}
+#     inst_id_to_label = {}
+#     i, j = 0, 0
+#     for label in cslabels:
+#         id_to_label[label.id] = i
+#         i += 1
+#         if label.hasInstances is True:
+#             inst_id_to_label[label.id] = j
+#             j += 1
+#
+#     id_to_map = {id: i for i, id in id_to_label.items()}
+#     inst_id_to_map = {id: i for i, id in inst_id_to_label.items()}
+#     info = {**Cityscapes.info,
+#             **dict(class_names=[l.name for l in cslabels if l.trainId >= 0],
+#                    class_colors=[l.color for l in cslabels if l.trainId >= 0] + [[0, 0, 0]],
+#                    class_count=len(cslabels))}
+
+from . import _vistas_info
+
+
+class Vistas(Dataset):
+    default_root = 'Vistas'
+    subsets = ('training', 'validation', 'testing')
+    subset_to_size = {'training': 18000, 'validation': 2000, 'testing': 2}
+    class_count = 63
+    ignore_ids = _vistas_info.ignore_ids
+    id_to_label = {i: -1 if i in _vistas_info.ignore_ids else i for i in
+                   range(class_count + len(_vistas_info.ignore_ids))}
+    info = Record(problem='semantic_segmentation', class_count=class_count,
+                  # not including the 3 void classes
+                  class_names=_vistas_info.class_names,
+                  class_colors=_vistas_info.class_colors)
+
+    def __init__(self, root, subset='training',
+                 labels: T.Literal['Cityscapes', 'default'] = 'default'):
+        self.root = Path(root)
+        self.subset = subset
+
+        self.image_dir = root / subset / 'images'
+        self.label_dir = root / subset / 'labels'
+
+        self.image_paths = list(sorted(self.image_dir.glob('*.jpg')))
+        self.label_paths = [self.label_dir / f'{p.stem}.png' for p in self.image_paths]
+
+        if labels == 'Cityscapes':
+            from . import taxonomies
+            self.id_to_label = {id: -1 for id in Vistas.id_to_label}
+            self.id_to_label.update(class_mapping.encode_many_to_one_mapping(
+                taxonomies.Vistas.cityscapes_mapping,
+                value_to_ind={k: i for i, k in enumerate(Cityscapes.info.class_names)},
+                key_to_ind={k: -1 if i in Vistas.ignore_ids else i
+                            for i, k in enumerate(Vistas.info.class_names)}))
+            info = Record(Cityscapes.info)
+        else:
+            info = type(self).info
+        labels_str = f'(labels={labels=})' if labels != 'Cityscapes' else ''
+        super().__init__(name=f'{type(self).__name__}{labels_str}', subset=subset, info=info)
+
+        _check_size(self.image_paths, size=self.subset_to_size[subset], name=self.name)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def get_example(self, idx):
+        return _make_sem_seg_record(self.image_paths[idx], self.label_paths[idx],
+                                    id_to_label=self.id_to_label)
 
 
 class WildDash(Dataset):
     subsets = ['val', 'bench']
     splits = dict(all=(('val', 'bench'), None), both=(('val', 'bench'), None))
-    default_dir = 'WildDash'
+    default_root = 'WildDash'
 
-    def __init__(self, data_dir, subset='val', downsampling=1):
-        _check_subsets(self.__class__, subset)
+    def __init__(self, root, subset='val', downsampling=1):
+        _check_subset(self.__class__, subset)
         if downsampling < 1:
             raise ValueError("downsampling must be greater or equal to 1.")
 
@@ -981,7 +1056,7 @@ class WildDash(Dataset):
         self._LAB_SUFFIX = "0_labelIds.png"
         self._id_to_label = [(l.id, l.trainId) for l in cslabels]
 
-        self._images_dir = Path(f'{data_dir}/wd_{subset}_01')
+        self._images_dir = Path(f'{root}/wd_{subset}_01')
         self._image_names = sorted([
             str(x.relative_to(self._images_dir))[:-5]
             for x in self._images_dir.glob(f'*{self._IMG_SUFFIX}')
@@ -1019,14 +1094,56 @@ class WildDash(Dataset):
         return len(self._image_names)
 
 
+class BDD10k(Dataset):
+    subsets = 'train', 'val', 'test'  # 'test' labels are invalid
+
+    def __init__(self, root, subset):
+        self.root = Path(root)
+        _check_subset(BDD10k, subset)
+
+        self.images_base = self.root / 'images' / '10k' / self.subset
+        self.labels_base = self.root / 'labels' / 'sem_seg' / 'masks' / self.subset
+
+        self.image_paths = list(self.images_base.glob('*.jpg'))
+        self.label_paths = [self.labels_base / f'{p.stem}.png' for p in self.image_paths]
+
+        super().__init__(subset=subset)
+
+    def get_example(self, idx):
+        name = str(self.image_paths[idx].relative_to(self.images_base).with_suffix(""))
+        return _make_sem_seg_record(self.image_paths[idx], self.label_paths[idx], name=name)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+
+class BDDUnsupervised(Dataset):
+    subsets = 'train', 'val', 'test'
+
+    def __init__(self, root, subset):
+        _check_subset(BDD10k, subset)
+
+        self.root = Path(root)
+        self.images_base = self.root / 'images' / '100k' / subset
+        self.image_paths = self.images_base.glob('*.jpg')
+        super().__init__(subset=subset)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def get_example(self, idx):
+        img_path = self.image_paths(idx)
+        return _make_record(image_=lambda: load_image(img_path), name=img_path.stem)
+
+
 class ICCV09(Dataset):
     subsets = []
-    default_dir = 'iccv09'
+    default_root = 'iccv09'
 
-    def __init__(self, data_dir):  # TODO subset
+    def __init__(self, root):  # TODO subset
         self._shape = [240, 320]
-        self._images_dir = Path(f'{data_dir}/images')
-        self._labels_dir = Path(f'{data_dir}/labels')
+        self._images_dir = Path(f'{root}/images')
+        self._labels_dir = Path(f'{root}/labels')
         self._image_list = [str(x)[:-4] for x in self._images_dir.iterdir()]
 
         info = dict(problem='semantic_segmentation', class_count=8,
@@ -1056,7 +1173,7 @@ class VOC2012Segmentation(Dataset):
     subset_to_size = {'train': 1464, 'val': 1449, 'test': None, 'trainval': 2913,
                       'train_aug': 10582}
     subsets = tuple(subset_to_size.keys())
-    default_dir = 'VOCdevkit'
+    default_root = 'VOCdevkit'
     subdir = 'VOC2012'
     info = dict(
         problem='semantic_segmentation',
@@ -1076,14 +1193,14 @@ class VOC2012Segmentation(Dataset):
         ),
         md5='6cd6e144f989b92b3379bac3b3de84fd')
 
-    def __init__(self, data_dir, subset='train', pad=False):
-        _check_subsets(self.__class__, subset)
-        data_dir = Path(data_dir)
+    def __init__(self, root, subset='train', pad=False):
+        _check_subset(self.__class__, subset)
+        root = Path(root)
         self.pad = pad
 
-        self.download_if_necessary(data_dir)
+        self.download_if_necessary(root)
 
-        data_subdir = data_dir / self.subdir
+        data_subdir = root / self.subdir
         self._images_dir = data_subdir / 'JPEGImages'
         if subset == 'train_aug':
             sets_dir = data_subdir / 'ImageSets/SegmentationAug'
@@ -1113,6 +1230,8 @@ class VOC2012Segmentation(Dataset):
             return tvtf.center_crop(img, [500] * 2) if self.pad else img
 
         def load_lab():
+            breakpoint()
+            lab = load_segmentation(self._labels_dir / f"{name}.png")
             lab = np.array(_load_image(self._labels_dir / f"{name}.png", force_rgb=False)) \
                 .astype(np.int8)
             return numpy_transforms.center_crop(lab, [500] * 2,
@@ -1132,11 +1251,11 @@ class VOC2012Segmentation(Dataset):
 #
 #     def __init__(self, args, subset='train', train=False):
 #         super().__init__(args, train)
-#         data_dir = Path(args.data_path) / 'viper' / subset / 'img'
+#         root = Path(args.data_path) / 'viper' / subset / 'img'
 #
 #         self.img_paths = []
-#         for city in next(os.walk(data_dir))[1]:
-#             city_path = data_dir / city
+#         for city in next(os.walk(root))[1]:
+#             city_path = root / city
 #             files = next(os.walk(city_path))[2]
 #             self.img_paths.extend(city_path / f for f in files)
 #
@@ -1208,24 +1327,24 @@ class VOC2012Segmentation(Dataset):
 
 # class DarkZurich(Dataset):
 #     subsets = ['train', 'val', 'val_ref']
-#     default_dir = 'dark_zurich'
+#     default_root = 'dark_zurich'
 #
-#     def __init__(self, data_dir, subset='train', downsampling=1):
+#     def __init__(self, root, subset='train', downsampling=1):
 #         _check_subsets(self.__class__, subset)
 #         if downsampling < 1:
 #             raise ValueError("downsampling must be greater or equal to 1.")
 #
-#         data_dir = Path(data_dir)
+#         root = Path(root)
 #
 #         self._downsampling = downsampling
 #
-#         corresp_dir = data_dir / "corresp" / subset
-#         gps_dir = data_dir / "gps" / subset
-#         rgb_anon_dir = data_dir / "gps" / subset
+#         corresp_dir = root / "corresp" / subset
+#         gps_dir = root / "gps" / subset
+#         rgb_anon_dir = root / "gps" / subset
 #
-#         img_dir = data_dir / '701_StillsRaw_full'
-#         lab_dir = data_dir / 'LabeledApproved_full'
-#         lines = (data_dir / f'{subset}.txt').read_text().splitlines()
+#         img_dir = root / '701_StillsRaw_full'
+#         lab_dir = root / 'LabeledApproved_full'
+#         lines = (root / f'{subset}.txt').read_text().splitlines()
 #         self._img_lab_list = [(str(img_dir / f'{x}.png'), str(lab_dir / f'{x}_L.png'))
 #                               for x in lines]
 #         # info = dict(

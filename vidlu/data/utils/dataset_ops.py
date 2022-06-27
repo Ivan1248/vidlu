@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm, trange
 
 from vidlu.utils.func import partial
-from vidlu.data import Dataset, Record
+from vidlu.data import Dataset, Record, class_mapping
 
 
 def rotating_labels(ds: Dataset) -> Dataset:
@@ -15,7 +15,7 @@ def rotating_labels(ds: Dataset) -> Dataset:
     """
     class_count = ds.info['class_count']
     # Divide examples into groups by class
-    class_subset_indices = ds.matching_indices(
+    class_subset_indices = ds.find_indices(
         [lambda d, i=i: bool(d.class_label == i) for i in range(class_count)],
         progress_bar=partial(tqdm, desc='rotating_labels'))[:-1]
     if any(len(csi) != len(ds) // class_count for csi in class_subset_indices):

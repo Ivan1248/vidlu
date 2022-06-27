@@ -28,11 +28,10 @@ from typeguard import check_argument_types
 
 import vidlu.utils.path as vup
 from vidlu.utils.misc import slice_len, query_user, pickle_sizeof
-from vidlu.utils.collections import NameDict
 from vidlu.utils.path import to_valid_path
 from vidlu.utils.storage import DefaultCompressor
 
-from .record import Record
+from .record import Record, DictRecord, LazyField
 
 
 # Helpers ######################################################################
@@ -128,10 +127,12 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
 
     def __init__(self, *, name: str = None, subset: str = None, data=None, info: T.Mapping = None,
                  data_change=None, info_change=None):
-        self.name = name or getattr(data, 'name', None) or type(self).__name__
         if subset is not None:
-            self.name = f"{self.name}-{subset}"
-        self.info = NameDict(info or getattr(data, 'info', dict()))
+            self.subset = subset
+        self.name = name or getattr(data, 'name', type(self).__name__)
+        if hasattr(self, 'subset'):
+            self.name += f'-{self.subset}'
+        self.info = DictRecord(info or getattr(self, 'info', None) or getattr(data, 'info', dict()))
         self.data = data
         self.change_info = auto_change_info(self, name=self.name, data_change=data_change,
                                             info_change=info_change)
@@ -195,12 +196,6 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     def example_size(self, sample_count):
         return pickle_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
 
-    def sample(self, length, replace=False, seed=53, **kwargs):
-        """Creates a dataset with randomly chosen elements with or without
-        replacement.
-        """
-        return SampleDataset(self, length=length, replace=replace, seed=seed, **kwargs)
-
     def cache(self, max_cache_size=np.inf, directory=None, chunk_size=100, **kwargs):
         """Caches the dataset in RAM (partially or completely)."""
         if directory is not None:
@@ -252,19 +247,23 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """
         return HDDInfoCacheDataset(self, name_to_func, directory, recompute=recompute, **kwargs)
 
-    def matching_indices(self, predicate, progress_bar=None):
+    def find(self, predicate, progress_bar=None):
+        """Returns the indices of elements matching the predicate."""
+        if progress_bar:
+            self = (tqdm if progress_bar is True else progress_bar)(self)
+        return ((i, r) for i, r in enumerate(self) if predicate(r))
+
+    def find_indices(self, predicate, progress_bar=None):
         """Returns the indices of elements matching the predicate."""
         if not callable(predicate) and isinstance(predicate, T.Sequence):
-            return self._multi_matching_indices(predicate, progress_bar)
-        if progress_bar:
-            return (i for i, d in enumerate(progress_bar(self)) if predicate(d))
-        return (i for i, d in enumerate(self) if predicate(d))
+            return self._multi_matching_indices(predicate, progress_bar=progress_bar)
+        return (i for i, r in self.find(predicate, progress_bar=progress_bar))
 
     def filter(self, predicate, *, func_name=None, progress_bar=None, **kwargs):
         """Creates a dataset containing only the elements for which `func`
         evaluates to True.
         """
-        indices = np.array(list(self.matching_indices(predicate, progress_bar=progress_bar)))
+        indices = np.array(list(self.find_indices(predicate, progress_bar=progress_bar)))
         func_name = func_name or f'{_subset_hash(indices):x}'
         return SubDataset(self, indices, choice_name=f'filter({func_name})', **kwargs)
 
@@ -334,6 +333,12 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
 
     def zip(self, *other, **kwargs):
         return ZipDataset([self] + list(other), **kwargs)
+
+    def sample(self, length, replace=False, seed=53, **kwargs):
+        """Creates a dataset with randomly chosen elements with or without
+        replacement.
+        """
+        return SampleDataset(self, length=length, replace=replace, seed=seed, **kwargs)
 
     def _multi_matching_indices(self, predicates, progress_bar=None):
         """Splits the dataset indices into disjoint subsets matching predicates.
@@ -545,7 +550,6 @@ class HDDCacheDataset(Dataset):
 
         for i in range(consistency_check_sample_count):
             ii = (i + 1) * len(dataset) // (consistency_check_sample_count + 1)
-
             if not objects_equal(dataset[ii], self[ii]):
                 warnings.warn(f"Cache of the dataset {self.data_identifier} inconsistent." +
                               " Deleting old and creating new cache.")
@@ -606,79 +610,89 @@ class HDDCacheDataset(Dataset):
             shutil.rmtree(self.cache_dir)
 
 
+# class InfoCacheDataset(Dataset):  # lazy
+#     def __init__(self, dataset, name_to_func, **kwargs):
+#         self.names_str = ', '.join(name_to_func.keys())
+#         self.initialized = multiprocessing.Value('i', 0)  # must be before super
+#         info = NameDict(dataset.info or kwargs.get('info', dict()))
+#         self._info = None
+#         super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
+#                          data_change=False, info_change=list(name_to_func), **kwargs)
+#         self.name_to_func = name_to_func
+#         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
+#         self._logger.addHandler(logging.NullHandler())
+#
+#     @property
+#     def info(self):
+#         if not self.initialized.value:
+#             self._update_info_cache()
+#         return self._info
+#
+#     @info.setter
+#     def info(self, value):
+#         """This is called by the base initializer and (unnecessarily) by pickle
+#         if the object is shared between processes."""
+#         self._info = value
+#
+#     def _compute(self):
+#         self._logger.info(f"{type(self).__name__}: computing/loading {self.names_str} for"
+#                           + f" {self.identifier}")
+#         info_cache = dict()
+#         for n, f in self.name_to_func.items():
+#             info_cache[n] = f(self.data)
+#         return info_cache
+#
+#     def _update_info_cache(self):
+#         with self.initialized.get_lock():
+#             if not self.initialized.value:  # lazy
+#                 if any(k not in self._info for k in self.name_to_func):
+#                     self._info.update(self._compute())
+#                 self.initialized.value = True
+
+
 class InfoCacheDataset(Dataset):  # lazy
     def __init__(self, dataset, name_to_func, **kwargs):
         self.names_str = ', '.join(name_to_func.keys())
-        self.initialized = multiprocessing.Value('i', 0)  # must be before super
-        info = NameDict(dataset.info or kwargs.get('info', dict()))
-        self._info = None
+        self.initialized = {k: multiprocessing.Value('i', 0)
+                            for k in name_to_func}  # must be before super
+        info = DictRecord(dataset.info or kwargs.get('info', dict()),
+                          **{k: LazyField(f) for k, f in name_to_func.items()})  # lazyness support
+
         super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
                          data_change=False, info_change=list(name_to_func), **kwargs)
         self.name_to_func = name_to_func
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
 
-    @property
-    def info(self):
-        if not self.initialized.value:
-            self._update_info_cache()
-        return self._info
 
-    @info.setter
-    def info(self, value):
-        """This is called by the base initializer and (unnecessarily) by pickle
-        if the object is shared between processes."""
-        self._info = value
-
-    def _compute(self):
-        self._logger.info(f"{type(self).__name__}: computing/loading {self.names_str} for"
-                          + f" {self.identifier}")
-        info_cache = dict()
-        for n, f in self.name_to_func.items():
-            info_cache[n] = f(self.data)
-        return info_cache
-
-    def _update_info_cache(self):
-        with self.initialized.get_lock():
-            if not self.initialized.value:  # lazy
-                if any(k not in self._info for k in self.name_to_func):
-                    self._info.update(self._compute())
-                self.initialized.value = True
-
-
-class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
-    def __init__(self, dataset, name_to_func, cache_dir, recompute=False, simplify_dataset=None,
-                 **kwargs):
-        super().__init__(dataset, name_to_func, **kwargs)
-        self.cache_dir = Path(cache_dir)
-        self.cache_file = to_valid_path(self.cache_dir / "info_cache" / self.identifier)
-        self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+class HDDCache:
+    def __init__(self, dataset, compute, cache_file, recompute=False, check_dataset=None):
+        self.dataset = dataset
+        self.check_dataset = check_dataset
+        self.compute = compute
+        self.cache_file = cache_file
         self.recompute = recompute
-        self.check_data = None
-        if simplify_dataset is not None:
-            self.check_data = InfoCacheDataset(simplify_dataset(dataset), name_to_func)
 
-    def _compute_check_data(self):
-        return None if self.check_data is None else self.check_data._compute()
-
-    def _compute(self):
+    def __call__(self):
+        ds = self.dataset
+        check = None if self.check_dataset is None else self.compute(self.check_dataset)
         if self.cache_file.exists():
             if self.recompute:
                 self.cache_file.unlink()
-            try:  # load
-                with self.cache_file.open('rb') as file:
-                    info_cache, check = pickle.load(file)
-            except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError,
-                    ValueError):
-                self.cache_file.unlink()
-                warnings.warn("Error loading cache. The cache file will have to be recreated.")
             else:
-                if objects_equal(check, self._compute_check_data()):
-                    return info_cache
-                else:
+                try:  # load
+                    with self.cache_file.open('rb') as file:
+                        info_cache, check_cache = pickle.load(file)
+                except (PermissionError, TypeError, EOFError, AttributeError,
+                        pickle.UnpicklingError, ValueError):
                     self.cache_file.unlink()
-        info_cache = super()._compute()
-        check = self._compute_check_data()
+                    warnings.warn("Error loading cache. The cache file will have to be recreated.")
+                else:
+                    if objects_equal(check_cache, check):
+                        return info_cache
+                    else:
+                        self.cache_file.unlink()
+        info_cache = self.compute(ds)
         try:  # store
             with self.cache_file.open('wb') as file:
                 pickle.dump((info_cache, check), file)
@@ -686,6 +700,62 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
             self.cache_file.unlink()
             raise
         return info_cache
+
+
+class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
+    def __init__(self, dataset, name_to_func, cache_dir, recompute=False, simplify_dataset=None,
+                 **kwargs):
+        self.cache_dir = Path(cache_dir) / "info_cache"
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        check_ds = None if simplify_dataset is None else simplify_dataset(dataset)
+        name_to_func = {
+            k: HDDCache(dataset, func,
+                        cache_file=to_valid_path(self.cache_dir / (dataset.identifier + k)),
+                        recompute=recompute, check_dataset=check_ds)
+            for k, func in name_to_func.items()}
+        super().__init__(dataset, name_to_func, **kwargs)
+
+
+# class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
+#     def __init__(self, dataset, name_to_func, cache_dir, recompute=False, simplify_dataset=None,
+#                  **kwargs):
+#         super().__init__(dataset, name_to_func, **kwargs)
+#         self.cache_dir = Path(cache_dir)
+#         self.cache_file = to_valid_path(self.cache_dir / "info_cache" / self.identifier)
+#         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+#         self.recompute = recompute
+#         self.check_data = None
+#         if simplify_dataset is not None:
+#             self.check_data = InfoCacheDataset(simplify_dataset(dataset), name_to_func)
+#
+#     def _compute_check_data(self):
+#         return None if self.check_data is None else self.check_data._compute()
+#
+#     def _compute(self):
+#         if self.cache_file.exists():
+#             if self.recompute:
+#                 self.cache_file.unlink()
+#             try:  # load
+#                 with self.cache_file.open('rb') as file:
+#                     info_cache, check = pickle.load(file)
+#             except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError,
+#                     ValueError):
+#                 self.cache_file.unlink()
+#                 warnings.warn("Error loading cache. The cache file will have to be recreated.")
+#             else:
+#                 if objects_equal(check, self._compute_check_data()):
+#                     return info_cache
+#                 else:
+#                     self.cache_file.unlink()
+#         info_cache = super()._compute()
+#         check = self._compute_check_data()
+#         try:  # store
+#             with self.cache_file.open('wb') as file:
+#                 pickle.dump((info_cache, check), file)
+#         except (PermissionError, TypeError):
+#             self.cache_file.unlink()
+#             raise
+#         return info_cache
 
 
 class SubDataset(Dataset):
