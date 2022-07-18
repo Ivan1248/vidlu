@@ -62,7 +62,7 @@ def add_segmentation_class_info_lazily(ds, cache_dir):
 
 # Caching ##########################################################################################
 
-def cache_data_lazily(ds, cache_dir, min_free_space=20 * 2 ** 30):
+def cache_lazily(ds, cache_dir, min_free_space=20 * 2 ** 30):
     ds_cached = ds.cache_hdd(f"{cache_dir}/datasets")
 
     elem_size = ds.example_size(sample_count=4)
@@ -92,4 +92,4 @@ class CachingDatasetFactory(DatasetFactory):  # TODO: delete
         ds = super().__call__(ds_name, **kwargs)
         for transform in self.transforms:
             ds = transform(ds)
-        return cache_data_lazily(ds, self.cache_dir)
+        return cache_lazily(ds, self.cache_dir)

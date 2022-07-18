@@ -1,14 +1,13 @@
 import inspect
 import os
 from pathlib import Path
-import dataclasses as dc
 import warnings
 import itertools
 from functools import partial
+from argparse import Namespace
 
 from . import datasets
 from .datasets import Dataset
-from vidlu.data.record import Record
 import vidlu.utils.path as vup
 
 
@@ -24,7 +23,7 @@ class DatasetFactory:
             if inspect.isclass(v) and issubclass(v, Dataset) and v is not Dataset}
         self.ds_name_lower_to_normal = {k.lower(): k for k in self.name_to_ds_class}
 
-    def __call__(self, name: str, **kwargs):
+    def __call__(self, name: str, *args, **kwargs):
         if name not in self.name_to_ds_class:
             if (name_fixed := self.ds_name_lower_to_normal.get(name.lower(), None)) is not None:
                 raise KeyError(f'No dataset has the name "{name}". Did you mean "{name_fixed}"?')
@@ -40,4 +39,7 @@ class DatasetFactory:
                           + f"{[str(p) for p in self.datasets_dirs]}")
             path_args = [self.datasets_dirs[0] / ds_class.default_root]
 
-        return ds_class(*path_args, **kwargs)
+        return ds_class(*path_args, *args, **kwargs)
+
+    def as_namespace(self):
+        return Namespace(**{name: partial(self, name) for name in self.name_to_ds_class})
