@@ -28,7 +28,7 @@ def numpy_collate(batch):
         raise TypeError(type(elem))
 
 
-class MultiSizeBatch(tuple):
+class MultiSizeBatch(list):
     pass
 
 
