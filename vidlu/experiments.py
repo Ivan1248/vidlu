@@ -133,18 +133,25 @@ def define_training_loop_actions(
         nonlocal epoch_time
         epoch_time = epoch_sw.time
         inter_epoch_sw.start()
-        if es.epoch in eval_epochs:
-            es_val = trainer.eval(data.test)
-            # epoch_to_main_metrics[es.epoch] = {k: es_val.metrics[k] for k in main_metrics}
-            # best_epoch = find_best_epoch(epoch_to_main_metrics, lambda s: s[main_metrics[0]])
-            # report_metrics(es_val, special_format=special_format, is_validation=True,
-            #                prefix=f'Best epoch ({best_epoch}): ')
-            cpman.save(trainer.state_dict(),
-                       summary=dict(logger=logger.state_dict(),
-                                    perf=es_val.metrics[main_metrics[0]],
-                                    # summary=epoch_to_main_metrics,
-                                    log="\n".join(logger.lines),
-                                    epoch=es.epoch))
+        if es.epoch not in eval_epochs:
+            return
+        first = True
+        for name, ds in data.items():
+            if name.startswith("test"):
+                es_val = trainer.eval(ds)
+                # epoch_to_main_metrics[es.epoch] = {k: es_val.metrics[k] for k in main_metrics}
+                # best_epoch = find_best_epoch(epoch_to_main_metrics, lambda s: s[
+                # main_metrics[0]])
+                # report_metrics(es_val, special_format=special_format, is_validation=True,
+                #                prefix=f'Best epoch ({best_epoch}): ')
+                if first:
+                    cpman.save(trainer.state_dict(),
+                               summary=dict(logger=logger.state_dict(),
+                                            perf=es_val.metrics[main_metrics[0]],
+                                            # summary=epoch_to_main_metrics,
+                                            log="\n".join(logger.lines),
+                                            epoch=es.epoch))
+                    first = False
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
