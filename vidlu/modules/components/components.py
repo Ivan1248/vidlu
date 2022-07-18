@@ -687,13 +687,59 @@ class KresoLadderModel(E.Module):
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
         self.lateral_preprocessing = lateral_preprocessing
 
-        a = E.Seq()
-
     def forward(self, x):
         context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
         context = self.context(context_input)
         laterals = list(map(self.lateral_preprocessing, laterals))
         ladder_output = self.ladder(context, laterals[::-1])
+        return self.act(self.norm(ladder_output)) if self.post_activation else ladder_output
+
+
+class MorsicPyramid(E.Module):
+    def __init__(self, model, stage_count: int, laterals: T.Sequence[str], proj_f=None,
+                 sum_f=E.Sum):
+        super().__init__()
+        self.model = model
+        self.stage_count = stage_count  # number of pyramid stages
+        self.laterals = laterals
+        self.projs = nn.ModuleList([nn.ModuleList([proj_f() for _ in laterals])
+                                    for _ in range(self.stage_count)])
+        self.sum = sum_f()
+
+    def forward(self, x):
+        stage_outputses = [[None] * (len(self.laterals) + self.stage_count)
+                           for _ in range(self.stage_count)]
+        for i, projs in enumerate(self.projs):
+            xi = F.interpolate(x, scale_factor=0.5 ** i, mode='bilinear',
+                               align_corners=False) if i != 0 else x
+            final, laterals = E.with_intermediate_outputs(self.model, self.laterals)(xi)
+            outputs = [proj(out) for (out, proj) in zip([laterals, *final], projs)]
+            stage_outputses[i][i:i + len(outputs)] = outputs
+        column_sums = [self.sum([xi for xi in col if xi is not None])
+                       for col in zip(*stage_outputses)]
+        return column_sums
+
+
+class MorsicPyramidModel(E.Module):
+    def __init__(self,
+                 backbone_f,
+                 laterals: T.Sequence[str],
+                 stage_count: int,
+                 up_width: int,
+                 up_blend_f=LadderUpsampleBlend,
+                 post_activation=False):
+        super().__init__()
+        self.backbone = backbone_f()
+        self.ladder = KresoLadder(up_width, up_blend_f)  # initialized when called
+        self.pyr = MorsicPyramid(stage_count, laterals=laterals, proj_f=None)
+        self.post_activation = post_activation
+        if post_activation:
+            defaults = default_args(default_args(up_blend_f).blend_block_f)
+            self.norm, self.act = defaults.norm_f(), defaults.act_f()
+
+    def forward(self, x):
+        pyr_out = self.pyr(x)
+        ladder_output = self.ladder(pyr_out[-1], pyr_out[:-1][::-1])
         return self.act(self.norm(ladder_output)) if self.post_activation else ladder_output
 
 
