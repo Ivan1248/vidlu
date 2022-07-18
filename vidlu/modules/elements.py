@@ -193,7 +193,8 @@ class InvertibleModuleMixin:
             inverse_type = type(f"{type(self).__name__}Inverse", (Inverse,), {})
             return inverse_type(self)
         raise ModuleInverseError(f"`inverse_forward` is not defined for `{type(self)}`."
-                                 + " Either `inverse_forward` or `inverse_module` should be overloaded.")
+                                 + " Either `inverse_forward` or `inverse_module` should be"
+                                 + " overloaded.")
 
     def inverse_forward(*args, **kwargs):
         # overload either this or inverse_module
@@ -256,6 +257,7 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         super().__init__()
         self._built = False if self._defines_build_or_post_build() else None
         self._check = None
+        self._state = None
         self._mode = dict()
         self._forward_check_pre_hooks = dict()
 
@@ -306,7 +308,8 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         except Exception as e:
             raise
             name = vmu.try_get_module_name_from_call_stack(self)
-            error_message = f"Error in {name}, type {type(self).__module__}.{type(self).__qualname__}"
+            error_message = f"Error in {name}, type " \
+                            + f"{type(self).__module__}.{type(self).__qualname__}"
             if self.is_inverse:
                 error_message += f" (inverse of {type(self.inverse).__qualname__})"
             if len(e.args) > 0:
@@ -323,6 +326,9 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         self._built = True
         if device is not None:
             self.to(device)
+        if self._state is not None:  # needs to be after self._built
+            self.load_state_dict(self._state)
+            self._state = None
         if type(self).post_build != Module.post_build:
             result = super().__call__(*args, **kwargs)  # hooks are not called before building
             if self.post_build(*args, **kwargs):
@@ -451,13 +457,22 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         param = next(self.parameters(), None)
         return None if param is None else param[0].device
 
+    def state_dict(self, destination=None, prefix='', keep_vars=False):
+        if self._state is None:
+            return super().state_dict(destination=destination, prefix=prefix, keep_vars=keep_vars)
+        else:
+            return self._state
+
     def load_state_dict(self, state_dict_or_path, strict=True):
         """Handles a path being given instead of a file (then it automatically
         maps to the correct device). Taken from MagNet."""
         sd = state_dict_or_path
         if isinstance(sd, PathLike):
             sd = torch.load(sd, map_location=self.device)
-        return super().load_state_dict(sd, strict=strict)
+        if self.is_built():
+            return super().load_state_dict(sd, strict=strict)
+        else:
+            self._state = sd
 
     def register_forward_check_pre_hook(self, hook: T.Callable[..., None]) -> hooks.RemovableHandle:
         handle = hooks.RemovableHandle(self._forward_check_pre_hooks)
