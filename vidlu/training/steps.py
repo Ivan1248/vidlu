@@ -3,7 +3,6 @@ import dataclasses as dc
 import numbers
 import os
 
-from vidlu.utils.func import partial
 import typing as T
 import copy
 from warnings import warn
@@ -11,18 +10,23 @@ from warnings import warn
 import numpy as np
 import torch
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel as DDP
 
+from vidlu.optim import OptimizerMaker
 from vidlu.data import BatchTuple, Record
 from vidlu.utils.collections import NameDict
+from vidlu.utils.func import partial
 import vidlu.torch_utils as vtu
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
 import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
+from vidlu.data.class_mapping import MultiSoftClassMapping
 
 
 # Training/evaluation steps ########################################################################
+
 
 def untag(x):
     """Changes the type of an input from a vidlu.data.Domain subtype to torch.Tensor.
@@ -55,21 +59,36 @@ class BaseStep:
 
 # Supervised
 @torch.no_grad()
-def _prepare_sup_batch(batch):
+def _unify_sup_batch(batch):
     if isinstance(batch, BatchTuple):
         warn(f"The batch (BatchTuple instance) consists of {len(batch)} batches.")
-        return tuple(torch.cat(batches, 0) if isinstance(batches[0], torch.Tensor) else
-                     sum(batches, []) if isinstance(batches[0], list) else
-                     batches / (0 / 0)
-                     for batches in zip(*batch))
+        values = tuple(torch.cat(batches, 0) if isinstance(batches[0], torch.Tensor) else
+                       sum(batches, []) if isinstance(batches[0], list) else
+                       batches / (0 / 0)
+                       for batches in zip(*batch))
+        try:
+            return Record(zip(batch[0].keys(), values))
+        except AttributeError as e:
+            return values
     else:
         return batch
 
 
-def do_optimization_step(optimizer, loss):
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+def do_optimization_step(optimizers, loss, scaler=None):
+    if not isinstance(optimizers, T.Sequence):
+        optimizers = [optimizers]
+
+    for optimizer in optimizers:
+        optimizer.zero_grad()
+    if scaler is None:
+        loss.backward()
+        for optimizer in optimizers:
+            optimizer.step()
+    else:
+        scaler.scale(loss).backward()
+        for optimizer in optimizers:
+            scaler.step(optimizer)
+        scaler.update()
 
 
 @ctx.contextmanager
@@ -82,7 +101,7 @@ def optimization_step(optimizer):
 @torch.no_grad()
 def supervised_eval_step(trainer, batch):
     trainer.model.eval()
-    x, y = _prepare_sup_batch(batch)[:2]
+    x, y = _unify_sup_batch(batch)[:2]
     out = trainer.model(untag(x))
     loss = trainer.loss(out, y, reduction="mean")
     return NameDict(x=x, target=y, out=out, loss=loss.item())
@@ -97,8 +116,128 @@ def _supervised_train_step_x_y(trainer, x, y):
 
 
 def supervised_train_step(trainer, batch):
-    x, y = _prepare_sup_batch(batch)[:2]
+    x, y = _unify_sup_batch(batch)[:2]
     return _supervised_train_step_x_y(trainer, x, y)
+
+
+@dc.dataclass
+class SupervisedStep:
+    eval: bool = False
+    amp: bool = False
+    ddp: bool = False
+
+    amp_scaler: T.Optional[torch.cuda.amp.GradScaler] = dc.field(init=False, default=None)
+
+    def __post_init__(self):
+        if self.amp:
+            self.amp_scaler = torch.cuda.amp.GradScaler()
+
+    def __call__(self, trainer, batch):
+        model = DDP(trainer.model) if self.ddp else trainer.model
+
+        model.eval() if self.eval else model.train()
+
+        with torch.cuda.amp.autocast() if self.amp else ctx.suppress():
+            x, y = _unify_sup_batch(batch)[:2]
+            out = model(untag(x))
+            loss = trainer.loss(out, y, reduction="mean")
+
+        if not self.eval:
+            do_optimization_step(trainer.optimizer, loss, scaler=self.amp_scaler)
+
+        return NameDict(x=x, target=y, out=out, loss=loss.item())
+
+    def state_dict(self):
+        return dict(amp_scaler=self.amp_scaler.state_dict() if self.amp else self.amp_scaler)
+
+    def load_state_dict(self, state_dict):
+        if self.amp:
+            self.amp_scaler.load_state_dict(state_dict['amp_scaler'])
+
+
+class LateInit:
+    @staticmethod
+    def state_dict(obj, attr_names):
+        result = dict()
+        for k in attr_names:
+            attr = getattr(obj, k)
+            result[k] = attr if isinstance(attr, dict) else attr.state_dict()
+        return result
+
+    @staticmethod
+    def load_state_dict(obj, state_dict):
+        for k, v in state_dict.items():
+            if isinstance(attr := getattr(obj, k), dict):
+                setattr(obj, k, v)
+            else:
+                attr.load_state_dict(v)
+
+    @staticmethod
+    def initialize(obj, **kwargs):
+        for k, v in kwargs.items():
+            state = getattr(obj, k)
+            if len(state) > 0:
+                v.load_state_dict(state)
+            setattr(obj, k, v)
+
+
+@dc.dataclass
+class AutomaticTaxonomySupervisedStep:
+    name_to_target_class_count: dict
+    mapping_ent_coef: float = 0
+    subclass_minimum_loss: T.Callable = lambda m: (1 - m.sum(1)).relu_()
+    subclass_minimum_coef: float = 0
+    mappings_f: T.Callable = MultiSoftClassMapping
+    optimizer_f: T.Callable = None
+
+    mappings: T.Union[torch.nn.Module, dict] = dc.field(init=False, default_factory=dict)
+    optimizer: T.Union[dict, object] = dc.field(init=False, default_factory=dict)
+
+    def __call__(self, trainer, batch, eval=False):
+        init_needed = isinstance(self.mappings, dict)
+        if init_needed:
+            LateInit.initialize(self, mappings=self.mappings_f(self.name_to_target_class_count))
+            self.mappings.to(device=next(trainer.model.parameters()).device)
+
+        trainer.model.eval() if eval else trainer.model.train()
+
+        uni_batch = _unify_sup_batch(batch)
+        (x, y), taxonomy = uni_batch[:2], uni_batch.taxonomy
+        out_univ = trainer.model(untag(x))
+        p_univ = out_univ.softmax(1)
+        p_spec = self.mappings(p_univ, taxonomy)
+        assert trainer.loss is vml.nll_loss
+        loss = torch.stack(
+            [trainer.loss(p, y[i:i + 1], reduction="mean") for i, p in enumerate(p_spec)]).mean()
+
+        if init_needed:
+            optimizer_f = OptimizerMaker(self.optimizer_f or trainer.optimizer_f.optimizer_f, [],
+                                         **{**trainer.optimizer_f.kwargs, 'weight_decay': 0})
+            LateInit.initialize(self, optimizer=optimizer_f(self.mappings))
+
+        loss_s = loss
+
+        loss_minsub = loss_ment = None
+        for m in self.mappings.parameters():
+            lmr = vml.entropy_l(m).mean()
+            loss_ment = lmr if loss_ment is None else loss_ment.add_(lmr)
+            lms = self.subclass_minimum_loss(m.softmax(0)).mean()
+            loss_minsub = lms if loss_minsub is None else loss_minsub.add_(lms)
+        if self.mapping_ent_coef > 0:
+            loss = loss + loss_ment * self.mapping_ent_coef
+        if self.subclass_minimum_coef > 0:
+            loss = loss + loss_minsub * self.subclass_minimum_coef
+
+        if not eval:
+            do_optimization_step([trainer.optimizer, self.optimizer], loss)
+
+        return NameDict(x=x, target=y, out=torch.cat(p_spec).log(), loss_s=loss_s.item(),
+                        loss_ment=loss_ment.item(), loss_minsub=loss_minsub.item())
+
+    def state_dict(self):
+        return LateInit.state_dict(self, attr_names=['mappings', 'optimizer'])
+
+    load_state_dict = LateInit.load_state_dict
 
 
 @dc.dataclass
@@ -108,7 +247,7 @@ class ClassifierEnsembleEvalStep:
 
     def __call__(self, trainer, batch):
         trainer.model.eval()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         out = self.combine(model(untag(x)) for model in self.model_iter(trainer.model))
         loss = trainer.loss(out, y, reduction="mean")
         return NameDict(x=x, target=y, out=out, loss=loss.item())
@@ -116,12 +255,81 @@ class ClassifierEnsembleEvalStep:
 
 class IIDMonocularStep:
     def __call__(self, trainer, batch):
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         trainer.model.train()
         out = trainer.model(untag(x))
         loss = trainer.loss(out, y, reduction="mean")
         do_optimization_step(trainer.optimizer, loss)
         return NameDict(x=x, target=y, out=out, loss=loss.item())
+
+
+@dc.dataclass
+class SupervisedCentroidContrastiveStep:
+    """Base class for VAT, mean teacher, ...
+
+    attack_eval_model is set to False because training on adversarial examples
+    of the evaluation model instance is more likely to result in overfitting to
+    adversarial examples.
+    """
+    eval: bool = False
+    alpha: float = 1
+    loss_contr: T.Callable = partial(vml.centroid_supervised_contrastive_loss_z, temperature=1,
+                                     centroid_anchor=False)
+    repr_path: str = "backbone"
+    class_head_path: str = "head"  # cross entropy loss applies only to the classification head
+    stop_class_head_grad: bool = True
+    proj_f: object = vmc.ConvProjHead
+
+    proj_head: T.Union[torch.nn.Module, dict] = dc.field(init=False, default_factory=dict)
+
+    # BYOL: wd=5e-7, setting the weight decay to zero may lead to unstable results (as in SimCLR)
+
+    def __call__(self, trainer, batch):
+        model = trainer.model
+        proj_heads_need_init = isinstance(self.proj_head, dict)
+
+        if proj_heads_need_init:
+            state_dict = self.proj_head
+            self.proj_head = self.proj_f()
+            if len(state_dict) > 0:
+                self.proj_head.load_state_dict(state_dict)
+
+        model_proj = AdditionalHeadModule(model, self.repr_path, self.proj_head,
+                                          additional_head_only=False)
+        x, y = _unify_sup_batch(batch)[:2]
+
+        model_proj.eval() if self.eval else model_proj.train()  # teacher always in eval mode
+
+        with optimization_step(trainer.optimizer):
+            if self.stop_class_head_grad:
+                def stop_grad_hook(module, inputs):
+                    return tuple(map(torch.detach, inputs))
+
+                class_head = vm.get_submodule(model, self.class_head_path)
+                with class_head.register_forward_pre_hook(stop_grad_hook):
+                    out, proj_out = model_proj(untag(x))
+            else:
+                out, proj_out = model_proj(untag(x))
+            loss_l = trainer.loss(out, y, reduction="mean")
+            loss_c = self.loss_contr(proj_out, y)
+            loss = loss_l.add(loss_c, alpha=self.alpha)
+            loss.backward()
+
+            if proj_heads_need_init:
+                trainer.optimizer.zero_grad()
+                trainer.optimizer.add_param_group(
+                    dict(params=list(set(self.proj_head.parameters()))))
+
+        return NameDict(x=x, target=y, out=out, loss_l=loss_l.item(), loss_c=loss_c.item())
+
+    def state_dict(self):
+        return dict(p) if isinstance(p := self.proj_head, dict) else p.state_dict()
+
+    def load_state_dict(self, state_dict):
+        if isinstance(self.proj_head, dict):
+            self.proj_head = dict(state_dict)
+        else:
+            self.proj_head.load_state_dict(state_dict)
 
 
 # generative flows and discriminative hybrids
@@ -154,7 +362,7 @@ class DiscriminativeFlowSupervisedTrainStep:  # TODO: improve
 
     def __call__(self, trainer, batch):
         trainer.model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         x = dequantize(x, 256)
         out, z = call_flow(trainer.model, x, end=self.flow_end)
@@ -182,7 +390,7 @@ class DiscriminativeFlowSupervisedEvalStep:  # TODO: improve
     @torch.no_grad()
     def __call__(self, trainer, batch):
         trainer.model.eval()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         out, z = call_flow(trainer.model, x, end=self.flow_end)
 
@@ -208,7 +416,7 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep:  # TODO: improve
     def __call__(self, trainer, batch):
         d_temp = 1
         trainer.model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         x = dequantize(x, 256)
 
@@ -271,7 +479,7 @@ class AdversarialDiscriminativeFlowSupervisedEvalStep:  # TODO: improve
     @torch.no_grad()
     def __call__(self, trainer, batch):
         trainer.model.eval()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         x = dequantize(x, 256)
         out_cd, z = call_flow(trainer.model, x, end=self.flow_end)
@@ -297,12 +505,9 @@ class AdversarialDiscriminativeFlowSupervisedTrainStep2:  # TODO: improve
     flow_end: T.Union[str, T.Tuple[str, slice]] = None
     eval: bool = False
 
-    def _adv_loss(self, out_adv):
-        return -out_adv.sigmoid().log()
-
     def __call__(self, trainer, batch):
         trainer.model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         x = dequantize(x, 256)
         out_full, z = call_flow(trainer.model, x, end=self.flow_end)
@@ -360,7 +565,7 @@ class SupervisedTrainMultiStep:
 
     def __call__(self, trainer, batch):
         trainer.model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         for i in range(self.repeat_count):
             with vtu.norm_stats_tracking_off(trainer.model) if i == 0 else ctx.suppress():
                 out = trainer.model(untag(x))
@@ -453,7 +658,7 @@ class SupervisedTrainAcumulatedBatchStep:
             raise RuntimeError(f"Batch size ({batch.shape(0)}) is not a multiple"
                                + f" of batch_split_factor ({self.batch_split_factor}).")
         trainer.model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         trainer.optimizer.zero_grad()
         xs, ys = [b.split(len(x) // self.batch_split_factor, dim=0) for b in [x, y]]
         outputs = []
@@ -496,7 +701,7 @@ class AdversarialTrainBiStep:
     virtual: bool = False
 
     def __call__(self, trainer, batch):
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         clean_result = _supervised_train_step_x_y(trainer, x, y)
         trainer.model.eval()  # adversarial examples are generated in eval mode
         x_p, y_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
@@ -531,7 +736,7 @@ class AdversarialStep:
     def __call__(self, trainer, batch):
         """
         When clean_proportion = 0, the step reduces to
-        >>> x, y = _prepare_sup_batch(batch)[:2]
+        >>> x, y = _unify_sup_batch(batch)[:2]
         >>>
         >>> trainer.model.eval()
         >>> crc = CleanResultCallback()
@@ -543,7 +748,7 @@ class AdversarialStep:
         >>> loss_p = trainer.loss(out, y, reduction="mean")
         >>> do_optimization_step(trainer.optimizer, loss=loss_p)
         """
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         cln_count = round(self.clean_proportion * len(x))
         cln_proportion = cln_count / len(x)
         split = lambda a: (a[:cln_count], a[cln_count:])
@@ -603,7 +808,7 @@ class AdversarialCombinedLossStep:
             self.adv_weight = 1 - self.clean_weight
 
     def __call__(self, trainer, batch):
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         trainer.model.eval()  # adversarial examples are generated in eval mode
         x_p, y_p = trainer.attack.perturb(trainer.model, x, None if self.virtual else y)
@@ -633,7 +838,7 @@ class AdversarialEvalStep:
     def __call__(self, trainer, batch):
         trainer.model.eval()
         attack = trainer.eval_attack
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         with torch.no_grad():
             out = trainer.model(untag(x))
@@ -659,7 +864,7 @@ class AdversarialTargetedEvalStep:
 
     def __call__(self, trainer, batch):
         trainer.model.eval()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         with torch.no_grad():
             output = trainer.model(untag(x))
@@ -694,7 +899,7 @@ class AdversarialTrainMultiStep:
 
     def __call__(self, trainer, batch):
         # assert trainer.attack.loss == trainer.loss
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
         clean_result = None
 
         def step(r):
@@ -734,7 +939,7 @@ class VATTrainStep:
     def __call__(self, trainer, batch):
         model, attack = trainer.model, trainer.attack
         model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         out = model(untag(x))
         loss = trainer.loss(out, y, reduction="mean")
@@ -767,7 +972,7 @@ class PertConsistencyTrainStep:  # TODO
     def __call__(self, trainer, batch):
         model = trainer.model
         model.train()
-        x, y = _prepare_sup_batch(batch)[:2]
+        x, y = _unify_sup_batch(batch)[:2]
 
         out = model(untag(x))
         loss = trainer.loss(out, y, reduction="mean")

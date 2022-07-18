@@ -24,7 +24,8 @@ swish = _Swish.apply
 
 def grid_2d(N, H, W, device=None, dtype=None, channels_first=False):
     k = dict(device=device, dtype=dtype)
-    mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)])
+    mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)],
+                        indexing='ij')
     base_grid = torch.stack(list(reversed(mg)), dim=-1)
     return base_grid.expand(N, H, W, 2)
 
@@ -167,7 +168,8 @@ def uniform_grid_2d(shape, low=0., high=1., homog_coord=False, homog_dim=2, dtyp
         low, high = (low,) * 2, (high,) * 2
     k = dict(device=device, dtype=dtype)
     mg = torch.meshgrid(
-        [torch.linspace(low[0], high[0], H, **k), torch.linspace(low[1], high[1], W, **k)])
+        [torch.linspace(low[0], high[0], H, **k), torch.linspace(low[1], high[1], W, **k)],
+        indexing='ij')
     mg = list(reversed(mg))
     if homog_coord:
         mg.insert(homog_dim, mg[0].new_ones(()).expand(mg[0].shape))

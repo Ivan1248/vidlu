@@ -29,21 +29,21 @@ def segmentation_to_class_aabbs(segmentation, classes=None):
     return ClassAABBsOnImage(class_to_aabbs, shape=segmentation.shape)
 
 
-def _example_seg_class_info(example):
+def example_seg_class_info(example):
     seg = example['seg_map']
     present_classes, counts = np.unique(seg, return_counts=True)
-    return dict(classes=present_classes, counts=counts,
+    return dict(classes=list(present_classes), class_incidences=list(counts),
                 class_aabbs=segmentation_to_class_aabbs(seg, classes=present_classes))
 
 
-def seg_class_info(ds, num_workers=4):
+def seg_class_info(ds, num_workers=4,
+                   progress_bar=lambda dl: tqdm(dl, total=len(dl), desc='segmentation_class_info')):
     # Based on code from Marin Oršić.
     class_freqs = np.zeros((len(ds), ds.info.class_count + 1), dtype=np.uint64)
     class_segment_boxes = []
 
-    ds_infos = ds.map(_example_seg_class_info)
-    for i, d in enumerate(tqdm(SingleDataLoader(ds_infos, num_workers=num_workers), total=len(ds),
-                               desc="segmentation_class_info")):
+    ds_infos = ds.map(example_seg_class_info)
+    for i, d in enumerate(progress_bar(SingleDataLoader(ds_infos, num_workers=num_workers))):
         class_freqs[i, d['classes']] += d['counts'].astype(np.uint64)
         class_segment_boxes.append(d['class_aabbs'])
     global_class_freqs = class_freqs.sum(0)

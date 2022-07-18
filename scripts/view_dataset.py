@@ -23,12 +23,13 @@ parser.add_argument('--jitter', type=str, default=None)
 parser.add_argument('--permute', action='store_true')
 args = parser.parse_args()
 
-ds = prepare_dataset(get_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
-                              cache_dir=dirs.cache)[0])
+[[ds], [name], _] = get_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
+                          cache_dir=dirs.cache)
+ds = prepare_dataset(ds)
 
-print("Name:", ds.name)
+print("Name:", ds.identifier, f'({" ".join(name)})')
 print("Info:")
-print_tree(ds.info, depth=1)
+print_tree(ds.info.dict_, depth=1)
 print("Number of examples:", len(ds))
 print(f"Size estimate: {pickle_sizeof(ds[0]) * len(ds) / 2 ** 30:.3f} GiB")
 

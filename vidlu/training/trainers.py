@@ -23,7 +23,7 @@ import vidlu.configs.training as vct
 from vidlu.training.extensions import TrainerExtension
 
 
-# Engine based on Ignite Engine ####################################################################
+# EpochLoop based on Ignite Engine #################################################################
 
 def _to_hours_mins_secs(t_s):
     """Convert seconds to hours, minutes, and seconds."""
@@ -51,7 +51,7 @@ class State(NameDict):
 class EpochLoop(object):
     """Runs a given process_function over each batch and emits events..
 
-    Taken from Ignite (https://pytorch.org/ignite, "class Engine") and modified.
+    Based on Ignite Engine (https://pytorch.org/ignite).
 
     Args:
         iter_procedure (Callable): A procedure receiving a handle to the engine
@@ -118,7 +118,7 @@ class EpochLoop(object):
                     self.should_terminate = self.should_terminate_epoch = False
                     return True
 
-    def run(self, data, max_epochs=1, restart=True):
+    def run(self, data, max_epochs=1, restart=True, **kwargs):
         """Runs the `process_function` over the passed data.
 
         Args:
@@ -127,31 +127,39 @@ class EpochLoop(object):
             max_epochs (int, optional): max epochs to run for (default: 1)
             restart (bool, optional): whether to reset the training state before
                 running. Default: `True`.
+            **kwargs (dict): additional data to be stored in the state.
         Returns:
             State: output state
         """
         if restart or self.state is None:
             self.state.reset(metrics={})
 
-        self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data))
+        self.state.update(data_loader=data, max_epochs=max_epochs, batch_count=len(data), **kwargs)
 
         self.logger.info(f"Epoch loop run starting with max_epochs={max_epochs}.")
         with Stopwatch() as sw_total:
             self.started(self.state)
+
             if self.state.epoch + 1 >= max_epochs:
                 warn("All epochs are already completed.")
+
             while self.state.epoch + 1 < max_epochs and not self.should_terminate:
                 self.state.epoch += 1
                 self.epoch_started(self.state)
+
                 with Stopwatch() as sw_epoch:
                     self._run_once_on_dataset()
+
                 hours, mins, secs = _to_hours_mins_secs(sw_epoch.time)
                 self.logger.info(
                     f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}.")
                 self.epoch_completed(self.state)
+
             self.completed(self.state)
+
         hours, mins, secs = _to_hours_mins_secs(sw_total.time)
         self.logger.info(f"Epoch loop run completed after {hours:02}:{mins:02}:{secs:02}.")
+
         return self.state
 
     def state_dict(self):
@@ -264,12 +272,12 @@ class Evaluator:
             output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
         return output
 
-    def eval(self, *datasets, batch_size=None):
+    def eval(self, *datasets, batch_size=None, **kwargs):
         dl_kwargs = dict(drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
         if self.deterministic:
             dl_kwargs.update(deterministic_data_loader_args())
         data_loader = self.data_loader_f(*datasets, **dl_kwargs)
-        return self.evaluation.run(tqdm(data_loader))
+        return self.evaluation.run(tqdm(data_loader), **kwargs)
 
 
 # Trainer ##########################################################################################
@@ -286,7 +294,7 @@ class Trainer(Evaluator):
     eval_batch_size: int = None
 
     epoch_count: int = Required  # optimization
-    optimizer_f: InitVar[T.Callable] = None  # optimization; vidlu.optim
+    optimizer_f: T.Callable = None  # optimization; vidlu.optim
     lr_scheduler_f: InitVar[T.Callable] = ConstLR  # optimization; vidlu.optim.lr_schedulers
     jitter: T.Callable = None  # learning
     train_step: T.Optional[T.Callable] = Required  # learning; vidlu.training.steps
@@ -296,15 +304,15 @@ class Trainer(Evaluator):
     lr_scheduler: T.Any = dc.field(init=False)
     extensions: T.Sequence[TrainerExtension] = dc.field(init=False)
 
-    def __post_init__(self, optimizer_f, lr_scheduler_f, extension_fs):
-        if self.eval_step is None and hasattr(self.train_step, 'eval'):
-            self.eval_step = copy.copy(self.train_step)
-            self.eval_step.eval = True
-
+    def __post_init__(self, lr_scheduler_f, extension_fs):
         super().__post_init__()
 
-        self.optimizer = optimizer_f(
-            self.model if isinstance(optimizer_f, vct.OptimizerMaker) else self.model.parameters())
+        if self.eval_step is None:
+            self.eval_step = self._get_eval_step()
+
+        self.optimizer = self.optimizer_f(
+            self.model if isinstance(self.optimizer_f,
+                                     vct.OptimizerMaker) else self.model.parameters())
 
         if 'epoch_count' in params(lr_scheduler_f):
             if params(lr_scheduler_f).epoch_count is not Empty:
@@ -327,6 +335,16 @@ class Trainer(Evaluator):
 
         self._initialized = True
 
+    def _get_eval_step(self):
+        result = self.__dict__['eval_step']
+        if result is None:
+            if not hasattr(self.train_step, 'eval'):
+                result = partial(self.train_step, eval=True)
+            else:
+                result = copy.copy(self.train_step)
+                result.eval_step.eval = True
+        return result
+
     def train(self, *datasets, restart=False):
         if self.jitter is not None:
             jitters = broadcast(self.jitter, len(datasets))
@@ -339,9 +357,10 @@ class Trainer(Evaluator):
         data_loader = self.data_loader_f(*datasets_jitt, **dl_kwargs)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
-    def eval(self, *datasets, batch_size=None):
+    def eval(self, *datasets, batch_size=None, **kwargs):
         return super().eval(*datasets,
-                            batch_size=self.eval_batch_size if batch_size is None else batch_size)
+                            batch_size=self.eval_batch_size if batch_size is None else batch_size,
+                            **kwargs)
 
     def state_dict(self):
         return dict(**{k: attr.state_dict() for k in type(self).state_dict_attrs

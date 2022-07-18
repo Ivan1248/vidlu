@@ -112,7 +112,6 @@ class PertModel(E.Module):
             if isinstance(x, self.domain) and not isinstance(x, self.supported):
                 raise NotImplementedError(
                     f'Inputs of type {type(x)} are not supported by ({type(self)}).')
-
         result_tuple = super().__call__(inputs_tuple, **kwargs)
 
         if not (tin := tuple(map(type, inputs_tuple))) == (tout := tuple(map(type, result_tuple))):

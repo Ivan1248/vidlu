@@ -86,13 +86,43 @@ def parse_data_str(data_str):
     return name_options_subsets_tuples
 
 
-def get_data(data_str: str, datasets_dir, cache_dir=None) \
-        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
-    from vidlu import data
-    from vidlu.data import Record
+def apply_default_transforms(datasets, cache_dir):
+    # TODO: de-hardcode
+    default_transforms = [  # partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
+        partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
+        partial(vdu.cache_lazily, cache_dir=cache_dir)]
+    for i, ds in enumerate(datasets):
+        for transform in default_transforms:
+            ds = transform(ds)
+        datasets[i] = ds
+    return datasets
+
+
+def get_data_namespace():
     import vidlu.transforms as vt
     import torchvision.transforms.functional_tensor as tvt
     import vidlu.modules.functional as vmf
+    from vidlu.data.datasets import taxonomies
+
+    namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
+                 **module_to_dict(vdu.dataset_ops)}
+    namespace.update(vt=vt, taxonomies=taxonomies, Record=Record)
+    return namespace
+
+
+def evaluate_data_transforms_string(datasets, transform_str):
+    # TODO: improve names if necessary
+    return factory_eval(transform_str, dict(**get_data_namespace(), d=datasets))
+
+
+def get_data(data_str: str, datasets_dir, cache_dir=None, return_datasets_only=False,
+             factory_version=1) \
+        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
+    if factory_version > 1:
+        return get_data_new(data_str, datasets_dir, cache_dir)
+
+    from vidlu import data
+    from vidlu.data import Record
 
     if ':' in data_str:
         data_str, transform_str = data_str.split(':', 1)
@@ -101,28 +131,26 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
 
     name_options_subsets_tuples = parse_data_str(data_str)
 
-    get_parted_dataset = data.DatasetFactory(datasets_dir)
-    if cache_dir is not None:
-        get_parted_dataset = vdu.CachingDatasetFactory(get_parted_dataset, cache_dir, [
-            partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
-            partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir)
-        ])
+    get_dataset = data.DatasetFactory(datasets_dir)
 
-    data = []
+    keys = []
+    datasets = []
     for name, options_str, subsets in name_options_subsets_tuples:
         options = factory_eval(f'dict{options_str or "()"}', dict(Record=Record))
-        pds = get_parted_dataset(name, **options)
-        k = f"{name}{options_str or ''}"
-        for s in subsets:
-            data.append(((k, s), getattr(pds, s)))
+        full_name = f"{name}{options_str or ''}"
+        for subset in subsets:
+            ds = get_dataset(name, subset=subset, **options)
+            keys.append((full_name, subset))
+            datasets.append(ds)
+
+    datasets = apply_default_transforms(datasets, cache_dir=cache_dir)
 
     if transform_str is not None:  # TODO: improve names if necessary
-        namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
-                     **module_to_dict(vdu.dataset_ops)}
-        namespace.update(vt=vt, Record=Record, d=[v for k, v in data])
-        values = factory_eval(transform_str, namespace)
-        data = [((getattr(v, 'identifier', f'dataset{i}'), ''), v) for i, v in enumerate(values)]
-    return data  # not dict since elements can repeat
+        datasets = evaluate_data_transforms_string(datasets, transform_str)
+
+    if return_datasets_only:
+        return datasets
+    return datasets, keys, transform_str
 
 
 get_data.help = \
@@ -132,26 +160,62 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
+def get_default_transforms(cache_dir):
+    return dict(
+        add_pixel_stats=partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
+        add_seg_class_info=partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
+        cache=partial(vdu.cache_lazily, cache_dir=cache_dir))
+
+
+def get_data_new(data_str: str, datasets_dir, cache_dir=None) \
+        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
+    from vidlu import data
+
+    factories = data.DatasetFactory(datasets_dir).as_namespace()
+    dt = NameDict(get_default_transforms(cache_dir))
+    glob = {**get_data_namespace(), **factories.__dict__, **dt, 'extend': lambda ds: dt.cache(
+        dt.add_seg_class_info(ds))}
+
+    try:
+        data = factory_eval(data_str, glob)
+    except SyntaxError as e:
+        # loc = {}
+        exec(data_str, glob)
+        data = glob['data']
+    return data
+
+
 def prepare_dataset(dataset):
     return dataset.map(lambda r: Record({k: prepare_element(v, k) for k, v in r.items()}),
                        func_name='prepare')
 
 
-def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
-    if ':' in data_str:  # TODO: remove names
+def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, factory_version=1):
+    names = None
+    if factory_version == 1 and ':' in data_str:  # TODO: remove names
         names, data_str = [x.strip() for x in data_str.split(':', 1)]
         names = [x.strip() for x in names.split(',')]
         if not all(x.startswith('train') or x.startswith('test') for x in names):
-            raise ValueError('All dataset identifiers should start with either "train" or "test".'
-                             + f' Some of {names} do not.')
-    else:
-        names = ['train', 'test']
+            raise ValueError(
+                'All dataset identifiers should start with either "train" or "test".'
+                + f' Some of {names} do not.')
 
-    datasets = [prepare_dataset(ds) for _, ds in get_data(data_str, datasets_dir, cache_dir)]
-    named_datasets = NameDict(dict(zip(names, datasets)))
+    datasets = get_data(data_str, datasets_dir, cache_dir, return_datasets_only=True,
+                        factory_version=factory_version)
+    if not isinstance(datasets, T.Mapping):
+        if names is None:
+            names = [f'train{i}' for i in range(len(datasets) - 1)] if len(datasets) > 2 else [
+                'train']
+            names.extend([f'test{i}' for i in range(len(datasets[0]) - 1)] if isinstance(
+                datasets[-1], tuple) else ['test'])
+            datasets = list(datasets[:-1]) + (list(datasets[-1]) if isinstance(
+                datasets[-1], tuple) else [datasets[-1]])
+        datasets = dict(zip(names, datasets))
+
+    datasets = {k: prepare_dataset(ds) for k, ds in datasets.items()}
     print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
-                                       for name, ds in named_datasets.items()))
-    return named_datasets
+                                       for name, ds in datasets.items()))
+    return NameDict(datasets)
 
 
 # Model ############################################################################################
@@ -231,7 +295,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         problem = problem or defaults.get_problem_from_dataset(prep_dataset)
 
     if init_input is None and prep_dataset is not None:
-        init_input = next(iter(DataLoader(prep_dataset, batch_size=2)))[0]
+        init_input = next(iter(DataLoader([prep_dataset[0]] * 2, batch_size=2)))[0]
 
     # `argtree_arg` has at most 1 element because `maxsplit`=1
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
@@ -252,8 +316,8 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
             argtree.update(factory_eval(f"t({argtree_arg[0]})", namespace))
         model_f = argtree.apply(model_f)
         input_adapter = get_input_adapter(
-            input_adapter_str, data_stats=(None if prep_dataset is None
-                                           else prep_dataset.info['pixel_stats']))
+            input_adapter_str, data_stats=prep_dataset.info[
+                'pixel_stats'] if input_adapter_str == 'standardize' else None)
         _print_args_messages('Model', model_class, model_f,
                              {**argtree, 'input_adapter': input_adapter},
                              verbosity=verbosity)
@@ -286,23 +350,23 @@ get_model.help = \
 
 def _parse_parameter_translation_string(params_str):
     dst_re = fr'\w+(?:\.\w+)*'
-    src_re = fr'(\w+(?:\/\w+)*)?{dst_re}'
+    src_re = fr'([\w\/]*)?{dst_re}'
     regex = re.compile(
-        fr'(?P<transl>[\w]+)(?::(?P<src>{src_re})?(?:->(?P<dst>{dst_re}))?)?:(?P<name>.+)')
+        fr'(?P<transl>\w+)(?::(?P<src>{src_re})?(?:->(?P<dst>{dst_re}))?)?:(?P<name>.+)')
     m = regex.fullmatch(params_str.strip())
     if m is None:
         regex = re.compile(
-            fr'(?P<transl>[\w]+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<name>.+))?')
+            fr'(?P<transl>\w+)(?:\[(?P<src>{src_re})])?(?:->(?P<dst>{dst_re}))?(?::(?P<name>.+))?')
         m = regex.fullmatch(params_str.strip())
     if m is None:
         # raise ValueError(
         #     f'{params_str=} does not match the pattern "translator[[<src>]][-><dst>][:<name>]".'
         #     + " <src> supports indexing nested dictionaries by putting commas between keys.")
         raise ValueError(
-            f'{params_str=} does not match the pattern "translator[:[<src>][-><dst>]]:<name>".'
+            f'{params_str=} does not match the pattern "<translator>[[<src>]][-><dst>]:<name>".'
             + ' <src> supports indexing nested dictionaries by putting "/" between keys.')
     p1 = Namespace(**{k: m.group(k) or '' for k in ['transl', 'src', 'dst', 'name']})
-    *src_dict, src = p1.src.split(",")
+    *src_dict, src = p1.src.split("/")
     return Namespace(translator=p1.transl, src_dict=src_dict, src_module=src, dest_module=p1.dst,
                      name=p1.name)
 
@@ -358,6 +422,7 @@ def short_symbols_for_get_trainer():
     from vidlu.transforms import jitter
     import vidlu.utils.func as vuf
     from vidlu.utils.func import partial
+    from vidlu.data import class_mapping
     tc = ct  # backward compatibility
     return {**locals(), **_func_short, **extensions}
 

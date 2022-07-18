@@ -46,6 +46,10 @@ class Array(torch.Tensor, Domain):
 
     @classmethod
     def collate(cls, elements, general_collate=None):
+        shapes = [tuple(x.shape) for x in elements]
+        if not all(s == shapes[0] for s in shapes[1:]):
+            raise RuntimeError(f"All elements (type {type(elements[0]).__name__}) should have"
+                               + f" equal shapes, but the shapes are {shapes}.")
         return torch_collate(elements)
 
 

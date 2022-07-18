@@ -11,8 +11,10 @@ name_to_url.update({
     'deeplabv1_resnet101-coco':
         'https://github.com/Ivan1248/semisup-seg-efficient/releases/download/pre-trained-dl/deeplabv1_resnet101-coco.pth',
     'hardnet68':
-        'https://github.com/PingoLH/Pytorch-HarDNet/blob/master/hardnet68.pth?raw=True'
+        'https://github.com/PingoLH/Pytorch-HarDNet/blob/master/hardnet68.pth?raw=True',
     #hardnet-petite? https://github.com/Ivan1248/FCHarDNet
+    "convnext_tiny_1k": "https://dl.fbaipublicfiles.com/convnext/convnext_tiny_1k_224_ema.pth",
+    "convnext_tiny_22k": "https://dl.fbaipublicfiles.com/convnext/convnext_tiny_22k_224.pth",
 })
 # name_to_url['resnetv2-18'] = \
 #    "https://github.com/Ivan1248/semisup-seg-efficient/releases/download/pre-trained-dl/resnetv2_18.pth"

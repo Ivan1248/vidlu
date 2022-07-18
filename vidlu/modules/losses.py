@@ -69,7 +69,8 @@ def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none
     if mask is not None and reduction == "none":
         raise ValueError(f'reduction="none" is not supported when a mask is provided.')
     if mask is None:
-        return result.mean() if reduction == "mean" else result.sum() if reduction == "sum" else result
+        return result.mean() if reduction == "mean" else result.sum() if reduction == "sum" else \
+            result
     else:
         result = result[mask]
         return result.mean() if reduction == "mean" else result.sum()
@@ -77,8 +78,15 @@ def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none
 
 def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none", ignore_index=-1):
     check_argument_types()
-    result = -torch.log(torch.einsum("nc...,nc...->n...", probs,
-                                     F.one_hot(target, probs.shape[1]).transpose(-1, 1)))
+    N, C, *HW = probs.shape
+    if ignore_index < 0:
+        target_valid = target.clamp(0, C - 1)
+    else:
+        target_valid = target.clone()
+        target_valid[target == ignore_index] = 0
+    target_oh = F.one_hot(target_valid, C)
+    target_oh = target_oh.to(probs.dtype)
+    result = -torch.log(torch.einsum("nc...,n...c->n...", probs, target_oh))
     return _apply_reduction(result, reduction=reduction, mask=target != ignore_index)
 
 
@@ -147,6 +155,127 @@ def reduce_loss(x, batch_reduction: T.Literal['sum', 'mean', None] = None,
     if batch_reduction is not None:
         x = getattr(torch, batch_reduction)(x, 0)
     return x
+
+
+# Special supervised ###############################################################################
+
+def downsample_segmap(segmap, factor, ambiguous_value: T.Literal[-1, 'mode']):  # TODO
+    from vidlu.modules.components import Baguette
+    segmap_bagu = Baguette(factor)(segmap.unsqueeze(1))
+    if ambiguous_value == 'mode':
+        segmap_ds = segmap_bagu.mode(dim=1).values
+    else:
+        segmap_ds = segmap_bagu.max(1).values
+        segmap_ds[segmap_bagu.min(1).values != segmap_ds] = ambiguous_value
+    return segmap_ds
+
+
+def centroid_supervised_contrastive_loss_z(z, target, temperature=1, centroid_anchor=False,
+                                           ignore_index=-1):
+    # centroid_anchor=False: pixels attract their centroid and repel other centroids
+    # centroid_anchor=True: centroids repel centroids and attract their pixels
+
+    assert z.dim() == 4
+    if z.shape[-2:] != target.shape[-2:]:
+        target = downsample_segmap(target, target.shape[-2] // z.shape[-2], ambiguous_value=-1)
+        # import matplotlib.pyplot as plt; plt.imshow(torch.cat(list(target), dim=-1).cpu(
+        # ).numpy()); plt.show()
+
+    masks = torch.stack([(target == i).view(-1)
+                         for i in torch.unique(target) if i.item() != ignore_index])  # G(HW)
+
+    z = z.permute(0, 2, 3, 1).reshape(-1, z.shape[1])  # NC
+
+    centroids = torch.einsum('gn,nc->gc', masks.float(), z) / masks.sum(1, keepdim=True)  # GC
+    groups = [z[m] for m in masks]  # G, *C
+
+    group_pos_scores = [torch.einsum('c,kc->k', centroid, groups[i])
+                        for i, centroid in enumerate(centroids)]  # G, *
+    group_log_numerators = [s / temperature for s in group_pos_scores]  # G
+
+    if centroid_anchor:
+        cent_neg_scores = torch.einsum('gc,hc->gh', centroids, centroids) / temperature  # GG
+        torch.diagonal(cent_neg_scores)[:] = 1
+        group_to_denominator_neg = cent_neg_scores.exp().sum(1)  # G
+        group_to_log_denominators = [(lnn.exp() + group_to_denominator_neg[i]).log()
+                                     for i, lnn in enumerate(group_log_numerators)]  # G, *
+    else:
+        group_to_log_denominators = [
+            torch.logsumexp(torch.einsum('hc,gc->hg', zs, centroids) / temperature, dim=1)
+            for zs in groups]  # G, *
+    group_to_log_ps = [ln - ld
+                       for ln, ld in zip(group_log_numerators, group_to_log_denominators)]  # G, *
+    log_ps = torch.cat(group_to_log_ps, dim=0)  # (G*)
+    return -log_ps.mean()
+
+
+def centroid_supervised_contrastive_loss_z(z, target, temperature=1, centroid_anchor=False,
+                                           ignore_index=-1):
+    # centroid_anchor=False: pixels attract their centroid and repel other centroids
+    # centroid_anchor=True: centroids repel centroids and attract their pixels
+
+    assert z.dim() == 4
+    if z.shape[-2:] != target.shape[-2:]:
+        target = downsample_segmap(target, target.shape[-2] // z.shape[-2], ambiguous_value=-1)
+        # import matplotlib.pyplot as plt; plt.imshow(torch.cat(list(target), dim=-1).cpu(
+        # ).numpy()); plt.show()
+
+    masks = torch.stack([(target == i).view(-1)
+                         for i in torch.unique(target) if i.item() != ignore_index])  # G(HW)
+
+    z = z.permute(0, 2, 3, 1).reshape(-1, z.shape[1])  # NC
+
+    centroids = torch.einsum('gn,nc->gc', masks.float(), z) / masks.sum(1, keepdim=True)  # GC
+    groups = [z[m] for m in masks]  # G, *C
+
+    group_pos_scores = [torch.einsum('c,kc->k', centroid, groups[i])
+                        for i, centroid in enumerate(centroids)]  # G, *
+    group_log_numerators = [s / temperature for s in group_pos_scores]  # G
+
+    if centroid_anchor:
+        cent_neg_scores = torch.einsum('gc,hc->gh', centroids, centroids) / temperature  # GG
+        torch.diagonal(cent_neg_scores)[:] = 1
+        group_to_denominator_neg = cent_neg_scores.exp().sum(1)  # G
+        group_to_log_denominators = [(lnn.exp() + group_to_denominator_neg[i]).log()
+                                     for i, lnn in enumerate(group_log_numerators)]  # G, *
+    else:
+        group_to_log_denominators = [
+            torch.logsumexp(torch.einsum('hc,gc->hg', zs, centroids) / temperature, dim=1)
+            for zs in groups]  # G, *
+    group_to_log_ps = [ln - ld
+                       for ln, ld in zip(group_log_numerators, group_to_log_denominators)]  # G, *
+    log_ps = torch.cat(group_to_log_ps, dim=0)  # (G*)
+    return -log_ps.mean()
+
+
+# def class_contrastive_loss_z(z, target, temperature=1, ignore_index=-1, sample_count=None):
+#     # centroid_anchor=False: pixels attract their centroid and repel other centroids
+#     # centroid_anchor=True: centroids repel centroids and attract their pixels
+#     assert z.dim() == 4
+#     if z.shape[-2:] != target.shape[-2:]:
+#         target = downsample_segmap(target, target.shape[-2] // z.shape[-2], ambiguous_value=-1)
+#         # import matplotlib.pyplot as plt; plt.imshow(torch.cat(list(target), dim=-1).cpu(
+#         ).numpy()); plt.show()
+#
+#     z = z.permute(0, 2, 3, 1).reshape(-1, z.shape[1])  # NC
+#     target = target.view(-1)  # N C
+#     non_ignore = (target != ignore_index).nonzero().view(-1)
+#
+#     if sample_count is not None:
+#         non_ignore = non_ignore[torch.randperm(len(non_ignore))[: sample_count]]
+#
+#     z = z[non_ignore]
+#     target = target[non_ignore]
+#
+#     target_repeated = target.expand(*[len(target)] * 2).view(len(target), -1)  # N N
+#     different_class = target_repeated.transpose(0, 1) != target  # N N
+#
+#     similarity = torch.einsum('nc,mc->nm', z, z)
+#
+#     log_nominators = torch.logsumexp(similarity * (~different_class) / temperature, dim=1)  # N
+#     log_denominators = torch.logsumexp(similarity * different_class / temperature, dim=1)  # N
+#     log_ps = log_nominators - log_denominators  # N
+#     return -log_ps.mean()
 
 
 # Distance losses ##################################################################################
