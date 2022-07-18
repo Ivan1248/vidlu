@@ -1,6 +1,7 @@
 from warnings import warn
 
 import numpy as np
+import torch
 from tqdm import tqdm, trange
 
 from vidlu.utils.func import partial
@@ -55,3 +56,38 @@ def chunks(ds: Dataset, size: int):
         return lambda: ds[indices[i]:indices[i + 1]]
 
     return Record({f"{i}_": get_fold_f(i) for i in range(len(indices) - 1)})
+
+
+def remap_classes(ds: Dataset, mapping, label_key=None, additional_info=None,
+                  additional_fields=None):
+    from vidlu.transforms.numpy import remap_segmentation
+
+    additional_info = additional_info or {}
+    additional_fields = additional_fields or {}
+
+    if label_key is None:
+        if 'seg_map' in ds[0].keys():
+            label_key = 'seg_map'
+        else:
+            raise NotImplementedError("No supported label field found.")
+
+    enc_mapping = class_mapping.encode_many_to_one_mapping(
+        mapping, value_to_ind=list({v: None for v in mapping.values()}))
+
+    def convert(label):
+        if is_torch := isinstance(label, torch.Tensor):
+            label = label.numpy()
+        label = remap_segmentation(label, enc_mapping)
+        return torch.from_numpy(label).to(device=label.device) if is_torch else label
+
+    return ds.map(lambda r: type(r)(r, **{label_key: convert(r[label_key])}, **additional_fields),
+                  info={**ds.info, **dict(class_count=len(mapping), class_names=list(mapping)),
+                        **additional_info})
+
+
+def add_class_mapping(ds: Dataset, mapping):
+    enc_mapping = class_mapping.encode_one_to_many_mapping(
+        mapping, value_to_ind={k: i for i, k in enumerate(ds.info.class_names)})
+
+    return ds.map(lambda r: type(r)(r, class_mapping=enc_mapping),
+                  info=dict(ds.info, class_mapping=mapping))
