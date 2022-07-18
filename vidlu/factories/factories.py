@@ -90,28 +90,37 @@ def apply_default_transforms(datasets, cache_dir):
     # TODO: de-hardcode
     default_transforms = [  # partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
         partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
-        partial(vdu.cache_data_lazily, cache_dir=cache_dir)]
-    for i, ds in datasets:
+        partial(vdu.cache_lazily, cache_dir=cache_dir)]
+    for i, ds in enumerate(datasets):
         for transform in default_transforms:
             ds = transform(ds)
         datasets[i] = ds
     return datasets
 
 
-def evaluate_data_transforms_string(datasets, transform_str):
+def get_data_namespace():
     import vidlu.transforms as vt
     import torchvision.transforms.functional_tensor as tvt
     import vidlu.modules.functional as vmf
+    from vidlu.data.datasets import taxonomies
 
-    # TODO: improve names if necessary
     namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
                  **module_to_dict(vdu.dataset_ops)}
-    namespace.update(vt=vt, Record=Record, d=datasets)
-    return factory_eval(transform_str, namespace)
+    namespace.update(vt=vt, taxonomies=taxonomies, Record=Record)
+    return namespace
 
 
-def get_data(data_str: str, datasets_dir, cache_dir=None) \
+def evaluate_data_transforms_string(datasets, transform_str):
+    # TODO: improve names if necessary
+    return factory_eval(transform_str, dict(**get_data_namespace(), d=datasets))
+
+
+def get_data(data_str: str, datasets_dir, cache_dir=None, return_datasets_only=False,
+             factory_version=1) \
         -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
+    if factory_version > 1:
+        return get_data_new(data_str, datasets_dir, cache_dir)
+
     from vidlu import data
     from vidlu.data import Record
 
@@ -139,6 +148,8 @@ def get_data(data_str: str, datasets_dir, cache_dir=None) \
     if transform_str is not None:  # TODO: improve names if necessary
         datasets = evaluate_data_transforms_string(datasets, transform_str)
 
+    if return_datasets_only:
+        return datasets
     return datasets, keys, transform_str
 
 
@@ -149,26 +160,62 @@ get_data.help = \
      + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
 
 
+def get_default_transforms(cache_dir):
+    return dict(
+        add_pixel_stats=partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
+        add_seg_class_info=partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
+        cache=partial(vdu.cache_lazily, cache_dir=cache_dir))
+
+
+def get_data_new(data_str: str, datasets_dir, cache_dir=None) \
+        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
+    from vidlu import data
+
+    factories = data.DatasetFactory(datasets_dir).as_namespace()
+    dt = NameDict(get_default_transforms(cache_dir))
+    glob = {**get_data_namespace(), **factories.__dict__, **dt, 'extend': lambda ds: dt.cache(
+        dt.add_seg_class_info(ds))}
+
+    try:
+        data = factory_eval(data_str, glob)
+    except SyntaxError as e:
+        # loc = {}
+        exec(data_str, glob)
+        data = glob['data']
+    return data
+
+
 def prepare_dataset(dataset):
     return dataset.map(lambda r: Record({k: prepare_element(v, k) for k, v in r.items()}),
                        func_name='prepare')
 
 
-def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir):
-    if ':' in data_str:  # TODO: remove names
+def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, factory_version=1):
+    names = None
+    if factory_version == 1 and ':' in data_str:  # TODO: remove names
         names, data_str = [x.strip() for x in data_str.split(':', 1)]
         names = [x.strip() for x in names.split(',')]
         if not all(x.startswith('train') or x.startswith('test') for x in names):
-            raise ValueError('All dataset identifiers should start with either "train" or "test".'
-                             + f' Some of {names} do not.')
-    else:
-        names = ['train', 'test']
+            raise ValueError(
+                'All dataset identifiers should start with either "train" or "test".'
+                + f' Some of {names} do not.')
 
-    datasets = [prepare_dataset(ds) for ds in get_data(data_str, datasets_dir, cache_dir)[0]]
-    named_datasets = NameDict(dict(zip(names, datasets)))
+    datasets = get_data(data_str, datasets_dir, cache_dir, return_datasets_only=True,
+                        factory_version=factory_version)
+    if not isinstance(datasets, T.Mapping):
+        if names is None:
+            names = [f'train{i}' for i in range(len(datasets) - 1)] if len(datasets) > 2 else [
+                'train']
+            names.extend([f'test{i}' for i in range(len(datasets[0]) - 1)] if isinstance(
+                datasets[-1], tuple) else ['test'])
+            datasets = list(datasets[:-1]) + (list(datasets[-1]) if isinstance(
+                datasets[-1], tuple) else [datasets[-1]])
+        datasets = dict(zip(names, datasets))
+
+    datasets = {k: prepare_dataset(ds) for k, ds in datasets.items()}
     print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
-                                       for name, ds in named_datasets.items()))
-    return named_datasets
+                                       for name, ds in datasets.items()))
+    return NameDict(datasets)
 
 
 # Model ############################################################################################
@@ -375,6 +422,7 @@ def short_symbols_for_get_trainer():
     from vidlu.transforms import jitter
     import vidlu.utils.func as vuf
     from vidlu.utils.func import partial
+    from vidlu.data import class_mapping
     tc = ct  # backward compatibility
     return {**locals(), **_func_short, **extensions}
 

@@ -36,6 +36,7 @@ class TrainingExperimentFactoryArgs:
     device: T.Optional[torch.device]
     verbosity: int
     deterministic: bool
+    data_factory_version: int
 
 
 # Component factories (or factory wrappers) ########################################################
@@ -292,7 +293,8 @@ class TrainingExperiment:
                 print(a.data)
                 with Stopwatch() as t:
                     data = factories.get_prepared_data_for_trainer(a.data, dirs.datasets,
-                                                                   dirs.cache)
+                                                                   dirs.cache,
+                                                                   factory_version=a.data_factory_version)
                 print(f"Data initialized in {t.time:.2f} s.")
             first_ds = next(iter(data.values()))
 
