@@ -99,7 +99,6 @@ def load_image(path, downsampling=1):
     return img
 
 
-
 def load_segmentation(path, downsampling, id_to_label=None, dtype=np.int8):
     """Loads and optionally translates segmentation labels.
 
@@ -118,9 +117,9 @@ def load_segmentation(path, downsampling, id_to_label=None, dtype=np.int8):
         raise ValueError("`downsampling` must be an `int`.")
 
     lab = _load_image(path, force_rgb=False)
-    lab = np.array(lab, dtype=dtype)
     if downsampling > 1:
         lab = tvtf.resize(lab, tuple(np.flip(lab.size) // downsampling), pimg.NEAREST)
+    lab = np.array(lab, dtype=dtype)
     if id_to_label:
         return remap_segmentation(lab, id_to_label)
     else:
@@ -1048,14 +1047,10 @@ class WildDash(Dataset):
             for x in self._images_dir.glob(f'*{self._IMG_SUFFIX}')
         ])
 
-        info = dict(problem='semantic_segmentation',
-                    class_count=19,
-                    class_names=[l.name for l in cslabels if l.trainId >= 0],
-                    class_colors=[l.color for l in cslabels if l.trainId >= 0])
         self._blank_label = np.full(list(self._shape), -1, dtype=np.int8)
         super().__init__(
             subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
-            info=info)
+            info=Cityscapes.info)
 
     def get_example(self, idx):
         path_prefix = f"{self._images_dir}/{self._image_names[idx]}"
@@ -1082,18 +1077,19 @@ class WildDash(Dataset):
 
 class BDD10k(Dataset):
     subsets = 'train', 'val', 'test'  # 'test' labels are invalid
+    default_root = 'bdd100k'
 
     def __init__(self, root, subset):
         self.root = Path(root)
         _check_subset(BDD10k, subset)
 
-        self.images_base = self.root / 'images' / '10k' / self.subset
-        self.labels_base = self.root / 'labels' / 'sem_seg' / 'masks' / self.subset
+        self.images_base = self.root / 'images' / '10k' / subset
+        self.labels_base = self.root / 'labels' / 'sem_seg' / 'masks' / subset
 
         self.image_paths = list(self.images_base.glob('*.jpg'))
         self.label_paths = [self.labels_base / f'{p.stem}.png' for p in self.image_paths]
 
-        super().__init__(subset=subset)
+        super().__init__(subset=subset, info=Cityscapes.info)
 
     def get_example(self, idx):
         name = str(self.image_paths[idx].relative_to(self.images_base).with_suffix(""))
@@ -1175,7 +1171,8 @@ class VOC2012Segmentation(Dataset):
         url=r'http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
         aug_urls=dict(  # train_aug is a superset of train and does not overlap with val
             labels=r'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/SegmentationClassAug.zip',
-            train_list=r'http://raw.githubusercontent.com/hfslyc/AdvSemiSeg/master/dataset/voc_list/train_aug.txt',
+            train_list=r'http://raw.githubusercontent.com/hfslyc/AdvSemiSeg/master/dataset'
+                       r'/voc_list/train_aug.txt',
         ),
         md5='6cd6e144f989b92b3379bac3b3de84fd')
 
@@ -1247,7 +1244,8 @@ class VOC2012Segmentation(Dataset):
 #
 #         self.names = [f.with_suffix('') for f in files]
 #
-#         self.label_paths = {f: f.replace('img', 'cls').replace('jpg', 'png') for f in self.img_paths
+#         self.label_paths = {f: f.replace('img', 'cls').replace('jpg', 'png') for f in
+#         self.img_paths
 #                             if os.path.exists(f.replace('img', 'cls').replace('jpg', 'png'))}
 #         print('\nTotal num images =', len(self.img_paths))
 #
