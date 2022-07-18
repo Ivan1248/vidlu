@@ -98,6 +98,13 @@ def approximate_pop_stats(exp, stats_dataset):
     exp.trainer.model.eval()
 
 
+def eval_on_test_sets(exp):
+    for name, ds in exp.data.items():
+        if name.startswith("test"):
+            print(f"Evaluating on {name} {getattr(ds, 'identifier', '')}...")
+            exp.trainer.eval(ds)
+
+
 def train(args):
     if args.resume == "restart" \
             and not query_user("Are you sure you want to restart the experiment?",
@@ -111,14 +118,15 @@ def train(args):
 
     exp.logger.log("Resume command:\n\x1b[0;30;42m"
                    + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
-                   + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} --metrics "{args.metrics}"'
+                   + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} '
+                     f'--metrics "{args.metrics}"'
                    + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
     exp.logger.log(f"RNG seed: {args.seed}")
 
     with get_profiler() if args.profile else ctx.suppress() as prof:
         if not args.no_init_eval:
             print('\nEvaluating initially...')
-            exp.trainer.eval(exp.data.test)
+            eval_on_test_sets(exp)
         log_run('cont.' if args.resume else 'start')
 
         print(('\nContinuing' if args.resume not in (
@@ -132,7 +140,7 @@ def train(args):
             with vtu.preserve_state(exp.trainer.model):
                 approximate_pop_stats(exp, exp.data.train)
                 print(f'\nEvaluating using approximate population statistics...')
-                exp.trainer.eval(exp.data.test)
+                eval_on_test_sets(exp)
 
         log_run('done', str(exp.cpman.id_to_perf))
 
@@ -190,7 +198,7 @@ def test(args):
 
     else:
         print('Starting evaluation (test/val):...')
-        e.trainer.eval(e.data.test)
+        eval_on_test_sets(e)
         print('Starting evaluation (train):...')
         e.trainer.eval(e.data.train)
 
@@ -227,7 +235,7 @@ def add_standard_arguments(parser, func):
                         help="Resume training from checkpoint of the same experiment. "
                              + "? - can start new training if there are no checkpoints, "
                              + "best - resumes from the best checkpoint, "
-                             + "restart - deletes existing checkpoints and restarts the experiments.")
+                             + "restart - deletes checkpoints and restarts the experiment.")
     parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
     parser.add_argument("--no_train_eval", action='store_true',
@@ -238,6 +246,7 @@ def add_standard_arguments(parser, func):
                         help="RNG seed. Default: int(time()) %% 100.")
     parser.add_argument("--deterministic", action='store_true',
                         help="Usage of deterministic operations.")
+    parser.add_argument("--data_factory_version", type=int, default=1)
     # reporting, debugging
     parser.add_argument("--debug", help="", action='store_true')
     parser.add_argument("--print_calls", help="", action='store_true')
