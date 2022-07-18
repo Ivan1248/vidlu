@@ -17,7 +17,7 @@ ds_train, ds_val, ds_test = (ds for k, ds in key_to_ds)
 
 
 def class_incidence(y, c):
-    y_oh = one_hot(y.unsqueeze(0).to(torch.int64).clamp_(0, c), c, torch.int64)
+    y_oh = one_hot(y.unsqueeze(0).to(torch.int64), c, torch.int64)
     return y_oh.squeeze(0).sum((0, 1))
 
 
