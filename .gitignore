@@ -190,7 +190,14 @@ venv.bak/
 
 
 # other
+other/notebooks/data/
 vidlu/libs/
 libs/
 semseg_cascade/
 *.ini
+
+# temporarily used
+/vidlu/transforms/other/morsic_transform/
+/vidlu/modules/other/morsic_loss/
+/vidlu/transforms/jitter/jitter_mo.py
+/vidlu/models/mo_models.py
