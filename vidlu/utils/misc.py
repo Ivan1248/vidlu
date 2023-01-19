@@ -309,30 +309,39 @@ class Stopwatch:
         self.stop()
 
     def __str__(self):
-        return f"Stopwatch(time={self.time})"
+        return f"Stopwatch(time={self.time}, running={self.running})"
 
     @property
     def time(self):
-        return self._time + self._time_func() - self.start_time if self.running else self._time
+        if self.running:
+            return self._prev_time + self._time_func() - self.start_time
+        else:
+            return self._prev_time
 
     def reset(self):
-        self._time = 0.
+        """Stops and resets the measurement (`running=False` and `time=0`)."""
+        self._prev_time = 0.
         self.start_time = None
         self.running = False
         return self
 
     def start(self):
+        """Starts, or resumes, the measurment."""
         if self.running:
-            self.reset()
-        self.start_time = self._time_func()
-        self.running = True
+            warnings.warn("Stopwatch already running.")
+        else:
+            self.start_time = self._time_func()
+            self.running = True
         return self
 
     def stop(self):
+        """Stops, or pauses, the measurement until `start` is called."""
         if self.running:
-            self._time = self.time
+            self._prev_time = self.time
             self.running = False
-        return self._time
+        else:
+            warnings.warn("Stopwatch is already not running.")
+        return self._prev_time
 
 
 # Shared arrays ####################################################################################

@@ -116,7 +116,7 @@ def define_training_loop_actions(
 
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
-        epoch_sw.start()
+        epoch_sw.reset().start()
         if sleepiness > 0:
             print(f"Warning: {sleepiness}s of sleep per epoch.")
         time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * epoch_time)
@@ -133,7 +133,7 @@ def define_training_loop_actions(
     def on_epoch_completed(es):
         nonlocal epoch_time
         epoch_time = epoch_sw.time
-        inter_epoch_sw.start()
+        inter_epoch_sw.reset().start()
         if es.epoch not in eval_epochs:
             return
         first = True
@@ -178,7 +178,7 @@ def define_training_loop_actions(
     def on_eval_epoch_started(es):
         nonlocal inter_epoch_time
         inter_epoch_time = inter_epoch_sw.time
-        eval_sw.start()
+        eval_sw.reset().start()
 
     @trainer.evaluation.epoch_completed.handler
     def on_eval_epoch_completed(es):
