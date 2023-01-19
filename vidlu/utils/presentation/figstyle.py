@@ -1,3 +1,4 @@
+from tkinter import font
 import matplotlib
 
 scale = 1
@@ -6,7 +7,7 @@ fontsize_pt = 10 * scale  # 11.74983
 textwidth_pt = 412.56497 * scale
 
 
-def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
+def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt, font_package='lmodern'):
     r"""Configures Matplotlib so saved figures can be used in LaTeX documents.
     Uses the sans-serif TeX Gyre Heros font (Helvetica), also for math.
 
@@ -38,7 +39,7 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     Based on: https://gist.github.com/martijnvermaat/b5fe45124049b1e8e037
     """
 
-    def figsize(width_fraction=1.0):
+    def get_figsize(width_fraction=1.0):
         """
         width_fraction: The fraction of the available width you'd like the figure to occupy.
         """
@@ -61,7 +62,8 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
     rcParams['legend.fontsize'] = document_fontsize
     # rcParams['font.family'] = 'sans-serif'
     # rcParams['font.sans-serif'] = ['tgheros']
-    # rcParams['font.serif'] = ['cm10']
+    #rcParams['font.serif'] = ['cm10']
+    rcParams['font.serif'] = [font_package]
     rcParams['text.usetex'] = True
     # matplotlib.rcParams['text.latex.unicode'] = True
     rcParams['text.latex.preamble'] = r"""
@@ -69,9 +71,10 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
         \usepackage{amsmath}
         \usepackage{amsfonts}
         \usepackage{amssymb}
-        
-        \usepackage{lmodern}        
-        \renewcommand{\familydefault}{\sfdefault}  % sans-serif main
+        """ + \
+        f"""\\usepackage{{{font_package}}}
+        """ + \
+        r"""\renewcommand{\familydefault}{\sfdefault}  % sans-serif main
         \usepackage[scaled]{beramono} % sans-serif monospace
         
         \DeclareMathOperator*{\argmax}{arg\,max}
@@ -79,9 +82,9 @@ def configure(document_fontsize=fontsize_pt, available_width=textwidth_pt):
         \DeclareMathOperator*{\Dklsym}{D_{\mathrm{KL}}}
         \newcommand{\Dkl}[2]{\Dklsym\left(#1\;\middle\|\;#2\right)}
         """
-    rcParams['figure.figsize'] = figsize()
+    rcParams['figure.figsize'] = get_figsize()
 
-    return figsize
+    return get_figsize
 
 
-figsize = configure()  # figsize is a function returning (width, height)
+get_figsize = configure()  # figsize is a function returning (width, height)
