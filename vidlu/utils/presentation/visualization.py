@@ -1,4 +1,5 @@
 import os
+import typing as T
 from functools import lru_cache
 
 import numpy as np
@@ -7,9 +8,30 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
+def concatenate_cmaps(cmaps):
+    def conc(x):
+        x *= len(cmaps)
+        i = int(x)
+        if i == x:
+            i -= 1
+        r = x - i
+        return cmaps[i](r)
+
+    return conc
+
+
+def get_cmap(cmap):
+    if isinstance(cmap, str):
+        return mpl.cm.get_cmap(cmap)
+    elif isinstance(cmap, T.Sequence):
+        return concatenate_cmaps(list(map(mpl.cm.get_cmap, cmap)))
+    else:
+        return cmap
+
+
 def get_color_palette(n, cmap='jet'):
-    cmap = mpl.cm.get_cmap(cmap)
-    return [np.array(cmap(i / (n - 1))[:3]) for i in range(n)]
+    cmap = get_cmap(cmap)
+    return np.stack([np.array(cmap(i / (n - 1))[:3]) for i in range(n)])
 
 
 def fuse_images(im1, im2, a=0.5):
@@ -175,14 +197,19 @@ def view_predictions_2(dataset, infer=None, save_dir=None):
     return Viewer().display(dataset, get_frame)
 
 
-def view_predictions(dataset, infer=None, save_dir=None):
-    if 'class_colors' in dataset.info:
+def view_predictions(dataset, infer=None, save_dir=None, colors=None, class_count=None):
+    if colors is not None:
+        colors = [np.zeros(3)] + colors  # unknown black
+    elif class_count is not None:
+        colors = get_color_palette(class_count)
+    elif 'class_colors' in dataset.info:
         colors = list(map(np.array, dataset.info['class_colors']))
         if np.max(np.array(colors)) > 1:
             colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
     else:
         colors = get_color_palette(dataset.info['class_count'])
     colors = np.array([np.zeros(3)] + colors)  # unknown black
+
 
     @lru_cache(maxsize=1000)
     def get_class_representative(label):  # classification
