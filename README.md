@@ -172,8 +172,16 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Extensions
 
-Vidlu enables extensions using the [_naming convention_ approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). Installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed.
-Extensions are also directly available for expression arguments for [factories in `vidlu.factories`](#factories).
+Vidlu enables extensions using the [_naming convention_ approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). This means that installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed. For example, if the name of the package is `vidlu\_my_ext`, it will have the name `my_ext` in the `extensions` dictionary.
+
+Extensions are directly available for expression arguments for [factories in `vidlu.factories`](#factories). For example, the code should work if `MyStep` and `MyModel` are defined in the extension `my_ext`:
+```python
+from torch import nn
+from vidlu.factories import get_trainer
+
+model = vidlu.extensions.extensions['my_ext'].MyModel()
+trainer = get_trainer("ct.supervised_cifar, training_step=my_ext.MyStep, eval_step=None")
+```
 
 ### Commonly used utilities
 
