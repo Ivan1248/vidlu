@@ -55,15 +55,17 @@ def log_run(status, result=None):
 
 
 def fetch_remote_experiment(args, dirs):
-    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args)))
-    cmd = ["rsync", "-azvLO", "--relative", "--delete", f"{args.remote}:{dir}/",
-           f"/"]
+    remote_name, port, *_ = f'{args.remote}:'.split(':')
+    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args))).strip("'")
+    cmd = ["rsync", "-azvLO", "--relative", "--delete", f"{remote_name}:{dir}/", f"/"]
+    if len(port) > 0:
+       cmd += [f"--rsh", f"ssh -p{port}"]
     print("Running " + " ".join(cmd))
     result = subprocess.run(cmd)
     if result.returncode != 0:
         warnings.warn(f"Experiment state transfer had errors: {result}")
-        query_user("Experiment state transfer had errors. Continue?", default='n')
-
+        if not query_user("Experiment state transfer had errors. Continue?", default='n'):
+            exit()
 
 def get_profiler():
     from torch.autograd.profiler import profile
@@ -221,6 +223,7 @@ def add_standard_arguments(parser, func):
                         help='A comma-separated list of metrics.')
     parser.add_argument("--eval_with_pop_stats", action='store_true',
                         help="Computes actual population statistics for batchnorm layers.")
+
     # device
     parser.add_argument("-d", "--device", type=str, help="PyTorch device.",
                         default=None)
