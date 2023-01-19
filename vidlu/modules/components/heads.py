@@ -12,7 +12,7 @@ from . import _default_factories as D
 
 # Standard #########################################################################################
 
-class ClassificationHead(E.Seq):
+class ChannelAveragingClassificationHead(E.Seq):
     def __init__(self, class_count):
         super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
                          logits=E.Linear(class_count))

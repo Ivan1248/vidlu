@@ -8,14 +8,14 @@ from vidlu.training.trainers import Trainer
 import vidlu.training.steps as vts
 import vidlu.configs.training as vct
 from vidlu.modules.losses import nll_loss_l
-from vidlu.modules.components import ClassificationHead
+from vidlu.modules.components import ChannelAveragingClassificationHead
 from vidlu.models import ResNetV2, resnet_v2_backbone
 from vidlu.training.robustness.attacks import GradientSignAttack
 
 
 def get_a_model():
     model = ResNetV2(backbone_f=partial(resnet_v2_backbone, depth=18, small_input=True),
-                     head_f=partial(ClassificationHead, 2))
+                     head_f=partial(ChannelAveragingClassificationHead, 2))
     model(torch.empty(1, 3, 32, 32))
     return model
 

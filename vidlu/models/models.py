@@ -212,7 +212,8 @@ class SegmentationModel(DiscriminativeModel):
 class ResNetV1(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=partial(resnet_v1_backbone, base_width=64),
-                             init=initialization.kaiming_resnet)
+                             init=initialization.kaiming_resnet,
+                             head_f=vmc.ChannelAveragingClassificationHead)
 
 
 class SegResNetV1(SegmentationModel):
