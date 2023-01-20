@@ -670,7 +670,7 @@ class HDDCache:
         self.dataset = dataset
         self.check_dataset = check_dataset
         self.compute = compute
-        self.cache_file = cache_file
+        self.cache_file = Path(cache_file)
         self.recompute = recompute
 
     def __call__(self):
@@ -694,6 +694,7 @@ class HDDCache:
                         self.cache_file.unlink()
         info_cache = self.compute(ds)
         try:  # store
+            self.cache_file.parent.mkdir(exist_ok=True)
             with self.cache_file.open('wb') as file:
                 pickle.dump((info_cache, check), file)
         except (PermissionError, TypeError):
@@ -710,52 +711,11 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
         check_ds = None if simplify_dataset is None else simplify_dataset(dataset)
         name_to_func = {
             k: HDDCache(dataset, func,
-                        cache_file=to_valid_path(self.cache_dir / (dataset.identifier + k)),
+                        cache_file=self.cache_dir / to_valid_path((dataset.identifier + k)),
                         recompute=recompute, check_dataset=check_ds)
             for k, func in name_to_func.items()}
         super().__init__(dataset, name_to_func, **kwargs)
 
-
-# class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
-#     def __init__(self, dataset, name_to_func, cache_dir, recompute=False, simplify_dataset=None,
-#                  **kwargs):
-#         super().__init__(dataset, name_to_func, **kwargs)
-#         self.cache_dir = Path(cache_dir)
-#         self.cache_file = to_valid_path(self.cache_dir / "info_cache" / self.identifier)
-#         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-#         self.recompute = recompute
-#         self.check_data = None
-#         if simplify_dataset is not None:
-#             self.check_data = InfoCacheDataset(simplify_dataset(dataset), name_to_func)
-#
-#     def _compute_check_data(self):
-#         return None if self.check_data is None else self.check_data._compute()
-#
-#     def _compute(self):
-#         if self.cache_file.exists():
-#             if self.recompute:
-#                 self.cache_file.unlink()
-#             try:  # load
-#                 with self.cache_file.open('rb') as file:
-#                     info_cache, check = pickle.load(file)
-#             except (PermissionError, TypeError, EOFError, AttributeError, pickle.UnpicklingError,
-#                     ValueError):
-#                 self.cache_file.unlink()
-#                 warnings.warn("Error loading cache. The cache file will have to be recreated.")
-#             else:
-#                 if objects_equal(check, self._compute_check_data()):
-#                     return info_cache
-#                 else:
-#                     self.cache_file.unlink()
-#         info_cache = super()._compute()
-#         check = self._compute_check_data()
-#         try:  # store
-#             with self.cache_file.open('wb') as file:
-#                 pickle.dump((info_cache, check), file)
-#         except (PermissionError, TypeError):
-#             self.cache_file.unlink()
-#             raise
-#         return info_cache
 
 
 class SubDataset(Dataset):
