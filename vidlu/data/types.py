@@ -6,6 +6,8 @@ import numpy as np
 
 import vidlu.utils.text as vut
 
+from collections import UserList
+
 # Domain types
 
 _type_to_domain = dict()
@@ -18,6 +20,64 @@ class Domain:
             raise NotImplementedError()
         else:
             return general_collate(elements)
+
+
+class Array(torch.Tensor, Domain):
+    def __new__(cls, obj):
+        return obj[...].as_subclass(cls)
+
+    def check_validity(self, quick):
+        return True
+
+    @classmethod
+    def collate(cls, elements, general_collate=None):
+        shapes = [tuple(x.shape) for x in elements]
+        if not all(s == shapes[0] for s in shapes[1:]):
+            raise RuntimeError(f"All elements (type {type(elements[0]).__name__}) should have"
+                               + f" equal shapes, but the shapes are {shapes}.")
+        return torch_collate(elements)
+
+    # @classmethod
+    # def __torch_function__(cls, func, types, args=(), kwargs=None):
+    #     if kwargs is None:
+    #         kwargs = {}
+    #     try:
+    #         return super().__torch_function__(func, types, args, kwargs=kwargs)
+    #     except TypeError as e:
+    #         args = [v.as_subclass(torch.Tensor) if isinstance(v, torch.Tensor) else v
+    #                 for v in args]
+    #         kwargs = {k: v.as_subclass(torch.Tensor) if isinstance(v, torch.Tensor) else v
+    #                   for k, v in kwargs.items()}
+    #         return super().__torch_function__(func, types, args, kwargs=kwargs)
+
+
+class ClassLabelLike(Array):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim in {0, 1}
+                and not torch.is_floating_point(self))
+
+
+class ClassLabel(ClassLabelLike):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and not torch.is_floating_point(self))
+
+
+class ClassDist(ClassLabelLike):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and torch.is_floating_point(self)
+                and (quick or torch.isclose(self.sum(), 1).item()))
+
+
+class Float(Array, Domain):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and torch.is_floating_point(self))
 
 
 class Name(str, Domain):
@@ -35,22 +95,6 @@ class Other(Domain):
     @classmethod
     def collate(cls, elements, general_collate=None):
         return elements
-
-
-class Array(torch.Tensor, Domain):
-    def __new__(cls, obj):
-        return obj[...].as_subclass(cls)
-
-    def check_validity(self, quick):
-        return True
-
-    @classmethod
-    def collate(cls, elements, general_collate=None):
-        shapes = [tuple(x.shape) for x in elements]
-        if not all(s == shapes[0] for s in shapes[1:]):
-            raise RuntimeError(f"All elements (type {type(elements[0]).__name__}) should have"
-                               + f" equal shapes, but the shapes are {shapes}.")
-        return torch_collate(elements)
 
 
 class Spatial2D(Domain):
@@ -86,6 +130,24 @@ class HSVImage(ArraySpatial2D):
 class SegMap(ArraySpatial2D):
     def check_validity(self, quick=False):
         return super().check_validity() and not torch.is_floating_point(self)
+
+
+class Mask2D(ArraySpatial2D):
+    def check_validity(self, quick=False):
+        return super().check_validity() and not torch.is_floating_point(self)
+
+
+class SoftMask2D(ArraySpatial2D):
+    def check_validity(self, quick=False):
+        return super().check_validity() and torch.is_floating_point(self)
+
+
+class ClassMasks2D(Spatial2D):
+    __slots__ = 'classes', 'masks'
+
+    def __init__(self, classes: T.Sequence[ClassLabel],
+                 masks: T.Union[T.Sequence[Mask2D], T.Sequence[SoftMask2D]]):
+        self.classes, self.masks = classes, masks
 
 
 class AABB(Spatial2D):
@@ -211,35 +273,6 @@ class ClassAABBsOnImage(dict, AABBsOnImageCollection):
         if shape is None:
             shape = self.shape
         return type(self)({k: list(map(func, aabbs)) for k, aabbs in self.items()}, shape=shape)
-
-
-class ClassLabelLike(Array):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim in {0, 1}
-                and not torch.is_floating_point(self))
-
-
-class ClassLabel(ClassLabelLike):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim == 0
-                and not torch.is_floating_point(self))
-
-
-class ClassDist(ClassLabelLike):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim == 0
-                and torch.is_floating_point(self)
-                and (quick or torch.isclose(self.sum(), 1).item()))
-
-
-class Float(Array, Domain):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim == 0
-                and torch.is_floating_point(self))
 
 
 # Mapping from keys in snake case to Domain subclasses and vice versa
