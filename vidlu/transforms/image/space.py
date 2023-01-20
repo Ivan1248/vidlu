@@ -7,6 +7,7 @@ from torch import Tensor
 import torch.nn.functional as nnF
 import numpy as np
 from typeguard import check_argument_types
+import PIL.Image as pimg
 
 import vidlu.data.types as dt
 from vidlu.utils import num
@@ -16,13 +17,44 @@ from vidlu.torch_utils import is_int_tensor, round_float_to_int
 from vidlu.modules.utils import func_to_module_class
 
 
+def complete_output_shape(partial_output_shape, input_shape):
+    """Completes undefined parts of the output shape based on the input shape.
+
+    Args:
+        partial_output_shape (Sequence[int]): A sequence of dimensions, where undefined dimensions have
+            the value `None`.
+        input_shape (Sequence[int]): A sequence of input dimensions.
+
+    Returns:
+        Output shape that has the same aspect ratio as the input shape.
+    """
+    assert len(partial_output_shape) == 2
+    shape = np.array(partial_output_shape)
+    input_shape = np.array(input_shape)
+    for i in range(2):
+        if shape[i] is None:
+            shape[i] = int(shape[1 - i] * input_shape[i] / input_shape[1 - i] + 0.5)
+            break
+    return shape
+
+
 @vectorize
 def resize(x, shape=None, scale_factor=None, mode='nearest', align_corners=None):
-    additional_dims = (None,) * (4 - len(x.shape))  # must be tuple, empty list doesn't work
+    if shape is not None and hasattr(x, 'shape') or hasattr(x, 'size'):
+        input_shape = tuple(reversed(x.size)) if isinstance(x, pimg.Image) else x.shape[-2:]
+        shape = complete_output_shape(shape, input_shape)
+
     if isinstance(x, torch.Tensor):
-        return nnF.interpolate(x[additional_dims], size=shape, scale_factor=scale_factor, mode=mode,
-                               align_corners=align_corners)[(0,) * len(additional_dims)]
-    scale = shape / x.shape
+        additional_dims = (None,) * (4 - len(x.shape))  # for batches and >2 spatial dimensions
+        result = \
+            nnF.interpolate(x[additional_dims], size=tuple(shape), scale_factor=scale_factor,
+                            mode=mode,
+                            align_corners=align_corners)[(0,) * len(additional_dims)]
+        return result  # torch_to_pil(result) if is_pil else result
+    elif isinstance(x, pimg.Image):
+        return x.resize(tuple(reversed(shape)), resample=getattr(pimg, mode.upper()))
+
+    scale = np.array(shape) / x.shape
     if isinstance(x, dt.AABBsOnImageCollection):
         return x.map(lambda bb: bb * scale, shape=shape)
     elif isinstance(x, dt.AABB):
@@ -249,7 +281,8 @@ def _sample_random_scale(min, max, dist: ScaleDistArg = "uniform", rng=np.random
 
 
 def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
-                      align_corners=None, scale_dist: ScaleDistArg = "uniform", rng=np.random,
+                      scale_factor_fn=lambda h, w: 1.,
+                      align_corners=None, scale_dist: ScaleDistArg = "log-uniform", rng=np.random,
                       rand_crop_fn=random_crop):
     check_argument_types()
 
@@ -261,7 +294,8 @@ def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
                for a in xs if isinstance(a, dt.Spatial2D)):
         raise RuntimeError("All inputs must have the same height and width.")
 
-    scale = _sample_random_scale(min_scale, max_scale, dist=scale_dist, rng=rng)
+    sf = scale_factor_fn(*x[0].shape[-2:])
+    scale = sf * _sample_random_scale(min_scale, max_scale, dist=scale_dist, rng=rng)
 
     xs = rand_crop_fn(xs, shape=np.array(shape) / scale, overflow=overflow, rng=rng)
 

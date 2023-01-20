@@ -128,6 +128,7 @@ class SegRandScaleCropPadHFlip(pert.PertModel):
                  shape: tuple,
                  max_scale: float,
                  min_scale: float = None,
+                 scale_factor_fn=lambda h, w: 1.,
                  overflow: object = 0,
                  align_corners: bool = True,
                  image_pad_value: T.Union[torch.Tensor, float, T.Literal['mean']] = 'mean',
@@ -142,8 +143,8 @@ class SegRandScaleCropPadHFlip(pert.PertModel):
         d, put_back = pick(lambda x: isinstance(x, dt.Spatial2D), inputs)
         d = self.random_scale_crop_f(
             shape=self.shape, max_scale=self.max_scale, min_scale=self.min_scale,
-            overflow=self.overflow, align_corners=self.align_corners,
-            scale_dist=self.scale_dist)(d)
+            overflow=self.overflow, scale_factor_fn=self.scale_factor_fn,
+            align_corners=self.align_corners, scale_dist=self.scale_dist)(d)
         d = vti.RandomHFlip()(d)
         pad = partial(vti.pad_to_shape, shape=self.shape)
         d = [pad(x, value=self.image_pad_value) if isinstance(x, dt.Image) else
