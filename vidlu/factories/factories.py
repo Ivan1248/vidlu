@@ -101,13 +101,14 @@ def apply_default_transforms(datasets, cache_dir):
 
 def get_data_namespace():
     import vidlu.transforms as vt
+    import vidlu.transforms.image as vti
     import torchvision.transforms.functional_tensor as tvt
     import vidlu.modules.functional as vmf
     from vidlu.data.datasets import taxonomies
 
     namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
                  **module_to_dict(vdu.dataset_ops)}
-    namespace.update(vt=vt, taxonomies=taxonomies, Record=Record)
+    namespace.update(vt=vt, vti=vti, taxonomies=taxonomies, Record=Record)
     return namespace
 
 
