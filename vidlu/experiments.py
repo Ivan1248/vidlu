@@ -66,14 +66,15 @@ def to_dhm_str(time):
 
 def define_training_loop_actions(
         trainer: Trainer, cpman: CheckpointManager, data, logger, main_metrics: T.Sequence[str],
-        eval_count=200, min_train_report_count=800,
+        eval_count=int(os.environ.get('VIDLU_EVAL_COUNT', 200)), min_train_report_count=800,
         interact_shortcuts=dict(i='embed()', skip='loop.terminate()'),
-        special_format={'mem': lambda v: f'{v}MiB', 'freq': lambda v: f'{v:.1f}/s'},
+        special_format={'mem': lambda v: f'{v}MiB', 'freq': lambda v: f'{v:.1f}/s',
+                        'freq_max': lambda v: f'freq_max={v:.1f}'},
         line_width=120):
     sleepiness = 0
     eval_epochs = get_report_iters(eval_count, trainer.epoch_count)
     epoch_time, inter_epoch_time, eval_time = -1, -1, -1
-    epoch_sw, inter_epoch_sw, eval_sw = Stopwatch(), Stopwatch(), Stopwatch()
+    sw_epoch, sw_inter_epoch, sw_eval = Stopwatch(), Stopwatch(), Stopwatch()
 
     # epoch_to_main_metrics = cpman.load_last()
 
@@ -116,7 +117,7 @@ def define_training_loop_actions(
 
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
-        epoch_sw.reset().start()
+        sw_epoch.reset().start()
         if sleepiness > 0:
             print(f"Warning: {sleepiness}s of sleep per epoch.")
         time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * epoch_time)
@@ -132,8 +133,8 @@ def define_training_loop_actions(
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
         nonlocal epoch_time
-        epoch_time = epoch_sw.time
-        inter_epoch_sw.reset().start()
+        epoch_time = sw_epoch.time
+        sw_inter_epoch.reset().start()
         if es.epoch not in eval_epochs:
             return
         first = True
@@ -177,13 +178,13 @@ def define_training_loop_actions(
     @trainer.evaluation.epoch_started.handler
     def on_eval_epoch_started(es):
         nonlocal inter_epoch_time
-        inter_epoch_time = inter_epoch_sw.time
-        eval_sw.reset().start()
+        inter_epoch_time = sw_inter_epoch.time
+        sw_eval.reset().start()
 
     @trainer.evaluation.epoch_completed.handler
     def on_eval_epoch_completed(es):
         nonlocal eval_time
-        eval_time = eval_sw.time
+        eval_time = sw_eval.time
         report_metrics(es, special_format=special_format, is_validation=True)
 
     def set_sleepiness(x):
@@ -291,25 +292,24 @@ class TrainingExperiment:
         try:
             with indent_print('\nInitializing data...'):
                 print(a.data)
-                with Stopwatch() as t:
+                with Stopwatch() as sw:
                     data = factories.get_prepared_data_for_trainer(a.data, dirs.datasets,
                                                                    dirs.cache,
                                                                    factory_version=a.data_factory_version)
-                print(f"Data initialized in {t.time:.2f} s.")
+                print(f"Data initialized in {sw.time:.2f} s.")
             first_ds = next(iter(data.values()))
 
             with indent_print('\nInitializing model...'):
                 print(a.model)
-                with Stopwatch() as t:
+                with Stopwatch() as sw:
                     model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
                                                 prep_dataset=first_ds, device=a.device,
                                                 verbosity=a.verbosity)
-                print(f"Model initialized in {t.time:.2f} s.")
+                print(f"Model initialized in {sw.time:.2f} s.")
 
             with indent_print('\nInitializing trainer and evaluation...'):
                 print(a.trainer)
-                trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
-                                                verbosity=a.verbosity,
+                trainer = factories.get_trainer(a.trainer, model=model, verbosity=a.verbosity,
                                                 deterministic=a.deterministic)
                 metrics, main_metrics = factories.get_metrics(a.metrics, trainer, dataset=first_ds)
                 for m in metrics:
