@@ -3,6 +3,9 @@ import typing as T
 from pathlib import Path
 import copy
 import difflib
+import logging
+from contextlib import contextmanager
+from functools import wraps
 
 import torch
 from torch import nn
@@ -267,6 +270,37 @@ def retry_if_cuda_oom(func):
 
 
 # AMP
+
+class DummyGradScaler:
+    @staticmethod
+    def scale(loss):
+        return loss
+
+    @staticmethod
+    def unscale_(optimizer):
+        pass
+
+    @staticmethod
+    def step(optimizer, *args, **kwargs):
+        return optimizer.step(*args, **kwargs)
+
+    @staticmethod
+    def update(new_scale=None):
+        pass
+
+    @staticmethod
+    def get_scale():
+        return 1.0
+
+    @staticmethod
+    def state_dict():
+        return dict()
+
+    @staticmethod
+    def load_state_dict(*args, **kwargs):
+        pass
+
+
 # Profiling
 
 def profile(func, on_cuda=True, device=None):
