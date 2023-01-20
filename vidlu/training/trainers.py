@@ -123,7 +123,7 @@ class EpochLoop(object):
 
         Args:
             data (Iterable): 1 or more collections of batches allowing repeated
-                iteration (e.g., list or `DataLoader`).
+                iteration (e.g. list or `DataLoader`).
             max_epochs (int, optional): max epochs to run for (default: 1)
             restart (bool, optional): whether to reset the training state before
                 running. Default: `True`.
@@ -263,11 +263,11 @@ class Evaluator:
             torch.cuda.reset_peak_memory_stats()
         if synchronize:
             torch.cuda.synchronize()
-        with Stopwatch() as t:
+        with Stopwatch() as sw:
             output = step(self, batch)
             if synchronize:
                 torch.cuda.synchronize()
-        output['freq'] = 1 / t.time
+        output['freq'] = 1 / sw.time
         if isinstance(output, T.MutableMapping) and torch.cuda.is_available():
             output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
         return output
@@ -295,7 +295,7 @@ class Trainer(Evaluator):
 
     epoch_count: int = Required  # optimization
     optimizer_f: T.Callable = None  # optimization; vidlu.optim
-    lr_scheduler_f: InitVar[T.Callable] = ConstLR  # optimization; vidlu.optim.lr_schedulers
+    lr_scheduler_f: T.Callable = ConstLR  # optimization; vidlu.optim.lr_schedulers
     jitter: T.Callable = None  # learning
     train_step: T.Optional[T.Callable] = Required  # learning; vidlu.training.steps
     extension_fs: InitVar[T.Sequence[T.Callable]] = ()  # learning
@@ -304,7 +304,7 @@ class Trainer(Evaluator):
     lr_scheduler: T.Any = dc.field(init=False)
     extensions: T.Sequence[TrainerExtension] = dc.field(init=False)
 
-    def __post_init__(self, lr_scheduler_f, extension_fs):
+    def __post_init__(self, extension_fs):
         super().__post_init__()
 
         if self.eval_step is None:
@@ -314,6 +314,7 @@ class Trainer(Evaluator):
             self.model if isinstance(self.optimizer_f,
                                      vct.OptimizerMaker) else self.model.parameters())
 
+        lr_scheduler_f = self.lr_scheduler_f
         if 'epoch_count' in params(lr_scheduler_f):
             if params(lr_scheduler_f).epoch_count is not Empty:
                 raise ValueError(
@@ -339,10 +340,10 @@ class Trainer(Evaluator):
         result = self.__dict__['eval_step']
         if result is None:
             if not hasattr(self.train_step, 'eval'):
-                result = partial(self.train_step, eval=True)
+                result = partial(self.train_step.__call__, eval=True)
             else:
                 result = copy.copy(self.train_step)
-                result.eval_step.eval = True
+                result.eval = True
         return result
 
     def train(self, *datasets, restart=False):
