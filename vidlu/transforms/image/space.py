@@ -21,8 +21,8 @@ def complete_output_shape(partial_output_shape, input_shape):
     """Completes undefined parts of the output shape based on the input shape.
 
     Args:
-        partial_output_shape (Sequence[int]): A sequence of dimensions, where undefined dimensions have
-            the value `None`.
+        partial_output_shape (Sequence[int]): A sequence of dimensions, where undefined dimensions
+            have the value `None`.
         input_shape (Sequence[int]): A sequence of input dimensions.
 
     Returns:
