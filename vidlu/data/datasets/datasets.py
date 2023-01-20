@@ -64,7 +64,7 @@ def _make_record(**kwargs):
 
 
 def _make_sem_seg_record(im_path, lab_path, id_to_label=None, downsampling=1,
-                         downsample_labels=False, name=None):
+                         downsample_labels=True, name=None):
     im_get = lambda: load_image(im_path, downsampling)
     lab_get = lambda: load_segmentation(lab_path, downsampling if downsample_labels else 1,
                                         id_to_label)
@@ -1009,7 +1009,7 @@ class Vistas(Dataset):
             info = Record(Cityscapes.info)
         else:
             info = type(self).info
-        labels_str = f'(labels={labels=})' if labels != 'Cityscapes' else ''
+        labels_str = f'({labels=})' if labels != 'Cityscapes' else ''
         super().__init__(name=f'{type(self).__name__}{labels_str}', subset=subset, info=info)
 
         _check_size(self.image_paths, size=self.subset_to_size[subset], name=self.name)
@@ -1019,6 +1019,36 @@ class Vistas(Dataset):
 
     def get_example(self, idx):
         return _make_sem_seg_record(self.image_paths[idx], self.label_paths[idx],
+                                    id_to_label=self.id_to_label)
+
+
+class LostAndFound(Dataset):
+    default_root = 'lost_and_found'
+    subsets = ()
+    size = 100
+    id_to_label = {0: 0, 1: 1, 2: -1}
+
+    def __init__(self, root):
+        self.root = Path(root)
+        self.images_base = self.root / 'leftImg8bit'
+        self.labels_base = self.root / 'ood'
+        self.label_paths = list(p.relative_to(self.labels_base)
+                                for p in Path(self.labels_base).rglob('*.png'))
+
+        self.info = dict(problem='semantic_segmentation', class_count=2, class_names=['ID', 'OOD'],
+                         class_colors=[[0.1] * 3, [1.] * 3])
+        super().__init__(info=self.info)
+
+        _check_size(self.label_paths, size=self.size, name=self.name)
+
+    def __len__(self):
+        return len(self.label_paths)
+
+    def get_example(self, idx):
+        lab_name = self.label_paths[idx]
+        name = str(lab_name).replace('_ood_segmentation.png', '')
+        img_path = self.images_base / (name + '_leftImg8bit.png')
+        return _make_sem_seg_record(img_path, lab_path=self.labels_base / lab_name, name=name,
                                     id_to_label=self.id_to_label)
 
 
@@ -1075,12 +1105,27 @@ class WildDash(Dataset):
         return len(self._image_names)
 
 
-class BDD10k(Dataset):
-    subsets = 'train', 'val', 'test'  # 'test' labels are invalid
+class WildDash2(Dataset):
     default_root = 'bdd100k'
 
-    def __init__(self, root, subset):
+    class_names = ['ego vehicle', 'road', 'sidewalk', 'building', 'wall', 'fence', 'guard rail',
+                   'pole', 'traffic light', 'traffic sign', 'vegetation', 'terrain', 'sky',
+                   'person', 'rider', 'car', 'truck', 'bus', 'motorcycle', 'bicycle', 'pickup',
+                   'van', 'billboard', 'street-light', 'road-marking']
+    class_colors = [[0, 20, 50], [128, 64, 128], [244, 35, 232], [70, 70, 70], [102, 102, 156],
+                    [190, 153, 153], [180, 165, 180], [153, 153, 153], [250, 170, 30],
+                    [220, 220, 0], [107, 142, 35], [152, 251, 152], [70, 130, 180], [220, 20, 60],
+                    [255, 0, 0], [0, 0, 142], [0, 0, 70], [0, 60, 100], [0, 0, 230], [119, 11, 32],
+                    [40, 0, 100], [0, 40, 120], [174, 64, 67], [210, 170, 100], [196, 176, 128],
+                    [0, 0, 0]]
+    id_to_label = {0: -1, 1: 0, 2: -1, 3: -1, 4: -1, 5: -1, 6: -1, 7: 1, 8: 2, 9: -1, 10: -1, 11: 3,
+                   12: 4, 13: 5, 4: 6, 15: -1, 16: -1, 17: 7, 18: -1, 19: 8, 20: 9, 21: 10, 22: 11,
+                   23: 12, 24: 13, 25: 14, 26: 15, 27: 16, 28: 17, 29: -1, 30: -1, 31: -1, 32: 18,
+                   33: 19, 34: 20, 35: 21, 36: 22, 37: 23, 38: 24}
+
+    def __init__(self, root, subset, **kwargs):
         self.root = Path(root)
+        self.kwargs = kwargs
         _check_subset(BDD10k, subset)
 
         self.images_base = self.root / 'images' / '10k' / subset
@@ -1093,7 +1138,34 @@ class BDD10k(Dataset):
 
     def get_example(self, idx):
         name = str(self.image_paths[idx].relative_to(self.images_base).with_suffix(""))
-        return _make_sem_seg_record(self.image_paths[idx], self.label_paths[idx], name=name)
+        return _make_sem_seg_record(self.image_paths[idx], self.label_paths[idx], name=name,
+                                    **self.kwargs, id_to_label=self.id_to_label)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+
+class BDD10k(Dataset):
+    subsets = 'train', 'val', 'test'  # 'test' labels are invalid
+    default_root = 'bdd100k'
+
+    def __init__(self, root, subset, **kwargs):
+        self.root = Path(root)
+        self.kwargs = kwargs
+        _check_subset(BDD10k, subset)
+
+        self.images_base = self.root / 'images' / '10k' / subset
+        self.labels_base = self.root / 'labels' / 'sem_seg' / 'masks' / subset
+
+        self.image_paths = list(self.images_base.glob('*.jpg'))
+        self.label_paths = [self.labels_base / f'{p.stem}.png' for p in self.image_paths]
+
+        super().__init__(subset=subset, info=Cityscapes.info)
+
+    def get_example(self, idx):
+        name = str(self.image_paths[idx].relative_to(self.images_base).with_suffix(""))
+        return _make_sem_seg_record(self.image_paths[idx], self.label_paths[idx], name=name,
+                                    **self.kwargs)
 
     def __len__(self):
         return len(self.image_paths)
