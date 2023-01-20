@@ -34,15 +34,15 @@ use_model = True
 if use_model:
     model = vf.get_model("SwiftNet,backbone_f=t(depth=18)",
                          input_adapter_str="standardize(mean=[.485,.456,.406],std=[.229,.224,.225])",
-                         problem=problem.SemanticSegmentation(y_shape=images[0].shape[-2:],
+                         problem=problem.SemanticSegmentation(shape=images[0].shape[-2:],
                                                               class_count=19),
                          init_input=images[0])
     params, submodule_path = vf.get_translated_parameters("swiftnet:swiftnet_ss_cs.pt",
                                                           params_dir=dirs.pretrained)
     model.load_state_dict(params)
     model, _ = vm.deep_split(model.backbone.backbone, "bulk.unit0_0")
-    #model, _ = vm.deep_split(model.backbone.backbone, "root.conv")
-    #model = vm.Identity()
+    # model, _ = vm.deep_split(model.backbone.backbone, "root.conv")
+    # model = vm.Identity()
     model = model.cuda()
 else:
     model = vm.Identity()
