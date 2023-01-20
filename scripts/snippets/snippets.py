@@ -5,6 +5,7 @@ print('\n'.join(f"{k} {tuple(v.shape)}" for k, v in trainer.model.state_dict().i
 
 # semseg
 
+# data.train
 visualization.view_predictions(
     data.train.map(lambda r, trainer=trainer: (
         trainer.prepare_batch((r.x.reshape((1,) + r.x.shape), r.y.reshape((1,) + r.y.shape)))[
@@ -13,13 +14,15 @@ visualization.view_predictions(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
         1).squeeze().int().cpu().numpy())
 
+# data.train MaskFormer
 visualization.view_predictions(
     data.train.map(lambda r, trainer=trainer: (
-        (r.x.permute(1, 2, 0).detach().cpu().numpy(), r.y.cpu().numpy()))),
-    infer=lambda x, trainer=trainer: trainer.model(
+        (r.image.permute(1, 2, 0).detach().cpu().numpy(), r.seg_map.cpu().numpy()))),
+    infer=lambda x, trainer=trainer: trainer.model.forward_sem_seg(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
         1).squeeze().int().cpu().numpy())
 
+# data.train_u
 visualization.view_predictions(
     data.train_u.map(lambda r, trainer=trainer: (
         [x := r.x.permute(1, 2, 0).detach().cpu().numpy(), x[:, :, 0]])),
