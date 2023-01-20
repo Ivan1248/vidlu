@@ -69,8 +69,8 @@ def parse_data_str(data_str):
             + ' Syntax: "(dataset1`{`(subset1_1, ..)`}`, dataset2`{`(subset2_1, ..)`}`, ..)')
 
     # full regex: r'((?:^|(?:,\s*))(\w+)(\([^{]*\))?{(\w+(?:\s*,\s*\w+)*)})'
-    start_re = r'(?:^|(?:,\s*))'
-    name_re, options_re, subsets_re = r'(\w+)', r'(\([^{]*\))', r'{(\w+(?:\s*,\s*\w+)*)}'
+    start_re = r'(?:^|(?:,\s*))'  # start of string or comma followed by 0 or more spaces
+    name_re, options_re, subsets_re = r'(\w+)', r'(\([^{]*\))', r'(?:{(\w+(?:\s*,\s*\w+)*)})'
     single_ds_re = re.compile(fr'({start_re}{name_re}{options_re}?{subsets_re}?)')
     single_ds_configs = [x[0] for x in single_ds_re.findall(data_str)]
     reconstructed_config = ''.join(single_ds_configs)
@@ -81,7 +81,8 @@ def parse_data_str(data_str):
     for s in single_ds_configs:
         m = single_ds_re.match(s)
         name, options, subsets = m.groups()[1:]
-        subsets = [s.strip() for s in subsets.split(',')]
+        if subsets is not None:
+            subsets = [s.strip() for s in subsets.split(',')]
         name_options_subsets_tuples += [(name, options, subsets)]
     return name_options_subsets_tuples
 
