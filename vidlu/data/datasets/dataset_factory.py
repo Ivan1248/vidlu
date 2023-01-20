@@ -33,7 +33,7 @@ class DatasetFactory:
 
         try:
             path_args = [vup.find_in_directories(self.datasets_dirs, ds_class.default_root)] \
-                if ds_class.default_root else []
+                if hasattr(ds_class, 'default_root') else []
         except FileNotFoundError as e:
             warnings.warn(f"{ds_class.default_root} directory for {ds_class} not found in any of "
                           + f"{[str(p) for p in self.datasets_dirs]}")
