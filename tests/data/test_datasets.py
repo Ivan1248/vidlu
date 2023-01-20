@@ -1,14 +1,16 @@
-from vidlu.data.datasets import DatasetFactory
+from vidlu.data.datasets import DatasetFactory, Dataset
 
 
 def test_datasets(tmpdir):
     factory = DatasetFactory(tmpdir)
-    factory("WhiteNoise")
-    whitenoise = factory("WhiteNoise", size=42).all
-    rademachernoise = factory("RademacherNoise", size=9).all
-    # TODO: uncomment hblobs
-    # hblobs = factory("hblobs", size=42).all
-    assert len(whitenoise) == 42
+    whitenoise = factory("WhiteNoise", size=53)
+    rademachernoise = factory("RademacherNoise", size=9)
+    hblobs = factory("HBlobs", size=42)
+    assert isinstance(whitenoise, Dataset)
+    assert isinstance(rademachernoise, Dataset)
+    assert isinstance(hblobs, Dataset)
+    assert len(whitenoise) == 53
+    assert len(hblobs) == 42
     assert len(rademachernoise) == 9
     # assert len(hblobs) == 42
     # assert all(np.all(a.x == b.x)
