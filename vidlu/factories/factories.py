@@ -12,7 +12,7 @@ from vidlu.data import DataLoader, Dataset, Record
 from vidlu.training import Trainer
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
-import vidlu.utils.func as vuf
+import vidlu.utils.func as uf
 from vidlu.utils.func import Reserved
 from vidlu.utils.func import partial
 from vidlu.extensions import extensions
@@ -40,11 +40,11 @@ def module_to_dict(module):
 def _print_all_args_message(func):
     print("All arguments:")
     print(f"Argument tree ({func.func if isinstance(func, partial) else func}):")
-    tree.print_tree(vuf.ArgTree.from_func(func), depth=1)
+    tree.print_tree(uf.ArgTree.from_func(func), depth=1)
 
 
 def _print_missing_args_message(func):
-    empty_args = list(vuf.find_params_deep(func, lambda k, v: vuf.is_empty(v)))
+    empty_args = list(uf.find_params_deep(func, lambda k, v: uf.is_empty(v)))
     if len(empty_args) != 0:
         print("Unassigned arguments:")
         for ea in empty_args:
@@ -271,9 +271,9 @@ def build_and_init_model(model, init_input, device):
         vm.call_if_not_built(model, init_input)
 
 
-_func_short = dict(partial=partial, t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
-                   sot=vuf.StrictObjectUpdatree, it=vuf.IndexableUpdatree,
-                   sit=vuf.StrictIndexableUpdatree, torch=torch)
+_func_short = dict(partial=partial, t=uf.ArgTree, ft=uf.FuncTree, ot=uf.ObjectUpdatree,
+                   sot=uf.StrictObjectUpdatree, it=uf.IndexableUpdatree,
+                   sit=uf.StrictIndexableUpdatree, torch=torch)
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
@@ -321,7 +321,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         _print_args_messages('Model', model_class, model_f,
                              {**argtree, 'input_adapter': input_adapter},
                              verbosity=verbosity)
-        if "input_adapter" in vuf.params(model_f):
+        if "input_adapter" in uf.params(model_f):
             model = model_f(input_adapter=input_adapter)
         else:
             model = model_f()
@@ -409,18 +409,21 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 # noinspection PyUnresolvedReferences
 def short_symbols_for_get_trainer():
     import math
+    import numpy as np
     import os
     from torch import optim
     import vidlu.optim.lr_schedulers as lr
+    import vidlu.optim as opt
     from vidlu.modules import losses
     import vidlu.data as vd
-    import vidlu.training.robustness as ta
     import vidlu.configs.training as ct
     import vidlu.configs.robustness as cr
+    import vidlu.training.robustness as ta
     import vidlu.training.steps as ts
     from vidlu.training.robustness import attacks
     from vidlu.transforms import jitter
-    import vidlu.utils.func as vuf
+    import vidlu.modules.utils as mu
+    import vidlu.utils.func as uf
     from vidlu.utils.func import partial
     from vidlu.data import class_mapping
     tc = ct  # backward compatibility
@@ -431,10 +434,7 @@ def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,
                 verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
-    default_config = ct.TrainerConfig(**defaults.get_trainer_args(dataset))  # empty
-    ah = factory_eval(f"vuf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
-    config = ct.TrainerConfig(default_config, *ah.args)
-    updatree = vuf.ObjectUpdatree(**ah.kwargs)
+    updatree = uf.ObjectUpdatree(**ah.kwargs)
     config = updatree.apply(config)
 
     trainer_f = partial(Trainer, **config.normalized())
