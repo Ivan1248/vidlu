@@ -352,12 +352,25 @@ def keyfilter(func, d, factory=dict):
 # Decorators #######################################################################################
 
 def vectorize(func=None, /, *, n=1):
+    """
+
+    Args:
+        func (Callable): a function that we want to apply in parallel to batched parameters.
+        n (int): number of arguments of different types
+
+    Producess a wrapper around f=func that computes as follows:
+        wrapper(func)((a11, .., a1n), .., (am1, ..., amn), b1, .., bk) =
+            (func(a11, .., am1, b1, .., bk), .., func(1n, .., amn, b1, .., bk))
+
+    Returns:
+        wrapper(func) if func is provided, and wrapper otherwise.
+    """
     def wrap(func):
         @functools.wraps(func)
         def wrapper(*a, **k):
             if isinstance(a[0], tuple):
-                a_multi, a_single = a[:n], a[n:]
-                return tuple(func(*am, *a_single, **k) for am in zip(*a_multi))
+                vector, a_shared = a[:n], a[n:]
+                return tuple(func(*vec, *a_shared, **k) for vec in zip(*vector))
             return func(*a, **k)
 
         return wrapper

@@ -29,9 +29,9 @@ class OptimizerMaker:
 
     def __call__(self, model):
         if not isinstance(model, torch.nn.Module):
-            raise ValueError(f"model should be a nn.Module, not {type(model)}.")
+            raise RuntimeError(f"model should be a nn.Module, not {type(model)}.")
         if isinstance(model, Module) and not model.is_built():
-            raise ValueError(f"model should be initialized.")
+            raise RuntimeError(f"model should be initialized.")
 
         def get_params(names_or_funcs):
             if isinstance(names_or_funcs, str) or callable(names_or_funcs):

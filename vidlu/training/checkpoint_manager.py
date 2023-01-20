@@ -78,8 +78,11 @@ class Checkpoint:  # TODO
     def _load(path, k, map_location=None):
         name, fi = getattr(Files, k, None) or (f"{k}.pth", TorchLoadSave)
         path = path / name
-        return fi.load(path, map_location=map_location) if "map_location" in params(fi.load) \
-            else fi.load(path)
+        try:
+            return fi.load(path, map_location=map_location) if "map_location" in params(fi.load) \
+                else fi.load(path)
+        except Exception as e:
+            raise RuntimeError(f"Could not load checkpoint at {path.parent}. Error {e}.")
 
 
 ModeArg = T.Literal['restart', 'resume', 'resume_or_start', 'start']
