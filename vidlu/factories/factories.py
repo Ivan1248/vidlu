@@ -140,9 +140,13 @@ def get_data(data_str: str, datasets_dir, cache_dir=None, return_datasets_only=F
     for name, options_str, subsets in name_options_subsets_tuples:
         options = factory_eval(f'dict{options_str or "()"}', dict(Record=Record))
         full_name = f"{name}{options_str or ''}"
-        for subset in subsets:
-            ds = get_dataset(name, subset=subset, **options)
-            keys.append((full_name, subset))
+        for subset in subsets or [None]:
+            if subset is None:
+                ds = get_dataset(name, **options)
+                keys.append(full_name)
+            else:
+                ds = get_dataset(name, subset=subset, **options)
+                keys.append((full_name, subset))
             datasets.append(ds)
 
     datasets = apply_default_transforms(datasets, cache_dir=cache_dir)
