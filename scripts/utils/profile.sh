@@ -1,4 +1,5 @@
 #!/bin/bash
+# Run "bash profile.sh ..." instead of "python ..."
 
 #stdbuf -o 0 python -m cProfile -s cumtime "$@" |& tee profile.out
 #stdbuf -o 0 python -m cProfile -s cumtime "$@" > profile.txt  # cumtime includes sub-calls
