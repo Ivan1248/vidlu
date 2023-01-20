@@ -255,7 +255,7 @@ class MultiSoftClassMapping(E.ModuleTable):
             self.to(device=univ_probs.device, dtype=univ_probs.dtype)
 
     def forward(self, univ_probs, names):
-        return [self[name](up.unsqueeze(0)) for up, name in zip(univ_probs, names)]
+        return [self[name](up.unsqueeze(0))[0] for up, name in zip(univ_probs, names)]
 
 
 def get_index_offsets(class_counts):
@@ -304,3 +304,35 @@ class SoftMappingInit:
                 w[-1, :offset] = logit
                 w[-1, offset + C:] = logit
             offset += C
+
+    @staticmethod
+    @torch.no_grad()
+    def one_to_one_same(module: MultiSoftClassMapping, p=None, logit=None):
+        if (logit is None) == (p is None):
+            raise ValueError("Either p (probability) or logit should be provided.")
+
+        for m in module.children():
+            w = m.weights
+            C = w.shape[0] - int(m.include_other)
+            if p is not None:
+                logit = math.log(C * p / (1 - p))
+            w.zero_()
+            for i in range(C):
+                w[i, i] = logit
+            if m.include_other:
+                w[-1, C:] = logit
+
+    @staticmethod
+    @torch.no_grad()
+    def uniform(module: MultiSoftClassMapping, p_other=None, logit_other=None):
+        if (logit_other is None) == (p_other is None):
+            raise ValueError("Either p_other or logit_other should be provided.")
+
+        for m in module.children():
+            w = m.weights
+            C = w.shape[0] - int(m.include_other)
+            if p_other is not None:
+                logit_other = math.log(C * p_other / (1 - p_other))
+            w.zero_()
+            if m.include_other:
+                w[-1, :] = logit_other
