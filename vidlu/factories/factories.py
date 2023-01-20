@@ -298,7 +298,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         if problem is None or init_input is None:
             raise ValueError("`problem` and `init_input` are required if `prep_dataset` is `None`.")
     else:
-        problem = problem or defaults.get_problem_from_dataset(prep_dataset)
+        problem = problem or defaults.get_problem(prep_dataset)
 
     if init_input is None and prep_dataset is not None:
         init_input = next(iter(DataLoader([prep_dataset[0]] * 2, batch_size=2)))[0]
@@ -307,14 +307,15 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
     if model_name[0] in "'\"":  # torch.hub
-        print(input_adapter_str)
+        if verbosity > 0:
+            print(input_adapter_str)
         assert input_adapter_str == 'id'
         model = factory_eval(f"torch.hub.load({model_str})")
     else:
         if hasattr(models, model_name):
             model_f = getattr(models, model_name)
         else:
-            model_f = factory_eval(model_name, namespace)
+            model_f = factory_eval(model_name, {**namespace, **models.__dict__})
         model_class = model_f
 
         argtree = defaults.get_model_argtree_for_problem(model_f, problem)
@@ -436,10 +437,11 @@ def short_symbols_for_get_trainer():
     return {**locals(), **_func_short, **extensions}
 
 
-def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,
-                verbosity=1) -> Trainer:
+def get_trainer(trainer_str: str, *, model, deterministic=False, verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
+    ah = factory_eval(f"uf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
+    config = ct.TrainerConfig(*ah.args)
     updatree = uf.ObjectUpdatree(**ah.kwargs)
     config = updatree.apply(config)
 
@@ -456,23 +458,14 @@ get_trainer.help = \
      + ' Instead of ArgTree(...), t(...) can be used.'
      + ' Example: "ResNetCifarTrainer"')
 
-"""
-def get_pretrained_params(model, params_name, params_dir):
-    return defaults.get_pretrained_params(model, params_name, params_dir)
-"""
-
 
 def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
     if problem is None:
         if dataset is None:
             raise ValueError("get_metrics: either the dataset argument"
                              + " or the problem argument need to be given.")
-        problem = defaults.get_problem_from_dataset(dataset)
+        problem = defaults.get_problem(dataset, trainer)
 
-    default_metrics, main_metrics = defaults.get_metrics(trainer, problem)
-
-    metrics_str = metrics_str.strip()
-    metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
-    additional_metrics = [getattr(metrics, name) for name in metric_names]
-
+    default_metrics, main_metrics = problem.get_metrics()
+    additional_metrics = factory_eval(f'[{metrics_str}]', {**metrics.__dict__, **_func_short})
     return default_metrics + additional_metrics, main_metrics
