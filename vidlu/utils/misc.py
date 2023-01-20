@@ -281,7 +281,7 @@ class Stopwatch:
     """A stopwatch that can be used as a context manager.
 
     Example:
-        with Stopwatch as sw:
+        with Stopwatch() as sw:
             sleep(1)
             assert sw.running and sw.time >= 1.
         assert not sw.running and sw.time >= 1.
@@ -296,7 +296,7 @@ class Stopwatch:
         sw.reset()
         assert not sw.running and sw.time == sw.start_time == 0
     """
-    __slots__ = '_time_func', 'start_time', '_time', 'running'
+    __slots__ = '_time_func', 'start_time', '_prev_time', 'running'
 
     def __init__(self, time_func=time.time):
         self._time_func = time_func
