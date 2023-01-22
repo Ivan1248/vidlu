@@ -255,7 +255,7 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
 
     def __init__(self):
         super().__init__()
-        self._built = False if self._defines_build_or_post_build() else None
+        self._built = not self._defines_build_or_post_build()
         self._check = None
         self._state = None
         self._mode = dict()
@@ -323,12 +323,15 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
             for c in self.children():
                 if c.training != self.training:
                     c.train(self.training)
-        self._built = True
         if device is not None:
             self.to(device)
-        if self._state is not None:  # needs to be after self._built
-            self.load_state_dict(self._state)
+        if self._state is not None:
+            super().__call__(*args, **kwargs)
+            self._built = True
+            self.load_state_dict(self._state)  # must be after self.build(...) in all submodules
             self._state = None
+        else:
+            self._built = True
         if type(self).post_build != Module.post_build:
             result = super().__call__(*args, **kwargs)  # hooks are not called before building
             if self.post_build(*args, **kwargs):
@@ -412,9 +415,13 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
     def _defines_build_or_post_build(cls):
         return cls.build != Module.build or cls.post_build != Module.post_build
 
-    def is_built(self, thorough=False):
+    @classmethod
+    def _defines_forward(cls):
+        return cls.forward != Module.forward
+
+    def is_built(self, thorough=True):
         if thorough:
-            return is_built(self, thorough=True)
+            return self._built and all(is_built(m, thorough) for m in self.children())
         return self._built
 
     def build(self, *args, **kwargs):
@@ -427,13 +434,16 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         """
         pass
 
-    def post_build(self, *args, **kwargs):
+    def post_build(self, *args, **kwargs) -> T.Optional[bool]:
         """This is run after the first evaluation (if overridden).
         
-        This methodt can be used for enabling efficiency modifications such as in-place computation
-        or gradient checkpointings.
+        This method can be used for enabling efficiency modifications such as in-place computation
+        or gradient checkpointing.
 
         This should not create new parameters, buffers, or modules.
+
+        If post_build does not change what forward returns for the same input, it can return True
+        for a faster initial call to the module. Otherwise, nothing should be returned.
         """
         return True
 
@@ -479,13 +489,21 @@ class Module(nn.Module, SplittableMixin, InvertibleModuleMixin, ABC):
         self._forward_check_pre_hooks[handle.id] = hook
         return handle
 
+    def parameters(self, recurse: bool = True):
+        if not self.is_built():
+            warnings.warn("The module is not built and might not have all parameters.")
+        return super().parameters(recurse)
 
-def is_built(module: T.Union[nn.Module, Module], thorough=False):
-    if hasattr(module, "is_built"):
-        b = module.is_built()
-        if not (thorough and b) and b is not None:
-            return module.is_built()
-    return all(is_built(m, thorough) for m in module.children())
+    def named_parameters(self, prefix: str = '', recurse: bool = True):
+        if not self.is_built():
+            warnings.warn("The module is not built and might not have all parameters.")
+        return super().named_parameters(prefix=prefix, recurse=recurse)
+
+
+def is_built(module: T.Union[nn.Module, Module], thorough=True):
+    this_built = module.is_built(False) if hasattr(module, "is_built") else True
+    return this_built and (not thorough or all(is_built(m, True)
+                                               for m in module.children()))
 
 
 def call_if_not_built(module: nn.Module, *args, **kwargs):
@@ -604,11 +622,12 @@ class Seq(ModuleTable, nn.Sequential):
     def _slice_class(self):
         return Seq
 
-    def forward(self, x):
+    def forward(self, input):
         modules = [m for m in self.children()]
         cp_iter = iter(self._checkpoints or ())
         cp_range = next(cp_iter, None)
         i = 0
+        x = input
         while i < len(self):
             if cp_range is not None and cp_range[0] == i:
                 def run_segment(x_, cp_range_=cp_range):
@@ -1412,6 +1431,16 @@ class Func(_Func):
         return result if self.inv is None else f"{result}, inv={repr(self.inv)}"
 
 
+class Partial(nn.Module):
+    def __init__(self, module, **kwargs):
+        super().__init__()
+        self.module = module
+        self.kwargs = kwargs
+
+    def forward(self, *args, **kwargs):
+        return self.module(*args, **self.kwargs, **kwargs)
+
+
 class Inverse(Module):
     def __init__(self, module):
         super().__init__()
@@ -1543,7 +1572,8 @@ def deep_join(left: Module, right: Module):
     return left.deep_join(right)
 
 
-def with_intermediate_outputs(module: nn.Module, submodule_paths: T.Union[T.List[str], str] = None,
+def with_intermediate_outputs(module: nn.Module,
+                              submodule_paths: T.Union[T.Sequence[str], str] = None,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
                               return_dict=False, inputs=False):
     """Creates a function wrapping `module` that returns a pair containing the
