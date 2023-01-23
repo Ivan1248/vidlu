@@ -650,9 +650,11 @@ class LadderUpsampleBlend(E.Module):
     _pre_blendings = dict(concat=E.Concat, sum=E.Sum)
 
     def __init__(self,
-                 out_channels,
-                 pre_blending='concat',
-                 blend_block_f=partial(PreactBlock, base_width=Reserved, width_factors=Reserved)):
+                 out_channels: int,
+                 pre_blending: T.Literal['concat', 'sum'] = 'concat',
+                 blend_block_f: T.Callable[[], nn.Module] = partial(
+                     PreactBlock, base_width=Reserved, width_factors=Reserved),
+                 non_multiple_effect: T.Literal[None, 'warn', 'error'] = 'warn'):
         super().__init__()
         if pre_blending not in self._pre_blendings:
             raise ValueError(f"Invalid pre-blending '{pre_blending}'. " +
@@ -662,13 +664,28 @@ class LadderUpsampleBlend(E.Module):
         self.project = None
         self.pre_blend = self._pre_blendings[pre_blending]()
         self.blend = self.block_f(base_width=out_channels, kernel_sizes=[3])
+        self.non_multiple_effect = non_multiple_effect
 
     def build(self, x, skip):
         self.project = Reserved.partial(self.block_f, base_width=x.shape[1])(kernel_sizes=[1])
 
+    def _check_sizes(self, x, skip):
+        if self.non_multiple_effect is not None:
+            x_size, skip_size = tuple(x.shape[-2:]), tuple(skip.shape[-2:])
+            rem = np.mod(skip_size, x_size).max()
+            factor = np.array(skip_size) / np.array(x_size)
+            if factor[0] != factor[1] or rem != 0:
+                message = f"The higher-resolution input size ({tuple(skip_size)}) is not a" \
+                          + f" multiple of lower-resolution input size ({tuple(x_size)})."
+                if self.non_multiple_effect == 'warn':
+                    warnings.warn(message)
+                else:
+                    raise RuntimeError(message)
+
     def forward(self, x, skip):
-        # resize is not defined in build because it depends on skip.shape
-        x_up = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        self._check_sizes(x, skip)
+
+        x_up = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)
         skip_proj = self.project(skip)
         b = self.pre_blend((x_up, skip_proj))
         return self.blend(b)
