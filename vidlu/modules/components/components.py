@@ -9,6 +9,7 @@ import warnings
 import torch
 from torch import nn
 from torch.nn import functional as F
+import einops
 
 import vidlu.modules.elements as E
 from vidlu.modules import tensor_extra
@@ -70,6 +71,46 @@ class Tent(E.Module):
         delta = self.delta.view(list(self.delta.shape) + [1] * (len(x.shape) - 2))
         # return F.relu(delta - (x - delta).abs())  # centered at delta
         return F.relu(delta - x.abs())
+
+
+# Transformer attention ############################################################################
+
+class MultiHeadAttention(E.Module):
+    # Modified from https://einops.rocks/pytorch-examples.html
+    # PyTorch provides a more efficient implementation.
+    def __init__(self, num_heads, *, embed_dim=None, d_k, d_v):
+        super().__init__()
+        self.num_heads = num_heads
+        self.embed_dim, self.d_k, self.d_v = embed_dim, d_k, d_v
+
+        self.w_qs, self.w_ks, self.w_vs = [nn.Linear(dim, dim) for dim in [d_k, d_k, d_v]]
+        self.fc_o = nn.Linear(num_heads * d_v, embed_dim)
+
+        if embed_dim is not None:
+            self.reset_parameters()
+
+    def build(self, q, k, v):
+        if self.embed_dim is None:
+            self.embed_dim = q.shape[1]
+            self.reset_parameters()
+
+    def reset_parameters(self):
+        for w, dim in zip([self.w_qs, self.w_ks, self.w_vs], [self.d_k, self.d_k, self.d_v]):
+            nn.init.normal_(w.weight, mean=0, std=np.sqrt(2.0 / (self.embed_dim + dim)))
+        nn.init.xavier_normal_(self.fc_o.weight)
+
+    def forward(self, q, k, v, mask=None):
+        q = einops.rearrange(self.w_qs(q), 'b l (head k) -> head b l k', head=self.num_heads)
+        k = einops.rearrange(self.w_ks(k), 'b t (head k) -> head b t k', head=self.num_heads)
+        v = einops.rearrange(self.w_vs(v), 'b t (head v) -> head b t v', head=self.num_heads)
+        attn = torch.einsum('hblk,hbtk->hblt', [q, k]) / np.sqrt(q.shape[-1])
+        if mask is not None:
+            attn = attn.masked_fill(mask[None], -np.inf)
+        attn = torch.softmax(attn, dim=3)
+        output = torch.einsum('hblt,hbtv->hblv', [attn, v])
+        output = einops.rearrange(output, 'head b l v -> b l (head v)')
+        output = self.fc_o(output)
+        return output, attn
 
 
 # Blocks ###########################################################################################
