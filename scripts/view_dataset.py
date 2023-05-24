@@ -12,10 +12,10 @@ from vidlu.utils import debug
 import dirs
 
 # python view_dataset.py
-#   mnist all
-#   inaturalist2018 train
-#   voc2012 test
-#   wilddash bench
+#   Cityscapes
+#   Cityscapes --subset all
+#   Cityscapes --subset train
+#   "VOC2012Segmentation(pad=True,size_unit=32)" --subset val
 
 parser = argparse.ArgumentParser()
 parser.add_argument('ds', type=str)
@@ -31,6 +31,7 @@ subset_expr = f'{{{args.subset}}}' if args.subset else ''
 
 [[ds], [name], _] = get_data(f"{args.ds}{subset_expr}", datasets_dir=dirs.datasets,
                              cache_dir=dirs.cache)
+
 ds = prepare_dataset(ds)
 if isinstance(name, tuple):
     name = f'({" ".join(name)})'

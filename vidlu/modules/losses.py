@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.torch_utils import norm_stats_tracking_off, preserve_grads
 from vidlu.ops import one_hot
@@ -64,8 +64,8 @@ def nll_loss_l(logits, target, weight=None, ignore_index=-1,
                            reduction=reduction)
 
 
+@typechecked
 def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none", mask=None):
-    check_argument_types()
     if mask is not None and reduction == "none":
         raise ValueError(f'reduction="none" is not supported when a mask is provided.')
     if mask is None:
@@ -76,8 +76,8 @@ def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none
         return result.mean() if reduction == "mean" else result.sum()
 
 
+@typechecked
 def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none", ignore_index=-1):
-    check_argument_types()
     N, C, *HW = probs.shape
     if ignore_index < 0:
         target_valid = target.clamp(0, C - 1)
@@ -90,8 +90,8 @@ def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"
     return _apply_reduction(result, reduction=reduction, mask=target != ignore_index)
 
 
+@typechecked
 def crossentropy(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"):
-    check_argument_types()
     result = (torch.einsum("nc...,nc...->n...", -torch.log(probs), target.transpose(-1, 1)))
     return _apply_reduction(result, reduction=reduction)
 

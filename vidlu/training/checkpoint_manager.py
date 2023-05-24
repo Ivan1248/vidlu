@@ -6,7 +6,7 @@ import typing as T
 import logging
 
 import torch
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.utils.path import create_file_atomic
 from vidlu.utils.func import params
@@ -88,6 +88,7 @@ class Checkpoint:  # TODO
 ModeArg = T.Literal['restart', 'resume', 'resume_or_start', 'start']
 
 
+@typechecked
 class CheckpointManager(object):
     """Checkpoint manager can be used to periodically save objects to disk.
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
@@ -137,8 +138,6 @@ class CheckpointManager(object):
                  n_last_kept=1, n_best_kept=0, mode: ModeArg = 'start',
                  separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
                  log_func=lambda s: "", name_suffix_func=lambda s: ""):
-        check_argument_types()
-
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
 

@@ -7,7 +7,7 @@ from warnings import warn
 import torch
 import torch.nn.functional as F
 from numpy import s_
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
@@ -299,6 +299,7 @@ def _get_center(center_arg, x, equivariant_dims):
             center_arg(x) if callable(center_arg) else center_arg)
 
 
+@typechecked
 class Contrast(EquivariantPertModel):
     """Linearly interpolates or extrapolates between inputs and centers.
 
@@ -315,7 +316,6 @@ class Contrast(EquivariantPertModel):
 
     def __init__(self, equivariant_dims=(-2, -1),
                  center: T.Union[float, T.Callable, T.Literal['mean']] = 0.5):
-        check_argument_types()
         super().__init__(equivariant_dims)
         self.center = center
 
@@ -679,9 +679,9 @@ def cutmix_roll_transform(x, mask):
     return x_p
 
 
+@typechecked
 class CutMix(PertModelBase):
     def __init__(self, mask_gen, combination: T.Literal['pairs', 'roll'] = 'pairs'):
-        check_argument_types()
         super().__init__()
         self.mask_gen = mask_gen
         self.combination = combination

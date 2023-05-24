@@ -4,7 +4,7 @@ import functools
 import typing as T
 import warnings
 
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.utils import text, tree
 from vidlu.utils.collections import NameDict
@@ -218,10 +218,9 @@ def _no_assignment_cond(k, v, default):
 
 TKwargsPolicy = T.Literal["error", "pick", "ignore"]
 
-
+@typechecked
 def pick_assignable_args(func, args_dict, return_other=False, assignment_cond=None,
                          kwargs_policy: TKwargsPolicy = "error"):
-    check_argument_types()
     if assignment_cond is None:
         assignment_cond = _no_assignment_cond
     parameters = list(signature(func).parameters.items())
@@ -378,30 +377,6 @@ def vectorize(func=None, /, *, n=1):
     if func is None:
         return wrap
     return wrap(func)
-
-
-def type_checked(func):
-    """A decorator that checks whether annotated parameters have valid types."""
-    sig = inspect.signature(func)
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        ba = sig.bind(*args, **kwargs)
-        ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
-        fail = False
-        for name, type_ in func.__annotations__.items():
-            type_origin = T.get_origin(type_)
-            if type_origin is not None:
-                if type_origin is T.Literal:
-                    if ba[name] not in T.get_args(type_):
-                        fail = True
-            if fail or not isinstance(ba[name], type_):
-                val_str = str(ba[name])
-                val_str = val_str if len(val_str) < 80 else val_str[:77] + '...'
-                raise TypeError(f"The argument {name}={val_str} is not of type {type_}.")
-        return func(*args, **kwargs)
-
-    return wrapper
 
 
 # Caching ##########################################################################################

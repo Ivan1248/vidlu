@@ -92,7 +92,7 @@ def compose(images_array):
 
 
 class Viewer:
-    """Datasset viewer.
+    """Dataset viewer.
 
     Press "q" to close the window. Press anything else to change the displayed
     composite image. Press "a" to return to the previous image.
@@ -114,7 +114,7 @@ class Viewer:
             images = get_images(i)
             for axim, im in zip(aximgs, images):
                 axim.set_data(im)
-            fig.canvas.set_window_title(str(i) + "-" + self.name)
+            #fig.canvas.set_window_title(str(i) + "-" + self.name)
             fig.canvas.draw()
 
         def on_press(event):
@@ -141,7 +141,7 @@ class Viewer:
         else:
             axes = axes.flat[:subplot_count]
         fig.canvas.mpl_connect('key_press_event', on_press)
-        fig.canvas.set_window_title(self.name)
+        #fig.canvas.set_window_title(self.name)
 
         def make_valid(im):
             if np.min(im) < 0 or np.max(im) > 0:

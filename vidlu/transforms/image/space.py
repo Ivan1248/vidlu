@@ -6,7 +6,7 @@ import torch
 from torch import Tensor
 import torch.nn.functional as nnF
 import numpy as np
-from typeguard import check_argument_types
+from typeguard import typechecked
 import PIL.Image as pimg
 
 import vidlu.data.types as dt
@@ -105,11 +105,10 @@ def pad(x, padding, mode='constant', value=0):
 Pad = func_to_module_class(pad)
 
 
+@typechecked
 @vectorize
 def pad_to_shape(x, shape, mode='constant', value: T.Union[int, T.Literal['mean']] = 0,
                  alignment: T.Literal['center', 'tl', 'tr', 'bl', 'br'] = 'center'):
-    check_argument_types()
-
     if value == 'mean':
         value = x.mean((1, 2))
     padding = np.array(shape) - np.array(x.shape[-2:])
@@ -238,9 +237,9 @@ def random_crop(x: T.Union[dt.Spatial2D, T.Sequence], shape, overflow=0, rng=np.
 RandomCrop = func_to_module_class(random_crop)
 
 
+@typechecked
 def random_crop_overlapping(x: tuple, shape, overflow=0, rare_classes=(), preselect_instance=False,
                             rng=np.random):
-    check_argument_types()
     image = next((a for a in x if isinstance(a, dt.ArraySpatial2D)), None)
     if image is None:
         raise RuntimeError("Image not found.")
@@ -280,12 +279,11 @@ def _sample_random_scale(min, max, dist: ScaleDistArg = "uniform", rng=np.random
     return scale
 
 
+@typechecked
 def random_scale_crop(x, shape, max_scale, min_scale=None, overflow=0,
                       scale_factor_fn=lambda h, w: 1.,
                       align_corners=None, scale_dist: ScaleDistArg = "log-uniform", rng=np.random,
                       rand_crop_fn=random_crop):
-    check_argument_types()
-
     multiple = isinstance(x, tuple)
     xs = x if multiple else (x,)
 

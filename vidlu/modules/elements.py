@@ -20,7 +20,7 @@ import torch.nn.modules as M
 import torch.utils.checkpoint as cp
 from torch.utils import hooks
 import einops
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
@@ -1572,6 +1572,7 @@ def deep_join(left: Module, right: Module):
     return left.deep_join(right)
 
 
+@typechecked
 def with_intermediate_outputs(module: nn.Module,
                               submodule_paths: T.Union[T.Sequence[str], str] = None,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
@@ -1595,8 +1596,6 @@ def with_intermediate_outputs(module: nn.Module,
         >>> module_wio(x)
         tensor(...), (tensor(...), tensor(...))
     """
-    check_argument_types()
-
     if submodule_paths is None:
         submodule_paths = [k for k, _ in module.named_modules()]
         single = False

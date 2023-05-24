@@ -65,11 +65,17 @@ It might be easiest to create the following directory structure. Symbolic links 
    └─ pretrained
 ```
 
-"&lt;ancestor&gt;/data" is found automatically if "&lt;ancestor&gt;" is an ancestor directory of `dirs.py`. Otherwise, the environment variable `VIDLU_DATA` should point to the "data" directory.
+The "data" directory can be created in the user home directory by running
 
-The "cache" directory should preferably be on an SSD. "datasets" and other directories, can be a slower disk. Data from "datasets" is not accessed after being cached.
+```sh
+mkdir ~/data ~/data/datasets ~/data/cache ~/data/experiments ~/data/pretrained
+```
 
-Alternatively, the paths can be defined through multiple environment variables: `VIDLU_DATASETS`, `VIDLU_CACHE`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`.
+"data" is found automatically if its parent directory is also an ancestor of `dirs.py`. Otherwise, the environment variable `VIDLU_DATA` should point to the "data" directory.
+
+The "cache" directory should preferably be on an SSD. "datasets" and other directories, on a slower disk. Data from "datasets" is not accessed after being cached.
+
+Alternatively, the paths can be defined individually through multiple environment variables: `VIDLU_DATASETS`, `VIDLU_CACHE`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`.
 
 ### Running experiments
 
