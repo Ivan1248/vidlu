@@ -8,11 +8,12 @@ print('\n'.join(f"{k} {tuple(v.shape)}" for k, v in trainer.model.state_dict().i
 # data.train
 visualization.view_predictions(
     data.train.map(lambda r, trainer=trainer: (
-        trainer.prepare_batch((r.x.reshape((1,) + r.x.shape), r.y.reshape((1,) + r.y.shape)))[
-            0].squeeze().permute(1, 2, 0).detach().cpu().numpy(), r.y.cpu().numpy())),
+        trainer.prepare_batch((r.image.reshape((1,) + r.image.shape), r.seg_map.reshape((1,) + r.seg_map.shape)))[
+            0].squeeze().permute(1, 2, 0).detach().cpu().numpy(), r.seg_map.cpu().numpy())),
     infer=lambda x, trainer=trainer: trainer.model(
         torch.tensor(x).to(device=trainer.model.device).permute(2, 0, 1).unsqueeze(0)).argmax(
         1).squeeze().int().cpu().numpy())
+
 
 # data.train MaskFormer
 visualization.view_predictions(
