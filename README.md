@@ -9,9 +9,9 @@ A deep learning framework for research with emphasis on computer vision, based o
 
 This repository contains
 
-1) a machine learning framework, mostly based on PyTorch,
-1) a set of datasets, models and training configurations (as part of the framework), and
-1) a set of scripts that use it.
+1. an experimental machine learning framework, mostly based on PyTorch,
+2. a set of datasets, models, training configurations (as part of the framework), various related algorithms, and
+3. a set of scripts for running experiments.
 
 ## Setup
 
@@ -192,22 +192,25 @@ trainer = get_trainer("ct.supervised_cifar, training_step=my_ext.MyStep, eval_st
 ### Commonly used utilities
 
 In many places in the code, some parameter names end with `_f`.
-This means that the argument is not a final object but a factory (hence `_f`). E.g. `block_f()` should produce a `block` instance. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `tree_partial` (analogue of `functools.partial`) allows flexible functional modification of any set of parameters of nested functions.
+This means that the argument is not a final object, but a factory (hence `_f`). E.g. `block_f()` should produce a `block` instance. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `tree_partial` (analogue of `functools.partial`) enables flexible functional modification of any set of parameters of nested functions.
 
 ```py
+from functools import partial as p
+from vidlu.utils.func import tree_partial, ArgTree as t
 
-def make_swallow(..., type='european'): ...
+def make_swallow(type='european', ...): ...
 
-def make_flock(..., load=None, swallow_f=make_swallow): ...
+def make_flock(load=None, swallow_f=make_swallow, ...): ...
 
-def eu(..., flock_f=make_flock):
+def eu_deliver(dest, flock_f=make_flock):
     ...
     flock = flock_f(...)
     ...
 
-from vidlu.utils.func import ArgTree as t
-au = tree_partial(eu, flock_f=t(load='coconut', swallow_f=t(type='african')))
-au()
+au_deliver_t = tree_partial(eu_deliver, flock_f=t(load='coconut', swallow_f=t(type='african')))
+au_deliver_p = p(eu_deliver, flock_f=p(make_flock, load='coconut', swallow_f=p(make_swallow, type='african')))
+dest = 'Caerbannog'
+assert au_deliver_t(dest) == au_deliver_p(dest)
 ```
 
 <!--
