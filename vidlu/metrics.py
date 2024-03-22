@@ -102,10 +102,7 @@ def all_soft_multiclass_confusion_matrix(true: torch.Tensor, pred: torch.Tensor,
     """
     if dtype is not None:
         true, pred = true.to(dtype), pred.to(dtype)
-    # return true.new_ones((true.shape[-1], true.shape[-1]))
     return torch.einsum("bni,bnj->bij" if batch else "ni,nj->ij", true, pred)
-    return torch.bmm(true.permute(1, 0).unsqueeze(0).to(dtype=torch.float16),
-                     pred.unsqueeze(0).to(dtype=torch.float16)).squeeze(0)
     # return torch.einsum("ni,nj->ij", true, pred)
 
 
