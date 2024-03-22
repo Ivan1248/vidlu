@@ -1,6 +1,7 @@
 arpeggio>=1.9.0
 blosc
 einops
+gitpython
 ipython
 matplotlib
 numpy
