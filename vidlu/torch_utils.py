@@ -47,8 +47,7 @@ def switch_requires_grad(module_or_params, value):
 
 
 def switch_training(module, value):
-    """Sets the training attribute to false for the module and all submodules.
-    """
+    """Sets the training attribute to false for the module and all submodules."""
     return vuc.switch_attribute(module.modules(), 'training', value)
 
 
@@ -323,23 +322,15 @@ def compare(a, b, name=None, key=None):
         assert type(a) == type(other)
         result = compare(a, other)
         print("+" if result else "FAIL")
-        # if not result:
-        # if not result:
-        #     exit()
         return result
     if isinstance(a, torch.Tensor):
         b = b.to(a.device)
         if a.shape != b.shape:
             import pudb;
             pudb.set_trace()
-        # if "backbone.backbone.root.norm.orig.running_mean" == key:
-        #     breakpoint()
-        #     torch.old = (a.detach().clone(), b.detach().clone())
         if not torch.all(a == b):
             print(f"{(a - b).abs().max():1.2e} {key}")
             return False
-            # if not torch.allclose(a, b):
-            #     return False
         return True
     elif isinstance(a, T.Mapping):
         results = dict()
@@ -350,7 +341,6 @@ def compare(a, b, name=None, key=None):
             results[k] = compare(v, b[k], key=k)
         result = all(results.values())
         if not result:
-            # negatives = {k: v for k, v in results.items() if not v}
             print(str(results).replace(", ", ",\n"))
         return result
     elif isinstance(a, T.Sequence):
