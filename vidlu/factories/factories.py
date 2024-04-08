@@ -437,7 +437,8 @@ def short_symbols_for_get_trainer():
     return {**locals(), **_func_short, **extensions}
 
 
-def get_trainer(trainer_str: str, *, model, deterministic=False, verbosity=1) -> Trainer:
+def get_trainer(trainer_str: str, *, model, deterministic=False, distributed=False,
+                verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
     ah = factory_eval(f"uf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
@@ -447,7 +448,7 @@ def get_trainer(trainer_str: str, *, model, deterministic=False, verbosity=1) ->
 
     trainer_f = partial(Trainer, **config.normalized())
 
-    trainer = trainer_f(model=model, deterministic=deterministic)
+    trainer = trainer_f(model=model, deterministic=deterministic, distributed=distributed)
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
     return trainer
 

@@ -12,9 +12,10 @@ from tqdm import tqdm
 import torch
 import numpy as np
 
-import vidlu.modules.utils as vmu
-from vidlu.data import Record, DataLoader, BatchTuple
+import vidlu.utils.distributed as vud
+from vidlu.data import DataLoader, BatchTuple
 import vidlu.data.utils as vdu
+import vidlu.modules.utils as vmu
 from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
@@ -193,10 +194,16 @@ def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blo
 
 # Evaluator and trainer ############################################################################
 
-NUM_WORKERS = int(os.environ.get("VIDLU_NUM_WORKERS", 2))
+NUM_WORKERS = int(os.environ.get("VIDLU_NUM_WORKERS",
+                                 max(4, min(12, os.cpu_count() // 8))))  # TODO: per GPU
+print(f"{NUM_WORKERS=}")
 
 
-def deterministic_data_loader_args():
+def deterministic_data_loader_args(distributed):
+    if distributed:
+        raise NotImplementedError(
+            "Deterministic DataLoader arguments not available for distributed training")
+
     def worker_init_fn(worker_id):
         seed = torch.initial_seed() % 2 ** 32
         np.random.seed(seed)
@@ -216,11 +223,12 @@ class Evaluator:
         vdu.auto_data_loader, dl_f=DataLoader, multi_dl_f='zip', num_workers=NUM_WORKERS,
         shuffle=True)
     deterministic: bool = False
-    batch_size: int = 1
+    batch_size: T.Union[int, T.Sequence[int]] = 1
     metrics: list = dc.field(default_factory=list)
     eval_step: T.Callable = Required
     eval_sync: bool = bool(
         int(os.environ.get("VIDLU_SYNCHRONIZE_STEP", 1))) and torch.cuda.is_available()
+    distributed: bool = False
 
     def __post_init__(self):
         self.prepare_batch = partial(self.prepare_batch, device=vmu.get_device(self.model),
@@ -272,16 +280,42 @@ class Evaluator:
             output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
         return output
 
+    def _make_data_loader(self, *datasets, batch_size, **kwargs):
+        """Creates a dataloader based on a data loader factory, batch size, and other potential
+        arguments.
+
+        If distributed training is required, the samplers in the data loader are modified and batch
+        size is divided by the number of processes.
+        """
+        if self.distributed:
+            batch_size = divide_batch_size_over_processes(batch_size)
+        data_loader = self.data_loader_f(*datasets, batch_size=batch_size, **kwargs)
+        if self.distributed:
+            data_loader = vdu.make_data_loader_distributed(data_loader)
+        return data_loader
+
     def eval(self, *datasets, batch_size=None, **kwargs):
         dl_kwargs = dict(drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
         if self.deterministic:
-            dl_kwargs.update(deterministic_data_loader_args())
-        data_loader = self.data_loader_f(*datasets, **dl_kwargs)
+            dl_kwargs.update(deterministic_data_loader_args(self.distributed))
+        data_loader = self._make_data_loader(*datasets, **dl_kwargs)
+
         return self.evaluation.run(tqdm(data_loader), **kwargs)
+
+
+def divide_batch_size_over_processes(batch_size: T.Union[int, T.Sequence[int]]):
+    if isinstance(batch_size, int):
+        num_processes = vud.get_global_size()
+        if batch_size % num_processes != 0:
+            raise ValueError(
+                f"{batch_size=} is not a multiple of the number of processes ({num_processes}).")
+        return batch_size // num_processes
+    return tuple(map(divide_batch_size_over_processes, batch_size))
 
 
 # Trainer ##########################################################################################
 
+# TODO: support for distributed training for metrics and iteration step proedures
 @dataclass
 class Trainer(Evaluator):
     """A class encapsulating all machine learning algorithm components.
@@ -291,7 +325,7 @@ class Trainer(Evaluator):
     """
     state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler', 'train_step', 'eval_step')
 
-    eval_batch_size: int = None
+    eval_batch_size: T.Union[int, T.Sequence[int]] = None
 
     epoch_count: int = Required  # optimization
     optimizer_f: T.Callable = None  # optimization; vidlu.optim
@@ -352,10 +386,12 @@ class Trainer(Evaluator):
             datasets_jitt = [ds.map(jitter) for jitter, ds in zip(jitters, datasets)]
         else:
             datasets_jitt = datasets
+
         dl_kwargs = dict(drop_last=True, batch_size=self.batch_size)
         if self.deterministic:
-            dl_kwargs.update(deterministic_data_loader_args())
-        data_loader = self.data_loader_f(*datasets_jitt, **dl_kwargs)
+            dl_kwargs.update(deterministic_data_loader_args(self.distributed))
+        data_loader = self._make_data_loader(*datasets_jitt, **dl_kwargs)
+
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None, **kwargs):
