@@ -46,7 +46,7 @@ class Partial(functools.partial):
     >>> p = partial(lambda a=5, b=7: print(a, b), a=1)
     >>> assert p.a == 1 and p.b == 7
     >>> p()
-    1x
+    1 7
     """
 
     def __new__(cls, func, /, *args, **keywords):
@@ -73,8 +73,8 @@ class Partial(functools.partial):
                 unexpected = provided.difference(params_)
                 if len(unexpected) > 0:
                     func_name = getattr(func, "__name__", str(func))
-                    raise RuntimeError(f"Unexpected arguments {unexpected} for {func_name}"
-                                       + f" with signature {sig}.")
+                    raise RuntimeError(f"{func_name} with signature {sig} got unexpected arguments"
+                                       + f" {unexpected}.")
         except ValueError:
             pass
         return functools.partial.__call__(self, *args, **kwargs)
@@ -217,6 +217,7 @@ def _no_assignment_cond(k, v, default):
 
 
 TKwargsPolicy = T.Literal["error", "pick", "ignore"]
+
 
 @typechecked
 def pick_assignable_args(func, args_dict, return_other=False, assignment_cond=None,
@@ -364,6 +365,7 @@ def vectorize(func=None, /, *, n=1):
     Returns:
         wrapper(func) if func is provided, and wrapper otherwise.
     """
+
     def wrap(func):
         @functools.wraps(func)
         def wrapper(*a, **k):
@@ -389,6 +391,9 @@ class _FactoryHolder:
 
 
 class Cached:
+    """Wraps a function with no parameters. When called the first time, calls the function and
+    stores its result and discards the function. When called again, returns the stored result."""
+
     __slots__ = '_item'
 
     def __init__(self, factory):

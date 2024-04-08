@@ -74,6 +74,7 @@ def crash_after(*args, format='%Y-%m-%d', message=None):
         crashtime = datetime(*args)
     else:
         crashtime = args[0]
+
     message = "" if message is None else f" Message: {message}"
     if datetime.utcnow() > crashtime:
         raise AssertionError(

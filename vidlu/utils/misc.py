@@ -31,12 +31,17 @@ def slice_len(s, sequence_length):
 
 # Deep attribute access ############################################################################
 
-def deep_getattr(namespace, path: str):
-    names = path.split('.')
-    obj = namespace[names[0]] if isinstance(namespace, T.Mapping) else getattr(namespace, names[0])
-    for name in names[1:]:
-        obj = getattr(obj, name)
-    return obj
+def deep_getattr(root_obj, path: T.Union[T.List[str], str]):
+    """Retrieves a descendant object of `root_obj` that corresponds to `path`.
+    Args:
+        root_obj (object): an object.
+        path (Tensor): path to the descendant object of `root_obj`.
+    """
+    if isinstance(path, str):
+        path = [] if path == '' else path.split('.')
+    for name in path:
+        root_obj = getattr(root_obj, name)
+    return root_obj
 
 
 # Argument broadcasting ############################################################################
@@ -170,15 +175,16 @@ def query_user(question, default=None, timeout=np.inf, options=None):
 
     options_str = "/".join(f"{{{c}}}" if c == default else c for c in options)
     while True:
-        sys.stdout.write(f'{question} [{options_str}]: ')
+        sys.stdout.write(f'{question} ' + (
+            "" if timeout is None else f'(timeout {timeout}s)') + f' [{options_str}]: ')
         sys.stdout.flush()
         sw = Stopwatch().start()
         inp = no_input = id(sw)
         while sw.time < timeout:
-            time.sleep(0.1)
             if (inp := try_input(default=no_input)) is not no_input:
                 print()
                 break
+            time.sleep(0.1)
         if inp in [no_input, ""]:
             return options[default]
         elif inp in options:
@@ -241,6 +247,16 @@ def download(url, output_path, md5=None):
     with _DownloadProgressBar(unit='B', unit_scale=True,
                               miniters=1, desc="Downloading " + url.split('/')[-1]) as t:
         urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
+
+
+def download_git_repo(url, output_path, branch=None):
+    import git  # gitpython
+
+    def progress(op_code, cur_count, max_count=None, message=''):
+        if message:
+            print(message)
+
+    return git.Repo.clone_from(url, output_path, branch=branch, progress=progress)
 
 
 # Mappings #########################################################################################
