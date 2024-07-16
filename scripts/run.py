@@ -299,7 +299,9 @@ if __name__ == "__main__":
         # torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 
+    # https://discuss.pytorch.org/t/difference-between-torch-manual-seed-and-torch-cuda-manual-seed/13848/7
     seed = (0 if args.deterministic else int(time.time()) % 100) if args.seed is None else args.seed
+    os.environ['PYTHONHASHSEED'] = str(seed)
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
         rseed(seed)
     args.seed = seed
