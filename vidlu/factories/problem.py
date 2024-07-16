@@ -39,7 +39,7 @@ class ProblemExtra(Enum):
 @dc.dataclass
 class Problem:
     def get_metrics(self):
-        return get_universal_metrics()
+        return get_universal_metrics(), ()
 
 
 @dc.dataclass
@@ -52,7 +52,7 @@ class Classification(Supervised):
     aliases = dict(class_count=['num_classes'])
 
     class_count: int
-    extra: T.List[ProblemExtra]
+    extra: T.List[ProblemExtra] = dc.field(default_factory=list)
 
     def get_metrics(self):
         result = get_classification_metrics(self, ('A',))
@@ -61,7 +61,7 @@ class Classification(Supervised):
 
 @dc.dataclass
 class SemanticSegmentation(Classification):
-    shape: T.Tuple[int, int]
+    shape: T.Tuple[int, int] = None  # TODO: remove " = None" and use @dc.dataclass(kw_only=True)
 
     def get_metrics(self):
         result = get_classification_metrics(self, ('A', 'mIoU', 'IoU'))

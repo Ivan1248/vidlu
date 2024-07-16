@@ -6,8 +6,10 @@ from pathlib import Path
 import os
 import shutil
 import warnings
-from vidlu.utils.func import partial
+from functools import partial
+import re
 import typing as T
+import tempfile
 
 import PIL.Image as pimg
 import numpy as np
@@ -16,11 +18,12 @@ import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
 import torchvision.datasets.utils as tvdu
-from vidlu.data import Dataset, Record, class_mapping
+from vidlu.data import Dataset, Record, class_mapping, DataChange
+from vidlu.data.dataset import SubDataset
 from vidlu.transforms.numpy import remap_segmentation
 from vidlu.utils.misc import download, to_shared_array
 from vidlu.transforms import numpy as numpy_transforms
-from vidlu.utils.misc import extract_zip
+from vidlu.utils.misc import extract_zip, download_git_repo
 
 from ._cityscapes_labels import labels as cslabels
 
@@ -31,8 +34,7 @@ IMG_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif', '.tif
 
 # Helper functions
 
-
-def _load_image(path, force_rgb=True, dtype=None):
+def _load_image(path, force_rgb=True, dtype=None) -> np.ndarray:
     """Loads an image or segmentation.
 
     Args:
@@ -73,7 +75,8 @@ def _make_sem_seg_record(im_path, lab_path, id_to_label=None, downsampling=1,
 
 def _check_subset(dataset_class, subset):
     if subset not in dataset_class.subsets:
-        raise ValueError(f"Invalid subset name for {dataset_class.__name__}.")
+        raise ValueError(
+            f'Invalid subset name "{subset}" for {dataset_class.__name__}. Available subsets: {", ".join(dataset_class.subsets)}.')
 
 
 def _check_size(*images, size, name=None):
@@ -99,7 +102,7 @@ def load_image(path, downsampling=1):
     return img
 
 
-def load_segmentation(path, downsampling, id_to_label=None, dtype=np.int8):
+def load_segmentation(path, downsampling=1, id_to_label=None, dtype=np.int8):
     """Loads and optionally translates segmentation labels.
 
     Args:
@@ -134,28 +137,26 @@ _max_int32 = 2 ** 31 - 1
 class WhiteNoise(Dataset):
     subsets = []
 
-    def __init__(self, distribution='normal', mean=0, std=1, example_shape=(32, 32, 3), size=50000,
+    def __init__(self, mean=0, std=1, example_shape=(32, 32, 3), size=50000,
                  seed=53, key='image'):
         self._shape = example_shape
         self._rand = np.random.RandomState(seed=seed)
         self._seeds = self._rand.randint(1, size=(size,))
-        if distribution not in ('normal', 'uniform'):
-            raise ValueError('Distribution not in {"normal", "uniform"}')
-        self._distribution = distribution
         self.mean = mean
         self.std = std
         self.key = key
-        super().__init__(name=f'WhiteNoise-{distribution}({mean},{std},{example_shape})',
+        super().__init__(name=f'WhiteNoise({mean},{std},{example_shape})',
                          subset=f'{seed}{size}', data=self._seeds)
 
     def get_example(self, idx):
         self._rand.seed(self._seeds[idx])
-        if self._distribution == 'normal':
-            return _make_record(**{self.key: self._rand.randn(*self._shape) * self.std + self.mean})
-        elif self._distribution == 'uniform':
-            d = 12 ** 0.5 / 2
-            raise NotImplementedError("mean, std")
-            return _make_record(**{self.key: self._rand.uniform(-d, d, self._shape)})
+        return _make_record(**{self.key: self._rand.randn(*self._shape) * self.std + self.mean})
+
+
+class DummyDataset(WhiteNoise):
+    def __init__(self, subset):
+        super().__init__()
+        self.subest = subset
 
 
 class RademacherNoise(Dataset):
@@ -381,8 +382,11 @@ class Cifar100(Dataset):
         train_x = data['data'].reshape((-1, ch, h, w)).transpose(0, 2, 3, 1)
         self.x, self.y = train_x, data['fine_labels']
 
-        super().__init__(subset=subset, info=dict(class_count=100, problem='classification',
-                                                  coarse_labels=data['coarse_labels']))
+        with open(root / "meta", 'rb') as f:
+            meta = pickle.load(f)
+        super().__init__(subset=subset,
+                         info=dict(class_count=100, meta=meta, class_names=meta['fine_label_names'],
+                                   problem='classification', coarse_labels=data['coarse_labels']))
 
     def download(self, root):
         datasets_dir = root.parent
@@ -496,7 +500,7 @@ class INaturalist2018(Dataset):
 
     def get_example(self, idx):
         img_path = self._root / self._file_names[idx]
-        return _make_record(image_=load_image(img_path, self._downsampling),
+        return _make_record(image_=lambda: load_image(img_path, self._downsampling),
                             class_label=self._labels[idx])
 
     def __len__(self):
@@ -864,8 +868,6 @@ class CamVidSequences(Dataset):  # TODO
         self._downsampling = downsampling
 
         self._image_paths = list((root / subset).iterdir())
-        _check_size(self._image_paths, size=self.subset_to_size[subset],
-                    name=f"{type(self).__name__}-{subset}")
 
         info = dict(
             problem='semantic_segmentation', class_count=11,
@@ -875,6 +877,7 @@ class CamVidSequences(Dataset):  # TODO
         super().__init__(
             subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
             info=info)
+        _check_size(self._image_paths, size=self.subset_to_size[subset], name=self.name)
 
     def get_example(self, idx):
         image_path = self._image_paths[idx]
@@ -971,7 +974,7 @@ class Cityscapes(Dataset):
 #                    class_colors=[l.color for l in cslabels if l.trainId >= 0] + [[0, 0, 0]],
 #                    class_count=len(cslabels))}
 
-from . import _vistas_info
+from . import _vistas_info, taxonomies
 
 
 class Vistas(Dataset):
@@ -999,7 +1002,6 @@ class Vistas(Dataset):
         self.label_paths = [self.label_dir / f'{p.stem}.png' for p in self.image_paths]
 
         if labels == 'Cityscapes':
-            from . import taxonomies
             self.id_to_label = {id: -1 for id in Vistas.id_to_label}
             self.id_to_label.update(class_mapping.encode_many_to_one_mapping(
                 taxonomies.Vistas.cityscapes_mapping,
@@ -1223,9 +1225,33 @@ class ICCV09(Dataset):
         return len(self._image_list)
 
 
-class VOC2012Segmentation(Dataset):
-    subset_to_size = {'train': 1464, 'val': 1449, 'test': None, 'trainval': 2913,
-                      'train_aug': 10582}
+def voc_color_map(size=21, normalized=False, swap_void_and_background=False):
+    # source: https://gist.github.com/ccj5351/ae554ea70cef79ab1efdb3f9f92d2b37
+    def bitget(byteval, idx):
+        return ((byteval & (1 << idx)) != 0)
+
+    dtype = 'float32' if normalized else 'uint8'
+    cmap = np.zeros((size, 3), dtype=dtype)
+    for i in range(size):
+        r = g = b = 0
+        c = i
+        for j in range(8):
+            r = r | (bitget(c, 0) << 7 - j)
+            g = g | (bitget(c, 1) << 7 - j)
+            b = b | (bitget(c, 2) << 7 - j)
+            c = c >> 3
+
+        cmap[i] = np.array([r, g, b])
+
+    if swap_void_and_background:
+        cmap[0, :] = np.array([224, 224, 0])
+    cmap = cmap / 255 if normalized else cmap
+    return cmap
+
+
+class VOC2012Seg(Dataset):  # TODO: Rename to VOCSeg
+    subset_to_size = {'train': 1464, 'val': 1449, 'test': 1456, 'trainval': 2913,
+                      'train_aug': 10582}  # train is a subset of train-aug
     subsets = tuple(subset_to_size.keys())
     default_root = 'VOCdevkit'
     subdir = 'VOC2012'
@@ -1235,11 +1261,7 @@ class VOC2012Segmentation(Dataset):
         class_names=['background', 'aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car',
                      'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse', 'motorbike', 'person',
                      'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor'],
-        class_colors=[(128, 64, 128), (244, 35, 232), (70, 70, 70), (102, 102, 156),
-                      (190, 153, 153), (153, 153, 153), (250, 170, 30), (220, 220, 0),
-                      (107, 142, 35), (152, 251, 152), (70, 130, 180), (220, 20, 60), (255, 0, 0),
-                      (0, 0, 142), (0, 0, 70), (0, 60, 100), (0, 80, 100), (0, 0, 230), (0, 0, 230),
-                      (0, 0, 230), (119, 11, 32)],
+        class_colors=voc_color_map(21, swap_void_and_background=True),
         url=r'http://host.robots.ox.ac.uk/pascal/VOC/voc2012/VOCtrainval_11-May-2012.tar',
         aug_urls=dict(  # train_aug is a superset of train and does not overlap with val
             labels=r'http://vllab1.ucmerced.edu/~whung/adv-semi-seg/SegmentationClassAug.zip',
@@ -1248,10 +1270,16 @@ class VOC2012Segmentation(Dataset):
         ),
         md5='6cd6e144f989b92b3379bac3b3de84fd')
 
-    def __init__(self, root, subset='train', pad=False):
+    def __init__(self, root, subset: T.Literal['train', 'train_aug', 'val', 'test'] = 'train',
+                 size_unit=1):
         _check_subset(self.__class__, subset)
+        if size_unit == 1:
+            warnings.warn("VOC2012Seg: Setting size_unit=1. This might result in mis-alignment of"
+                          " the model output because some image sizes will not be multiples of the"
+                          " smallest representation size in the model. Recommended setting for"
+                          " evaluation: size_unit=512.")
         root = Path(root)
-        self.pad = pad
+        self.size_unit = size_unit
 
         self.download_if_necessary(root)
 
@@ -1259,15 +1287,16 @@ class VOC2012Segmentation(Dataset):
         self._images_dir = data_subdir / 'JPEGImages'
         if subset == 'train_aug':
             sets_dir = data_subdir / 'ImageSets/SegmentationAug'
-            self._labels_dir = data_subdir / 'SegmentationClassAug'
+            self._labels_dir = data_subdir / 'SegmentationClassAug'  # includes all labels from SegmentationClass
             if not sets_dir.exists():
                 self.download_aug(data_subdir)
         else:
             sets_dir = data_subdir / 'ImageSets/Segmentation'
             self._labels_dir = data_subdir / 'SegmentationClass'
-        self._image_list = (sets_dir / f'{subset}.txt').read_text().splitlines()
+        self._names = (sets_dir / f'{subset}.txt').read_text().splitlines()
 
         super().__init__(subset=subset, info=self.info)
+        _check_size(self._names, size=self.subset_to_size[subset], name=self.name)
 
     def download_aug(self, root_dir):
         tvdu.download_and_extract_archive(self.info['aug_urls']['labels'], root_dir,
@@ -1278,24 +1307,82 @@ class VOC2012Segmentation(Dataset):
             download(self.info['aug_urls'][f'train_list'], file_path)
 
     def get_example(self, idx):
-        name = self._image_list[idx]
+        name = self._names[idx]
+
+        def get_padded_size(size, unit: int):
+            size = torch.tensor(size, dtype=torch.int)
+            result = ((size + (unit - 1)).div(unit, rounding_mode='trunc') * unit).tolist()
+            assert min(result) >= unit
+            return result
 
         def load_img():
             img = _load_image(self._images_dir / f"{name}.jpg")
-            return tvtf.center_crop(img, [500] * 2) if self.pad else img
+            if self.size_unit != 1:
+                size = get_padded_size(img.size[::-1], self.size_unit)
+                img = tvtf.center_crop(img, size)
+            return img
 
         def load_lab():
-            breakpoint()
-            lab = load_segmentation(self._labels_dir / f"{name}.png")
-            lab = np.array(_load_image(self._labels_dir / f"{name}.png", force_rgb=False)) \
-                .astype(np.int8)
-            return numpy_transforms.center_crop(lab, [500] * 2,
-                                                fill=-1) if self.pad else lab  # -1 ok?
+            lab = torch.tensor(load_segmentation(self._labels_dir / f"{name}.png"))
+            if self.size_unit != 1:
+                size = get_padded_size(lab.shape, self.size_unit)
+                lab = numpy_transforms.center_crop(lab, size, fill=-1)
+            return lab
 
-        return _make_record(image_=load_img, seg_map_=load_lab)
+        # return _make_record(image_=load_img, seg_map_=load_lab)
+        return _make_record(image_=load_img, seg_map_=load_lab, id=name)
 
     def __len__(self):
-        return len(self._image_list)
+        return len(self._names)
+
+
+def _get_voc2012_seg_splits_cac_subset_to_size():
+    # code outside of the class so that auxiliary variables don't become class attributes
+    subset_to_size = {'train_aug': 10582}  # train is a subset of train-aug
+    for split in range(3):
+        for size in [2645, 1323, 662]:
+            name = f'{split}_{size}'
+            subset_to_size[name] = size
+            subset_to_size[name + 'u'] = 10582 - size
+    return subset_to_size
+
+
+class VOC2012SegSplitsCAC(SubDataset):
+    subset_to_size = _get_voc2012_seg_splits_cac_subset_to_size()  # train is a subset of train-aug
+    subsets = tuple(subset_to_size.keys())
+    default_root = 'VOCdevkit'
+    info = VOC2012Seg.info
+
+    def __init__(self, root, subset='train_aug', size_unit=1):
+        _check_subset(self.__class__, subset)
+        root = Path(root)
+        data = VOC2012Seg(root, 'train_aug', size_unit=size_unit)
+
+        if subset != 'train_aug':
+            splits_root = root.with_name(root.name + "_splits_cac")
+            self.download_if_necessary(splits_root)
+
+            split, labeled_size = list(map(int, re.findall(r'\d+', subset)))
+            file_path = (splits_root / f'voc_splits{split}' /
+                         f'{labeled_size}_train_{"un" * (subset[-1] == "u")}supervised.txt')
+            names = [Path(line.split()[0]).stem
+                     for line in file_path.read_text().splitlines()]
+            name_to_old_index = {r: i for i, r in enumerate(data._names)}
+            indices = [name_to_old_index[name] for name in names]
+        else:
+            indices = list(range(len(data)))
+
+        super().__init__(data, indices=indices, subset=subset)
+        _check_size(indices, size=self.subset_to_size[subset], name=self.name)
+
+    def download(self, splits_root):
+        with tempfile.TemporaryDirectory() as repo_dir:
+            download_git_repo('https://github.com/Ivan1248/Context-Aware-Consistency.git',
+                              repo_dir)
+            splits_root.mkdir()
+            for i in range(3):
+                shutil.move(Path(repo_dir) / f'dataloaders/voc_splits{i}',
+                            Path(splits_root) / f'voc_splits{i}')
 
 # class Viper(Dataset):
 #     class_info = _viper_mapping.get_class_info()

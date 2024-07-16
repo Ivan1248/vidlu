@@ -89,9 +89,16 @@ def parse_data_str(data_str):
 
 def apply_default_transforms(datasets, cache_dir):
     # TODO: de-hardcode
+    import os
+    if int(os.environ.get("VIDLU_DUMMY_DATA", 0)) and cache_dir is not None:
+        for i, ds in enumerate(datasets):
+            datasets[i] = vdu.cache_lazily(ds[:1].map(lambda r: type(r)(**r)),
+                                           cache_dir=cache_dir).repeat(len(ds))  # .cache().repeat
+        return datasets
     default_transforms = [  # partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
-        partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
-        partial(vdu.cache_lazily, cache_dir=cache_dir)]
+        partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir)]
+    if cache_dir is not None:
+        default_transforms.append(partial(vdu.cache_lazily, cache_dir=cache_dir))
     for i, ds in enumerate(datasets):
         for transform in default_transforms:
             ds = transform(ds)
@@ -102,7 +109,7 @@ def apply_default_transforms(datasets, cache_dir):
 def get_data_namespace():
     import vidlu.transforms as vt
     import vidlu.transforms.image as vti
-    import torchvision.transforms.functional_tensor as tvt
+    import torchvision.transforms.functional as tvt
     import vidlu.modules.functional as vmf
     from vidlu.data.datasets import taxonomies
 
@@ -167,6 +174,9 @@ get_data.help = \
 
 
 def get_default_transforms(cache_dir):
+    import os
+    if int(os.environ.get("VIDLU_DUMMY_DATA", 0)):
+        return dict(dummy=lambda ds: ds[:1].map(lambda r: type(r)(**r)).cache().repeat(len(ds)))
     return dict(
         add_pixel_stats=partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
         add_seg_class_info=partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
@@ -461,6 +471,7 @@ get_trainer.help = \
 
 
 def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
+    # TODO: require something like metrics-str == "default" for default metrics
     if problem is None:
         if dataset is None:
             raise ValueError("get_metrics: either the dataset argument"
@@ -468,5 +479,9 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
         problem = defaults.get_problem(dataset, trainer)
 
     default_metrics, main_metrics = problem.get_metrics()
+    if metrics_str.endswith('!'):
+        metrics_str = metrics_str[:-1]
+        from .problem import get_universal_metrics
+        default_metrics, main_metrics = get_universal_metrics(), ()
     additional_metrics = factory_eval(f'[{metrics_str}]', {**metrics.__dict__, **_func_short})
     return default_metrics + additional_metrics, main_metrics

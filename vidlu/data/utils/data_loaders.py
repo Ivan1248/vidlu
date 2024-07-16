@@ -6,7 +6,6 @@ import numpy as np
 import torch
 import torch.utils.data as tud
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler, Dataset, Sampler
-from lightning.fabric.utilities.distributed import DistributedSamplerWrapper
 
 from vidlu.data import DataLoader, ZipDataLoader, CombinedDataLoader
 from vidlu.data.record import Record
@@ -236,6 +235,7 @@ def _get_distributed_sampler(data_loader: DataLoader, **kwargs) -> DistributedSa
 
     if isinstance(data_loader.sampler, (RandomSampler, SequentialSampler)):
         return DistributedSampler(data_loader.dataset, **kwargs)
+    from lightning.fabric.utilities.distributed import DistributedSamplerWrapper
     return DistributedSamplerWrapper(data_loader.sampler, **kwargs)
 
 

@@ -221,14 +221,6 @@ class SoftClassMapping(E.Module):
         return result
 
 
-class SoftClassMappingTargetProb(E.Module):
-    def __init__(self, soft_class_mapping):
-        self.soft_class_mapping = soft_class_mapping
-
-    def forward(self, univ_probs, target, class_count):
-        target_oh = one_hot(target, class_count)
-
-
 class MultiSoftClassMapping(E.ModuleTable):
     def __init__(self, name_to_target_class_count, elem_class_count=None, include_other=False,
                  init=None):

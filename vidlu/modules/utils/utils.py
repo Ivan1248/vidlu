@@ -1,9 +1,9 @@
 import itertools
 import typing as T
+from functools import partial
 
 import torch
 from torch import nn
-from vidlu.utils.func import partial
 
 from vidlu.utils.inspect import find_frame_in_call_stack
 from vidlu.utils.func import func_to_class
@@ -42,10 +42,6 @@ def get_device(module):
 
 
 func_to_module_class = partial(func_to_class, superclasses=nn.Module, method_name='forward')
-
-
-def sole_tuple_to_varargs(inputs):  # tuple, not any sequence type
-    return inputs[0] if len(inputs) == 1 and isinstance(inputs[0], tuple) else inputs
 
 
 def extract_tensors(*args, **kwargs):

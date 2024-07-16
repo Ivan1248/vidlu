@@ -8,12 +8,11 @@ import vidlu.utils.text as vut
 
 from collections import UserList
 
-# Domain types
 
-_type_to_domain = dict()
+# Modality types
 
 
-class Domain:
+class DataModality:
     @classmethod
     def collate(cls, elements, general_collate=None):
         if general_collate is None:
@@ -22,7 +21,7 @@ class Domain:
             return general_collate(elements)
 
 
-class Array(torch.Tensor, Domain):
+class Array(torch.Tensor, DataModality):
     def __new__(cls, obj):
         return obj[...].as_subclass(cls)
 
@@ -73,20 +72,20 @@ class ClassDist(ClassLabelLike):
                 and (quick or torch.isclose(self.sum(), 1).item()))
 
 
-class Float(Array, Domain):
+class Float(Array, DataModality):
     def check_validity(self, quick=False):
         return (super().check_validity(quick)
                 and self.ndim == 0
                 and torch.is_floating_point(self))
 
 
-class Name(str, Domain):
+class Name(str, DataModality):
     @classmethod
     def collate(cls, elements, general_collate=None):
         return elements
 
 
-class Other(Domain):
+class Other(DataModality):
     __slots__ = 'item'
 
     def __init__(self, obj):
@@ -97,7 +96,7 @@ class Other(Domain):
         return elements
 
 
-class Spatial2D(Domain):
+class Spatial2D(DataModality):
     pass
 
 
@@ -275,7 +274,47 @@ class ClassAABBsOnImage(dict, AABBsOnImageCollection):
         return type(self)({k: list(map(func, aabbs)) for k, aabbs in self.items()}, shape=shape)
 
 
+# Based on Mask2Former code: Copyright (c) Facebook, Inc. and its affiliates.
+class PaddedImageBatch(DataModality):
+    """A tensor of images of possibly varying sizes (padded) together with the sizes."""
+
+    def __init__(self, images, sizes):
+        self.images = images
+        self.sizes = sizes
+
+    def get_mask(self, pos_value=1.0, neg_value=0.0):
+        mask = torch.full_like(self.images, neg_value)
+        for i, size in enumerate(self.sizes):
+            mask[i, ..., :size[0], :size[1]] = pos_value
+
+    def to_list(self):
+        return [self[i, :, :size[0], :size[1]] for i, size in enumerate(self.sizes)]
+
+    @staticmethod
+    def from_list(images: T.List[torch.Tensor], size_divisibility: int = 0,
+                  fill_value: float = 0.0) -> 'PaddedImageBatch':
+        assert isinstance(images, (tuple, list))
+
+        image_sizes = torch.tensor([list(x.shape[-2:]) for x in images])
+        max_size = image_sizes.max(0).values
+        min_size = image_sizes.max(0).values
+
+        if size_divisibility > 1:
+            stride = size_divisibility
+            max_size = (max_size + (stride - 1)).div(stride, rounding_mode="floor") * stride
+
+        if tuple(max_size) == tuple(min_size):
+            batched_images = torch.stack(images)
+        else:
+            batch_shape = [len(images)] + list(images[0].shape[:-2]) + list(max_size)
+            batched_images = images[0].new_full(batch_shape, fill_value, device=images[0].device)
+            for i, img in enumerate(images):
+                batched_images[i, ..., :img.shape[-2], :img.shape[-1]].copy_(img)
+
+        return PaddedImageBatch(batched_images, image_sizes)
+
+
 # Mapping from keys in snake case to Domain subclasses and vice versa
 from_key = {vut.to_snake_case(name): cls for name, cls in globals().items()
-            if isinstance(cls, type) and issubclass(cls, Domain)}
+            if isinstance(cls, type) and issubclass(cls, DataModality)}
 to_key = {cls: name for name, cls in from_key.items()}

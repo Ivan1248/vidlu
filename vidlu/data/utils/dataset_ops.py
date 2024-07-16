@@ -1,10 +1,10 @@
 from warnings import warn
+from functools import partial
 
 import numpy as np
 import torch
 from tqdm import tqdm, trange
 
-from vidlu.utils.func import partial
 from vidlu.data import Dataset, Record, class_mapping
 
 

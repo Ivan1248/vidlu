@@ -1,6 +1,7 @@
 import warnings
 from numbers import Number
 import typing as T
+from functools import partial
 
 import torch
 from torch import Tensor
@@ -11,7 +12,6 @@ import PIL.Image as pimg
 
 import vidlu.data.types as dt
 from vidlu.utils import num
-from vidlu.utils.func import partial
 from vidlu.utils.func import vectorize
 from vidlu.torch_utils import is_int_tensor, round_float_to_int
 from vidlu.modules.utils import func_to_module_class
@@ -105,7 +105,6 @@ def pad(x, padding, mode='constant', value=0):
 Pad = func_to_module_class(pad)
 
 
-@typechecked
 @vectorize
 def pad_to_shape(x, shape, mode='constant', value: T.Union[int, T.Literal['mean']] = 0,
                  alignment: T.Literal['center', 'tl', 'tr', 'bl', 'br'] = 'center'):

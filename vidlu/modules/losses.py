@@ -25,7 +25,7 @@ def to_labels(x):
 
 
 def labels_to_probs(x, c, dtype):
-    return one_hot(x, c=c, dtype=dtype)
+    return one_hot(x, c, dtype=dtype)
 
 
 class LossAdapter:
@@ -486,14 +486,20 @@ class CarliniWagnerLoss(nn.Module):
 # Generative
 
 def input_image_nll(x, z, bin_count=256):
+    """Computes the log-probability that each dimension of x belongs ta the corresponding bin out of
+     255.
+
+     Assumes that all input elements are between 0 and 1."""
     N, dim = len(x), x[0].numel()
+
     ll_z = -0.5 * (z ** 2 + np.log(2 * np.pi))
     ll_z = ll_z.view(N, -1).sum(-1)
     ll_z -= np.log(bin_count) * dim
-    loss_ladj = -Ladj.get(z)()
-    loss_ll_z = -ll_z
-    return (loss_ladj + loss_ll_z) / dim
 
+    nladj = -Ladj.get(z)()
+    nll_z = -ll_z
+    nll = nladj + nll_z
+    return nll / dim
 
 # Utilities
 

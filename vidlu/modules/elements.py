@@ -26,7 +26,6 @@ from vidlu.utils.collections import NameDict
 from vidlu.utils.inspect import class_initializer_locals_c
 import vidlu.utils.func as vuf
 import vidlu.torch_utils as vtu
-from vidlu.utils import tree
 
 import vidlu.modules.utils as vmu
 from vidlu.modules.deconv import FastDeconv
@@ -1403,7 +1402,7 @@ class GhostBatchNorm(BatchNorm):
                 self.weight, self.bias, False, self.momentum, self.eps)
 
 
-# Additional generally useful M ##############################################################
+# Additional generally useful modules ##############################################################
 
 
 class _Func(Module):
@@ -1574,7 +1573,7 @@ def deep_join(left: Module, right: Module):
 
 @typechecked
 def with_intermediate_outputs(module: nn.Module,
-                              submodule_paths: T.Union[T.Sequence[str], str] = None,
+                              submodule_paths: T.Union[T.Sequence[str], str, None] = None,
                               inplace_modified_action: T.Literal['warn', 'error', None] = 'warn',
                               return_dict=False, inputs=False):
     """Creates a function wrapping `module` that returns a pair containing the
@@ -1639,43 +1638,6 @@ def with_intermediate_outputs(module: nn.Module,
         outputs = dict(zip(submodule_paths, outputs)) if return_dict else \
             outputs[0] if single else tuple(outputs)
         return output, outputs
-
-    return wrapper
-
-
-def with_intermediate_outputs_tree(
-        module: nn.Module, submodule_paths=None,
-        inplace_modified_action: T.Literal['warn', 'error', None] = 'warn', leaf_name='out'):
-    """Creates a function wrapping `module` that returns a pair containing the
-    output of `module.forward` as well as a tree of intermediate outputs as
-    defined by `submodule_paths`.
-
-    Args:
-        module (Module): a module.
-        submodule_paths (optional, List[str]): a list of names (relative to
-            `root`) of modules the outputs of which you want to get. When the
-             value is `None` (default), outputs of all submodules are stored.
-        inplace_modified_action: What to do if it is detected that an
-            intermediate output is in-place modified by a subsequent
-            operation.
-
-    Example:
-        >>> module(x)
-        tensor(...)
-        >>> module_wiot = with_intermediate_outputs(module)
-        >>> module_wiot(x)
-        tensor(...), {'block1': {'conv': tensor(...), ...}, ...}
-    """
-
-    wio = with_intermediate_outputs(
-        module, submodule_paths=submodule_paths,
-        inplace_modified_action=inplace_modified_action, return_dict=True)
-
-    @functools.wraps(module)
-    def wrapper(*args, **kwargs):
-        output, outputs = wio(*args, **kwargs)
-        path_to_value = (((*k.split('.'), leaf_name), v) for k, v in outputs.items())
-        return output, tree.unflatten(path_to_value)
 
     return wrapper
 

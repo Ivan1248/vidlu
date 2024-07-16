@@ -11,23 +11,23 @@ class _NoValue:
     pass
 
 
-def has(x, k=None):
+def has(x: torch.Tensor, k:str=None):
     return hasattr(x, 'extra') and (k is None or hasattr(x.extra, k))
 
 
-def get(x, k, default=_NoValue):
+def get(x: torch.Tensor, k:str, default=_NoValue):
     if default is not _NoValue and not hasattr(x, 'extra') or not hasattr(x.extra, k):
         return default
     return getattr(x.extra, k)
 
 
-def set(x, k, value):
+def set(x: torch.Tensor, k:str, value):
     if not has(x):
         x.extra = Namespace()
     setattr(x.extra, k, value)
 
 
-def delete(x, k):
+def delete(x: torch.Tensor, k:str):
     delattr(x.extra, k)
 
 
@@ -35,13 +35,13 @@ def clear(x):
     del x.extra
 
 
-def pop(x, k):
+def pop(x: torch.Tensor, k:str):
     v = get(x, k)
     delete(x, k)
     return v
 
 
-def _stop(x, k, must_exist=False):
+def _stop(x: torch.Tensor, k:str, must_exist=False):
     y = x[:]
     if not has(x):
         return y
@@ -51,7 +51,7 @@ def _stop(x, k, must_exist=False):
     return y
 
 
-def stop(x, k, must_exist=False):
+def stop(x: torch.Tensor, k:str, must_exist=False):
     return vmu.map_tensors(x, partial(_stop, k=k, must_exist=must_exist))
 
 
@@ -60,27 +60,38 @@ class ExtraBase:
 
     @classmethod
     def set(cls, x, value):
+        """Sets the value of the attribute of `x.extra` with name `cls.name`."""
         set(x, cls.name, value)
         return x
 
     @classmethod
     def get(cls, x, default=_NoValue):
+        """Gets the value of the attribute of `x.extra` with name `cls.name`."""
         return get(x, cls.name, default=default)
 
     @classmethod
     def has(cls, x):
+        """Sets the value of the attribute of `x.extra` with name `cls.name`."""
         return has(x, cls.name)
 
     @classmethod
     def pop(cls, x):
+        """Pops the value of the attribute of `x.extra` with name `cls.name`."""
         return pop(x, cls.name)
 
     @classmethod
     def stop(cls, x):
+        """Returns an equivalent tensor with the attribute of `x.extra` with name `cls.name`
+        removed.
+        """
         return stop(x, cls.name)
 
 
 class LogAbsDetJac(ExtraBase):  # TODO: rename to LogVolChange?
+    """A class for manipulating the closure for computing the natural logarithm of the absolute
+    Jacobian of the determinant of the output with respect to the input. The updated closure is to
+    be stored in the metadata of the output tensors of invertible operatorions."""
+
     name = 'ladj'
 
     @classmethod
