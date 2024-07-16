@@ -76,10 +76,6 @@ class PILCompressor(Compressor):
 
 class PILPNGCompressor(Compressor):  # TODO
     def compress(self, obj):
-        return torchvision.io.encode_png(pil_to_torch(obj).permute(2, 0, 1),
-                                         compression_level=9), obj.mode
-
-    def decompress(self, obj):
         # compr. level: size, compr. time, decompr. time, decompr. CPU util.
         # torchvision.io.encode_png
         # 0: 780MiB, 1:49, 16s, 215cpu
@@ -94,6 +90,10 @@ class PILPNGCompressor(Compressor):  # TODO
         # blosc.compress_ptr lz4hc
         # 3: 571MiB, 1:46, 13s, 189cpu
         # 9: 550MiB, 1:54, 13s, 191cpu
+        return torchvision.io.encode_png(pil_to_torch(obj).permute(2, 0, 1),
+                                         compression_level=9), obj.mode
+
+    def decompress(self, obj):
         content, mode = obj
         return numpy_to_pil(torchvision.io.decode_png(content).permute(1, 2, 0).numpy(), mode=mode)
 
