@@ -264,8 +264,7 @@ def tree_partial_(args, kwargs, partial_f=Partial):
         return par[k]
 
     kwargs = {
-        k: tree_partial_((default_args(func)[k],), v, partial_f=partial_f)
-        if isinstance(v, ArgTree)
+        k: tree_partial_((default_args(func)[k],), v, partial_f=partial_f) if isinstance(v, ArgTree)
         else v.item if isinstance(v, EscapedItem)
         else v.apply(get_param(k)) if isinstance(v, UpdatreeMixin)
         else v
