@@ -101,6 +101,30 @@ class AttrDict(dict):
         self.__dict__ = self
 
 
+class Registry(collections.UserDict):
+    def __init__(self, filter_=None):
+        super().__init__()
+        self.filter = (lambda x: x) if filter_ is None else filter_
+
+    def register(self, *args):
+        """
+        Register the given object under the the name `obj.__name__`.
+        Can be used as either a decorator or not. See docstring of this class for usage.
+        """
+        if len(args) == 1:
+            obj = args[0]
+            name = obj.__name__
+        else:
+            name, obj = args
+        self[name] = obj
+        return obj  # in case that it is used as a decorator
+
+    def register_from(self, namespace):
+        for k, v in vars(namespace).items():
+            if self.filter(v):
+                self.register(k, v)
+
+
 class SingleWriteDict(dict):
     def __init__(self, *a, **k):
         dict.__init__(self, *a, **k)
