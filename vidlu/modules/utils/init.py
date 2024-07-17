@@ -26,13 +26,27 @@ class Initializer:
         return handle
 
 
+def get_param(module, path):
+    param_or_module = vm.get_submodule(module, path)
+    if not isinstance(param_or_module, torch.Tensor):
+        params = dict(param_or_module.named_parameters())
+        if (l := len(params)) > 1:
+            raise ValueError(f"{path=} corresponds to a module which contains {l} > 1 parameters."
+                             + f" This makes the parameter path ambiguous. The available parameters"
+                             + f" are: " + ", ".join(params.keys()) + ".")
+        elif l == 0:
+            raise RuntimeError(f"The module {path} contains no parameters.")
+        return next(iter(params.values()))
+    return param_or_module
+
+
 @dc.dataclass
 class UniformInit(Initializer):
     name_to_bounds: T.Mapping[str, T.Sequence[T.Union[float, torch.Tensor]]]
 
     def __call__(self, module, input=None):
         for path, bounds in self.name_to_bounds.items():
-            vo.random_uniform_(vm.get_submodule(module, path), *bounds)
+            vo.random_uniform_(get_param(module, path), *bounds)
 
 
 @dc.dataclass
@@ -41,7 +55,7 @@ class BinaryInit(Initializer):
 
     def __call__(self, module, input=None):
         for path, prob in self.name_to_prob.items():
-            param = vm.get_submodule(module, path)
+            param = get_param(module, path)
             param.set_(torch.rand(()) <= prob)
 
 
@@ -51,7 +65,7 @@ class NormalInit(Initializer):
 
     def __call__(self, module, input=None):
         for path, (mean, std) in self.name_to_mean_std.items():
-            vm.get_submodule(module, path).normal_(mean=mean, std=std)
+            get_param(module, path).normal_(mean=mean, std=std)
 
 
 class JointInit(Initializer):
