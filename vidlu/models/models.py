@@ -212,7 +212,8 @@ class DiscriminativeModel(SeqModel):
 
 
 class ClassificationModel(DiscriminativeModel):
-    pass
+    __init__ = partialmethod(DiscriminativeModel.__init__,
+                             head_f=vmc.ChannelAveragingClassificationHead)
 
 
 class LogisticRegression(ClassificationModel):
