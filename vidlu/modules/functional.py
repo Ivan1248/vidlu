@@ -22,7 +22,7 @@ class _Swish(torch.autograd.Function):
 swish = _Swish.apply
 
 
-def grid_2d(N, H, W, device=None, dtype=None, channels_first=False):
+def grid_2d(N, H, W, device=None, dtype=None):
     k = dict(device=device, dtype=dtype)
     mg = torch.meshgrid([torch.linspace(-1, 1, H, **k), torch.linspace(-1, 1, W, **k)],
                         indexing='ij')
