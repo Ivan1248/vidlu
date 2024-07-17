@@ -1,7 +1,6 @@
 import shutil
 from argparse import Namespace
-from vidlu.utils.func import partial
-from pathlib import Path
+from functools import partial
 import warnings
 
 import numpy as np
@@ -43,6 +42,7 @@ def add_pixel_stats_to_info_lazily(ds, cache_dir):
 
 
 def add_segmentation_class_info_lazily(ds, cache_dir):
+    return ds
     if 'seg_map' not in ds[0].keys():
         return ds
 
@@ -53,16 +53,11 @@ def add_segmentation_class_info_lazily(ds, cache_dir):
                       class_aabbs_=lambda: info()['class_aabbs'])
 
     return ds.map(lambda r: r.join(add_seg_class_info(r)))
-    # ds = ds.info_cache_hdd(dict(seg_class_info=seg_class_info), cache_dir, recompute=False,
-    #                        simplify_dataset=lambda ds: ds[:4])
-    # return ds.enumerate().map_unpack(
-    #     lambda i, r: Record(
-    #         r, class_seg_boxes_=lambda: ds.info.seg_class_info['class_segment_boxes'][i]))
 
 
 # Caching ##########################################################################################
 
-def cache_lazily(ds, cache_dir, min_free_space=20 * 2 ** 30):
+def cache_lazily(ds, cache_dir, min_free_space=10 * 2 ** 30):
     ds_cached = ds.cache_hdd(f"{cache_dir}/datasets")
 
     elem_size = ds.example_size(sample_count=4)
@@ -81,7 +76,7 @@ def cache_lazily(ds, cache_dir, min_free_space=20 * 2 ** 30):
         return ds
 
 
-class CachingDatasetFactory(DatasetFactory):  # TODO: delete
+class CachingDatasetFactory(DatasetFactory):  # TODO: remove
     def __init__(self, datasets_dir_or_factory, cache_dir, transforms=()):
         ddof = datasets_dir_or_factory
         super().__init__(ddof.datasets_dirs if isinstance(ddof, DatasetFactory) else ddof)

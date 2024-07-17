@@ -18,7 +18,7 @@ import torch
 import torchvision.datasets as dset
 import torchvision.transforms.functional as tvtf
 import torchvision.datasets.utils as tvdu
-from vidlu.data import Dataset, Record, class_mapping, DataChange
+from vidlu.data import Dataset, Record, class_mapping
 from vidlu.data.dataset import SubDataset
 from vidlu.transforms.numpy import remap_segmentation
 from vidlu.utils.misc import download, to_shared_array

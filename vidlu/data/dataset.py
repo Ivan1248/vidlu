@@ -78,17 +78,6 @@ class StandardDownloadableDatasetMixin:
         # (data_dir.parent / filename).rename(data_dir)
 
 
-class SeqChange(Enum):
-    Order = "order"
-    Removal = "removal"
-    Repeat = "repeat"
-    Addition = "addition"
-
-
-class DataChange:
-    SeqChange = SeqChange
-
-
 @dc.dataclass
 class ChangeInfo:
     """An object describing the kind of change between the original and the
@@ -113,7 +102,7 @@ class ChangeInfo:
             a single info instance per dataset.
     """
     name: str
-    data_change: T.Union[bool, T.Sequence[T.Union[str, SeqChange]]] = None
+    data_change: T.Union[bool, T.Sequence[str]] = None
     info_change: T.Union[bool, T.Sequence[str]] = None
 
     def __repr__(self):
@@ -144,7 +133,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
             self.subset = subset
         self.info = DictRecord(info or getattr(self, 'info', None) or getattr(data, 'info', dict()))
         self.data = data
-        self.change_info = make_change_info(self, name=self.name, data_change=data_change,
+        self.change_info = make_change_info(self, name=self.name,
+                                            data_change=subset if data_change is None else data_change,
                                             info_change=info_change)
 
     @property
@@ -161,7 +151,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     def data_identifier(self):
         return ".".join(c.name for c in self.changes if c.data_change is not False)
 
-    def __getitem__(self, idx, field=None):
+    def _getitem(self, idx, field=None, **kwargs):
         if isinstance(idx, tuple):
             idx, [field] = idx[0], idx[1:]
 
@@ -176,9 +166,9 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         filter_fields = (lambda x: element_fancy_index(x, field)) if field is not None else None
 
         if isinstance(idx, slice):
-            ds = SubrangeDataset(self, idx)
+            ds = SubrangeDataset(self, idx, **kwargs)
         elif isinstance(idx, (list, np.ndarray)):
-            ds = SubDataset(self, idx)
+            ds = SubDataset(self, idx, **kwargs)
         else:
             if idx < 0:
                 idx += len(self)
@@ -187,9 +177,11 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
             d = self.get_example(idx)
             return d if filter_fields is None else filter_fields(d)
         if filter_fields is not None:
-            func_name = f"[{field}]"
-            ds = ds.map(filter_fields, func_name=func_name)
+            ds = ds.map(filter_fields, **{'func_name': f"[{field}]", **kwargs})
         return ds
+
+    def __getitem__(self, idx, field=None):
+        return self._getitem(idx, field=field)
 
     def __len__(self):  # This can be overridden
         return len(self.data)
@@ -275,7 +267,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """
         indices = np.array(list(self.find_indices(predicate, progress_bar=progress_bar)))
         func_name = func_name or f'{_subset_hash(indices):x}'
-        return SubDataset(self, indices, subset=f'filter({func_name})', **kwargs)
+        return self._getitem(indices, subset=f'filter({func_name})', **kwargs)
 
     def filter_split(self, predicates, *, func_names=None, **kwargs):
         """
@@ -286,7 +278,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         if isinstance(func_names, str):
             func_names = [f"{func_names}_{i}" for i in range(len(predicates) + 1)]
         return [
-            SubDataset(self, indices, subset=f'filter({func_name})', **kwargs)
+            self._getitem(indices, subset=f'filter({func_name})', **kwargs)
             for indices, func_name in zip(indiceses, func_names)]
 
     def map(self, func, *, func_name=None, unpack=False, **kwargs):
@@ -317,8 +309,7 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     def permute(self, seed=53, **kwargs):
         """Creates a permutation of the dataset."""
         indices = np.random.RandomState(seed=seed).permutation(len(self))
-        return SubDataset(self, indices, subset=F"permute({seed})",
-                          data_change=[SeqChange.Order], **kwargs)
+        return self._getitem(indices, subset=F"permute({seed})", **kwargs)
 
     def repeat(self, number_of_repeats, **kwargs):
         """Creates a dataset with `number_of_repeats` times the length of the
@@ -769,27 +760,21 @@ class HDDInfoCacheDataset(InfoCacheDataset):  # TODO
 
 
 class SubDataset(Dataset):
+    __slots__ = ('indices',)
+
     def __init__(self, dataset, indices: T.Union[T.Sequence, T.Callable], subset=None,
                  **kwargs):
         # convert indices to smaller int type if possible
-        if isinstance(indices, slice):
-            self._len = len(dataset)
-            start, stop, step = indices.indices(slice_len(indices, self._len))
-            self._get_index = lambda i: start + step * i
-            choice_name_ = f"[{start}:{stop}:{step if step != 0 else ''}]"
-        else:
-            self._len = len(indices)
-            indices = _compress_indices(indices, len(dataset))
-            self._get_index = lambda i: indices[i]
-            choice_name_ = f"[indices_{_subset_hash(indices):x}]"
+        self.indices = _compress_indices(indices, len(dataset))
+        choice_name_ = f"[indices_{_subset_hash(indices):x}]"
         super().__init__(name=subset or choice_name_, data=dataset,
-                         data_change=kwargs.pop("data_change", [SeqChange.Removal]), **kwargs)
+                         data_change=kwargs.pop("data_change", [choice_name_]), **kwargs)
 
     def get_example(self, idx):
-        return self.data[self._get_index(idx)]
+        return self.data[self.indices(idx)]
 
     def __len__(self):
-        return self._len
+        return len(self.indices)
 
 
 class SubrangeDataset(Dataset):
@@ -799,8 +784,10 @@ class SubrangeDataset(Dataset):
         start, stop, step = slice_.indices(len(dataset))
         self.start, self.stop, self.step = start, stop, step
         self._len = slice_len(slice_, len(dataset))
+        choice_name_ = f"[{start}:{stop}:{step if step != 0 else ''}]"
         super().__init__(name=f"[{start}..{stop}" + ("]" if step == 1 else f";{step}]"),
-                         data=dataset, data_change=[SeqChange.REMOVAL], **kwargs)
+                         data=dataset, data_change=kwargs.pop("data_change", [choice_name_]),
+                         **kwargs)
 
     def get_example(self, idx):
         return self.data[self.start + self.step * idx]
@@ -813,8 +800,8 @@ class RepeatDataset(Dataset):
     __slots__ = ("number_of_repeats",)
 
     def __init__(self, dataset, number_of_repeats, **kwargs):
-        super().__init__(name=f"repeat({number_of_repeats})", data=dataset,
-                         data_change=[SeqChange.Repeat], **kwargs)
+        name = f"repeat({number_of_repeats})"
+        super().__init__(name=name, data=dataset, data_change=[name], **kwargs)
         self.number_of_repeats = number_of_repeats
 
     def get_example(self, idx):
@@ -841,10 +828,8 @@ class SampleDataset(Dataset):
         args = f"{seed}"
         if length is not None:
             args += f",{length}"
-        data_change = [SeqChange.Order, SeqChange.Removal, SeqChange.Repeat] if replace else [
-            SeqChange.Order]
-        super().__init__(name=f"sample{'_r' if replace else ''}({args})", data=dataset,
-                         data_change=data_change, **kwargs)
+        name = f"sample{'_r' if replace else ''}({args})"
+        super().__init__(name=name, data=dataset, data_change=name, **kwargs)
         self._len = length or len(dataset)
 
     def get_example(self, idx):

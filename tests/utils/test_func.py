@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import pytest
-from functools import partial, wraps
+from functools import wraps
 from vidlu.utils.func import (Empty, default_args, params, func_to_class, class_to_func)
 from vidlu.utils.func import FuncTree as ft, IndexableUpdatree as it, StrictObjectUpdatree as ot
 
@@ -42,7 +42,7 @@ class TestHardPartial:
         def foo(*a, **k):
             pass
 
-        a = partial(foo, a=5)
+        a = Partial(foo, a=5)
         ab = Partial(a, b=6)
         assert ab.func is foo
         assert ab.keywords == dict(a=5, b=6)
@@ -52,13 +52,13 @@ class TestHardPartial:
         assert abc.func is foo
 
     def test_frozen_partial(self):
-        from vidlu.utils.func import FrozenPartial as frozen_partial
+        from vidlu.utils.func import FrozenPartial, Partial
 
         def carry(a, coconut=4):
             return a * coconut ** 2
 
-        f1 = frozen_partial(carry, 2)
-        f2 = frozen_partial(carry, a=2)
+        f1 = FrozenPartial(carry, 2)
+        f2 = FrozenPartial(carry, a=2)
         assert f1.func is f2.func
         assert f1.args == (2,)
         assert f2.args == ()
@@ -68,21 +68,21 @@ class TestHardPartial:
         with pytest.raises(Exception):
             f2(a=5)
 
-        f4 = frozen_partial(f2, coconut=6)
+        f4 = FrozenPartial(f2, coconut=6)
         assert f4.func is f2
         assert f4.keywords == dict(coconut=6)
         with pytest.raises(Exception):
             f4(coconut=1)
 
-        f5 = partial(carry, a=7, coconut=8)
-        f6 = frozen_partial(f5)
+        f5 = Partial(carry, a=7, coconut=8)
+        f6 = FrozenPartial(f5)
         assert len(f6.args) == 0
         assert len(f6.keywords) == 0
         assert f6.func == f5
         f6(a=3, coconut=2)
 
-        f5 = frozen_partial(carry, a=7, coconut=8)
-        f6 = partial(f5)
+        f5 = FrozenPartial(carry, a=7, coconut=8)
+        f6 = Partial(f5)
         assert len(f6.args) == 0
         assert len(f6.keywords) == 0
         assert f6.func == f5
