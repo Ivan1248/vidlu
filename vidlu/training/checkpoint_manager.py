@@ -6,25 +6,24 @@ import typing as T
 import logging
 
 import torch
-from typeguard import typechecked
 
 from vidlu.utils.path import create_file_atomic
 from vidlu.utils.func import params
 from vidlu.utils.storage import TorchLoadSave, JsonLoadSave, TextLoadSave
 
 
-class _Smallest(float):  # float inheritance needed storing as JSON
+class _SmallestFloat(float):  # float inheritance needed storing as JSON
     def __new__(cls):
         return float.__new__(cls, "-inf")
 
     def __lt__(self, other):
-        return not isinstance(other, _Smallest)
+        return not isinstance(other, _SmallestFloat)
 
     def __gt__(self, other):
         return False
 
 
-smallest = _Smallest()
+smallest = _SmallestFloat()
 
 
 class Files:
@@ -44,15 +43,17 @@ class Checkpoint:  # TODO
     summary: T.Mapping
     progress_info: T.Mapping
 
-    perf: object = smallest
+    perf: float = smallest
     log: str = ""
 
     def save(self, path):
         separately_saved_state_parts = self.info['separately_saved_state_parts']
         extracted_state_parts = {f"{k}_state": self.state[k] for k in separately_saved_state_parts}
         other_state = {k: v for k, v in self.state.items() if k not in separately_saved_state_parts}
-        stuff = dict(**{**{k: getattr(self, k) for k in self.__annotations__},
-                        'state': other_state}, **extracted_state_parts)
+
+        fields = {k: getattr(self, k) for k in self.__annotations__}
+        stuff = dict(**{**fields, 'state': other_state}, **extracted_state_parts)
+
         try:
             for k, v in stuff.items():
                 name, file_interface = getattr(Files, k, None) or (f"{k}.pth", TorchLoadSave)
@@ -88,82 +89,118 @@ class Checkpoint:  # TODO
 ModeArg = T.Literal['restart', 'resume', 'resume_or_start', 'start']
 
 
-@typechecked
 class CheckpointManager(object):
-    """Checkpoint manager can be used to periodically save objects to disk.
+    """Checkpoint manager can be used to periodically save algorithm states and summaries to disk.
+    
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
 
+    The main methods are `save`, `load_last` and `load_best` which receive or return a state
+    dictionary.
+
     Args:
-        checkpoints_dir (str):
-            Directory path where objects will be saved
-        experiment_name (str):
-            Prefix of the file paths to which objects will be saved.
-        n_last_kept (int, optional):
-            Number of objects that should be kept on disk. Older files will be
-            removed.
+        checkpoints_dir (str): Directory path where objects will be saved
+        experiment_name (str): Prefix of the name of the directory corresponding to a checkpoint.
+        experiment_info (object, optional): Arbitrary fixed data about the experiment that is saved
+            to the disk for all checkpoints.
+        n_recent_kept (int, optional): Maximum number of most recent checkpoints kept on disk. Older
+            checkpoints are removed. Default: 1.
+        n_best_kept (int, optional): Maximum number of best checkpoints kept on disk. Default: 0.
+        start_mode (Literal['restart', 'resume', 'resume_or_start', 'start'], optional): Controls
+            whether an exception should be raised depending on whether checkpoints of the experiment
+            already exist and whether the user will load a checkpoint before saving a new one:
+            - "restart" removes all existing checkpoints on initialization,
+            - "resume" expects that the user will first load an existing checkpoint,
+            - "resume_or_start" expects that the user will first load a checkpoint if it any exist,
+            - "start" expects that there are no existing checkpoints.
+            Default; 'start'.
+        separately_saved_state_parts (Sequence[str], optional): Keys of entries in the state
+            dictionary that are to be saved as separate files in checkpoint directories. This does
+            not affect the external behavior of the `save` and `load_*` methods. Default: `()`.
+        perf_func (Callable[[Mapping], float], optional): A function that receives the second
+            argument of the `save` method and returns a `float` that can be used to compare
+            checkpoints (greater is better). Default: constant "smallest float" function.
+        log_func (Callable[[Mapping], str], optional): A function that receives the second argument
+            of the `save` method and returns a string that should be printed when an expeiment is
+            resumed. Default: `lambda s: ""`.
+        name_suffix_func (Callable[[Mapping], str], optional): A function that receives the second
+            argument of the `save` method and returns a suffix that is appended to the name of the
+            checkpoint directory `lambda s: ""`.
         resume (bool, optional):
-            If True, `load_last` needs to be called in order to restore the last
-            checkpoint and continue. If `load_last` is not called before
-            saving/updating, an exception is raised.
+            If True, `load_last` needs to be called in order to restore the last checkpoint and
+            continue. If `load_last` is not called before saving/updating, an exception is raised.
         reset (bool, optional):
-            If True, existing checkpoints with the same checkpoints_dir and
-            experiment_name will be deleted.
+            If True, existing checkpoints with the same checkpoints_dir and experiment_name will be
+            deleted.
 
     Notes:
-        These names are used to specify filenames for saved objects. Each
-        saved state directory a name with the following format: `{id}_{index}`,
-        where `id` is the argument passed to the constructor, and `index` is the
-        index of the saved object, which is incremented by 1 with every call to
-        `save`. The directory contains the following files: 'state.pth' - the
-        state object passed to `save`, 'checkpoint.info' - CheckpointManager
-        state, and, optionally, 'log.txt' - the log (lines) provided as the
-        second argument to `save`.
+        A checkpoint is saved as a directory under a path with the format:
+            `{checkpoints_dir}/{experiment_name}/{checkpoint_index}{name_suffix}`,
+        where:
+        - `checkpoints_dir` and `experiment_name` are constructor arguments.
+        - `checkpoint_index` starts from 0 and increases each time a checkpoint is saved.
+        - `name_suffix` is an optional suffix that depends on `name_suffix_func` and the `summary`
+        argument of the `save` method.
+        Each checkpoint directory contains files that correspond to `CheckpointManager` fields and
+        extracted state dictionary entries as defined by `separately_saved_state_parts`.
 
     Examples:
         >>> import os
         >>> from vidlu.training.checkpoint_manager import CheckpointManager
         >>> from torch import nn
+        >>> checkpoints_dir = '~/data/experiments/states'
         >>> model = nn.Linear(3, 3)
-        >>> cpman = CheckpointManager('/tmp/states', 'lin33', n_saved=2, overwrite_if_exists=True)
-        >>> cpman.save(model.state_dict(), summary=dict(lines=['baz']))
-        >>> cpman.save(model.state_dict(), summary=dict(lines=['baz', 'bap']))
-        >>> state, logger_state = cpman.load_last()
+        >>> cpman = CheckpointManager(
+        ...     checkpoints_dir = checkpoints_dir,  # directory that contains experiment directories
+        ...     experiment_name='lin33',  # name of experiment directory, which contains checkpoints
+        ...     n_recent_kept=2,  # store only the 2 most recent checkpoint
+        ...     start_mode='resume_or_start',  # resume if any checkpoints exist
+        ...     perf_func=lambda s: s.get('perf', 0),  # extract performance from summary
+        ...     log_func=lambda s: s.get('log', ""),
+        ...     name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.2f}")
+        >>> if cpman.resuming_required:
+        >>>     state, summary = cpman.load_last(map_location='cuda:0')
+        >>>     print(summary['log'])
+        >>> cpman.save(model.state_dict(), summary=dict(perf=0.11, log='Starting', epoch=0))
+        >>> cpman.save(model.state_dict(), summary=dict(perf=0.25, epoch=10, log='Starting\\nBaz'))
+        >>> state, summary = cpman.load_last(map_location='cuda:0')
         >>> model.load_state_dict(state)
-        >>> assert logger_state == dict(lines=['baz', 'bap'])
-        >>> os.listdir('/tmp/states')
-        ['lin33_1', 'lin33_2']
+        >>> assert summary['log'] == 'Starting\\nBaz'
+        >>> os.listdir(f'{checkpoints_dir}/lin33')
+        ['0_0_0.11', '1_10_0.25']
     """
 
-    def __init__(self, checkpoints_dir, experiment_name: str, info=None,
-                 n_last_kept=1, n_best_kept=0, mode: ModeArg = 'start',
-                 separately_saved_state_parts: T.Sequence[str] = (), perf_func=lambda s: smallest,
-                 log_func=lambda s: "", name_suffix_func=lambda s: ""):
+    def __init__(self, checkpoints_dir, experiment_name: str, experiment_info=None,
+                 n_recent_kept=1, n_best_kept=0, start_mode: ModeArg = 'start',
+                 separately_saved_state_parts: T.Sequence[str] = (),
+                 perf_func: T.Callable[[T.Mapping], float] = lambda s: smallest,
+                 log_func: T.Callable[[T.Mapping], str] = lambda s: "",
+                 name_suffix_func=lambda s: ""):
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
 
         self.checkpoints_dir = checkpoints_dir
         self.experiment_dir = Path(checkpoints_dir).expanduser() / experiment_name
-        self.info = info or dict()
-        self.n_recent_kept, self.n_best_kept = n_last_kept, n_best_kept
+        self.info = experiment_info or dict()
+        self.n_recent_kept, self.n_best_kept = n_recent_kept, n_best_kept
         self.separately_saved_state_parts = separately_saved_state_parts
         self.perf_func, self.log_func, self.name_suffix_func = perf_func, log_func, name_suffix_func
 
         self.index = 0
         self.sync()
-        self.resuming_required = mode != "restart" and len(self.saved) > 0
+        self.resuming_required = start_mode != "restart" and len(self.saved) > 0
 
-        if mode == "restart":
+        if start_mode == "restart":
             self.restart()
-        elif mode == "resume":
+        elif start_mode == "resume":
             if not self.resuming_required:
                 raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
                                    + f" {self.experiment_dir}.")
-        elif mode == "start":
+        elif start_mode == "start":
             if self.resuming_required:
                 raise RuntimeError(f"{experiment_name} is already present in {checkpoints_dir}."
                                    + " You can resume or restart.")
-        elif mode != "resume_or_start":
-            raise ValueError(f"Argument {mode=} does not match {ModeArg}.")
+        elif start_mode != "resume_or_start":
+            raise ValueError(f"Argument {start_mode=} does not match type {ModeArg}.")
 
     def restart(self):
         self.remove_old_checkpoints(0, 0)  # does not remove checkpoints when called from __init__
@@ -200,8 +237,8 @@ class CheckpointManager(object):
                         info=dict(info=self.info,
                                   separately_saved_state_parts=self.separately_saved_state_parts),
                         perf=self.perf_func(summary), log=self.log_func(summary))
-        name = f"{self.index}" + (
-            "" if (suff := self.name_suffix_func(summary)) == "" else f"_{suff}")
+        name_suffix = "" if (suff := self.name_suffix_func(summary)) == "" else f"_{suff}"
+        name = f"{self.index}{name_suffix}"
         path = self.experiment_dir / name
         path.mkdir(parents=True, exist_ok=True)
         self._logger.info(f"Saving checkpoint {name} in {self.experiment_dir}.")
