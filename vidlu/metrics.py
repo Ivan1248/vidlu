@@ -1,5 +1,6 @@
 import functools
 from abc import ABCMeta
+import typing as T
 
 import numpy as np
 import torch
@@ -16,13 +17,30 @@ EPS = 1e-8
 # from dlu #########################################################################################
 
 class AccumulatingMetric:
+    """
+    Abstract base class for metrics that can be computed in multiple iterations.
+    """
+
     def reset(self):
+        """Resets the state of the metric.
+        """
         raise NotImplementedError()
 
-    def update(self, iter_result):
+    def update(self, iter_result: T.Mapping[str, T.Any]):
+        """Updates the metric with results from a mini-batch.
+
+        Args:
+            iter_result (Mapping[str, Any]): A dictionary that contains the data necessary to
+                compute the metrics.
+        """
         raise NotImplementedError()
 
-    def compute(self):
+    def compute(self) -> T.Mapping[str, T.Any]:
+        """Computes and returns the final metric values after all updates.
+
+        Returns:
+            Mapping[str, Any]: Mapping of metric names to values.
+        """
         raise NotImplementedError()
 
 

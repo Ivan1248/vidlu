@@ -121,6 +121,8 @@ def define_training_loop_actions(
 
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
+        """Restarts epoch time measurement, prints the estimated remaining time of training /
+        evaluation and other information."""
         sw_epoch.reset().start()
         if sleepiness > 0:
             print(f"Warning: {sleepiness}s of sleep per epoch.")
@@ -136,9 +138,12 @@ def define_training_loop_actions(
 
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
+        """Stores the duration of the epoch, restarts inter-epoch time measurement, and, if the
+        conditions are met, runs evaluation on evaluation datasets and stores a checkpoint."""
         nonlocal epoch_time
         epoch_time = sw_epoch.time
         sw_inter_epoch.reset().start()
+
         if es.epoch not in eval_epochs:
             return
         first = True
@@ -163,6 +168,7 @@ def define_training_loop_actions(
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
+        """Reports metrics if the current iteration if the conditions are met,"""
         report_iters = get_report_iters(max(1, min_train_report_count // trainer.epoch_count),
                                         es.batch_count)
         iter = es.iteration % es.batch_count
@@ -176,6 +182,11 @@ def define_training_loop_actions(
 
     @trainer.evaluation.iter_completed.handler
     def on_eval_iteration_completed(es):
+        """Starts an interactive shell if there is user input.
+
+        If the user sets the variable `sleepiness`, `time.sleep` is alled after every iteration so
+        that the number of seconds in sleep per epoch is `sleepiness`.
+        """
         interact(es, loop=trainer.evaluation)
 
         if sleepiness > 0:
@@ -183,12 +194,14 @@ def define_training_loop_actions(
 
     @trainer.evaluation.epoch_started.handler
     def on_eval_epoch_started(es):
+        """Stores the inter-epoch time and starts evaluation time measurement."""
         nonlocal inter_epoch_time
         inter_epoch_time = sw_inter_epoch.time
         sw_eval.reset().start()
 
     @trainer.evaluation.epoch_completed.handler
     def on_eval_epoch_completed(es):
+        """Stores the duration of evaluation and reports the evaluation metrics."""
         nonlocal eval_time
         eval_time = sw_eval.time
         report_metrics(es, special_format=special_format, is_validation=True)
@@ -246,17 +259,18 @@ def get_experiment_name(training_args):
     return experiment_id
 
 
-def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
+def create_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
     a = training_args
     experiment_id = get_experiment_name(training_args)
     cpman = CheckpointManager(
-        checkpoints_dir, experiment_name=experiment_id, info=training_args,
+        checkpoints_dir, experiment_name=experiment_id, experiment_info=training_args,
         separately_saved_state_parts=("model",), n_best_kept=1,
-        mode=('start' if a.resume is None else
+        start_mode=('start' if a.resume is None else
               'restart' if a.resume == "restart" else
               'resume_or_start' if a.resume == "?" else
               'resume'),
-        perf_func=lambda s: s.get('perf', 0), log_func=lambda s: s.get('log', ""),
+        perf_func=lambda s: s.get('perf', 0),
+        log_func=lambda s: s.get('log', ""),
         name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
     return cpman
 
@@ -311,7 +325,7 @@ class TrainingExperiment:
             print(f"device: {device}")
 
         with indent_print('\nInitializing checkpoint manager...'):
-            cpman = get_checkpoint_manager(a, dirs.saved_states)
+            cpman = create_checkpoint_manager(a, dirs.saved_states)
 
         try:
             with indent_print('\nInitializing data...'):

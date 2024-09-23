@@ -54,7 +54,7 @@ def get_experiment(resume=True, restart=False):
         logger = Logger()
         cpman = CheckpointManager(dirs.saved_states, experiment_name="resnet_cifar_example",
                                   separately_saved_state_parts=("model",), n_best_kept=1,
-                                  mode='restart' if restart else 'resume' if resume else 'new',
+                                  start_mode='restart' if restart else 'resume' if resume else 'new',
                                   perf_func=lambda s: s.get('perf', 0),
                                   log_func=lambda s: s.get('log', ""),
                                   name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
