@@ -38,7 +38,7 @@ def check_no_inf_nan(module, input, output):
 def print_norm(module, input, output):
     """
     Example:
-        >>> for m in module.modules:
+        >>> for m in module.modules():
         >>>      m.register_forward_hook(check_no_inf_nan)
     """
     module_name = try_get_module_name_from_call_stack(module)
