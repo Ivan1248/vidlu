@@ -13,6 +13,13 @@ Welcome to Vidlu's documentation!
 
    vidlu
 
+.. autosummary::
+   :toctree: _autosummary
+   :template: custom-module-template.rst
+   :recursive:
+
+   vidlu.training
+
 .. toctree::
    :maxdepth: 4
    :caption: Contents:
