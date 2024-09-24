@@ -36,6 +36,9 @@ extensions = ['sphinx.ext.napoleon',  # Google-style docstrings
               #'m2r'  # md to rst -- m2r unmaintained, bug
               ]
 
+# Turn on sphinx.ext.autosummary
+autosummary_generate = True
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
