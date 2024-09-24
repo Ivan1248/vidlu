@@ -148,8 +148,6 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
                         stride_after_1x1):
     if not len(kernel_sizes) == len(width_factors):
         raise ValueError(f"{len(kernel_sizes)=} does not match {len(width_factors)=}.")
-    if stride_after_1x1 is None and kernel_sizes[0] == 1:
-        raise ValueError("stride_after_1x1 should be a boolean value, none None.")
     widths = [base_width * wf for wf in width_factors]
     round_widths = list(map(round, widths))  # fractions to ints
     if widths != round_widths:
@@ -159,7 +157,7 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
     conv_defaults = default_args(D.conv_f)
     if not isinstance(stride, Sequence):
         if stride_after_1x1 and kernel_sizes[0] == 1 and stride > 1:
-            # if the first convolution is 1x1, it is not strided
+            # if the first convolution is 1x1, it is not strided -- see the Torchvision Bottleneck documentation
             stride = [1, stride] + [1] * (len(widths) - 2)
         else:
             stride = [stride] + [1] * (len(widths) - 1)
@@ -252,7 +250,7 @@ class PostactBlock(E.Seq):
                  act_f=E.ReLU,
                  conv_f=params(PreactBlock).conv_f,
                  noise_f=None,
-                 stride_after_1x1=None):
+                 stride_after_1x1=True):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
                                                        stride, dilation, stride_after_1x1)
@@ -307,25 +305,6 @@ class StandardRootBlock(E.Seq):
             self.add(act=act_f(),
                      pool=pool_f(3, stride=2, padding='half'))
 
-    # def forward(self, x):
-    #     x_l = torch.load(f"/tmp/debug/x_l{0}.pt")
-    #     interm = torch.load(f"/tmp/debug/interm_outs_u{0}.pt")
-    #
-    #     print("im", x.min(), x.mean(), x.max())
-    #     try:
-    #         print(self.conv.orig.weight.min(), self.conv.orig.weight.max())
-    #     except:
-    #         pass
-    #     x = self.conv(x)
-    #     print("x", x.min(), x.max())
-    #     m = interm['backbone.conv1']
-    #     breakpoint()
-    #     x = self.norm(x)
-    #     x = self.act(x)
-    #     x = self.pool(x)
-    #     # x = super().forward(x)
-    #     return x
-
 
 class ImprovedRootBlock(E.Seq):
     """Standard Inception-v2 root block.
@@ -362,8 +341,9 @@ class AffineCoupling(E.Module):
 
     def forward(self, x1, x2):
         s = self.scale(x1).exp()
-        y = Ladj.stop(x1), x2 * s + self.translation(x1)
-        return Ladj.add(y, (x1, x2), lambda: s.view(s.shape[0], -1).sum(1))
+        y1 = Ladj.stop(x1)
+        y2 = x2 * s + self.translation(x1)
+        return Ladj.add((y1, y2), (x1, x2), lambda: s.view(s.shape[0], -1).sum(1))
 
     def inverse_forward(self, y1, y2):
         if Ladj.has(y1):
@@ -747,53 +727,82 @@ class KresoContext(E.Seq):
                                                dilation=[1, 2]))
 
 
-class KresoLadderModel(E.Module):
+class KresoLadderDecoder(E.Module):
     def __init__(self,
-                 backbone_f,
-                 laterals: T.Sequence[str],
-                 ladder_width: int,
+                 up_width: int,
                  context_f=DenseSPP,
                  up_blend_f=LadderUpsampleBlend,
                  post_activation=False,
                  lateral_preprocessing=lambda x: x):
         super().__init__()
-        self.backbone = backbone_f()
         self.context = context_f()
-        self.ladder = KresoLadder(ladder_width, up_blend_f)  # initialized when called
-        self.laterals = laterals
+        self.ladder = KresoLadder(up_width, up_blend_f)  # initialized when called
         self.post_activation = post_activation
         if post_activation:
             defaults = default_args(default_args(up_blend_f).blend_block_f)
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
         self.lateral_preprocessing = lateral_preprocessing
 
-    def forward(self, x):
-        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
+    def forward(self, context_input, laterals):
         context = self.context(context_input)
         laterals = list(map(self.lateral_preprocessing, laterals))
         ladder_output = self.ladder(context, laterals[::-1])
         return self.act(self.norm(ladder_output)) if self.post_activation else ladder_output
 
 
+class LadderModel(nn.Module):
+    def __init__(self, backbone_f, laterals: T.Sequence[str], decoder_f):
+        self.backbone = backbone_f()
+        self.laterals = laterals
+        self.decoder = decoder_f()
+
+    def forward(self, x):
+        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
+        return self.decoder(context_input, laterals)
+
+
+class KresoLadderModel(KresoLadderDecoder):
+    def __init__(self,
+                 backbone_f,
+                 laterals: T.Sequence[str],
+                 up_width: int,
+                 context_f=DenseSPP,
+                 up_blend_f=LadderUpsampleBlend,
+                 post_activation=False,
+                 lateral_preprocessing=lambda x: x):
+        super().__init__(
+            up_width=up_width, context_f=context_f,
+            up_blend_f=up_blend_f, post_activation=post_activation,
+            lateral_preprocessing=lateral_preprocessing)
+        self.backbone = backbone_f()
+        self.laterals = laterals
+
+    def forward(self, x):
+        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
+        return super().forward(context_input, laterals)
+
+
 class MorsicPyramid(E.Module):
-    def __init__(self, model, stage_count: int, laterals: T.Sequence[str], proj_f=None,
+    def __init__(self, model, stage_count: int, laterals: T.Sequence[str], width,
                  sum_f=E.Sum):
         super().__init__()
         self.model = model
         self.stage_count = stage_count  # number of pyramid stages
         self.laterals = laterals
-        self.projs = nn.ModuleList([nn.ModuleList([proj_f() for _ in laterals])
-                                    for _ in range(self.stage_count)])
+        self.projs = nn.ModuleList(
+            [nn.ModuleList([E.Conv(kernel_size=1, out_channels=width, bias=True)
+                            for _ in range(len(laterals) + 1)])
+             for _ in range(self.stage_count)])
         self.sum = sum_f()
 
     def forward(self, x):
-        stage_outputses = [[None] * (len(self.laterals) + self.stage_count)
+        stage_outputses = [[None] * (len(self.laterals) + self.stage_count - 1)
                            for _ in range(self.stage_count)]
         for i, projs in enumerate(self.projs):
             xi = F.interpolate(x, scale_factor=0.5 ** i, mode='bilinear',
                                align_corners=False) if i != 0 else x
             final, laterals = E.with_intermediate_outputs(self.model, self.laterals)(xi)
-            outputs = [proj(out) for (out, proj) in zip([laterals, *final], projs)]
+            outputs = [proj(out) for (out, proj) in zip([*laterals, final], projs)]
             stage_outputses[i][i:i + len(outputs)] = outputs
         column_sums = [self.sum([xi for xi in col if xi is not None])
                        for col in zip(*stage_outputses)]
@@ -811,7 +820,8 @@ class MorsicPyramidModel(E.Module):
         super().__init__()
         self.backbone = backbone_f()
         self.ladder = KresoLadder(up_width, up_blend_f)  # initialized when called
-        self.pyr = MorsicPyramid(stage_count, laterals=laterals, proj_f=None)
+        self.pyr = MorsicPyramid(self.backbone, stage_count=stage_count, laterals=laterals,
+                                 width=up_width)
         self.post_activation = post_activation
         if post_activation:
             defaults = default_args(default_args(up_blend_f).blend_block_f)

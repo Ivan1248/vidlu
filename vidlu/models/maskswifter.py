@@ -4,14 +4,18 @@ from warnings import warn
 
 import torch
 import torch.nn.functional as F
-from typeguard import check_argument_types
+from typeguard import typechecked
 from torch import nn
 
 import vidlu.modules.components as vmc
 import vidlu.modules as vm
+from vidlu.modules.other.mask2former.transformer_decoder import \
+    MultiScaleMaskedTransformerDecoder
+from vidlu.modules.other.mask2former.set_criterion import SetCriterion
 from vidlu.data.types import ClassMasks2D
 
-from .models import SegmentationModel, resnet_v1_backbone, swiftnet_set_mem_efficiency
+from .models import (SegmentationModel, resnet_v1_backbone, swiftnet_set_mem_efficiency,
+                     SwiftNetBase, swiftnet_ladder_f)
 from .utils import ladder_input_names
 from .initialization import kaiming_resnet
 
@@ -61,8 +65,6 @@ class VidluMultiScaleMaskedTransformerDecoder(vm.Module):
         self.args = self.get_args()
 
     def build(self, x, mask_features):
-        from mask2former.modeling.transformer_decoder.mask2former_transformer_decoder import \
-            MultiScaleMaskedTransformerDecoder
         in_channels = mask_features.shape[1]
         if in_channels != self.args.hidden_dim:
             warn(
@@ -74,87 +76,53 @@ class VidluMultiScaleMaskedTransformerDecoder(vm.Module):
         return self.module(multi_scale_features, mask_features)
 
 
-class MaskSwifter(SegmentationModel):
+maskswifter_transformer_head_f = partial(
+    VidluMultiScaleMaskedTransformerDecoder, mask_classification=True, num_queries=100, nheads=8,
+    dim_feedforward=2048, dec_layers=9, pre_norm=False, enforce_input_project=False)
+
+
+@typechecked
+class MaskSwifter(SwiftNetBase):
     def __init__(self,
                  backbone_f=resnet_v1_backbone,
-                 decoder_width=128,
-                 decoder_f=partial(
-                     vmc.KresoLadderDecoder,
-                     context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
-                                       out_size=128, grid_sizes=(8, 4, 2)),
-                     up_blend_f=partial(vmc.LadderUpsampleBlend, pre_blending='sum'),
-                     post_activation=True,
-                     lateral_preprocessing=lambda x: (
-                             torch.cat(x, dim=1) if isinstance(x, tuple) else x)),
-                 head_f=partial(VidluMultiScaleMaskedTransformerDecoder, mask_classification=True,
-                                num_queries=100, nheads=8, dim_feedforward=2048, dec_layers=9,
-                                pre_norm=False, enforce_input_project=False),
+                 up_width=128,
+                 head_f=maskswifter_transformer_head_f,
                  input_adapter=None,
                  init=kaiming_resnet,
                  laterals=ladder_input_names,
-                 # (f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
+                 # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  stage_count=None,
+                 ladder_f=swiftnet_ladder_f,
                  mem_efficiency=1):
-        check_argument_types()
-        super().__init__(
-            backbone_f=backbone_f,
-            head_f=partial(head_f, hidden_dim=decoder_width, mask_dim=decoder_width),
-            init=init,
-            input_adapter=input_adapter)
-        self.decoder = decoder_f(up_width=decoder_width)
-        self.laterals = laterals
-        self.laterals_with_suffix = laterals
-        self.lateral_suffix = lateral_suffix
-        self.mem_efficiency = mem_efficiency
-        self.stage_count = stage_count
-        self.outputs = None
-        self.output_shape = None
-
-    def build(self, x):
-        if callable(self.laterals):
-            vm.call_if_not_built(self.backbone, x)
-            self.laterals = self.laterals(self.backbone)
-        if self.stage_count is not None:
-            self.laterals = self.laterals[-self.stage_count:]
-            if self.stage_count != len(self.laterals):
-                warn(f"{self.stage_count=} is different from {len(self.laterals)}.")
-        self.laterals_with_suffix = [f"{p}.{self.lateral_suffix}" for p in
-                                     self.laterals] if self.lateral_suffix else self.laterals
-        super().build(x)
+        super().__init__(backbone_f=backbone_f,
+                         head_f=partial(head_f, hidden_dim=up_width, mask_dim=up_width), init=init,
+                         input_adapter=input_adapter, laterals=laterals,
+                         lateral_suffix=lateral_suffix, stage_count=stage_count, ladder_f=ladder_f,
+                         mem_efficiency=mem_efficiency)
 
     def post_build(self, *args, **kwargs):
-        """Sets up in-place operations and gradient checkpointing for
-        efficiency."""
-        super().post_build()
         swiftnet_set_mem_efficiency(self, self.mem_efficiency)
         return True
 
     def forward(self, x):
-        backbone_wio = vm.with_intermediate_outputs(self.backbone, self.laterals_with_suffix)
-        context_input, laterals = backbone_wio(x)
+        bulk_wio = vm.with_intermediate_outputs(
+            self.bulk, [f'ladder.up_blends.{i}' for i in range(len(self.laterals))], inputs=True)
 
-        dec_wio = vm.with_intermediate_outputs(
-            self.decoder,
-            ['context'] + [f'ladder.up_blends.{i}' for i in range(len(self.laterals))])
-        # mask_features, _, multi_scale_features = self.pixel_decoder.forward_features(backbone_features)
-        mask_features, (*multi_scale_features, _) = dec_wio(context_input, laterals)
+        final_features, multi_scale_features1 = bulk_wio(x)
+        multi_scale_features, skips = list(zip(*multi_scale_features1))
 
-        outputs = self.head(multi_scale_features, mask_features)
+        outputs = self.head(multi_scale_features, final_features)
         aux_outputs = outputs.pop('aux_outputs')
         return outputs, aux_outputs
 
-    def forward_sem_seg(self, x):
+    def forward_sem_seg(self, x, shape=None):
         output, _ = self(x)
         mask_cls_results = output["pred_logits"]
         mask_pred_results = output["pred_masks"]
         # upsample masks
-        mask_pred_results = F.interpolate(
-            mask_pred_results,
-            size=x.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        )
+        mask_pred_results = F.interpolate(mask_pred_results, size=shape or x.shape[-2:],
+                                          mode="bilinear", align_corners=False)
 
         del output
         return self.semantic_inference(mask_cls_results, mask_pred_results)
@@ -188,11 +156,10 @@ class MaskFormerOutput(T.TypedDict):
 
 
 class Mask2FormerSetCriterion(nn.Module):
-    def __init__(self, num_classes, matcher, weight_dict, eos_coef, losses,
+    def __init__(self, num_classes, matcher, eos_coef, losses,
                  num_points, oversample_ratio, importance_sample_ratio):
         super().__init__()
-        from mask2former.modeling.criterion import SetCriterion
-        self.module = SetCriterion(num_classes, matcher, weight_dict, eos_coef, losses,
+        self.module = SetCriterion(num_classes, matcher, eos_coef, losses,
                                    num_points, oversample_ratio, importance_sample_ratio)
 
     def forward(self, output: MaskFormerOutput, aux_outputs: T.List[MaskFormerOutput],
