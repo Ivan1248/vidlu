@@ -75,8 +75,8 @@ def to_typed_args(**kwargs):
 
 
 class PertModel(E.Module):
-    domain: T.Optional[T.Union[T.Tuple[type], type]] = dt.Domain
-    supported: T.Optional[T.Union[T.Tuple[type], type]] = dt.Domain
+    domain: T.Optional[T.Union[T.Tuple[type], type]] = dt.DataModality
+    supported: T.Optional[T.Union[T.Tuple[type], type]] = dt.DataModality
     param_defaults = dict()
 
     def __init__(self, domain=None):
@@ -107,7 +107,7 @@ class PertModel(E.Module):
 
         if any(type(x) is torch.Tensor for x in inputs_tuple):
             raise TypeError(
-                f"torch.Tensor inputs should be instances of {dt.Domain.__qualname__}.")
+                f"torch.Tensor inputs should be instances of {dt.DataModality.__qualname__}.")
         for x in inputs_tuple:
             if isinstance(x, self.domain) and not isinstance(x, self.supported):
                 raise NotImplementedError(
