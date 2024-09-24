@@ -6,6 +6,12 @@
 Welcome to Vidlu's documentation!
 =================================
 
+.. automodule:: vidlu
+   :imported-members:
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: vidlu.data
     :members:
 
