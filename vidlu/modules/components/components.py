@@ -50,6 +50,28 @@ class GaussianFilter2D(E.Module):
         return x
 
 
+class SquareFilter(E.Module):
+    def __init__(self, ksize=None, padding_mode='reflect'):
+        if isinstance(ksize, int):
+            ksize = (ksize, ksize)
+        super().__init__()
+        self.padding = [ksize // 2] * 4
+        self.padding_mode = padding_mode
+
+        with torch.no_grad():
+            kernel = torch.ones(ksize)
+            self.register_buffer('kernel', kernel.div_(torch.sum(kernel)))  # normalize
+            self.kernel.requires_grad_(False)
+
+    def forward(self, x):
+        ker1 = self.kernel.expand(x.shape[1], 1, 1, *self.kernel.shape)
+        ker2 = ker1.view(x.shape[1], 1, *self.kernel.shape, 1)
+        x = F.pad(x, self.padding, mode=self.padding_mode)
+        for ker in [ker1, ker2]:
+            x = F.conv2d(x, weight=ker, groups=x.shape[1], padding=0)
+        return x
+
+
 # Activations ######################################################################################
 
 
