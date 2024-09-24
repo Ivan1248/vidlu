@@ -16,8 +16,6 @@ import multiprocessing
 import datetime as dt
 from pathlib import Path
 import shutil
-from enum import Enum
-from functools import cached_property
 import dataclasses as dc
 
 import numpy as np
@@ -195,8 +193,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     def get_example(self, idx):  # This can be overridden
         return self.data[idx]
 
-    def example_size(self, sample_count):
-        return pickle_sizeof([r for r in self.permute()[:sample_count]]) // sample_count
+    def example_size(self, sample_count, size_func=pickle_sizeof):
+        return size_func([r for r in self.permute()[:sample_count]]) // sample_count
 
     def cache(self, max_cache_size=np.inf, directory=None, chunk_size=100, **kwargs):
         """Caches the dataset in RAM (partially or completely)."""
