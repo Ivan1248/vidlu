@@ -12,7 +12,7 @@ class TestDataLoaders:
         batch_size = 3
         for ns in [[9, 5], [7, 11, 13]]:
             primary_index_to_n = {'shortest': min(ns), 'longest': max(ns), **dict(enumerate(ns))}
-            dss = np.array([list(range(n)) for n in ns])
+            dss = [list(range(n)) for n in ns]
             loader_f = partial(zip_data_loader, num_workers=0, batch_size=batch_size,
                                collate_fn=lambda b: b)
             for primary_index, n in primary_index_to_n.items():

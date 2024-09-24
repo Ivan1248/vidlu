@@ -8,7 +8,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from numpy import s_
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
@@ -75,8 +75,8 @@ def to_typed_args(**kwargs):
 
 
 class PertModel(E.Module):
-    domain: T.Optional[T.Union[T.Tuple[type], type]] = dt.Domain
-    supported: T.Optional[T.Union[T.Tuple[type], type]] = dt.Domain
+    domain: T.Optional[T.Union[T.Tuple[type], type]] = dt.DataModality
+    supported: T.Optional[T.Union[T.Tuple[type], type]] = dt.DataModality
     param_defaults = dict()
 
     def __init__(self, domain=None):
@@ -107,7 +107,7 @@ class PertModel(E.Module):
 
         if any(type(x) is torch.Tensor for x in inputs_tuple):
             raise TypeError(
-                f"torch.Tensor inputs should be instances of {dt.Domain.__qualname__}.")
+                f"torch.Tensor inputs should be instances of {dt.DataModality.__qualname__}.")
         for x in inputs_tuple:
             if isinstance(x, self.domain) and not isinstance(x, self.supported):
                 raise NotImplementedError(
@@ -396,9 +396,9 @@ class Contrast(Space2dEquivariantPertModel):
     """
     param_defaults = dict(factor=dict(value=1., bounds=[0, float('inf')]))
 
+    @typechecked
     def __init__(self, equivariant_dims=(-2, -1),
                  center: T.Union[float, T.Callable, T.Literal['mean']] = 0.5):
-        check_argument_types()
         super().__init__(equivariant_dims)
         self.center = center
 
@@ -764,11 +764,11 @@ def cutmix_roll_transform(x, mask):
     return x_p
 
 
+@typechecked
 class CutMix(PertModel):
     domain = dt.ArraySpatial2D
 
     def __init__(self, mask_gen, combination: T.Literal['pairs', 'roll'] = 'pairs'):
-        check_argument_types()
         super().__init__()
         self.mask_gen = mask_gen
         self.combination = combination

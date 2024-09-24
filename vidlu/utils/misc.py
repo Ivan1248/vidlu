@@ -31,12 +31,17 @@ def slice_len(s, sequence_length):
 
 # Deep attribute access ############################################################################
 
-def deep_getattr(namespace, path: str):
-    names = path.split('.')
-    obj = namespace[names[0]] if isinstance(namespace, T.Mapping) else getattr(namespace, names[0])
-    for name in names[1:]:
-        obj = getattr(obj, name)
-    return obj
+def deep_getattr(root_obj, path: T.Union[T.List[str], str]):
+    """Retrieves a descendant object of `root_obj` that corresponds to `path`.
+    Args:
+        root_obj (object): an object.
+        path (Tensor): path to the descendant object of `root_obj`.
+    """
+    if isinstance(path, str):
+        path = [] if path == '' else path.split('.')
+    for name in path:
+        root_obj = getattr(root_obj, name)
+    return root_obj
 
 
 # Argument broadcasting ############################################################################
@@ -170,15 +175,16 @@ def query_user(question, default=None, timeout=np.inf, options=None):
 
     options_str = "/".join(f"{{{c}}}" if c == default else c for c in options)
     while True:
-        sys.stdout.write(f'{question} [{options_str}]: ')
+        sys.stdout.write(f'{question} ' + (
+            "" if timeout is None else f'(timeout {timeout}s)') + f' [{options_str}]: ')
         sys.stdout.flush()
         sw = Stopwatch().start()
         inp = no_input = id(sw)
         while sw.time < timeout:
-            time.sleep(0.1)
             if (inp := try_input(default=no_input)) is not no_input:
                 print()
                 break
+            time.sleep(0.1)
         if inp in [no_input, ""]:
             return options[default]
         elif inp in options:
@@ -243,6 +249,16 @@ def download(url, output_path, md5=None):
         urllib.request.urlretrieve(url, filename=output_path, reporthook=t.update_to)
 
 
+def download_git_repo(url, output_path, branch=None):
+    import git  # gitpython
+
+    def progress(op_code, cur_count, max_count=None, message=''):
+        if message:
+            print(message)
+
+    return git.Repo.clone_from(url, output_path, branch=branch, progress=progress)
+
+
 # Mappings #########################################################################################
 
 def fuse(*dicts, overriding=None, ignore_if_equal=True, factory=None):
@@ -281,7 +297,7 @@ class Stopwatch:
     """A stopwatch that can be used as a context manager.
 
     Example:
-        with Stopwatch as sw:
+        with Stopwatch() as sw:
             sleep(1)
             assert sw.running and sw.time >= 1.
         assert not sw.running and sw.time >= 1.
@@ -296,7 +312,7 @@ class Stopwatch:
         sw.reset()
         assert not sw.running and sw.time == sw.start_time == 0
     """
-    __slots__ = '_time_func', 'start_time', '_time', 'running'
+    __slots__ = '_time_func', 'start_time', '_prev_time', 'running'
 
     def __init__(self, time_func=time.time):
         self._time_func = time_func
@@ -309,30 +325,39 @@ class Stopwatch:
         self.stop()
 
     def __str__(self):
-        return f"Stopwatch(time={self.time})"
+        return f"Stopwatch(time={self.time}, running={self.running})"
 
     @property
     def time(self):
-        return self._time + self._time_func() - self.start_time if self.running else self._time
+        if self.running:
+            return self._prev_time + self._time_func() - self.start_time
+        else:
+            return self._prev_time
 
     def reset(self):
-        self._time = 0.
+        """Stops and resets the measurement (`running=False` and `time=0`)."""
+        self._prev_time = 0.
         self.start_time = None
         self.running = False
         return self
 
     def start(self):
+        """Starts, or resumes, the measurment."""
         if self.running:
-            self.reset()
-        self.start_time = self._time_func()
-        self.running = True
+            warnings.warn("Stopwatch already running.")
+        else:
+            self.start_time = self._time_func()
+            self.running = True
         return self
 
     def stop(self):
+        """Stops, or pauses, the measurement until `start` is called."""
         if self.running:
-            self._time = self.time
+            self._prev_time = self.time
             self.running = False
-        return self._time
+        else:
+            warnings.warn("Stopwatch is already not running.")
+        return self._prev_time
 
 
 # Shared arrays ####################################################################################

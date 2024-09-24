@@ -1,5 +1,6 @@
 import functools
 from abc import ABCMeta
+import typing as T
 
 import numpy as np
 import torch
@@ -7,6 +8,8 @@ from functools import wraps
 
 from vidlu.ops import one_hot
 from vidlu.utils.num import KleinSum
+from vidlu.torch_utils import retry_if_cuda_oom
+
 
 EPS = 1e-8
 
@@ -14,13 +17,30 @@ EPS = 1e-8
 # from dlu #########################################################################################
 
 class AccumulatingMetric:
+    """
+    Abstract base class for metrics that can be computed in multiple iterations.
+    """
+
     def reset(self):
+        """Resets the state of the metric.
+        """
         raise NotImplementedError()
 
-    def update(self, iter_result):
+    def update(self, iter_result: T.Mapping[str, T.Any]):
+        """Updates the metric with results from a mini-batch.
+
+        Args:
+            iter_result (Mapping[str, Any]): A dictionary that contains the data necessary to
+                compute the metrics.
+        """
         raise NotImplementedError()
 
-    def compute(self):
+    def compute(self) -> T.Mapping[str, T.Any]:
+        """Computes and returns the final metric values after all updates.
+
+        Returns:
+            Mapping[str, Any]: Mapping of metric names to values.
+        """
         raise NotImplementedError()
 
 
@@ -100,10 +120,7 @@ def all_soft_multiclass_confusion_matrix(true: torch.Tensor, pred: torch.Tensor,
     """
     if dtype is not None:
         true, pred = true.to(dtype), pred.to(dtype)
-    # return true.new_ones((true.shape[-1], true.shape[-1]))
     return torch.einsum("bni,bnj->bij" if batch else "ni,nj->ij", true, pred)
-    return torch.bmm(true.permute(1, 0).unsqueeze(0).to(dtype=torch.float16),
-                     pred.unsqueeze(0).to(dtype=torch.float16)).squeeze(0)
     # return torch.einsum("ni,nj->ij", true, pred)
 
 
@@ -189,10 +206,14 @@ def mIoU(cm, eps=1e-8):
 class ClassificationMetrics(AccumulatingMetric):
     def __init__(self, class_count, get_target=lambda r: r.target,
                  get_hard_prediction=lambda r: r.out.argmax(1),
-                 metrics=('A', 'mP', 'mR', 'mIoU'), device=None):
+                 metrics=('A', 'mP', 'mR', 'mIoU'), device=None, cm=None):
         self.class_count = class_count
-        self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False,
-                              device=device)
+        if cm is not None:
+            assert list(cm.shape) == [class_count] * 2
+            self.cm = cm
+        else:
+            self.cm = torch.zeros([class_count] * 2, dtype=torch.int64, requires_grad=False,
+                                  device=device)
         self.get_target = get_target
         self.get_hard_prediction = get_hard_prediction
         self.metrics = metrics
@@ -205,7 +226,7 @@ class ClassificationMetrics(AccumulatingMetric):
     def update(self, iter_result):
         true = self.get_target(iter_result).flatten()
         pred = self.get_hard_prediction(iter_result).flatten()
-        cm = multiclass_confusion_matrix(true, pred, self.class_count)
+        cm = retry_if_cuda_oom(multiclass_confusion_matrix)(true, pred, self.class_count)
         if self.cm.device != cm.device:
             self.cm = self.cm.to(cm.device)
         self.cm += cm
@@ -217,6 +238,54 @@ class ClassificationMetrics(AccumulatingMetric):
 
     def __repr__(self):
         return f"{type(self).__name__}(class_count={self.class_count}, metrics={self.metrics})"
+
+
+class ThresholdlessBinaryClassificationMetrics(AccumulatingMetric):
+    def __init__(self, get_target=lambda r: r.target,
+                 get_prediction=lambda r: r,
+                 metrics=('AuROC', 'AuPR', 'FPR95')):
+        self.reset()
+        self.get_target = get_target
+        self.get_prediction = get_prediction
+        self.metrics = metrics
+
+    @torch.no_grad()
+    def reset(self):
+        self.truths = []
+        self.predictions = []
+
+    @torch.no_grad()
+    def update(self, iter_result):
+        true = self.get_target(iter_result)
+        non_ignored = true != -1
+        true = true[non_ignored]
+        pred = self.get_prediction(iter_result)[non_ignored]
+        self.truths.extend(true.cpu().numpy().tolist())
+        self.predictions.extend(pred.cpu().numpy().tolist())
+
+    @torch.no_grad()
+    def compute(self):
+        from sklearn.metrics import average_precision_score, roc_curve, auc
+        from tqdm import tqdm
+        def get_auroc_fpr95(true, pred):
+            fprs, tprs, thresholds = roc_curve(true, pred)
+            roc_auc = auc(fprs, tprs)
+            fpr95 = 0
+            for i, tpr in enumerate(tqdm(tprs, desc="TPR@FPR=0.95")):
+                if tpr >= 0.95:
+                    fpr95 = fprs[i]
+                    break
+            return roc_auc, fpr95
+
+        truths = np.array(self.truths)
+        predictions = np.array(self.predictions)
+        AuPR = average_precision_score(truths, predictions)
+        AuROC, FPR95 = get_auroc_fpr95(truths, predictions)
+        locals_ = locals()
+        return {k: locals_[k] for k in self.metrics}
+
+    def __repr__(self):
+        return f"{type(self).__name__}(metrics={self.metrics})"
 
 
 class _MeanMetric(AccumulatingMetric, metaclass=ABCMeta):
@@ -284,6 +353,33 @@ class MinMetric(_ExtremumMetric):
         super().__init__(name, min, extract_func=extract_func)
 
 
+class StatMetric(AccumulatingMetric):
+    def __init__(self, name, stat_func, extract_func=None):
+        self.name = name
+        self.stat_func = stat_func
+        self.extract_func = extract_func or (lambda x: x[name])
+        self.reset()
+
+    def reset(self):
+        self._ext = []
+
+    @torch.no_grad()
+    def update(self, iter_result):
+        self._ext.append(self.extract_func(iter_result))
+
+    @torch.no_grad()
+    def compute(self):
+        return {self.name: self.stat_func(self._ext)}
+
+    def __repr__(self):
+        return f"{type(self).__name__}(name={self.name})"
+
+
+class MedianMetric(StatMetric):
+    def __init__(self, name, extract_func=None):
+        super().__init__(name, lambda a: np.median(a), extract_func=extract_func)
+
+
 class _MultiMetric(AccumulatingMetric):
     def __init__(self, filter, metric_f):
         self.filter = filter
@@ -329,6 +425,11 @@ class MaxMultiMetric(_MultiMetric):
 class MinMultiMetric(_MultiMetric):
     def __init__(self, filter):
         super().__init__(filter=filter, metric_f=MinMetric)
+
+
+class MedianMultiMetric(_MultiMetric):
+    def __init__(self, filter):
+        super().__init__(filter=filter, metric_f=MedianMetric)
 
 
 class SoftClassificationMetrics(AccumulatingMetric):

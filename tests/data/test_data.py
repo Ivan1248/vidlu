@@ -147,9 +147,9 @@ class TestDataset:
 
             if i == 0:  # in the second run, the info is cached in the filesystem
                 assert len(call_counts) == 0  # unless the debugger has already called ds.info
-                _ = ds.info
+                _ = ds.info['sum']
                 assert all(x == 1 for x in call_counts.values()) and len(call_counts) > 0
-                _ = ds.info
+                _ = ds.info['sum']
                 assert all(x == 1 for x in call_counts.values())
             else:
                 _ = ds.info

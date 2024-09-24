@@ -13,6 +13,14 @@ from vidlu.experiments import TrainingExperiment
 import numpy as np
 
 
+def untag(x):
+    """Changes the type of an input from a vidlu.data.Domain subtype to torch.Tensor.
+
+    The original object is unchanged.
+    """
+    return x.as_subclass(torch.Tensor)
+
+
 def _perturb(attack, model, x, y, out):
     loss_mask = torch.ones_like(y[:, ...])
     pmodel = attack(model, x, y, loss_mask=loss_mask)
@@ -38,8 +46,9 @@ def generate_inputs(e: TrainingExperiment, n=8, dir="/tmp/semisup"):
 
     examples = []
     for xy in tqdm(dl):
-        x, y = trainer.prepare_batch(xy)
-        out = model(x)
+        x, y, *_ = trainer.prepare_batch(xy)
+        x, y = untag(x), untag(y)
+        out = model(untag(x))
         x_p, y_p, out_p, out_po = _perturb(attack=attack, model=model, x=x, y=y, out=out.argmax(1))
         examples.append(dict(x=x, y=y, x_p=x_p, y_p=y_p, out_po=out_po))
 
@@ -47,12 +56,10 @@ def generate_inputs(e: TrainingExperiment, n=8, dir="/tmp/semisup"):
     return examples
 
 
-def generate_results(e: TrainingExperiment, dir="/tmp/semisup", suffix=""):
+def _generate_results(model, examples, dir="/tmp/semisup", suffix=""):
     if suffix != "":
         suffix = f"_{suffix}"
     dir = Path(dir)
-    model = e.model
-    examples = torch.load(dir / 'input_examples')
     new = ["out", "out_p"]
     results = [dict(**item, out=model(item['x']).argmax(1), out_p=model(item['x_p']).argmax(1))
                for item in examples]
@@ -79,11 +86,27 @@ def generate_results(e: TrainingExperiment, dir="/tmp/semisup", suffix=""):
     return results
 
 
-def latex_grid(n, dir):
+def generate_results(e: TrainingExperiment, dir="/tmp/semisup", suffix=""):
+    dir = Path(dir)
+    model = e.model
+    examples = torch.load(dir / 'input_examples')
+    return _generate_results(model, examples, dir=dir, suffix=suffix)
+
+
+def backenumerate(items):
+    n = len(items)
+    for i, x in enumerate(items):
+        yield i - n, x
+
+
+def print_latex_grid(n, dir):
     path = Path(dir)
+    print(r"\begin{tabular}{@{}c@{\;}c@{\;}c@{\;}c@{}}")
+    print(r"input & ground truth & simple-PhTPS & supervised \\")
     for i in range(n):
-        for names in [['x', 'y', 'out', 'out_sup'], ['x_p', 'y_p', 'out_p', 'out_p_sup']]:
-            for name in names:
+        for row, names in backenumerate([['x', 'y', 'out', 'out_sup'],
+                                         ['x_p', 'y_p', 'out_p', 'out_p_sup']]):
+            for col, name in backenumerate(names):
                 print(f"\includegraphics[width=\imwidth]{{{path / f'{i:04}_{name}.png'}}}",
-                      end='\,')
-            print(r"\\")
+                      end='&\n' if col != -1 else '\\\\\n' if (i, row) != (n - 1, -1) else '\n')
+    print("\end{tabular}")

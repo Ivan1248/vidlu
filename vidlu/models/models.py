@@ -4,9 +4,10 @@ from fractions import Fraction as Frac
 import typing as T
 from warnings import warn
 import logging
+import sys
 
 import torch
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 import vidlu.modules as M
 import vidlu.modules as vm
@@ -54,7 +55,9 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
             and not len(inters := set(backbone_f.keywords).intersection(kwargs)) == 0:
         raise RuntimeError(f"Arguments {inters} should be given directly to the factory instead of "
                            f"being bound to backbone_f.")
-    return backbone_f(**kwargs)
+    module = backbone_f(**kwargs)
+    module.depth = depth
+    return module
 
 
 resnet_v2_backbone = partial(resnet_v1_backbone,
@@ -168,6 +171,22 @@ class Model(M.Module):
             self._init(self)
 
 
+class DummyModel(Model):
+    shape_to_output = dict()
+
+    def __init__(self, model_f, *args, **kwargs):
+        super().__init__()
+        self.model = model_f(*args, **kwargs)
+
+    def forward(self, x):
+        if (result := self.shape_to_output.get(x.shape, None)) is None:
+            with torch.no_grad():
+                result = self.model(x)
+                result = result[:1].expand_as(result)
+                self.shape_to_output[x.shape] = result
+        return result.to(x.device).detach().requires_grad_()
+
+
 class SeqModel(M.Seq):
     def __init__(self, seq, init, input_adapter=None):
         inpad = {} if input_adapter is None else dict(input_adapter=input_adapter)
@@ -193,7 +212,8 @@ class DiscriminativeModel(SeqModel):
 
 
 class ClassificationModel(DiscriminativeModel):
-    pass
+    __init__ = partialmethod(DiscriminativeModel.__init__,
+                             head_f=vmc.ChannelAveragingClassificationHead)
 
 
 class LogisticRegression(ClassificationModel):
@@ -203,6 +223,11 @@ class LogisticRegression(ClassificationModel):
 
 
 class SegmentationModel(DiscriminativeModel):
+    def __init__(self, backbone_f, head_f, init, input_adapter=None, size_divisibility=None):
+        super().__init__(backbone_f=backbone_f, head_f=head_f, init=init,
+                         input_adapter=input_adapter)
+        self.size_divisibility = size_divisibility
+
     def forward(self, x, shape=None):
         inject_shape = lambda m, h: (h[0], x.shape[-2:] if shape is None else shape)
         with self.head.register_forward_pre_hook(inject_shape):
@@ -212,7 +237,8 @@ class SegmentationModel(DiscriminativeModel):
 class ResNetV1(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=partial(resnet_v1_backbone, base_width=64),
-                             init=initialization.kaiming_resnet)
+                             init=initialization.kaiming_resnet,
+                             head_f=vmc.ChannelAveragingClassificationHead)
 
 
 class SegResNetV1(SegmentationModel):
@@ -258,32 +284,44 @@ class IRevNet(ClassificationModel):
 class MNISTNet(ClassificationModel):
     __init__ = partialmethod(ClassificationModel.__init__,
                              backbone_f=mnistnet.MNISTNetBackbone,
-                             init=initialization.kaiming_mnistnet)
+                             init=initialization.kaiming_mnistnet,
+                             head_f=vmc.heads.ClassificationHead1D)
 
 
+swiftnet_ladder_f = partial(
+    vmc.KresoLadderModel,
+    context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42, out_size=128,
+                      grid_sizes=(8, 4, 2)),
+    lateral_preprocessing=lambda x: (torch.cat(x, dim=1) if isinstance(x, tuple) else x))
+swiftnet_head_f = partial(vmc.heads.SegmentationHead, kernel_size=1)
+
+
+@typechecked
 class SwiftNetBase(SegmentationModel):
     def __init__(self,
                  backbone_f=resnet_v1_backbone,
-                 ladder_width=128,
-                 head_f=vmc.heads.SegmentationHead,
+                 up_width=128,
+                 head_f=swiftnet_head_f,
                  input_adapter=None,
                  init=initialization.kaiming_resnet,
                  laterals=ladder_input_names,
                  # list(f"bulk.unit{i}_{j}" for i, j in zip(range(3), [1] * 3)),
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  stage_count=None,
+                 ladder_f=swiftnet_ladder_f,
                  mem_efficiency=1):
-        check_argument_types()
-        super().__init__(
-            backbone_f=backbone_f,
-            head_f=partial(head_f, kernel_size=1),
-            init=init,
-            input_adapter=input_adapter)
+        super().__init__(backbone_f=backbone_f, head_f=head_f, init=init,
+                         input_adapter=input_adapter)
         self.laterals = laterals
         self.lateral_suffix = lateral_suffix
         self.mem_efficiency = mem_efficiency
-        self.ladder_width = ladder_width
+        self.up_width = up_width
         self.stage_count = stage_count
+        self.ladder_f = ladder_f
+
+    @property
+    def bulk(self):
+        return self.backbone
 
     def build(self, x):
         if callable(self.laterals):
@@ -294,38 +332,43 @@ class SwiftNetBase(SegmentationModel):
             if self.stage_count != len(self.laterals):
                 warn(f"{self.stage_count=} is different from {len(self.laterals)=}.")
 
-        backbone = self.backbone
-        self.backbone = vmc.KresoLadderModel(
+        backbone = self.backbone  # self.backbone will be the decoder with the backbone (upsampling)
+        self.backbone = self.ladder_f(
             backbone_f=lambda: backbone,
             laterals=[f"{p}.{self.lateral_suffix}" if self.lateral_suffix else
                       p for p in self.laterals],
-            ladder_width=self.ladder_width,
-            context_f=partial(vmc.DenseSPP, bottleneck_size=128, level_size=42,
-                              out_size=128, grid_sizes=(8, 4, 2)),
+            up_width=self.up_width,
             up_blend_f=partial(vmc.LadderUpsampleBlend, pre_blending='sum'),
-            post_activation=True,
-            lateral_preprocessing=lambda x: (torch.cat(x, dim=1) if isinstance(x, tuple) else x))
+            post_activation=True)
         super().build(x)
+
+
+def swiftnet_set_mem_efficiency(model, mem_efficiency):
+    set_all_inplace(model, mem_efficiency >= 1)
+    if model.lateral_suffix == 'sum':
+        for lb in model.laterals:
+            vm.get_submodule(model.backbone.backbone, f"{lb}.act").inplace = False
+
+    if mem_efficiency >= 3:  # 6022MiB 5.83/s
+        for res_unit in model.backbone.backbone.bulk:
+            res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))
+    elif mem_efficiency >= 2:  # 6260MiB, 5.84/s
+        for res_unit in model.backbone.backbone.bulk:
+            res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))
 
 
 class SwiftNet(SwiftNetBase):
     def post_build(self, *args, **kwargs):
         """Sets up in-place operations and gradient checkpointing for
         efficiency."""
-        super().post_build()
-
-        set_all_inplace(self, self.mem_efficiency >= 1)
-        if self.lateral_suffix == 'sum':
-            for lb in self.laterals:
-                vm.get_submodule(self.backbone.backbone, f"{lb}.act").inplace = False
-
-        if self.mem_efficiency >= 3:  # 6022MiB 5.83/s
-            for res_unit in self.backbone.backbone.bulk:
-                res_unit.fork.block.set_checkpoints(('conv0', 'norm1'))
-        elif self.mem_efficiency >= 2:  # 6260MiB, 5.84/s
-            for res_unit in self.backbone.backbone.bulk:
-                res_unit.fork.block.set_checkpoints(('conv0', 'act0'), ('conv1', 'norm1'))
+        swiftnet_set_mem_efficiency(self, self.mem_efficiency)
         return True
+
+
+class SwiftNetPyr(SwiftNetBase):
+    __init__ = partialmethod(SwiftNetBase.__init__,
+                             ladder_f=partial(vmc.MorsicPyramidModel, stage_count=3))
+    post_build = SwiftNet.post_build
 
 
 class SwiftNetIRevNet(SwiftNetBase):
@@ -353,7 +396,7 @@ class SwiftNetConvNeXt(SwiftNetBase):
 
 class LadderDensenet(DiscriminativeModel):
     def __init__(self, backbone_f=partial(densenet_backbone), laterals=None,
-                 ladder_width=128, head_f=Empty, input_adapter=None):
+                 up_width=128, head_f=Empty, input_adapter=None):
         """
 
         laterals contains all but the last block?
@@ -361,7 +404,7 @@ class LadderDensenet(DiscriminativeModel):
         Args:
             backbone_f:
             laterals:
-            ladder_width:
+            up_width:
         """
         if laterals is None:
             laterals = tuple(f"bulk.db{i}.unit{j}.sum" for i, j in zip(range(3), [1] * 3))
@@ -369,7 +412,7 @@ class LadderDensenet(DiscriminativeModel):
         super().__init__(backbone_f=partial(vmc.KresoLadderModel,
                                             backbone_f=backbone_f,
                                             laterals=laterals,
-                                            ladder_width=ladder_width),
+                                            up_width=up_width),
                          head_f=head_f,
                          init=initialization.kaiming_resnet,
                          input_adapter=input_adapter)

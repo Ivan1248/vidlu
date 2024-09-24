@@ -1,21 +1,24 @@
 import os
 import warnings
 from argparse import Namespace
-from vidlu.utils.func import partial
 from dataclasses import dataclass
 from pathlib import Path
 import typing as T
 import numpy as np
 import time
+import copy
 
 import torch
 import torch.nn as nn
+from torch.nn.parallel import DistributedDataParallel
+
 # from torch.utils.tensorboard import SummaryWriter
 
 from vidlu import factories
 import vidlu.modules as vm
 from vidlu.training import Trainer, CheckpointManager
 from vidlu.utils.misc import indent_print
+import vidlu.utils.distributed as vud
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils.misc import try_input, Stopwatch, query_user
@@ -37,6 +40,7 @@ class TrainingExperimentFactoryArgs:
     verbosity: int
     deterministic: bool
     data_factory_version: int
+    distributed: T.Optional[bool]
 
 
 # Component factories (or factory wrappers) ########################################################
@@ -66,14 +70,15 @@ def to_dhm_str(time):
 
 def define_training_loop_actions(
         trainer: Trainer, cpman: CheckpointManager, data, logger, main_metrics: T.Sequence[str],
-        eval_count=200, min_train_report_count=800,
+        eval_count=int(os.environ.get('VIDLU_EVAL_COUNT', 200)), min_train_report_count=800,
         interact_shortcuts=dict(i='embed()', skip='loop.terminate()'),
-        special_format={'mem': lambda v: f'{v}MiB', 'freq': lambda v: f'{v:.1f}/s'},
+        special_format={'mem': lambda v: f'{v}MiB', 'freq': lambda v: f'{v:.1f}/s',
+                        'freq_max': lambda v: f'freq_max={v:.1f}'},
         line_width=120):
     sleepiness = 0
     eval_epochs = get_report_iters(eval_count, trainer.epoch_count)
     epoch_time, inter_epoch_time, eval_time = -1, -1, -1
-    epoch_sw, inter_epoch_sw, eval_sw = Stopwatch(), Stopwatch(), Stopwatch()
+    sw_epoch, sw_inter_epoch, sw_eval = Stopwatch(), Stopwatch(), Stopwatch()
 
     # epoch_to_main_metrics = cpman.load_last()
 
@@ -84,7 +89,7 @@ def define_training_loop_actions(
 
         def eval_str(metrics):
             def fmt(v):
-                with np.printoptions(precision=2, threshold=20 if is_validation else 4,
+                with np.printoptions(precision=2, threshold=None if is_validation else 4,
                                      linewidth=line_width, floatmode='maxprec_equal',
                                      suppress=True):
                     return (f"{v:.4f}".lstrip('0') if isinstance(v, float) and v > 1e-3 else
@@ -116,7 +121,9 @@ def define_training_loop_actions(
 
     @trainer.training.epoch_started.handler
     def on_epoch_started(es):
-        epoch_sw.start()
+        """Restarts epoch time measurement, prints the estimated remaining time of training /
+        evaluation and other information."""
+        sw_epoch.reset().start()
         if sleepiness > 0:
             print(f"Warning: {sleepiness}s of sleep per epoch.")
         time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * epoch_time)
@@ -126,14 +133,17 @@ def define_training_loop_actions(
                     + f" lr=({', '.join(f'{x:.2e}' for x in trainer.lr_scheduler.get_last_lr())}),"
                     + f" devices={{{os.environ.get('CUDA_VISIBLE_DEVICES', '0')}}}")
         if epoch_time > 0:
-            info_str += f", left {to_dhm_str(time_left)} ({to_dhm_str(time_left_training)} training)"
+            info_str += f", left {to_dhm_str(time_left)} ({epoch_time:0.0f}s+{eval_time:0.0f}s per epoch)"
         logger.log(info_str)
 
     @trainer.training.epoch_completed.handler
     def on_epoch_completed(es):
+        """Stores the duration of the epoch, restarts inter-epoch time measurement, and, if the
+        conditions are met, runs evaluation on evaluation datasets and stores a checkpoint."""
         nonlocal epoch_time
-        epoch_time = epoch_sw.time
-        inter_epoch_sw.start()
+        epoch_time = sw_epoch.time
+        sw_inter_epoch.reset().start()
+
         if es.epoch not in eval_epochs:
             return
         first = True
@@ -146,9 +156,11 @@ def define_training_loop_actions(
                 # report_metrics(es_val, special_format=special_format, is_validation=True,
                 #                prefix=f'Best epoch ({best_epoch}): ')
                 if first:
+                    main_metric_name = main_metrics[0] if len(main_metrics) > 0 else next(
+                        iter(es_val.metrics.keys()))
                     cpman.save(trainer.state_dict(),
                                summary=dict(logger=logger.state_dict(),
-                                            perf=es_val.metrics[main_metrics[0]],
+                                            perf=es_val.metrics[main_metric_name],
                                             # summary=epoch_to_main_metrics,
                                             log="\n".join(logger.lines),
                                             epoch=es.epoch))
@@ -156,6 +168,7 @@ def define_training_loop_actions(
 
     @trainer.training.iter_completed.handler
     def on_iteration_completed(es):
+        """Reports metrics if the current iteration if the conditions are met,"""
         report_iters = get_report_iters(max(1, min_train_report_count // trainer.epoch_count),
                                         es.batch_count)
         iter = es.iteration % es.batch_count
@@ -169,6 +182,11 @@ def define_training_loop_actions(
 
     @trainer.evaluation.iter_completed.handler
     def on_eval_iteration_completed(es):
+        """Starts an interactive shell if there is user input.
+
+        If the user sets the variable `sleepiness`, `time.sleep` is alled after every iteration so
+        that the number of seconds in sleep per epoch is `sleepiness`.
+        """
         interact(es, loop=trainer.evaluation)
 
         if sleepiness > 0:
@@ -176,14 +194,16 @@ def define_training_loop_actions(
 
     @trainer.evaluation.epoch_started.handler
     def on_eval_epoch_started(es):
+        """Stores the inter-epoch time and starts evaluation time measurement."""
         nonlocal inter_epoch_time
-        inter_epoch_time = inter_epoch_sw.time
-        eval_sw.start()
+        inter_epoch_time = sw_inter_epoch.time
+        sw_eval.reset().start()
 
     @trainer.evaluation.epoch_completed.handler
     def on_eval_epoch_completed(es):
+        """Stores the duration of evaluation and reports the evaluation metrics."""
         nonlocal eval_time
-        eval_time = eval_sw.time
+        eval_time = sw_eval.time
         report_metrics(es, special_format=special_format, is_validation=True)
 
     def set_sleepiness(x):
@@ -208,17 +228,26 @@ def define_training_loop_actions(
 
 # Experiment #######################################################################################
 
-def get_device(device_str):
-    if device_str is None:
+def get_device(device_id: T.Optional[T.Union[str, int]], distributed: bool):
+    if distributed:
+        if device_id is None:
+            rank = vud.get_local_rank()
+            return torch.device(rank)
+        else:
+            warnings.warn("The device argument should be set to None for distributed"
+                          + " training on multiple devices.")
+    if device_id is None:
         if torch.cuda.device_count() == 0 \
-                and not query_user("No GPU found. Are you sure you want to continue?",
-                                   timeout=10, default='y'):
+                and not query_user("No GPU found. Do you want to use a CPU?",
+                                   default='y', timeout=10):
             raise RuntimeError("No GPU available.")
         return torch.device("cuda:0" if torch.cuda.device_count() > 0 else "cpu")
-    elif device_str == "auto":
+    elif device_id == "auto":
         from vidlu import gpu_utils
         return torch.device(
             gpu_utils.get_first_available_device(max_gpu_util=0.5, no_processes=False))
+    else:
+        return torch.device(device_id)
 
 
 def get_experiment_name(training_args):
@@ -230,17 +259,18 @@ def get_experiment_name(training_args):
     return experiment_id
 
 
-def get_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
+def create_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_dir):
     a = training_args
     experiment_id = get_experiment_name(training_args)
     cpman = CheckpointManager(
-        checkpoints_dir, experiment_name=experiment_id, info=training_args,
+        checkpoints_dir, experiment_name=experiment_id, experiment_info=training_args,
         separately_saved_state_parts=("model",), n_best_kept=1,
-        mode=('start' if a.resume is None else
+        start_mode=('start' if a.resume is None else
               'restart' if a.resume == "restart" else
               'resume_or_start' if a.resume == "?" else
               'resume'),
-        perf_func=lambda s: s.get('perf', 0), log_func=lambda s: s.get('log', ""),
+        perf_func=lambda s: s.get('perf', 0),
+        log_func=lambda s: s.get('log', ""),
         name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
     return cpman
 
@@ -278,39 +308,55 @@ class TrainingExperiment:
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
         _check_dirs(dirs)
-        a = training_args
         logger = Logger()
+        a = training_args
+        distributed, device = a.distributed, a.device
 
         with indent_print("\nSetting device..."):
-            a.device = get_device(a.device)
-            print(f"device: {a.device}")
+            print(f"{distributed=}")
+            if distributed is None:
+                distributed = vud.distributed_is_enabled()
+            print(f"enabled {distributed=}")
+            if distributed:
+                print(f"\nDistributed training: global rank: {vud.get_global_rank()},"
+                      + f" local rank: {vud.get_local_rank()},"
+                      + f" number of processes: {vud.get_global_size()}")
+            device = get_device(device, distributed)
+            print(f"device: {device}")
 
         with indent_print('\nInitializing checkpoint manager...'):
-            cpman = get_checkpoint_manager(a, dirs.saved_states)
+            cpman = create_checkpoint_manager(a, dirs.saved_states)
 
         try:
             with indent_print('\nInitializing data...'):
                 print(a.data)
-                with Stopwatch() as t:
+                with Stopwatch() as sw:
                     data = factories.get_prepared_data_for_trainer(a.data, dirs.datasets,
                                                                    dirs.cache,
                                                                    factory_version=a.data_factory_version)
-                print(f"Data initialized in {t.time:.2f} s.")
+                print(f"Data initialized in {sw.time:.2f} s.")
             first_ds = next(iter(data.values()))
 
             with indent_print('\nInitializing model...'):
                 print(a.model)
-                with Stopwatch() as t:
+                with Stopwatch() as sw:
                     model = factories.get_model(a.model, input_adapter_str=a.input_adapter,
-                                                prep_dataset=first_ds, device=a.device,
+                                                prep_dataset=first_ds, device=device,
                                                 verbosity=a.verbosity)
-                print(f"Model initialized in {t.time:.2f} s.")
+                    if distributed:
+                        model = DistributedDataParallel(model, device_ids=[vud.get_local_rank()])
+                        for m in model.modules():
+                            if (module_type_name := type(m).__name__).startswith("Batch"):
+                                model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+                                break
+                print(f"Model initialized in {sw.time:.2f} s.")
 
             with indent_print('\nInitializing trainer and evaluation...'):
                 print(a.trainer)
-                trainer = factories.get_trainer(a.trainer, model=model, dataset=first_ds,
-                                                verbosity=a.verbosity,
-                                                deterministic=a.deterministic)
+                trainer = factories.get_trainer(a.trainer, model=model, verbosity=a.verbosity,
+                                                deterministic=a.deterministic,
+                                                distributed=distributed)
+                # TODO: distributed metrics
                 metrics, main_metrics = factories.get_metrics(a.metrics, trainer, dataset=first_ds)
                 for m in metrics:
                     trainer.metrics.append(m())
@@ -322,7 +368,7 @@ class TrainingExperiment:
             resuming_required = cpman.resuming_required
             if resuming_required:
                 state, summary = (cpman.load_best if a.resume == "best" else cpman.load_last)(
-                    map_location=a.device)
+                    map_location=device)
                 # TODO: remove backward compatibility
                 logger.load_state_dict(summary.get('logger', summary))
                 logger.print_all()

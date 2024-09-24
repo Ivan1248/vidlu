@@ -1,4 +1,4 @@
-from vidlu.utils.func import partial
+from functools import partial
 
 from torch import nn
 

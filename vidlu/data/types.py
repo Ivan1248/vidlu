@@ -6,12 +6,13 @@ import numpy as np
 
 import vidlu.utils.text as vut
 
-# Domain types
-
-_type_to_domain = dict()
+from collections import UserList
 
 
-class Domain:
+# Modality types
+
+
+class DataModality:
     @classmethod
     def collate(cls, elements, general_collate=None):
         if general_collate is None:
@@ -20,24 +21,7 @@ class Domain:
             return general_collate(elements)
 
 
-class Name(str, Domain):
-    @classmethod
-    def collate(cls, elements, general_collate=None):
-        return elements
-
-
-class Other(Domain):
-    __slots__ = 'item'
-
-    def __init__(self, obj):
-        self.item = obj
-
-    @classmethod
-    def collate(cls, elements, general_collate=None):
-        return elements
-
-
-class Array(torch.Tensor, Domain):
+class Array(torch.Tensor, DataModality):
     def __new__(cls, obj):
         return obj[...].as_subclass(cls)
 
@@ -52,8 +36,67 @@ class Array(torch.Tensor, Domain):
                                + f" equal shapes, but the shapes are {shapes}.")
         return torch_collate(elements)
 
+    # @classmethod
+    # def __torch_function__(cls, func, types, args=(), kwargs=None):
+    #     if kwargs is None:
+    #         kwargs = {}
+    #     try:
+    #         return super().__torch_function__(func, types, args, kwargs=kwargs)
+    #     except TypeError as e:
+    #         args = [v.as_subclass(torch.Tensor) if isinstance(v, torch.Tensor) else v
+    #                 for v in args]
+    #         kwargs = {k: v.as_subclass(torch.Tensor) if isinstance(v, torch.Tensor) else v
+    #                   for k, v in kwargs.items()}
+    #         return super().__torch_function__(func, types, args, kwargs=kwargs)
 
-class Spatial2D(Domain):
+
+class ClassLabelLike(Array):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim in {0, 1}
+                and not torch.is_floating_point(self))
+
+
+class ClassLabel(ClassLabelLike):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and not torch.is_floating_point(self))
+
+
+class ClassDist(ClassLabelLike):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and torch.is_floating_point(self)
+                and (quick or torch.isclose(self.sum(), 1).item()))
+
+
+class Float(Array, DataModality):
+    def check_validity(self, quick=False):
+        return (super().check_validity(quick)
+                and self.ndim == 0
+                and torch.is_floating_point(self))
+
+
+class Name(str, DataModality):
+    @classmethod
+    def collate(cls, elements, general_collate=None):
+        return elements
+
+
+class Other(DataModality):
+    __slots__ = 'item'
+
+    def __init__(self, obj):
+        self.item = obj
+
+    @classmethod
+    def collate(cls, elements, general_collate=None):
+        return elements
+
+
+class Spatial2D(DataModality):
     pass
 
 
@@ -86,6 +129,24 @@ class HSVImage(ArraySpatial2D):
 class SegMap(ArraySpatial2D):
     def check_validity(self, quick=False):
         return super().check_validity() and not torch.is_floating_point(self)
+
+
+class Mask2D(ArraySpatial2D):
+    def check_validity(self, quick=False):
+        return super().check_validity() and not torch.is_floating_point(self)
+
+
+class SoftMask2D(ArraySpatial2D):
+    def check_validity(self, quick=False):
+        return super().check_validity() and torch.is_floating_point(self)
+
+
+class ClassMasks2D(Spatial2D):
+    __slots__ = 'classes', 'masks'
+
+    def __init__(self, classes: T.Sequence[ClassLabel],
+                 masks: T.Union[T.Sequence[Mask2D], T.Sequence[SoftMask2D]]):
+        self.classes, self.masks = classes, masks
 
 
 class AABB(Spatial2D):
@@ -213,36 +274,47 @@ class ClassAABBsOnImage(dict, AABBsOnImageCollection):
         return type(self)({k: list(map(func, aabbs)) for k, aabbs in self.items()}, shape=shape)
 
 
-class ClassLabelLike(Array):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim in {0, 1}
-                and not torch.is_floating_point(self))
+# Based on Mask2Former code: Copyright (c) Facebook, Inc. and its affiliates.
+class PaddedImageBatch(DataModality):
+    """A tensor of images of possibly varying sizes (padded) together with the sizes."""
 
+    def __init__(self, images, sizes):
+        self.images = images
+        self.sizes = sizes
 
-class ClassLabel(ClassLabelLike):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim == 0
-                and not torch.is_floating_point(self))
+    def get_mask(self, pos_value=1.0, neg_value=0.0):
+        mask = torch.full_like(self.images, neg_value)
+        for i, size in enumerate(self.sizes):
+            mask[i, ..., :size[0], :size[1]] = pos_value
 
+    def to_list(self):
+        return [self[i, :, :size[0], :size[1]] for i, size in enumerate(self.sizes)]
 
-class ClassDist(ClassLabelLike):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim == 0
-                and torch.is_floating_point(self)
-                and (quick or torch.isclose(self.sum(), 1).item()))
+    @staticmethod
+    def from_list(images: T.List[torch.Tensor], size_divisibility: int = 0,
+                  fill_value: float = 0.0) -> 'PaddedImageBatch':
+        assert isinstance(images, (tuple, list))
 
+        image_sizes = torch.tensor([list(x.shape[-2:]) for x in images])
+        max_size = image_sizes.max(0).values
+        min_size = image_sizes.max(0).values
 
-class Float(Array, Domain):
-    def check_validity(self, quick=False):
-        return (super().check_validity(quick)
-                and self.ndim == 0
-                and torch.is_floating_point(self))
+        if size_divisibility > 1:
+            stride = size_divisibility
+            max_size = (max_size + (stride - 1)).div(stride, rounding_mode="floor") * stride
+
+        if tuple(max_size) == tuple(min_size):
+            batched_images = torch.stack(images)
+        else:
+            batch_shape = [len(images)] + list(images[0].shape[:-2]) + list(max_size)
+            batched_images = images[0].new_full(batch_shape, fill_value, device=images[0].device)
+            for i, img in enumerate(images):
+                batched_images[i, ..., :img.shape[-2], :img.shape[-1]].copy_(img)
+
+        return PaddedImageBatch(batched_images, image_sizes)
 
 
 # Mapping from keys in snake case to Domain subclasses and vice versa
 from_key = {vut.to_snake_case(name): cls for name, cls in globals().items()
-            if isinstance(cls, type) and issubclass(cls, Domain)}
+            if isinstance(cls, type) and issubclass(cls, DataModality)}
 to_key = {cls: name for name, cls in from_key.items()}

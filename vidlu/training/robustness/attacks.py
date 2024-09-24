@@ -121,8 +121,8 @@ def apply_loss_mask(loss, mask):
 
 
 @torch.no_grad()
-def _pert_to_pert_model(pert_or_x_adv, x=None):
-    pert = pert_or_x_adv - x if x is not None else pert_or_x_adv
+def _pert_to_pert_model(pert_or_x_pert, x=None):
+    pert = pert_or_x_pert - x if x is not None else pert_or_x_pert
     pert_model = vmi.Add(())
     pert_model(pert)
     pert_model.addend.set_(pert)
@@ -130,15 +130,15 @@ def _pert_to_pert_model(pert_or_x_adv, x=None):
 
 
 @dataclass
-class BasePerturber:
+class BaseAttack:
     def __call__(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
         with torch.enable_grad():
             if NotImplemented is not (
                     pert := self._get_perturbation(model, x, y=y, loss_mask=loss_mask, **kwargs)):
                 return _pert_to_pert_model(pert) if isinstance(pert, torch.Tensor) else pert
             elif NotImplemented is not (
-                    x_adv := self._perturb(model, x, y=y, loss_mask=loss_mask, **kwargs)):
-                return _pert_to_pert_model(x_adv, x)
+                    x_p := self._perturb(model, x, y=y, loss_mask=loss_mask, **kwargs)):
+                return _pert_to_pert_model(x_p, x)
             raise NotImplementedError("_get_perturbation or _perturb should be implemented.")
 
     def perturb(self, model: nn.Module, x, y=None, loss_mask=None, output=None, **kwargs):
@@ -164,16 +164,16 @@ class BasePerturber:
         return perturb(x, y, loss_mask)
 
     def _perturb(self, model, x, y=None, loss_mask=None, **kwargs):
-        # this or _get_perturbation has to be implemented in subclasses
+        # either this or _get_perturbation has to be implemented in subclasses
         return NotImplemented
 
     def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
-        # this or _perturb  has to be implemented in subclasses
+        # either this or _perturb  has to be implemented in subclasses
         return NotImplemented
 
 
 @dataclass
-class Attack(BasePerturber):
+class Attack(BaseAttack):
     """Adversarial attack.
 
     __call__ returns a perturbation model, while perturb returns an
@@ -717,30 +717,6 @@ def default_projection(eps, clip_bounds):
             pmodel.ensure_output_within_bounds(x, clip_bounds)
 
     return projection
-
-
-@dataclass
-class PertModelRandPerturber(BasePerturber):
-    pert_model_f: vmi.PertModelBase = partial(vmi.Add, ())
-    initializer: T.Callable[[vmi.PertModelBase, torch.Tensor], None] = Required
-    projection: T.Union[float, T.Callable[[vmi.PertModelBase, torch.Tensor], None]] = Required
-    project_init: bool = True
-
-    def __post_init__(self):
-        super().__post_init__()
-        if self.projection is None:
-            self.projection = lambda *_: None
-        elif not callable(self.projection):
-            self.projection = default_projection(eps=self.projection, clip_bounds=self.clip_bounds)
-
-    def _get_perturbation(self, model, x, y=None, loss_mask=None, pert_model=None,
-                          initialize_pert_model=True, backward_callback=None):
-        if pert_model is None:
-            pert_model = self.pert_model_f()
-        _init_pert_model(pert_model, x,
-                         initializer=self.initializer if initialize_pert_model else None,
-                         projection=self.projection if self.project_init else None)
-        return pert_model
 
 
 def _noprojection(*_):

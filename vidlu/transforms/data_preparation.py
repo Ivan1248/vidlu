@@ -1,3 +1,5 @@
+import typing as T
+
 import numpy as np
 import torch
 
@@ -14,5 +16,8 @@ def prepare_element(x, key_or_type):
     if dom is dt.Image:
         x = vti.hwc_to_chw(vti.to_torch(x)).to(dtype=torch.float) / 255
     elif dom in (dt.ClassLabel, dt.SegMap):
-        x = torch.tensor(x, dtype=torch.int64)  # the loss supports only int64
+        if isinstance(x, torch.Tensor):
+            x = x.to(torch.int64)
+        else:
+            x = torch.tensor(x, dtype=torch.int64)  # the loss supports only int64
     return dom(x)

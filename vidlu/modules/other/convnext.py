@@ -6,9 +6,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.layers import trunc_normal_, DropPath
-from timm.models.registry import register_model
 
+from vidlu.utils import optional_import
+optional_import.set_module_substitute('timm.models.registry', dict(register_model=lambda f: f))
+from timm.models.registry import register_model
 
 class Block(nn.Module):
     r""" ConvNeXt Block. There are two equivalent implementations:
@@ -31,6 +32,7 @@ class Block(nn.Module):
         self.pwconv2 = nn.Linear(4 * dim, dim)
         self.gamma = nn.Parameter(layer_scale_init_value * torch.ones((dim)),
                                   requires_grad=True) if layer_scale_init_value > 0 else None
+        from timm.models.layers import DropPath
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, x):
@@ -95,6 +97,7 @@ class ConvNeXtBackbone(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.Linear)):
+            from timm.models.layers import trunc_normal_
             trunc_normal_(m.weight, std=.02)
             nn.init.constant_(m.bias, 0)
 

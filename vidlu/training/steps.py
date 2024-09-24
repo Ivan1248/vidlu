@@ -1,8 +1,8 @@
 import contextlib as ctx
 import dataclasses as dc
+import inspect
 import numbers
 import os
-
 import typing as T
 import copy
 from warnings import warn
@@ -10,7 +10,6 @@ from warnings import warn
 import numpy as np
 import torch
 from torch import nn
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 from vidlu.optim import OptimizerMaker
 from vidlu.data import BatchTuple, Record
@@ -23,17 +22,37 @@ import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 from vidlu.data.class_mapping import MultiSoftClassMapping
+from vidlu.training.measurement import memory_tracking
+from vidlu.training.robustness import attack_as_perturber
 
 
 # Training/evaluation steps ########################################################################
 
 
 def untag(x):
-    """Changes the type of an input from a vidlu.data.Domain subtype to torch.Tensor.
+    """Changes the type of an instance of a Tensor subtype (such as vidlu.data.DataModality) to Tensor.
 
     The original object is unchanged.
     """
     return x.as_subclass(torch.Tensor)
+
+
+def maybe_with_output_shape(model, output_shape):
+    try:
+        m = model
+        while 'shape' not in inspect.signature(m.forward).parameters:
+            # for DistributedDataParallel and other module wrappers
+            m = m.module
+        return vm.Partial(model, shape=output_shape)
+    except AttributeError as e:
+        return model
+
+
+def maybe_call_with_output_shape(model, x, *, shape):
+    try:
+        return model(x, shape=shape)
+    except TypeError as e:
+        return model(x)
 
 
 @dc.dataclass
@@ -74,28 +93,25 @@ def _unify_sup_batch(batch):
         return batch
 
 
-def do_optimization_step(optimizers, loss, scaler=None):
+def do_optimization_step(optimizers, loss, scaler=vtu.DummyGradScaler):
     if not isinstance(optimizers, T.Sequence):
         optimizers = [optimizers]
 
     for optimizer in optimizers:
         optimizer.zero_grad()
-    if scaler is None:
-        loss.backward()
-        for optimizer in optimizers:
-            optimizer.step()
-    else:
-        scaler.scale(loss).backward()
-        for optimizer in optimizers:
-            scaler.step(optimizer)
-        scaler.update()
+
+    scaler.scale(loss).backward()
+    for optimizer in optimizers:
+        scaler.step(optimizer)
+    scaler.update()
 
 
 @ctx.contextmanager
-def optimization_step(optimizer):
+def optimization_step(optimizer, scaler=vtu.DummyGradScaler):
     optimizer.zero_grad()
     yield
-    optimizer.step()
+    scaler.step(optimizer)
+    scaler.update()
 
 
 @torch.no_grad()
@@ -107,7 +123,9 @@ def supervised_eval_step(trainer, batch):
     return NameDict(x=x, target=y, out=out, loss=loss.item())
 
 
+@memory_tracking()
 def _supervised_train_step_x_y(trainer, x, y):
+    # import pudb; pudb.set_trace()
     trainer.model.train()
     out = trainer.model(untag(x))
     loss = trainer.loss(out, y, reduction="mean")
@@ -121,38 +139,149 @@ def supervised_train_step(trainer, batch):
 
 
 @dc.dataclass
-class SupervisedStep:
+class DummyStep:
+    access_batch: bool
     eval: bool = False
-    amp: bool = False
-    ddp: bool = False
-
-    amp_scaler: T.Optional[torch.cuda.amp.GradScaler] = dc.field(init=False, default=None)
-
-    def __post_init__(self):
-        if self.amp:
-            self.amp_scaler = torch.cuda.amp.GradScaler()
 
     def __call__(self, trainer, batch):
-        model = DDP(trainer.model) if self.ddp else trainer.model
+        if self.access_batch:
+            try:
+                items = batch.items()
+            except AttributeError as e:
+                items = batch
+            for x in items:
+                _ = x
+        return NameDict(loss=0)
+
+
+@dc.dataclass
+class AmpMixin:
+    amp: bool = False
+    amp_scaler: T.Union[torch.cuda.amp.GradScaler, T.Type[vtu.DummyGradScaler]] = dc.field(
+        init=False, default=None)
+
+    def __post_init__(self):
+        self.amp_scaler = torch.cuda.amp.GradScaler() if self.amp else vtu.DummyGradScaler
+
+    def state_dict(self):
+        return dict(amp_scaler=self.amp_scaler.state_dict())
+
+    def load_state_dict(self, state_dict):
+        self.amp_scaler.load_state_dict(state_dict['amp_scaler'])
+
+    def maybe_amp(self):
+        return torch.cuda.amp.autocast() if self.amp else ctx.suppress()
+
+    def amp_backward(self, loss, *args, **kwargs):
+        return self.amp_scaler.scale(loss).backward(*args, **kwargs)
+
+    def optimization_step(self, optimizers):
+        return optimization_step(optimizers, self.amp_scaler)
+
+    def do_optimization_step(self, optimizers, loss):
+        return do_optimization_step(optimizers, loss, scaler=self.amp_scaler)
+
+
+@dc.dataclass
+class SupervisedStep(AmpMixin):
+    eval: bool = False
+
+    def __call__(self, trainer, batch):
+        model = trainer.model
 
         model.eval() if self.eval else model.train()
 
-        with torch.cuda.amp.autocast() if self.amp else ctx.suppress():
-            x, y = _unify_sup_batch(batch)[:2]
-            out = model(untag(x))
-            loss = trainer.loss(out, y, reduction="mean")
+        with self.maybe_amp():
+            with torch.no_grad() if self.eval else ctx.suppress():
+                x, y = _unify_sup_batch(batch)[:2]
+                out = maybe_call_with_output_shape(model, untag(x), shape=y.shape[1:])
+                loss = trainer.loss(out, y, reduction="mean")
 
         if not self.eval:
-            do_optimization_step(trainer.optimizer, loss, scaler=self.amp_scaler)
+            self.do_optimization_step(trainer.optimizer, loss)
 
         return NameDict(x=x, target=y, out=out, loss=loss.item())
 
-    def state_dict(self):
-        return dict(amp_scaler=self.amp_scaler.state_dict() if self.amp else self.amp_scaler)
 
-    def load_state_dict(self, state_dict):
-        if self.amp:
-            self.amp_scaler.load_state_dict(state_dict['amp_scaler'])
+@dc.dataclass
+class MaskFormerSegStep(AmpMixin):
+    eval: bool = False
+    loss: nn.Module = None
+    loss_weights: dict = dc.field(
+        default_factory=lambda: dict(loss_ce=2., loss_mask=5., loss_dice=5.))
+    aux_loss_weight_factor: float = 1.
+
+    predict_only: bool = False
+    upsample_masks: bool = True
+
+    def init_loss_if_necessary(self, num_classes, device):
+        from vidlu.modules.other.mask2former.matcher import HungarianMatcher
+        if self.loss is None:
+            from vidlu.models.maskswifter import Mask2FormerSetCriterion
+
+            self.loss = Mask2FormerSetCriterion(
+                num_classes=num_classes,
+                matcher=HungarianMatcher(cost_class=self.loss_weights['loss_ce'],
+                                         cost_mask=self.loss_weights['loss_mask'],
+                                         cost_dice=self.loss_weights['loss_dice'],
+                                         num_points=112 ** 2),
+                eos_coef=0.1,
+                losses=['labels', 'masks'],
+                num_points=112 ** 2,
+                oversample_ratio=3.,
+                importance_sample_ratio=0.75)
+            self.loss.to(device)
+
+    def __call__(self, trainer, batch):
+        import torch.nn.functional as F
+        num_classes = 19
+
+        model = trainer.model
+        self.init_loss_if_necessary(num_classes=num_classes, device=model.device)
+
+        model.eval() if self.eval else model.train()
+
+        with self.maybe_amp():
+            x, y = _unify_sup_batch(batch)[:2]
+            mask_output, aux_outputs = model(untag(x))
+
+            # bipartite matching-based loss
+            if not self.predict_only:
+                losses, losses_aux = self.loss(output=mask_output, aux_outputs=aux_outputs,
+                                               targets=untag(y) % (num_classes + 1))
+
+                loss = sum(losses[k] * self.loss_weights[k] for k in losses) \
+                       + sum(lss[k] * (self.loss_weights[k] * self.aux_loss_weight_factor)
+                             for lss in losses_aux for k in lss)
+
+        if not self.eval:
+            self.do_optimization_step(trainer.optimizer, loss)
+
+        with self.maybe_amp():
+            with torch.no_grad():
+                out = model.semantic_inference(mask_output["pred_logits"],
+                                               mask_output["pred_masks"],
+                                               upsample_masks=self.upsample_masks,
+                                               shape=x.shape[-2:])
+                if self.predict_only:
+                    return NameDict(x=x, target=y, out=out, mask_out=mask_output)
+
+        @torch.no_grad()
+        def get_eam_score():
+            mask_cls = mask_output["pred_logits"]
+            mask_pred = mask_output["pred_masks"]
+            mask_pred = F.interpolate(mask_pred, size=x.shape[-2:], mode="bilinear",
+                                      align_corners=False)
+            cprobs = mask_cls.softmax(-1)
+            masks = mask_pred.sigmoid()
+            return torch.einsum("nq,nqhw->nhw", -cprobs[:, :, :19].max(-1).values, masks)
+            # (m := mask_out, cprobs := m['pred_logits'].softmax(-1),
+            #  masks := m['pred_masks'].sigmoid(),
+            #  torch.einsum("nq,nqhw->nhw", -cprobs.max(-1).values, masks))[-1]
+
+        return NameDict(x=x, target=y, out=out, mask_out=mask_output, loss=loss.item(),
+                        get_anomality=get_eam_score,
+                        **{k: v.item() for k, v in losses.items()})
 
 
 class LateInit:
@@ -184,58 +313,104 @@ class LateInit:
 @dc.dataclass
 class AutomaticTaxonomySupervisedStep:
     name_to_target_class_count: dict
+    mappings_f: T.Callable = MultiSoftClassMapping
+    optimizer_f: T.Callable = None
     mapping_ent_coef: float = 0
     subclass_minimum_loss: T.Callable = lambda m: (1 - m.sum(1)).relu_()
     subclass_minimum_coef: float = 0
-    mappings_f: T.Callable = MultiSoftClassMapping
-    optimizer_f: T.Callable = None
+    other_max_coef: float = 0
+    max_max_coef: float = 0
+    min_univ_size_coef: float = 0
+    helper_heads_coef: float = 0
+    helper_heads_test: bool = False
+    repr_path: str = "backbone"
 
     mappings: T.Union[torch.nn.Module, dict] = dc.field(init=False, default_factory=dict)
+    helper_heads: T.Union[torch.nn.Module, dict] = dc.field(init=False, default_factory=dict)
     optimizer: T.Union[dict, object] = dc.field(init=False, default_factory=dict)
 
     def __call__(self, trainer, batch, eval=False):
+        assert trainer.loss is vml.nll_loss
+
         init_needed = isinstance(self.mappings, dict)
         if init_needed:
             LateInit.initialize(self, mappings=self.mappings_f(self.name_to_target_class_count))
             self.mappings.to(device=next(trainer.model.parameters()).device)
+            if self.helper_heads_coef != 0:
+                LateInit.initialize(self, helper_heads=vmc.MultiSegmentationHead(
+                    self.name_to_target_class_count))
+                self.helper_heads.to(device=next(trainer.model.parameters()).device)
 
         trainer.model.eval() if eval else trainer.model.train()
 
         uni_batch = _unify_sup_batch(batch)
         (x, y), taxonomy = uni_batch[:2], uni_batch.taxonomy
-        out_univ = trainer.model(untag(x))
+        out_univ, repr = vm.with_intermediate_outputs(trainer.model, self.repr_path)(untag(x))
         p_univ = out_univ.softmax(1)
         p_spec = self.mappings(p_univ, taxonomy)
-        assert trainer.loss is vml.nll_loss
-        loss = torch.stack(
-            [trainer.loss(p, y[i:i + 1], reduction="mean") for i, p in enumerate(p_spec)]).mean()
+        loss_s = torch.stack(
+            [trainer.loss(p.unsqueeze(0), y[i:i + 1], reduction="mean")
+             for i, p in enumerate(p_spec)]).mean()
 
-        if init_needed:
-            optimizer_f = OptimizerMaker(self.optimizer_f or trainer.optimizer_f.optimizer_f, [],
-                                         **{**trainer.optimizer_f.kwargs, 'weight_decay': 0})
-            LateInit.initialize(self, optimizer=optimizer_f(self.mappings))
+        if init_needed:  # TODO LR-scheduler
+            if self.optimizer_f is None or isinstance(self.optimizer_f, OptimizerMaker):
+                optimizer_f = self.optimizer_f or trainer.optimizer_f
+                optimizer_f = OptimizerMaker(optimizer_f.optimizer_f, [],
+                                             **{**optimizer_f.kwargs, 'weight_decay': 0})
+            else:
+                optimizer_f = OptimizerMaker(self.optimizer_f, [], weight_decay=0)
+            LateInit.initialize(self, optimizer=optimizer_f(nn.ModuleList(
+                [self.mappings] + ([self.helper_heads] if self.helper_heads_coef != 0 else []))))
 
-        loss_s = loss
+        loss = loss_s
 
-        loss_minsub = loss_ment = None
+        loss_to_coef = dict(loss_ment=self.mapping_ent_coef, loss_minsub=self.subclass_minimum_coef,
+                            loss_othm=self.other_max_coef, loss_mm=self.max_max_coef,
+                            loss_minunsz=self.min_univ_size_coef,
+                            loss_s_help=self.helper_heads_coef)
+        losses = dict()
+
+        def add_loss(**kwargs):
+            for name, value in kwargs.items():
+                losses[name] = value if name not in losses else losses[name].add_(value)
+
+        if self.helper_heads_coef > 0:
+            out_spec_help = self.helper_heads(repr, taxonomy, shape=x.shape[2:])
+            add_loss(loss_s_help=torch.stack(
+                [vml.nll_loss_l(s.unsqueeze(0).softmax(1), y[i:i + 1], reduction="mean")
+                 for i, s in enumerate(out_spec_help)]).mean())
+
         for m in self.mappings.parameters():
-            lmr = vml.entropy_l(m).mean()
-            loss_ment = lmr if loss_ment is None else loss_ment.add_(lmr)
-            lms = self.subclass_minimum_loss(m.softmax(0)).mean()
-            loss_minsub = lms if loss_minsub is None else loss_minsub.add_(lms)
-        if self.mapping_ent_coef > 0:
-            loss = loss + loss_ment * self.mapping_ent_coef
-        if self.subclass_minimum_coef > 0:
-            loss = loss + loss_minsub * self.subclass_minimum_coef
+            add_loss(loss_ment=vml.entropy_l(m).mean(),
+                     loss_minsub=self.subclass_minimum_loss(m.softmax(0)).mean(),
+                     loss_othm=-m.softmax(0)[-1].log().mean(),
+                     loss_mm=-m.softmax(0).max(1)[0].log().mean())
+        p_oths = [m.softmax(0)[-1] for m in self.mappings.parameters()]
+        p_oth_prod = p_oths[0]
+        for p_oth in p_oths[1:]:
+            p_oth_prod = p_oth_prod * p_oth
+        add_loss(loss_minunsz=-p_oth_prod.mean())
+
+        for loss_name, coef in loss_to_coef.items():
+            if coef != 0:
+                loss = loss + losses[loss_name] * coef
+        if self.helper_heads_test:
+            loss = loss - loss_s
+            loss_s = losses['loss_s_help']
+            p_spec = [s.softmax(0) for s in out_spec_help]
 
         if not eval:
             do_optimization_step([trainer.optimizer, self.optimizer], loss)
 
-        return NameDict(x=x, target=y, out=torch.cat(p_spec).log(), loss_s=loss_s.item(),
-                        loss_ment=loss_ment.item(), loss_minsub=loss_minsub.item())
+        return NameDict(x=x, target=y, out=torch.stack(p_spec).log(), loss_s=loss_s.item(),
+                        **{name: losses[name].item()
+                           for name, coef in loss_to_coef.items() if coef > 0})
 
     def state_dict(self):
-        return LateInit.state_dict(self, attr_names=['mappings', 'optimizer'])
+        attr_names = ['mappings', 'optimizer']
+        if self.helper_heads_coef > 0:
+            attr_names.append('helper_heads')
+        return LateInit.state_dict(self, attr_names=attr_names)
 
     load_state_dict = LateInit.load_state_dict
 
@@ -265,12 +440,6 @@ class IIDMonocularStep:
 
 @dc.dataclass
 class SupervisedCentroidContrastiveStep:
-    """Base class for VAT, mean teacher, ...
-
-    attack_eval_model is set to False because training on adversarial examples
-    of the evaluation model instance is more likely to result in overfitting to
-    adversarial examples.
-    """
     eval: bool = False
     alpha: float = 1
     loss_contr: T.Callable = partial(vml.centroid_supervised_contrastive_loss_z, temperature=1,
@@ -1050,7 +1219,7 @@ def _cons_output_to_target(out_uns, stop_grad, output_to_target):
     return target_uns
 
 
-def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_model=False):
+def _perturb_a(attack, model, x, attack_target, loss_mask='create', attack_eval_model=False):
     """Applies corresponding perturbations to the input, unsupervised target, and validity mask.
     Also computes the prediction in the perturbed input."""
     if loss_mask == 'create':
@@ -1066,8 +1235,27 @@ def _perturb(attack, model, x, attack_target, loss_mask='create', attack_eval_mo
     return NameDict(x=x_p, target=target_p, **loss_mask_p_dict, pmodel=pmodel)
 
 
+def create_loss_mask(*args):
+    return torch.ones_like(untag(args[0])[:, 0, ...])
+
+
+def _perturb_p(pertgen, *args, loss_mask='create'):
+    """Applies corresponding perturbations to the input, unsupervised target, and validity mask.
+    Also computes the prediction in the perturbed input."""
+    if loss_mask == 'create':
+        loss_mask = torch.ones_like(untag(args[0])[:, 0, ...])
+
+    pmodel = pertgen(*args, loss_mask=loss_mask)
+    if loss_mask is None:
+        args_p, loss_mask_p = pmodel(*args), None
+    else:
+        args_p, loss_mask_p = pmodel(*args, loss_mask)
+    loss_mask_p_dict = dict() if loss_mask_p is None else dict(loss_mask=loss_mask_p.detach())
+    return args_p, NameDict(**loss_mask_p_dict, pmodel=pmodel)
+
+
 @dc.dataclass
-class SemisupCleanTargetConsStepBase:
+class SemisupCleanTargetConsStepBase(AmpMixin):
     """Base class for VAT, mean teacher, ...
 
     attack_eval_model is set to False because training on adversarial examples
@@ -1081,12 +1269,14 @@ class SemisupCleanTargetConsStepBase:
     entropy_loss_coef: float = 0
     loss_cons: T.Optional[T.Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None
     block_grad_on_clean: bool = True
-    eval_mode_teacher: bool = False
+    eval_mode_teacher: bool = False  # !!!
     pert_both: bool = False
     mem_efficient: bool = True  # TODO: replace with ~joint_batch
     eval: bool = False
+    mem_tracking: bool = False
 
     def __post_init__(self):
+        super().__post_init__()
         if self.uns_loss_on_all is None:
             self.uns_loss_on_all = self.eval
 
@@ -1102,51 +1292,62 @@ class SemisupCleanTargetConsStepBase:
 
         x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, self.uns_loss_on_all, joint_batch)[
                                :4]
+
+        model = maybe_with_output_shape(model, y_l.shape[1:])
+        teacher = maybe_with_output_shape(teacher, y_l.shape[1:])
+
         loss_mask = None if len(y_l.shape) + 1 < len(x_l.shape) else 'create'
-        perturb_x_u = lambda attack_target, loss_mask: _perturb(
+        perturb_x_u = lambda attack_target, loss_mask: _perturb_a(
             attack=attack, model=model, x=x_u, attack_target=attack_target,
             attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
 
         model.eval() if self.eval else model.train()  # teacher always in eval mode
 
-        with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
-            # Supervised loss
-            with torch.no_grad() if self.eval else ctx.suppress():
-                out_all = model(untag(x_all)) if joint_batch else None
-                out_l = out_all[:len(y_l)] if joint_batch else model(untag(x_l))
-                loss_l = trainer.loss(out_l, y_l, reduction="mean")
-                if not self.eval and not joint_batch:  # back-propagates supervised loss sooner
-                    loss_l.backward()
-                    loss_l = loss_l.detach()
+        with self.maybe_amp():
+            with self.optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
+                # Supervised loss
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    out_all = model(untag(x_all)) if joint_batch else None
+                    out_l = out_all[:len(y_l)] if joint_batch else model(untag(x_l))
+                    loss_l = trainer.loss(out_l, untag(y_l), reduction="mean")
+                    if not self.eval and not joint_batch:  # back-propagates supervised loss sooner
+                        self.amp_backward(loss_l)
+                        loss_l = loss_l.detach()
 
-            # Unsupervised loss
-            detach_clean = self.eval or self.block_grad_on_clean
-            with torch.no_grad() if detach_clean else ctx.suppress():
-                out_u, loss_mask, additional = self._get_teacher_out(
-                    teacher, x_u, perturb_x_u, loss_mask, out_all)
-                pert = perturb_x_u(attack_target=output_to_target(out_u), loss_mask=loss_mask)
-                del pert.pmodel  # memory saving
-                if detach_clean:
-                    pert.target = pert.target.detach()  # pseudo-label
+                # Unsupervised loss
+                detach_clean = self.eval or self.block_grad_on_clean
+                with torch.no_grad() if detach_clean else ctx.suppress():
+                    out_u, loss_mask, additional = self._get_teacher_output(
+                        teacher, x_u, perturb_x_u, loss_mask, out_all)
+                    pert = perturb_x_u(attack_target=output_to_target(out_u), loss_mask=loss_mask)
+                    # !del perturb_x_u, attack, teacher, additional, out_u  # TODO: keep out_u
+                    del pert.pmodel  # memory saving
+                    if detach_clean:
+                        pert.target = pert.target.detach()  # pseudo-label
 
-            with torch.no_grad() if self.eval else ctx.suppress():
-                with ctx.suppress() if self.pert_bn_stats_updating else \
-                        vtu.norm_stats_tracking_off(model):
-                    pert.out = model(untag(pert.x))  # student output
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    with ctx.suppress() if self.pert_bn_stats_updating else \
+                            vtu.norm_stats_tracking_off(model):
+                        pert.out = model(untag(pert.x))  # student output
+                    loss_u = loss_cons(pert.out, pert.target)
+                    loss_u = (
+                        loss_u if loss_mask is None else loss_u[pert.loss_mask >= 1 - 1e-6]).mean()
+                    # !del pert  # TODO: delete
 
-                loss_u = loss_cons(pert.out, pert.target)
-                loss_u = (
-                    loss_u if loss_mask is None else loss_u[pert.loss_mask >= 1 - 1e-6]).mean()
-                loss = loss_l.add(loss_u, alpha=self.alpha)
-                with ctx.suppress() if self.entropy_loss_coef else torch.no_grad():  # memory saving
-                    loss_ent = vml.entropy_l(pert.out).mean()
-                    if self.entropy_loss_coef:
-                        loss.add_(loss_ent, alpha=self.entropy_loss_coef)
-                if not self.eval:
-                    loss.backward()
+                    loss = loss_l.add(loss_u, alpha=self.alpha)
+                    if self.entropy_loss_coef != 0:
+                        with ctx.suppress() if self.entropy_loss_coef else torch.no_grad():  # memory saving
+                            loss_ent = vml.entropy_l(pert.out).mean()
+                            if self.entropy_loss_coef:
+                                loss.add_(loss_ent, alpha=self.entropy_loss_coef)
+                    else:
+                        loss_ent = -1
+                    if not self.eval:
+                        self.amp_backward(loss)
 
-        return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
-                        x_u=x_u, x_p=pert.x, y_p=pert.target, out_u=out_u, out_p=pert.out,
+        return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(),
+                        loss_u=loss_u.item(),
+                        x_u=x_u, x_p=pert.x, out_t=pert.target, out_u=out_u, out_p=pert.out,
                         loss_ent=loss_ent.item(), **additional)
 
     def get_student_and_teacher(self, trainer):
@@ -1157,7 +1358,7 @@ class SemisupCleanTargetConsStepBase:
                                    output_to_target=attack.output_to_target)
         return self.loss_cons or attack.loss, output_to_target
 
-    def _get_teacher_out(self, teacher, x_u, perturb_x_u, loss_mask, out_all):
+    def _get_teacher_output(self, teacher, x_u, perturb_x_u, loss_mask, out_all):
         with vtu.switch_training(teacher,
                                  False) if self.eval_mode_teacher else ctx.suppress():
             if self.pert_both:
@@ -1186,17 +1387,80 @@ class SemisupCleanTargetConsStepBase:
 
 
 @dc.dataclass
-class SemisupVATStep(SemisupCleanTargetConsStepBase):
-    pass
+class SimpleOneWayConsStep(AmpMixin):
+    """Base class for VAT, mean teacher, ...
 
+    attack_eval_model is set to False because training on adversarial examples
+    of the evaluation model instance is more likely to result in overfitting to
+    adversarial examples.
+    """
+    alpha: float = 1
+    loss_cons: T.Optional[T.Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = vml.kl_div_ll
+    eval_mode_teacher: bool = False
+    eval: bool = False
+    mem_tracking: bool = None
 
-SemisupVATTrainStep = SemisupVATStep  # TODO: delete
+    @memory_tracking(substitute_del_comments=True,
+                     cond=lambda s, *a, **k: s.mem_tracking and not s.eval)
+    def __call__(self, trainer, batch):
+        x_l, y_l, x_u, other = _prepare_semisup_batch(batch)
+        if x_u is None and self.eval:
+            x_u = x_l
+        del batch  # !6
+
+        perturb = (trainer.perturber if hasattr(trainer, 'perturber')
+                   else attack_as_perturber(trainer.attack)).perturb
+
+        teacher = model = maybe_with_output_shape(trainer.model, y_l.shape[1:])
+        model.eval() if self.eval else model.train()  # TODO: teacher always in eval mode
+
+        with self.maybe_amp():
+            with self.optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
+                # Supervised loss
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    out_l = model(untag(x_l))  # !7
+                    loss_l = trainer.loss(out_l, untag(y_l), reduction="mean")  # !8
+                    if not self.eval:  # back-propagates supervised loss sooner
+                        self.amp_backward(loss_l)
+                        loss_l = loss_l.detach()  # !9
+
+                # Unsupervised loss
+                with torch.no_grad():
+                    with vtu.switch_training(teacher,
+                                             False) if self.eval_mode_teacher else ctx.suppress():
+                        out_u = teacher(untag(x_u))
+                    loss_mask = (None if len(y_l.shape) + 1 < len(x_l.shape) else
+                                 create_loss_mask(out_u))
+                    x_p, out_t, loss_mask = perturb(x_u, out_u.detach(), loss_mask)
+                    # !del out_u, perturb
+
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    out_p = model(untag(x_p))  # !14 # student output
+                    loss_u = self.loss_cons(out_p, out_t)
+                    loss_u = (loss_u if loss_mask is None else loss_u[loss_mask >= 1 - 1e-6]).mean()
+
+                    loss = loss_l.add(loss_u, alpha=self.alpha)  # !16
+                    if not self.eval:
+                        self.amp_backward(loss)  # !17 # !19
+                    # !del x_l, x_u, x_p, out_u, out_t
+
+        return NameDict(x=x_l, target=y_l, out=out_l, loss_l=loss_l.item(), loss_u=loss_u.item(),
+                        x_u=x_u, x_p=x_p, out_u=out_u, out_p=out_p, out_t=out_t)
 
 
 @dc.dataclass
-class SemisupVATEvalStep(SemisupVATStep):
+class SemisupConsStep(SemisupCleanTargetConsStepBase):
+    pass
+
+
+@dc.dataclass
+class SemisupConsEvalStep(SemisupConsStep):
     eval: bool = True
     uns_loss_on_all: bool = True
+
+
+SemisupVATStep = SemisupConsStep
+SemisupVATTrainStep = SemisupConsStep  # TODO: delete
 
 
 @dc.dataclass
@@ -1221,7 +1485,7 @@ class SemisupTwoWayOneCleanConsStep:
 
         x_l, y_l, x_u, x_all = _prepare_semisup_batch_s(batch, uns_loss_on_all, joint_batch)[:4]
         loss_mask = None if len(y_l.shape) + 1 < len(x_l.shape) else 'create'
-        perturb_x_u = lambda attack_target, loss_mask: _perturb(
+        perturb_x_u = lambda attack_target, loss_mask: _perturb_a(
             attack=attack, model=model, x=x_u, attack_target=attack_target,
             attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
 
@@ -1276,7 +1540,7 @@ class AdditionalHeadModule(vm.Seq):
 
 
 @dc.dataclass
-class SemisupContrastiveStepBase:
+class SemisupContrastiveStepBase(AmpMixin):
     """Base class for VAT, mean teacher, ...
 
     attack_eval_model is set to False because training on adversarial examples
@@ -1323,45 +1587,46 @@ class SemisupContrastiveStepBase:
 
         x_l, y_l, x_u = _prepare_semisup_batch(batch)[:3]
         loss_mask = 'create'
-        perturb_x_u = lambda attack_target, loss_mask: _perturb(
+        perturb_x_u = lambda attack_target, loss_mask: _perturb_a(
             attack=attack, model=model_proj, x=x_u, attack_target=attack_target,
             attack_eval_model=self.attack_eval_model, loss_mask=loss_mask)
 
         model_proj.eval() if self.eval else model_proj.train()  # teacher always in eval mode
 
-        with optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
-            # Supervised loss
-            with torch.no_grad() if self.eval else ctx.suppress():
-                out_l = model(untag(x_l))
-                loss_l = trainer.loss(out_l, y_l, reduction="mean")
-                if not self.eval:  # back-propagates supervised loss sooner
-                    loss_l.backward()
-                    loss_l = loss_l.detach()
+        with self.maybe_amp():
+            with self.optimization_step(trainer.optimizer) if not self.eval else ctx.suppress():
+                # Supervised loss
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    out_l = model(untag(x_l))
+                    loss_l = trainer.loss(out_l, y_l, reduction="mean")
+                    if not self.eval:  # back-propagates supervised loss sooner
+                        self.amp_backward(loss_l)
+                        loss_l = loss_l.detach()
 
-            # Unsupervised loss
-            detach_clean = self.eval or self.block_grad_on_clean
-            with torch.no_grad() if detach_clean else ctx.suppress():
-                out_u, loss_mask, additional = self._get_teacher_out(
-                    teacher_proj, x_u, perturb_x_u, loss_mask, None)
-                pert = perturb_x_u(attack_target=out_u, loss_mask=loss_mask)
-                del pert.pmodel  # memory saving
-                if detach_clean:
-                    pert.target = pert.target.detach()  # pseudo-label
+                # Unsupervised loss
+                detach_clean = self.eval or self.block_grad_on_clean
+                with torch.no_grad() if detach_clean else ctx.suppress():
+                    out_u, loss_mask, additional = self._get_teacher_out(
+                        teacher_proj, x_u, perturb_x_u, loss_mask, None)
+                    pert = perturb_x_u(attack_target=out_u, loss_mask=loss_mask)
+                    del pert.pmodel  # memory saving
+                    if detach_clean:
+                        pert.target = pert.target.detach()  # pseudo-label
 
-            with torch.no_grad() if self.eval else ctx.suppress():
-                with ctx.suppress() if self.pert_bn_stats_updating else \
-                        vtu.norm_stats_tracking_off(model_proj):
-                    pert.out = untag(model_proj(pert.x))  # student output
-            with torch.no_grad() if self.eval else ctx.suppress():
-                try:
-                    loss_u = self.loss_cons(pert.out, pert.target)[
-                        pert.loss_mask >= 1 - 1e-6].mean()
-                except IndexError as e:
-                    warn(e.args[0])
-                    loss_u = self.loss_cons(pert.out, pert.target).mean()
-                loss = loss_l.add(loss_u, alpha=self.alpha)
-                if not self.eval:
-                    loss.backward()
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    with ctx.suppress() if self.pert_bn_stats_updating else \
+                            vtu.norm_stats_tracking_off(model_proj):
+                        pert.out = untag(model_proj(pert.x))  # student output
+                with torch.no_grad() if self.eval else ctx.suppress():
+                    try:
+                        loss_u = self.loss_cons(pert.out, pert.target)[
+                            pert.loss_mask >= 1 - 1e-6].mean()
+                    except IndexError as e:
+                        warn(e.args[0])
+                        loss_u = self.loss_cons(pert.out, pert.target).mean()
+                    loss = loss_l.add(loss_u, alpha=self.alpha)
+                    if not self.eval:
+                        self.amp_backward(loss)
 
             if proj_heads_need_init:
                 trainer.optimizer.zero_grad()
@@ -1376,13 +1641,16 @@ class SemisupContrastiveStepBase:
         return [trainer.model] * 2
 
     def state_dict(self):
-        return dict(p) if isinstance(p := self.proj_heads, dict) else p.state_dict()
+        return dict(sup=super().state_dict(),
+                    proj_heads=dict(p) if isinstance(p := self.proj_heads,
+                                                     dict) else p.state_dict())
 
     def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict['sup'])
         if isinstance(self.proj_heads, dict):
-            self.proj_heads = dict(state_dict)
+            self.proj_heads = dict(state_dict['proj_heads'])
         else:
-            self.proj_heads.load_state_dict(state_dict)
+            self.proj_heads.load_state_dict(state_dict['proj_heads'])
 
     def _get_teacher_out(self, teacher, x_u, perturb_x_u, loss_mask, out_all):
         with vtu.switch_training(teacher,

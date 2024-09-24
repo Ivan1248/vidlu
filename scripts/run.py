@@ -12,6 +12,7 @@ import time
 import traceback
 
 import torch
+import torch.distributed as dist
 import numpy as np
 
 # noinspection PyUnresolvedReferences
@@ -55,14 +56,17 @@ def log_run(status, result=None):
 
 
 def fetch_remote_experiment(args, dirs):
-    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args)))
-    cmd = ["rsync", "-azvLO", "--relative", "--delete", f"{args.remote}:{dir}/",
-           f"/"]
+    remote_name, port, *_ = f'{args.remote}:'.split(':')
+    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args))).strip("'")
+    cmd = ["rsync", "-azvLO", "--relative", "--delete", f"{remote_name}:{dir}/", f"/"]
+    if len(port) > 0:
+        cmd += [f"--rsh", f"ssh -p{port}"]
     print("Running " + " ".join(cmd))
     result = subprocess.run(cmd)
     if result.returncode != 0:
         warnings.warn(f"Experiment state transfer had errors: {result}")
-        query_user("Experiment state transfer had errors. Continue?", default='n')
+        if not query_user("Experiment state transfer had errors. Continue?", default='n'):
+            exit()
 
 
 def get_profiler():
@@ -106,67 +110,74 @@ def eval_on_test_sets(exp):
 
 
 def train(args):
-    if args.resume == "restart" \
-            and not query_user("Are you sure you want to restart the experiment?",
-                               timeout=30, default='y'):
-        exit()
+    try:
+        if args.distributed:
+            dist.init_process_group(os.environ.get("VIDLU_DIST_INIT", 'gloo'))
 
-    if args.remote and args.resume not in [None, "restart"]:
-        fetch_remote_experiment(args, dirs)
+        if args.resume == "restart" \
+                and not query_user("Are you sure you want to restart the experiment?",
+                                   default='y', timeout=15):
+            exit()
 
-    exp = make_experiment(args, dirs=dirs)
+        if args.remote and args.resume not in [None, "restart"]:
+            fetch_remote_experiment(args, dirs)
 
-    exp.logger.log("Resume command:\n\x1b[0;30;42m"
-                   + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
-                   + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} '
-                     f'--metrics "{args.metrics}"'
-                   + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
-    exp.logger.log(f"RNG seed: {args.seed}")
+        exp = make_experiment(args, dirs=dirs)
 
-    with get_profiler() if args.profile else ctx.suppress() as prof:
-        if not args.no_init_eval:
-            print('\nEvaluating initially...')
-            eval_on_test_sets(exp)
-        log_run('cont.' if args.resume else 'start')
+        exp.logger.log("Resume command:\n\x1b[0;30;42m"
+                       + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
+                       + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} '
+                         f'--metrics "{args.metrics}"'
+                       + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
+        exp.logger.log(f"RNG seed: {args.seed}")
 
-        print(('\nContinuing' if args.resume not in (
-            "restart", None) else 'Starting') + ' training...')
-        training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
-
-        torch.cuda.empty_cache()
-        exp.trainer.train(*training_datasets.values(), restart=False)
-
-        if args.eval_with_pop_stats:
-            with vtu.preserve_state(exp.trainer.model):
-                approximate_pop_stats(exp, exp.data.train)
-                print(f'\nEvaluating using approximate population statistics...')
+        with get_profiler() if args.profile else ctx.suppress() as prof:
+            if not args.no_init_eval:
+                print('\nEvaluating initially...')
                 eval_on_test_sets(exp)
+            log_run('cont.' if args.resume else 'start')
 
-        log_run('done', str(exp.cpman.id_to_perf))
+            print(('\nContinuing' if args.resume not in (
+                "restart", None) else 'Starting') + ' training...')
+            training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
 
-        if not args.no_train_eval and args.train_eval:
-            for name, ds in training_datasets.items():
-                print(f'\nEvaluating on training data ({name})...')
-                try:
-                    exp.trainer.eval(ds)
-                except ValueError as e:
-                    if 'not enough values to unpack' in e.args[0]:
-                        warnings.warn(e.args[0])
-                    else:
-                        raise
-        print(exp.cpman.id_to_perf)
+            torch.cuda.empty_cache()
+            exp.trainer.train(*training_datasets.values(), restart=False)
 
-    if args.profile:
-        print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+            if args.eval_with_pop_stats:
+                with vtu.preserve_state(exp.trainer.model):
+                    approximate_pop_stats(exp, exp.data.train)
+                    print(f'\nEvaluating using approximate population statistics...')
+                    eval_on_test_sets(exp)
 
-    exp.cpman.remove_old_checkpoints()
+            log_run('done', str(exp.cpman.id_to_perf))
 
-    print(f"\nRNG seed: {args.seed}")
-    print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
+            if args.train_eval:
+                for name, ds in training_datasets.items():
+                    print(f'\nEvaluating on training data ({name})...')
+                    try:
+                        exp.trainer.eval(ds)
+                    except ValueError as e:
+                        if 'not enough values to unpack' in e.args[0]:
+                            warnings.warn(e.args[0])
+                        else:
+                            raise
+            print(exp.cpman.id_to_perf)
 
-    if dirs.cache is not None:
-        cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
-        clean_up_dataset_cache(dirs.cache / 'datasets', timedelta(days=cache_cleanup_time))
+        if args.profile:
+            print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+
+        exp.cpman.remove_old_checkpoints()
+
+        print(f"\nRNG seed: {args.seed}")
+        print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
+
+        if dirs.cache is not None:
+            cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
+            clean_up_dataset_cache(dirs.cache / 'datasets', timedelta(days=cache_cleanup_time))
+    finally:
+        if args.distributed:
+            dist.destroy_process_group()
 
 
 def get_path(args):
@@ -221,9 +232,13 @@ def add_standard_arguments(parser, func):
                         help='A comma-separated list of metrics.')
     parser.add_argument("--eval_with_pop_stats", action='store_true',
                         help="Computes actual population statistics for batchnorm layers.")
+
     # device
     parser.add_argument("-d", "--device", type=str, help="PyTorch device.",
                         default=None)
+    parser.add_argument("--num_nodes", type=int, help="Number of compute nodes.",
+                        default=None)
+    parser.add_argument("--distributed", help="", action='store_true')
     # experiment result saving, state checkpoints
     parser.add_argument("-e", "--experiment_suffix", type=str, default=None,
                         help="Experiment ID suffix. Required for running multiple experiments"
@@ -239,7 +254,7 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--no_init_eval", action='store_true',
                         help="Skip testing before training.")
     parser.add_argument("--no_train_eval", action='store_true',
-                        help="No evaluation on the training set.")
+                        help="No evaluation on the training set.")  # TODO: remove
     parser.add_argument("--train_eval", action='store_true',
                         help="Evaluation on the training set.")
     parser.add_argument("-s", "--seed", type=int, default=None,
@@ -284,7 +299,9 @@ if __name__ == "__main__":
         # torch.backends.cudnn.deterministic = True
         torch.use_deterministic_algorithms(True)
 
+    # https://discuss.pytorch.org/t/difference-between-torch-manual-seed-and-torch-cuda-manual-seed/13848/7
     seed = (0 if args.deterministic else int(time.time()) % 100) if args.seed is None else args.seed
+    os.environ['PYTHONHASHSEED'] = str(seed)
     for rseed in [torch.manual_seed, np.random.seed, random.seed]:
         rseed(seed)
     args.seed = seed

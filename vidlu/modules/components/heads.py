@@ -12,7 +12,7 @@ from . import _default_factories as D
 
 # Standard #########################################################################################
 
-class ClassificationHead(E.Seq):
+class ChannelAveragingClassificationHead(E.Seq):
     def __init__(self, class_count):
         super().__init__(pre_logits_mean=nn.AdaptiveAvgPool2d((1, 1)),
                          logits=E.Linear(class_count))
@@ -130,3 +130,12 @@ class AdvChannelMeanLogitsSplitter(E.Seq):
         super().__init__(spl=E.Split([class_count, ...]),
                          par=E.Parallel(mean_split=vmc.ChannelMeanSplitter(), id=E.Identity()),
                          restruct=E.Restruct("(logits, zl), zr", "logits, zl, zr"))
+
+
+class MultiSegmentationHead(E.ModuleTable):
+    def __init__(self, name_to_class_counts, shape=None, **kwargs):
+        super().__init__(**{name: SegmentationHead(class_count, shape=shape, **kwargs)
+                            for name, class_count in name_to_class_counts.items()})
+
+    def forward(self, z, names, shape=None):
+        return [self[name](z[i:i + 1], shape=shape)[0] for i, name in enumerate(names)]

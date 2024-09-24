@@ -9,9 +9,9 @@ A deep learning framework for research with emphasis on computer vision, based o
 
 This repository contains
 
-1) a machine learning framework, mostly based on PyTorch,
-1) a set of datasets, models and training configurations (as part of the framework), and
-1) a set of scripts that use it.
+1. an experimental machine learning framework, mostly based on PyTorch,
+2. a set of datasets, models, training configurations (as part of the framework), various related algorithms, and
+3. a set of scripts for running experiments.
 
 ## Setup
 
@@ -65,11 +65,17 @@ It might be easiest to create the following directory structure. Symbolic links 
    └─ pretrained
 ```
 
-"&lt;ancestor&gt;/data" is found automatically if "&lt;ancestor&gt;" is an ancestor directory of `dirs.py`. Otherwise, the environment variable `VIDLU_DATA` should point to the "data" directory.
+The "data" directory can be created in the user home directory by running
 
-The "cache" directory should preferably be on an SSD. "datasets" and other directories, can be a slower disk. Data from "datasets" is not accessed after being cached.
+```sh
+mkdir ~/data ~/data/datasets ~/data/cache ~/data/experiments ~/data/pretrained
+```
 
-Alternatively, the paths can be defined through multiple environment variables: `VIDLU_DATASETS`, `VIDLU_CACHE`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`.
+"data" is found automatically if its parent directory is also an ancestor of `dirs.py`. Otherwise, the environment variable `VIDLU_DATA` should point to the "data" directory.
+
+The "cache" directory should preferably be on an SSD. "datasets" and other directories, on a slower disk. Data from "datasets" is not accessed after being cached.
+
+Alternatively, the paths can be defined individually through multiple environment variables: `VIDLU_DATASETS`, `VIDLU_CACHE`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`.
 
 ### Running experiments
 
@@ -172,28 +178,39 @@ Optimizer configurations can be defined using `OptimizerMaker`, which stores all
 
 ### Extensions
 
-Vidlu enables extensions using the [_naming convention_ approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). Installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed.
-Extensions are also directly available for expression arguments for [factories in `vidlu.factories`](#factories).
+Vidlu enables extensions using the [_naming convention_ approach](https://packaging.python.org/guides/creating-and-discovering-plugins/#using-naming-convention). This means that installed packages or other packages found in directories in the `PYTHONPATH` environment variable with names prefixed with "vidlu\_" are loaded and made available in the `extensions` dictionary in the `vidlu.extensions` module, but the prefix is removed. For example, if the name of the package is `vidlu\_my_ext`, it will have the name `my_ext` in the `extensions` dictionary.
+
+Extensions are directly available for expression arguments for [factories in `vidlu.factories`](#factories). For example, the code should work if `MyStep` and `MyModel` are defined in the extension `my_ext`:
+```python
+from torch import nn
+from vidlu.factories import get_trainer
+
+model = vidlu.extensions.extensions['my_ext'].MyModel()
+trainer = get_trainer("ct.supervised_cifar, training_step=my_ext.MyStep, eval_step=None")
+```
 
 ### Commonly used utilities
 
 In many places in the code, some parameter names end with `_f`.
-This means that the argument is not a final object but a factory (hence `_f`). E.g. `block_f()` should produce a `block` instance. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `tree_partial` (analogue of `functools.partial`) allows flexible functional modification of any set of parameters of nested functions.
+This means that the argument is not a final object, but a factory (hence `_f`). E.g. `block_f()` should produce a `block` instance. This is to allow more flexibility while keeping signatures short. Here the combination of such a design with `ArgTree` and `tree_partial` (analogue of `functools.partial`) enables flexible functional modification of any set of parameters of nested functions.
 
 ```py
+from functools import partial as p
+from vidlu.utils.func import tree_partial, ArgTree as t
 
-def make_swallow(..., type='european'): ...
+def make_swallow(type='european', ...): ...
 
-def make_flock(..., load=None, swallow_f=make_swallow): ...
+def make_flock(load=None, swallow_f=make_swallow, ...): ...
 
-def eu(..., flock_f=make_flock):
+def eu_deliver(dest, flock_f=make_flock):
     ...
     flock = flock_f(...)
     ...
 
-from vidlu.utils.func import ArgTree as t
-au = tree_partial(eu, flock_f=t(load='coconut', swallow_f=t(type='african')))
-au()
+au_deliver_t = tree_partial(eu_deliver, flock_f=t(load='coconut', swallow_f=t(type='african')))
+au_deliver_p = p(eu_deliver, flock_f=p(make_flock, load='coconut', swallow_f=p(make_swallow, type='african')))
+dest = 'Caerbannog'
+assert au_deliver_t(dest) == au_deliver_p(dest)
 ```
 
 <!--

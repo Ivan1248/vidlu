@@ -9,6 +9,7 @@ import warnings
 import torch
 from torch import nn
 from torch.nn import functional as F
+import einops
 
 import vidlu.modules.elements as E
 from vidlu.modules import tensor_extra
@@ -49,6 +50,28 @@ class GaussianFilter2D(E.Module):
         return x
 
 
+class SquareFilter(E.Module):
+    def __init__(self, ksize=None, padding_mode='reflect'):
+        if isinstance(ksize, int):
+            ksize = (ksize, ksize)
+        super().__init__()
+        self.padding = [ksize // 2] * 4
+        self.padding_mode = padding_mode
+
+        with torch.no_grad():
+            kernel = torch.ones(ksize)
+            self.register_buffer('kernel', kernel.div_(torch.sum(kernel)))  # normalize
+            self.kernel.requires_grad_(False)
+
+    def forward(self, x):
+        ker1 = self.kernel.expand(x.shape[1], 1, 1, *self.kernel.shape)
+        ker2 = ker1.view(x.shape[1], 1, *self.kernel.shape, 1)
+        x = F.pad(x, self.padding, mode=self.padding_mode)
+        for ker in [ker1, ker2]:
+            x = F.conv2d(x, weight=ker, groups=x.shape[1], padding=0)
+        return x
+
+
 # Activations ######################################################################################
 
 
@@ -72,6 +95,46 @@ class Tent(E.Module):
         return F.relu(delta - x.abs())
 
 
+# Transformer attention ############################################################################
+
+class MultiHeadAttention(E.Module):
+    # Modified from https://einops.rocks/pytorch-examples.html
+    # PyTorch provides a more efficient implementation.
+    def __init__(self, num_heads, *, embed_dim=None, d_k, d_v):
+        super().__init__()
+        self.num_heads = num_heads
+        self.embed_dim, self.d_k, self.d_v = embed_dim, d_k, d_v
+
+        self.w_qs, self.w_ks, self.w_vs = [nn.Linear(dim, dim) for dim in [d_k, d_k, d_v]]
+        self.fc_o = nn.Linear(num_heads * d_v, embed_dim)
+
+        if embed_dim is not None:
+            self.reset_parameters()
+
+    def build(self, q, k, v):
+        if self.embed_dim is None:
+            self.embed_dim = q.shape[1]
+            self.reset_parameters()
+
+    def reset_parameters(self):
+        for w, dim in zip([self.w_qs, self.w_ks, self.w_vs], [self.d_k, self.d_k, self.d_v]):
+            nn.init.normal_(w.weight, mean=0, std=np.sqrt(2.0 / (self.embed_dim + dim)))
+        nn.init.xavier_normal_(self.fc_o.weight)
+
+    def forward(self, q, k, v, mask=None):
+        q = einops.rearrange(self.w_qs(q), 'b l (head k) -> head b l k', head=self.num_heads)
+        k = einops.rearrange(self.w_ks(k), 'b t (head k) -> head b t k', head=self.num_heads)
+        v = einops.rearrange(self.w_vs(v), 'b t (head v) -> head b t v', head=self.num_heads)
+        attn = torch.einsum('hblk,hbtk->hblt', [q, k]) / np.sqrt(q.shape[-1])
+        if mask is not None:
+            attn = attn.masked_fill(mask[None], -np.inf)
+        attn = torch.softmax(attn, dim=3)
+        output = torch.einsum('hblt,hbtv->hblv', [attn, v])
+        output = einops.rearrange(output, 'head b l v -> b l (head v)')
+        output = self.fc_o(output)
+        return output, attn
+
+
 # Blocks ###########################################################################################
 
 
@@ -85,8 +148,6 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
                         stride_after_1x1):
     if not len(kernel_sizes) == len(width_factors):
         raise ValueError(f"{len(kernel_sizes)=} does not match {len(width_factors)=}.")
-    if stride_after_1x1 is None and kernel_sizes[0] == 1:
-        raise ValueError("stride_after_1x1 should be a boolean value, none None.")
     widths = [base_width * wf for wf in width_factors]
     round_widths = list(map(round, widths))  # fractions to ints
     if widths != round_widths:
@@ -96,7 +157,7 @@ def _resolve_block_args(kernel_sizes, base_width, width_factors, stride, dilatio
     conv_defaults = default_args(D.conv_f)
     if not isinstance(stride, Sequence):
         if stride_after_1x1 and kernel_sizes[0] == 1 and stride > 1:
-            # if the first convolution is 1x1, it is not strided
+            # if the first convolution is 1x1, it is not strided -- see the Torchvision Bottleneck documentation
             stride = [1, stride] + [1] * (len(widths) - 2)
         else:
             stride = [stride] + [1] * (len(widths) - 1)
@@ -189,7 +250,7 @@ class PostactBlock(E.Seq):
                  act_f=E.ReLU,
                  conv_f=params(PreactBlock).conv_f,
                  noise_f=None,
-                 stride_after_1x1=None):
+                 stride_after_1x1=True):
         super().__init__()
         widths, stride, dilation = _resolve_block_args(kernel_sizes, base_width, width_factors,
                                                        stride, dilation, stride_after_1x1)
@@ -244,25 +305,6 @@ class StandardRootBlock(E.Seq):
             self.add(act=act_f(),
                      pool=pool_f(3, stride=2, padding='half'))
 
-    # def forward(self, x):
-    #     x_l = torch.load(f"/tmp/debug/x_l{0}.pt")
-    #     interm = torch.load(f"/tmp/debug/interm_outs_u{0}.pt")
-    #
-    #     print("im", x.min(), x.mean(), x.max())
-    #     try:
-    #         print(self.conv.orig.weight.min(), self.conv.orig.weight.max())
-    #     except:
-    #         pass
-    #     x = self.conv(x)
-    #     print("x", x.min(), x.max())
-    #     m = interm['backbone.conv1']
-    #     breakpoint()
-    #     x = self.norm(x)
-    #     x = self.act(x)
-    #     x = self.pool(x)
-    #     # x = super().forward(x)
-    #     return x
-
 
 class ImprovedRootBlock(E.Seq):
     """Standard Inception-v2 root block.
@@ -299,8 +341,9 @@ class AffineCoupling(E.Module):
 
     def forward(self, x1, x2):
         s = self.scale(x1).exp()
-        y = Ladj.stop(x1), x2 * s + self.translation(x1)
-        return Ladj.add(y, (x1, x2), lambda: s.view(s.shape[0], -1).sum(1))
+        y1 = Ladj.stop(x1)
+        y2 = x2 * s + self.translation(x1)
+        return Ladj.add((y1, y2), (x1, x2), lambda: s.view(s.shape[0], -1).sum(1))
 
     def inverse_forward(self, y1, y2):
         if Ladj.has(y1):
@@ -609,9 +652,11 @@ class LadderUpsampleBlend(E.Module):
     _pre_blendings = dict(concat=E.Concat, sum=E.Sum)
 
     def __init__(self,
-                 out_channels,
-                 pre_blending='concat',
-                 blend_block_f=partial(PreactBlock, base_width=Reserved, width_factors=Reserved)):
+                 out_channels: int,
+                 pre_blending: T.Literal['concat', 'sum'] = 'concat',
+                 blend_block_f: T.Callable[[], nn.Module] = partial(
+                     PreactBlock, base_width=Reserved, width_factors=Reserved),
+                 non_multiple_effect: T.Literal[None, 'warn', 'error'] = 'warn'):
         super().__init__()
         if pre_blending not in self._pre_blendings:
             raise ValueError(f"Invalid pre-blending '{pre_blending}'. " +
@@ -621,13 +666,28 @@ class LadderUpsampleBlend(E.Module):
         self.project = None
         self.pre_blend = self._pre_blendings[pre_blending]()
         self.blend = self.block_f(base_width=out_channels, kernel_sizes=[3])
+        self.non_multiple_effect = non_multiple_effect
 
     def build(self, x, skip):
         self.project = Reserved.partial(self.block_f, base_width=x.shape[1])(kernel_sizes=[1])
 
+    def _check_sizes(self, x, skip):
+        if self.non_multiple_effect is not None:
+            x_size, skip_size = tuple(x.shape[-2:]), tuple(skip.shape[-2:])
+            rem = np.mod(skip_size, x_size).max()
+            factor = np.array(skip_size) / np.array(x_size)
+            if factor[0] != factor[1] or rem != 0:
+                message = f"The higher-resolution input size ({tuple(skip_size)}) is not a" \
+                          + f" multiple of lower-resolution input size ({tuple(x_size)})."
+                if self.non_multiple_effect == 'warn':
+                    warnings.warn(message)
+                else:
+                    raise RuntimeError(message)
+
     def forward(self, x, skip):
-        # resize is not defined in build because it depends on skip.shape
-        x_up = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=False)
+        self._check_sizes(x, skip)
+
+        x_up = F.interpolate(x, size=skip.shape[-2:], mode='bilinear', align_corners=False)
         skip_proj = self.project(skip)
         b = self.pre_blend((x_up, skip_proj))
         return self.blend(b)
@@ -667,53 +727,82 @@ class KresoContext(E.Seq):
                                                dilation=[1, 2]))
 
 
-class KresoLadderModel(E.Module):
+class KresoLadderDecoder(E.Module):
     def __init__(self,
-                 backbone_f,
-                 laterals: T.Sequence[str],
-                 ladder_width: int,
+                 up_width: int,
                  context_f=DenseSPP,
                  up_blend_f=LadderUpsampleBlend,
                  post_activation=False,
                  lateral_preprocessing=lambda x: x):
         super().__init__()
-        self.backbone = backbone_f()
         self.context = context_f()
-        self.ladder = KresoLadder(ladder_width, up_blend_f)  # initialized when called
-        self.laterals = laterals
+        self.ladder = KresoLadder(up_width, up_blend_f)  # initialized when called
         self.post_activation = post_activation
         if post_activation:
             defaults = default_args(default_args(up_blend_f).blend_block_f)
             self.norm, self.act = defaults.norm_f(), defaults.act_f()
         self.lateral_preprocessing = lateral_preprocessing
 
-    def forward(self, x):
-        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
+    def forward(self, context_input, laterals):
         context = self.context(context_input)
         laterals = list(map(self.lateral_preprocessing, laterals))
         ladder_output = self.ladder(context, laterals[::-1])
         return self.act(self.norm(ladder_output)) if self.post_activation else ladder_output
 
 
+class LadderModel(nn.Module):
+    def __init__(self, backbone_f, laterals: T.Sequence[str], decoder_f):
+        self.backbone = backbone_f()
+        self.laterals = laterals
+        self.decoder = decoder_f()
+
+    def forward(self, x):
+        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
+        return self.decoder(context_input, laterals)
+
+
+class KresoLadderModel(KresoLadderDecoder):
+    def __init__(self,
+                 backbone_f,
+                 laterals: T.Sequence[str],
+                 up_width: int,
+                 context_f=DenseSPP,
+                 up_blend_f=LadderUpsampleBlend,
+                 post_activation=False,
+                 lateral_preprocessing=lambda x: x):
+        super().__init__(
+            up_width=up_width, context_f=context_f,
+            up_blend_f=up_blend_f, post_activation=post_activation,
+            lateral_preprocessing=lateral_preprocessing)
+        self.backbone = backbone_f()
+        self.laterals = laterals
+
+    def forward(self, x):
+        context_input, laterals = E.with_intermediate_outputs(self.backbone, self.laterals)(x)
+        return super().forward(context_input, laterals)
+
+
 class MorsicPyramid(E.Module):
-    def __init__(self, model, stage_count: int, laterals: T.Sequence[str], proj_f=None,
+    def __init__(self, model, stage_count: int, laterals: T.Sequence[str], width,
                  sum_f=E.Sum):
         super().__init__()
         self.model = model
         self.stage_count = stage_count  # number of pyramid stages
         self.laterals = laterals
-        self.projs = nn.ModuleList([nn.ModuleList([proj_f() for _ in laterals])
-                                    for _ in range(self.stage_count)])
+        self.projs = nn.ModuleList(
+            [nn.ModuleList([E.Conv(kernel_size=1, out_channels=width, bias=True)
+                            for _ in range(len(laterals) + 1)])
+             for _ in range(self.stage_count)])
         self.sum = sum_f()
 
     def forward(self, x):
-        stage_outputses = [[None] * (len(self.laterals) + self.stage_count)
+        stage_outputses = [[None] * (len(self.laterals) + self.stage_count - 1)
                            for _ in range(self.stage_count)]
         for i, projs in enumerate(self.projs):
             xi = F.interpolate(x, scale_factor=0.5 ** i, mode='bilinear',
                                align_corners=False) if i != 0 else x
             final, laterals = E.with_intermediate_outputs(self.model, self.laterals)(xi)
-            outputs = [proj(out) for (out, proj) in zip([laterals, *final], projs)]
+            outputs = [proj(out) for (out, proj) in zip([*laterals, final], projs)]
             stage_outputses[i][i:i + len(outputs)] = outputs
         column_sums = [self.sum([xi for xi in col if xi is not None])
                        for col in zip(*stage_outputses)]
@@ -731,7 +820,8 @@ class MorsicPyramidModel(E.Module):
         super().__init__()
         self.backbone = backbone_f()
         self.ladder = KresoLadder(up_width, up_blend_f)  # initialized when called
-        self.pyr = MorsicPyramid(stage_count, laterals=laterals, proj_f=None)
+        self.pyr = MorsicPyramid(self.backbone, stage_count=stage_count, laterals=laterals,
+                                 width=up_width)
         self.post_activation = post_activation
         if post_activation:
             defaults = default_args(default_args(up_blend_f).blend_block_f)

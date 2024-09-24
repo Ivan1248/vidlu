@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from PIL import Image
+import PIL.Image as pimg
 import numpy as np
 import torch
 
@@ -8,7 +8,7 @@ from vidlu.utils.func import vectorize
 
 
 def is_pil_image(img):
-    return isinstance(img, Image.Image)
+    return isinstance(img, pimg.Image)
 
 
 def is_torch_image(img):
@@ -122,7 +122,8 @@ def numpy_to_pil(npimg, mode=None):
         PIL Image: Image converted to PIL Image.
     """
     if not is_numpy_image(npimg):
-        raise TypeError(f'img should be an ndarray image. Got {type(npimg)} with shape {npimg.shape}.')
+        raise TypeError(
+            f'img should be an ndarray image. Got {type(npimg)} with shape {npimg.shape}.')
 
     if npimg.shape[2] == 1:
         expected_mode = None
@@ -155,7 +156,7 @@ def numpy_to_pil(npimg, mode=None):
     if mode is None:
         raise TypeError(f'Input type {npimg.dtype} and shape {tuple(npimg.shape)} not supported.')
 
-    return Image.fromarray(npimg, mode=mode)
+    return pimg.fromarray(npimg, mode=mode)
 
 
 @dataclass

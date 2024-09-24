@@ -7,7 +7,7 @@ from warnings import warn
 import torch
 import torch.nn.functional as F
 from numpy import s_
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.torch_utils import round_float_to_int
 import vidlu.modules.elements as E
@@ -53,20 +53,6 @@ def _complete_shape(shape_tail, input_shape):
         b if a is None else a for a, b in zip(shape_tail, input_shape[-len(shape_tail):]))
 
 
-def pert_model_init(self, forward_arg_count):
-    if forward_arg_count is None:
-        self.forward_arg_count = 0
-        unlimited_param_kinds = (
-            inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
-        for p in inspect.signature(self.forward).parameters.values():
-            self.forward_arg_count += 1
-            if p.kind in unlimited_param_kinds:
-                self.forward_arg_count = -1
-                break
-    else:
-        self.forward_arg_count = forward_arg_count
-
-
 def _pert_model_forward(forward_arg_count, module, args, **kwargs):
     n = forward_arg_count
     if len(args) + len(kwargs) == 1 or n == -1:  # everything fits
@@ -84,14 +70,22 @@ def _pert_model_forward(forward_arg_count, module, args, **kwargs):
 class PertModelBase(E.Module):
     param_defaults = dict()
 
-    def __init__(self, forward_arg_count=None):
-        super().__init__()
-        pert_model_init(self, forward_arg_count)
+    def __init__(self, forward_arg_count=None, **kwargs):
+        super().__init__(**kwargs)  # kwargs are for other superclasses of the subclass
+        self.pert_model_init(forward_arg_count)
 
-    # def initialize(self, input=None):  # TODO: make initialize?
-    #     if input is not None:
-    #         self(input)
-    #     self.init(self, input)
+    def pert_model_init(self, forward_arg_count):
+        if forward_arg_count is None:
+            self.forward_arg_count = 0
+            unlimited_param_kinds = (
+                inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+            for p in inspect.signature(self.forward).parameters.values():
+                self.forward_arg_count += 1
+                if p.kind in unlimited_param_kinds:
+                    self.forward_arg_count = -1
+                    break
+        else:
+            self.forward_arg_count = forward_arg_count
 
     def build(self, x):
         # dummy_x has properties like x, but takes up almost no memory
@@ -209,8 +203,8 @@ class PertModel(PertModelBase):
 
 class SeqPertModel(PertModelBase, E.ModuleTable):
     def __init__(self, *args, forward_arg_count=None, **kwargs):
-        E.ModuleTable.__init__(self, *args, **kwargs)
-        pert_model_init(self, forward_arg_count)
+        # __init__calls: PertModelBase, then ModuleTable, then Module
+        super().__init__(*args, forward_arg_count=forward_arg_count, **kwargs)
 
     def forward(self, *args):
         if len(args) == 1:
@@ -299,6 +293,7 @@ def _get_center(center_arg, x, equivariant_dims):
             center_arg(x) if callable(center_arg) else center_arg)
 
 
+@typechecked
 class Contrast(EquivariantPertModel):
     """Linearly interpolates or extrapolates between inputs and centers.
 
@@ -315,7 +310,6 @@ class Contrast(EquivariantPertModel):
 
     def __init__(self, equivariant_dims=(-2, -1),
                  center: T.Union[float, T.Callable, T.Literal['mean']] = 0.5):
-        check_argument_types()
         super().__init__(equivariant_dims)
         self.center = center
 
@@ -562,7 +556,8 @@ def _warp(x, grid, y=None, mask=None, interpolation_mode='bilinear', padding_mod
             continous = 'float' in f'{z.dtype}'
             z_p = (z if continous else z.to(grid_y.dtype))
             single_channel = z.dim() == 3
-            z_p = _warp_func(z_p[:, None, ...] if single_channel else z_p, grid_y,
+            z_p = _warp_func(z_p[:, None, ...] if single_channel else z_p,
+                             grid_y.as_subclass(type(z_p)),
                              mode=interpolation_mode if continous else label_interpolation_mode,
                              padding_mode=padding_mode if continous else lpm,
                              align_corners=align_corners)
@@ -643,7 +638,7 @@ class TPSWarp(PertModelBase):
                      vmf.backward_tps_grid_from_points)
 
         grid = grid_func(c_src, c_dst, size=x.shape)
-        if y is not None and y.shape[-2:] != x.shape[-2:]:
+        if y is not None and y.shape[-2:] != x.shape[-2:] and len(y.shape) >= len(x.shape) - 1:
             grid = (grid, grid_func(c_src, c_dst, size=y.shape))
 
         return _warp(x, y=y, mask=mask, grid=grid,
@@ -679,9 +674,9 @@ def cutmix_roll_transform(x, mask):
     return x_p
 
 
+@typechecked
 class CutMix(PertModelBase):
     def __init__(self, mask_gen, combination: T.Literal['pairs', 'roll'] = 'pairs'):
-        check_argument_types()
         super().__init__()
         self.mask_gen = mask_gen
         self.combination = combination

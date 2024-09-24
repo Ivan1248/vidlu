@@ -5,6 +5,39 @@ from functools import cached_property
 
 from vidlu.utils.path import find_in_ancestors
 
+__doc__ = """
+`scripts/dirs.py` searches for and stores directory paths for datasets, cache, results and other data in the following variables:
+-   `datasets: list[Path]` can point to multiple directories, each of which can contain dataset directories.
+-   `cache: Path` points to a directory for caching data.
+-   `pretrained: Path` points to a directory for pre-trained parameters.
+-   `experiments: Path` points to a directory for experiment results. The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
+
+It might be easiest to create the following directory structure. Symbolic links can be useful.
+
+```sh
+<ancestor>
+├─ .../vidlu/scripts/dirs.py
+└─ data
+   ├─ cache
+   ├─ datasets
+   ├─ experiments  # subdirectories created automatically
+   │  └─ states
+   └─ pretrained
+```
+
+The "data" directory can be created in the user home directory by running
+
+```sh
+mkdir ~/data ~/data/datasets ~/data/cache ~/data/experiments ~/data/pretrained
+```
+
+The "data" directory is found automatically if it is in an ancestor directory of `dirs.py`. Otherwise, the environment variable `VIDLU_DATA` should point to the "data" directory.
+
+The "cache" directory should preferably be on an SSD. "datasets" and other directories, can be on a slower disk. Data from "datasets" is not accessed after being cached.
+
+Alternatively, the paths can be defined individually through multiple environment variables: `VIDLU_DATASETS`, `VIDLU_CACHE`, `VIDLU_PRETRAINED`, and `VIDLU_EXPERIMENTS`.
+"""
+
 
 def _find(path_end, start=__file__, warn=False):
     try:
@@ -21,11 +54,11 @@ def opt(func, x):
 
 def _check_dir_path(path, kind=None):
     if path is None:
-        raise FileNotFoundError(f'No {kind} directory provided or found.')
+        raise FileNotFoundError(f'No {kind} directory provided or found.\n{__doc__}')
     if not path.exists():
-        raise FileNotFoundError(f'Directory "{path}" does not exist.')
+        raise FileNotFoundError(f'Directory "{path}" does not exist.\n{__doc__}')
     if not path.is_dir():
-        raise FileNotFoundError(f'"{path}" is not a directory.')
+        raise FileNotFoundError(f'"{path}" is not a directory.\n{__doc__}')
 
 
 class _Dirs:

@@ -12,7 +12,7 @@ from vidlu.data import DataLoader, Dataset, Record
 from vidlu.training import Trainer
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
-import vidlu.utils.func as vuf
+import vidlu.utils.func as uf
 from vidlu.utils.func import Reserved
 from vidlu.utils.func import partial
 from vidlu.extensions import extensions
@@ -40,11 +40,11 @@ def module_to_dict(module):
 def _print_all_args_message(func):
     print("All arguments:")
     print(f"Argument tree ({func.func if isinstance(func, partial) else func}):")
-    tree.print_tree(vuf.ArgTree.from_func(func), depth=1)
+    tree.print_tree(uf.ArgTree.from_func(func), depth=1)
 
 
 def _print_missing_args_message(func):
-    empty_args = list(vuf.find_params_deep(func, lambda k, v: vuf.is_empty(v)))
+    empty_args = list(uf.find_params_deep(func, lambda k, v: uf.is_empty(v)))
     if len(empty_args) != 0:
         print("Unassigned arguments:")
         for ea in empty_args:
@@ -69,8 +69,8 @@ def parse_data_str(data_str):
             + ' Syntax: "(dataset1`{`(subset1_1, ..)`}`, dataset2`{`(subset2_1, ..)`}`, ..)')
 
     # full regex: r'((?:^|(?:,\s*))(\w+)(\([^{]*\))?{(\w+(?:\s*,\s*\w+)*)})'
-    start_re = r'(?:^|(?:,\s*))'
-    name_re, options_re, subsets_re = r'(\w+)', r'(\([^{]*\))', r'{(\w+(?:\s*,\s*\w+)*)}'
+    start_re = r'(?:^|(?:,\s*))'  # start of string or comma followed by 0 or more spaces
+    name_re, options_re, subsets_re = r'(\w+)', r'(\([^{]*\))', r'(?:{(\w+(?:\s*,\s*\w+)*)})'
     single_ds_re = re.compile(fr'({start_re}{name_re}{options_re}?{subsets_re}?)')
     single_ds_configs = [x[0] for x in single_ds_re.findall(data_str)]
     reconstructed_config = ''.join(single_ds_configs)
@@ -81,16 +81,24 @@ def parse_data_str(data_str):
     for s in single_ds_configs:
         m = single_ds_re.match(s)
         name, options, subsets = m.groups()[1:]
-        subsets = [s.strip() for s in subsets.split(',')]
+        if subsets is not None:
+            subsets = [s.strip() for s in subsets.split(',')]
         name_options_subsets_tuples += [(name, options, subsets)]
     return name_options_subsets_tuples
 
 
 def apply_default_transforms(datasets, cache_dir):
     # TODO: de-hardcode
+    import os
+    if int(os.environ.get("VIDLU_DUMMY_DATA", 0)) and cache_dir is not None:
+        for i, ds in enumerate(datasets):
+            datasets[i] = vdu.cache_lazily(ds[:1].map(lambda r: type(r)(**r)),
+                                           cache_dir=cache_dir).repeat(len(ds))  # .cache().repeat
+        return datasets
     default_transforms = [  # partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
-        partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
-        partial(vdu.cache_lazily, cache_dir=cache_dir)]
+        partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir)]
+    if cache_dir is not None:
+        default_transforms.append(partial(vdu.cache_lazily, cache_dir=cache_dir))
     for i, ds in enumerate(datasets):
         for transform in default_transforms:
             ds = transform(ds)
@@ -100,13 +108,14 @@ def apply_default_transforms(datasets, cache_dir):
 
 def get_data_namespace():
     import vidlu.transforms as vt
-    import torchvision.transforms.functional_tensor as tvt
+    import vidlu.transforms.image as vti
+    import torchvision.transforms.functional as tvt
     import vidlu.modules.functional as vmf
     from vidlu.data.datasets import taxonomies
 
     namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
                  **module_to_dict(vdu.dataset_ops)}
-    namespace.update(vt=vt, taxonomies=taxonomies, Record=Record)
+    namespace.update(vt=vt, vti=vti, taxonomies=taxonomies, Record=Record)
     return namespace
 
 
@@ -138,9 +147,13 @@ def get_data(data_str: str, datasets_dir, cache_dir=None, return_datasets_only=F
     for name, options_str, subsets in name_options_subsets_tuples:
         options = factory_eval(f'dict{options_str or "()"}', dict(Record=Record))
         full_name = f"{name}{options_str or ''}"
-        for subset in subsets:
-            ds = get_dataset(name, subset=subset, **options)
-            keys.append((full_name, subset))
+        for subset in subsets or [None]:
+            if subset is None:
+                ds = get_dataset(name, **options)
+                keys.append(full_name)
+            else:
+                ds = get_dataset(name, subset=subset, **options)
+                keys.append((full_name, subset))
             datasets.append(ds)
 
     datasets = apply_default_transforms(datasets, cache_dir=cache_dir)
@@ -161,6 +174,9 @@ get_data.help = \
 
 
 def get_default_transforms(cache_dir):
+    import os
+    if int(os.environ.get("VIDLU_DUMMY_DATA", 0)):
+        return dict(dummy=lambda ds: ds[:1].map(lambda r: type(r)(**r)).cache().repeat(len(ds)))
     return dict(
         add_pixel_stats=partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
         add_seg_class_info=partial(vdu.add_segmentation_class_info_lazily, cache_dir=cache_dir),
@@ -271,9 +287,9 @@ def build_and_init_model(model, init_input, device):
         vm.call_if_not_built(model, init_input)
 
 
-_func_short = dict(partial=partial, t=vuf.ArgTree, ft=vuf.FuncTree, ot=vuf.ObjectUpdatree,
-                   sot=vuf.StrictObjectUpdatree, it=vuf.IndexableUpdatree,
-                   sit=vuf.StrictIndexableUpdatree, torch=torch)
+_func_short = dict(partial=partial, t=uf.ArgTree, ft=uf.FuncTree, ot=uf.ObjectUpdatree,
+                   sot=uf.StrictObjectUpdatree, it=uf.IndexableUpdatree,
+                   sit=uf.StrictIndexableUpdatree, torch=torch)
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
@@ -292,7 +308,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         if problem is None or init_input is None:
             raise ValueError("`problem` and `init_input` are required if `prep_dataset` is `None`.")
     else:
-        problem = problem or defaults.get_problem_from_dataset(prep_dataset)
+        problem = problem or defaults.get_problem(prep_dataset)
 
     if init_input is None and prep_dataset is not None:
         init_input = next(iter(DataLoader([prep_dataset[0]] * 2, batch_size=2)))[0]
@@ -301,14 +317,15 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
     model_name, *argtree_arg = (x.strip() for x in model_str.strip().split(',', 1))
 
     if model_name[0] in "'\"":  # torch.hub
-        print(input_adapter_str)
+        if verbosity > 0:
+            print(input_adapter_str)
         assert input_adapter_str == 'id'
         model = factory_eval(f"torch.hub.load({model_str})")
     else:
         if hasattr(models, model_name):
             model_f = getattr(models, model_name)
         else:
-            model_f = factory_eval(model_name, namespace)
+            model_f = factory_eval(model_name, {**namespace, **models.__dict__})
         model_class = model_f
 
         argtree = defaults.get_model_argtree_for_problem(model_f, problem)
@@ -321,7 +338,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         _print_args_messages('Model', model_class, model_f,
                              {**argtree, 'input_adapter': input_adapter},
                              verbosity=verbosity)
-        if "input_adapter" in vuf.params(model_f):
+        if "input_adapter" in uf.params(model_f):
             model = model_f(input_adapter=input_adapter)
         else:
             model = model_f()
@@ -409,37 +426,39 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 # noinspection PyUnresolvedReferences
 def short_symbols_for_get_trainer():
     import math
+    import numpy as np
     import os
     from torch import optim
     import vidlu.optim.lr_schedulers as lr
+    import vidlu.optim as opt
     from vidlu.modules import losses
     import vidlu.data as vd
-    import vidlu.training.robustness as ta
     import vidlu.configs.training as ct
     import vidlu.configs.robustness as cr
+    import vidlu.training.robustness as ta
     import vidlu.training.steps as ts
     from vidlu.training.robustness import attacks
     from vidlu.transforms import jitter
-    import vidlu.utils.func as vuf
+    import vidlu.modules.utils as mu
+    import vidlu.utils.func as uf
     from vidlu.utils.func import partial
     from vidlu.data import class_mapping
     tc = ct  # backward compatibility
     return {**locals(), **_func_short, **extensions}
 
 
-def get_trainer(trainer_str: str, *, dataset, model, deterministic=False,
+def get_trainer(trainer_str: str, *, model, deterministic=False, distributed=False,
                 verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
-    default_config = ct.TrainerConfig(**defaults.get_trainer_args(dataset))  # empty
-    ah = factory_eval(f"vuf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
-    config = ct.TrainerConfig(default_config, *ah.args)
-    updatree = vuf.ObjectUpdatree(**ah.kwargs)
+    ah = factory_eval(f"uf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
+    config = ct.TrainerConfig(*ah.args)
+    updatree = uf.ObjectUpdatree(**ah.kwargs)
     config = updatree.apply(config)
 
     trainer_f = partial(Trainer, **config.normalized())
 
-    trainer = trainer_f(model=model, deterministic=deterministic)
+    trainer = trainer_f(model=model, deterministic=deterministic, distributed=distributed)
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
     return trainer
 
@@ -450,23 +469,19 @@ get_trainer.help = \
      + ' Instead of ArgTree(...), t(...) can be used.'
      + ' Example: "ResNetCifarTrainer"')
 
-"""
-def get_pretrained_params(model, params_name, params_dir):
-    return defaults.get_pretrained_params(model, params_name, params_dir)
-"""
-
 
 def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
+    # TODO: require something like metrics-str == "default" for default metrics
     if problem is None:
         if dataset is None:
             raise ValueError("get_metrics: either the dataset argument"
                              + " or the problem argument need to be given.")
-        problem = defaults.get_problem_from_dataset(dataset)
+        problem = defaults.get_problem(dataset, trainer)
 
-    default_metrics, main_metrics = defaults.get_metrics(trainer, problem)
-
-    metrics_str = metrics_str.strip()
-    metric_names = [x.strip() for x in metrics_str.strip().split(',')] if metrics_str else []
-    additional_metrics = [getattr(metrics, name) for name in metric_names]
-
+    default_metrics, main_metrics = problem.get_metrics()
+    if metrics_str.endswith('!'):
+        metrics_str = metrics_str[:-1]
+        from .problem import get_universal_metrics
+        default_metrics, main_metrics = get_universal_metrics(), ()
+    additional_metrics = factory_eval(f'[{metrics_str}]', {**metrics.__dict__, **_func_short})
     return default_metrics + additional_metrics, main_metrics

@@ -12,7 +12,29 @@ torch.no_grad()
 class TestModule:
     def test_not_built(self):
         m = Module()
-        assert not m._built
+        assert m._built
+        assert m.is_built()
+
+        class BuildableModule(Module):
+            def forward(self, x):
+                return x
+
+            def build(self, *args, **kwargs):
+                pass
+
+        bm = BuildableModule()
+        assert not bm._built
+        assert not bm.is_built()
+        bm(1)
+        assert bm.is_built()
+
+        class PostBuildableModule(Module):
+            def post_build(self, *args, **kwargs):
+                pass
+
+        pbm = PostBuildableModule()
+        assert not pbm._built
+        assert not pbm.is_built()
 
     def test_store_arguments(self):
         class TModule(Module):

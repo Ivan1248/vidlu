@@ -62,7 +62,7 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
             self.dict_ = dict(_process_lazy_args(args[0]), **self.dict_)
         if any(isinstance(k, int) for k in self.dict_.keys()):
             raise ValueError("Record keys must be non-ints.")
-        if int(os.environ.get('VIDLU_EAGER_RECORD', '0'))==1:
+        if int(os.environ.get('VIDLU_EAGER_RECORD', '0')) == 1:
             self.evaluate()
             if 'classes' in self.keys() and self.classes[0] is None:
                 breakpoint()
@@ -85,10 +85,13 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
         return self[key]
 
     def __eq__(self, other):
-        if isinstance(other, RecordBase):
-            return self.dict_ == other.dict_
-        else:
-            return all(a == b for a, b in zip(self.items(), other.items()))
+        if isinstance(other, RecordBase) and self.dict_ == other.dict_:
+            return True
+        try:
+            return self.keys() == other.keys() and all(a == b for a, b in zip(self.items(),
+                                                                              other.items()))
+        except AttributeError as e:
+            return False
 
     def __getstate__(self):  # evaluates everything
         return {k: v for k, v in self.items()}

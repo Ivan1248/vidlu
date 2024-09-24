@@ -4,7 +4,7 @@ import functools
 import typing as T
 import warnings
 
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.utils import text, tree
 from vidlu.utils.collections import NameDict
@@ -46,7 +46,7 @@ class Partial(functools.partial):
     >>> p = partial(lambda a=5, b=7: print(a, b), a=1)
     >>> assert p.a == 1 and p.b == 7
     >>> p()
-    1x
+    1 7
     """
 
     def __new__(cls, func, /, *args, **keywords):
@@ -73,8 +73,8 @@ class Partial(functools.partial):
                 unexpected = provided.difference(params_)
                 if len(unexpected) > 0:
                     func_name = getattr(func, "__name__", str(func))
-                    raise RuntimeError(f"Unexpected arguments {unexpected} for {func_name}"
-                                       + f" with signature {sig}.")
+                    raise RuntimeError(f"{func_name} with signature {sig} got unexpected arguments"
+                                       + f" {unexpected}.")
         except ValueError:
             pass
         return functools.partial.__call__(self, *args, **kwargs)
@@ -219,9 +219,9 @@ def _no_assignment_cond(k, v, default):
 TKwargsPolicy = T.Literal["error", "pick", "ignore"]
 
 
+@typechecked
 def pick_assignable_args(func, args_dict, return_other=False, assignment_cond=None,
                          kwargs_policy: TKwargsPolicy = "error"):
-    check_argument_types()
     if assignment_cond is None:
         assignment_cond = _no_assignment_cond
     parameters = list(signature(func).parameters.items())
@@ -352,12 +352,26 @@ def keyfilter(func, d, factory=dict):
 # Decorators #######################################################################################
 
 def vectorize(func=None, /, *, n=1):
+    """
+
+    Args:
+        func (Callable): a function that we want to apply in parallel to batched parameters.
+        n (int): number of arguments of different types
+
+    Producess a wrapper around f=func that computes as follows:
+        wrapper(func)((a11, .., a1n), .., (am1, ..., amn), b1, .., bk) =
+            (func(a11, .., am1, b1, .., bk), .., func(1n, .., amn, b1, .., bk))
+
+    Returns:
+        wrapper(func) if func is provided, and wrapper otherwise.
+    """
+
     def wrap(func):
         @functools.wraps(func)
         def wrapper(*a, **k):
             if isinstance(a[0], tuple):
-                a_multi, a_single = a[:n], a[n:]
-                return tuple(func(*am, *a_single, **k) for am in zip(*a_multi))
+                vector, a_shared = a[:n], a[n:]
+                return tuple(func(*vec, *a_shared, **k) for vec in zip(*vector))
             return func(*a, **k)
 
         return wrapper
@@ -365,30 +379,6 @@ def vectorize(func=None, /, *, n=1):
     if func is None:
         return wrap
     return wrap(func)
-
-
-def type_checked(func):
-    """A decorator that checks whether annotated parameters have valid types."""
-    sig = inspect.signature(func)
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        ba = sig.bind(*args, **kwargs)
-        ba = dict(**ba.arguments, args=ba.args[len(ba.arguments):], kwargs=ba.kwargs)
-        fail = False
-        for name, type_ in func.__annotations__.items():
-            type_origin = T.get_origin(type_)
-            if type_origin is not None:
-                if type_origin is T.Literal:
-                    if ba[name] not in T.get_args(type_):
-                        fail = True
-            if fail or not isinstance(ba[name], type_):
-                val_str = str(ba[name])
-                val_str = val_str if len(val_str) < 80 else val_str[:77] + '...'
-                raise TypeError(f"The argument {name}={val_str} is not of type {type_}.")
-        return func(*args, **kwargs)
-
-    return wrapper
 
 
 # Caching ##########################################################################################
@@ -401,6 +391,9 @@ class _FactoryHolder:
 
 
 class Cached:
+    """Wraps a function with no parameters. When called the first time, calls the function and
+    stores its result and discards the function. When called again, returns the stored result."""
+
     __slots__ = '_item'
 
     def __init__(self, factory):

@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.8, 3.9]
+        python-version: [3.10, 3.11]
 
     steps:
     - uses: actions/checkout@v2
@@ -29,5 +29,5 @@ jobs:
       run: |
         pip install pytest
         pip install pytest-cov
-          # python -m pytest tests/ --cov=com --cov-report=xml --cov-report=html --ignore scripts/
-          python -m pytest tests/ --ignore scripts/
+        # python -m pytest tests/ --cov=com --cov-report=xml --cov-report=html --ignore scripts/
+        python -m pytest tests/ --ignore scripts/

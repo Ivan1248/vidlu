@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
-from typeguard import check_argument_types
+from typeguard import typechecked
 
 from vidlu.torch_utils import norm_stats_tracking_off, preserve_grads
 from vidlu.ops import one_hot
@@ -25,7 +25,7 @@ def to_labels(x):
 
 
 def labels_to_probs(x, c, dtype):
-    return one_hot(x, c=c, dtype=dtype)
+    return one_hot(x, c, dtype=dtype)
 
 
 class LossAdapter:
@@ -64,8 +64,8 @@ def nll_loss_l(logits, target, weight=None, ignore_index=-1,
                            reduction=reduction)
 
 
+@typechecked
 def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none", mask=None):
-    check_argument_types()
     if mask is not None and reduction == "none":
         raise ValueError(f'reduction="none" is not supported when a mask is provided.')
     if mask is None:
@@ -76,8 +76,8 @@ def _apply_reduction(result, reduction: T.Literal["none", "mean", "sum"] = "none
         return result.mean() if reduction == "mean" else result.sum()
 
 
+@typechecked
 def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none", ignore_index=-1):
-    check_argument_types()
     N, C, *HW = probs.shape
     if ignore_index < 0:
         target_valid = target.clamp(0, C - 1)
@@ -90,8 +90,8 @@ def nll_loss(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"
     return _apply_reduction(result, reduction=reduction, mask=target != ignore_index)
 
 
+@typechecked
 def crossentropy(probs, target, reduction: T.Literal["none", "mean", "sum"] = "none"):
-    check_argument_types()
     result = (torch.einsum("nc...,nc...->n...", -torch.log(probs), target.transpose(-1, 1)))
     return _apply_reduction(result, reduction=reduction)
 
@@ -486,14 +486,20 @@ class CarliniWagnerLoss(nn.Module):
 # Generative
 
 def input_image_nll(x, z, bin_count=256):
+    """Computes the log-probability that each dimension of x belongs ta the corresponding bin out of
+     255.
+
+     Assumes that all input elements are between 0 and 1."""
     N, dim = len(x), x[0].numel()
+
     ll_z = -0.5 * (z ** 2 + np.log(2 * np.pi))
     ll_z = ll_z.view(N, -1).sum(-1)
     ll_z -= np.log(bin_count) * dim
-    loss_ladj = -Ladj.get(z)()
-    loss_ll_z = -ll_z
-    return (loss_ladj + loss_ll_z) / dim
 
+    nladj = -Ladj.get(z)()
+    nll_z = -ll_z
+    nll = nladj + nll_z
+    return nll / dim
 
 # Utilities
 

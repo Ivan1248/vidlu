@@ -1,5 +1,5 @@
 from vidlu.data.class_mapping import invert_many_to_one_mapping
-from .datasets import _cityscapes_class_names
+from vidlu.data.datasets.datasets import _cityscapes_class_names
 
 # def remaining_taxonomy_part(taxonomy, classes):
 #     used_classes = {c for k, subs in taxonomy.items() for c in subs}

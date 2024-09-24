@@ -3,7 +3,7 @@ from numpy import s_
 
 import vidlu.modules.inputwise as vmi
 import vidlu.modules as vm
-from vidlu.modules.inputwise import PertModel, SeqPertModel
+from vidlu.modules.inputwise import PertModel, PertModelBase, SeqPertModel
 import vidlu.ops.image as voi
 import vidlu.ops as vo
 from vidlu.utils.func import partial
@@ -15,7 +15,7 @@ t = vmf.ArgTree
 
 # Perturbation models
 
-class Alglibiwasc(vm.Seq, vmi.PertModelBase):
+class Alglibiwasc(vm.Seq, PertModelBase):
     def __init__(self):
         super().__init__(vm.Seq(
             gamma=vmi.AlterLogGamma((2, 3)),
@@ -54,6 +54,15 @@ class ChannelGammaHsv(PertModel):
             forward_arg_count=forward_arg_count)
 
 
+class Maybe(PertModel):
+    def __init__(self, module, forward_arg_count=None):
+        super().__init__(module, forward_arg_count=forward_arg_count)
+        self.value = torch.full((), False)
+
+    def forward(self, arg):
+        return super().forward(arg) if self.value.item() else arg
+
+
 class Photometric20(SeqPertModel):
     def __init__(self, clamp=False, projection=None, forward_arg_count=None):
         add_f = partial(vmi.Add, equivariant_dims=(2, 3))
@@ -64,7 +73,8 @@ class Photometric20(SeqPertModel):
                            add_h=add_f(slice=s_[:, 0:1, ...]),
                            mul_v=mul_f(slice=s_[:, 2:, ...]),
                            to_rgb=PertModel(voi.hsv_to_rgb),
-                           shuffle=PertModel(partial(vm.shuffle, dim=1)))
+                           shuffle=Maybe(partial(vm.shuffle, dim=1),
+                                         forward_arg_count=forward_arg_count))
         if clamp:
             modules.soft_clamp = PertModel(partial(vo.soft_clamp, min_=0, max_=1, eps=0.01),
                                            forward_arg_count=1)

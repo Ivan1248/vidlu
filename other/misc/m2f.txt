@@ -1,0 +1,46 @@
+MaskFormerModel -- libs/Mask2Former/mask2former/maskformer_model.py
+
+
+MaskFormerModel
+    backbone: ResNet
+        (x) ->
+        features = backbone(input): (res2, .., res5)
+    sem_seg_head: MaskFormerHead
+        pixel_decoder: MSDeformAttnPixelDecoder
+            input_proj: ModuleList[Sequential[Conv2d, GroupNorm]]
+            pe_layer: PositionEmbeddingSine
+            transformer: MSDeformAttnTransformerEncoderOnly
+                encoder: MSDeformAttnTransformerEncoder
+                    layers: ModuleList[MSDeformAttnTransformerEncoderLayer]
+                        self_attn, norm1, ffn: nn.Module
+
+                (srcs, pos_embeds) ->
+                ...
+                memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
+                memory, spatial_shapes, level_start_index
+            mask_features: Conv2d
+            lateral_convs, lateral_convs: ModuleList[Conv2d]
+
+            (x) ->
+            ...
+            src[i] = self.input_proj(x[i])
+            pos[i] = self.pe_layer(x[i])
+            y, spatial_shapes, level_start_index = self.transformer(src, pos)
+            ...
+
+        predictor: MultiScaleMaskedTransformerDecoder
+            pe_layer: PositionEmbeddingSine
+            transformer_self_attention_layers: ModuleList[SelfAttentionLayer]
+            transformer_cross_attention_layers = ModuleList[CrossAttentionLayer]
+            transformer_ffn_layers = ModuleList[FFNLayer]
+            class_embed: Linear
+            mask_embed: MLP
+
+            (x, mask_features, mask=None) -> out: (pred_logits, pred_masks, aux_outputs)
+
+
+        (features, mask=None) ->
+        ...
+        mask_features, transformer_encoder_features, multi_scale_features = pixel_decoder.forward_features(features)
+        predictions = self.predictor(multi_scale_features, mask_features, mask)
+        ...

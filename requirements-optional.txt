@@ -5,3 +5,5 @@ pudb
 psutil
 xmltodict
 cupy  # softmax splatting
+timm
+typeguard

@@ -3,6 +3,9 @@ import typing as T
 from pathlib import Path
 import copy
 import difflib
+import logging
+from contextlib import contextmanager
+from functools import wraps
 
 import torch
 from torch import nn
@@ -44,8 +47,7 @@ def switch_requires_grad(module_or_params, value):
 
 
 def switch_training(module, value):
-    """Sets the training attribute to false for the module and all submodules.
-    """
+    """Sets the training attribute to false for the module and all submodules."""
     return vuc.switch_attribute(module.modules(), 'training', value)
 
 
@@ -188,6 +190,116 @@ def reset_cuda():
     torch.cuda.ipc_collect()
 
 
+# Copyright (c) Facebook, Inc. and its affiliates. Code taken from detectron2.utils.memory
+@contextmanager
+def _ignore_torch_cuda_oom():
+    """
+    A context which ignores CUDA OOM exception from pytorch.
+    """
+    try:
+        yield
+    except RuntimeError as e:
+        # NOTE: the string may change?
+        if "CUDA out of memory. " in str(e):
+            pass
+        else:
+            raise
+
+
+# Copyright (c) Facebook, Inc. and its affiliates. Code taken from detectron2.utils.memory
+def retry_if_cuda_oom(func):
+    """
+    Makes a function retry itself after encountering
+    pytorch's CUDA OOM error.
+    It will first retry after calling `torch.cuda.empty_cache()`.
+
+    If that still fails, it will then retry by trying to convert inputs to CPUs.
+    In this case, it expects the function to dispatch to CPU implementation.
+    The return values may become CPU tensors as well and it's user's
+    responsibility to convert it back to CUDA tensor if needed.
+
+    Args:
+        func: a stateless callable that takes tensor-like objects as arguments
+
+    Returns:
+        a callable which retries `func` if OOM is encountered.
+
+    Examples:
+    ::
+        output = retry_if_cuda_oom(some_torch_function)(input1, input2)
+        # output may be on CPU even if inputs are on GPU
+
+    Note:
+        1. When converting inputs to CPU, it will only look at each argument and check
+           if it has `.device` and `.to` for conversion. Nested structures of tensors
+           are not supported.
+
+        2. Since the function might be called more than once, it has to be
+           stateless.
+    """
+
+    def maybe_to_cpu(x):
+        try:
+            like_gpu_tensor = x.device.type == "cuda" and hasattr(x, "to")
+        except AttributeError:
+            like_gpu_tensor = False
+        if like_gpu_tensor:
+            return x.to(device="cpu")
+        else:
+            return x
+
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        with _ignore_torch_cuda_oom():
+            return func(*args, **kwargs)
+
+        # Clear cache and retry
+        torch.cuda.empty_cache()
+        with _ignore_torch_cuda_oom():
+            return func(*args, **kwargs)
+
+        # Try on CPU. This slows down the code significantly, therefore print a notice.
+        logger = logging.getLogger(__name__)
+        logger.info("Attempting to copy inputs of {} to CPU due to CUDA OOM".format(str(func)))
+        new_args = (maybe_to_cpu(x) for x in args)
+        new_kwargs = {k: maybe_to_cpu(v) for k, v in kwargs.items()}
+        return func(*new_args, **new_kwargs)
+
+    return wrapped
+
+
+# AMP
+
+class DummyGradScaler:
+    @staticmethod
+    def scale(loss):
+        return loss
+
+    @staticmethod
+    def unscale_(optimizer):
+        pass
+
+    @staticmethod
+    def step(optimizer, *args, **kwargs):
+        return optimizer.step(*args, **kwargs)
+
+    @staticmethod
+    def update(new_scale=None):
+        pass
+
+    @staticmethod
+    def get_scale():
+        return 1.0
+
+    @staticmethod
+    def state_dict():
+        return dict()
+
+    @staticmethod
+    def load_state_dict(*args, **kwargs):
+        pass
+
+
 # Profiling
 
 def profile(func, on_cuda=True, device=None):
@@ -210,23 +322,15 @@ def compare(a, b, name=None, key=None):
         assert type(a) == type(other)
         result = compare(a, other)
         print("+" if result else "FAIL")
-        # if not result:
-        # if not result:
-        #     exit()
         return result
     if isinstance(a, torch.Tensor):
         b = b.to(a.device)
         if a.shape != b.shape:
             import pudb;
             pudb.set_trace()
-        # if "backbone.backbone.root.norm.orig.running_mean" == key:
-        #     breakpoint()
-        #     torch.old = (a.detach().clone(), b.detach().clone())
         if not torch.all(a == b):
             print(f"{(a - b).abs().max():1.2e} {key}")
             return False
-            # if not torch.allclose(a, b):
-            #     return False
         return True
     elif isinstance(a, T.Mapping):
         results = dict()
@@ -237,7 +341,6 @@ def compare(a, b, name=None, key=None):
             results[k] = compare(v, b[k], key=k)
         result = all(results.values())
         if not result:
-            # negatives = {k: v for k, v in results.items() if not v}
             print(str(results).replace(", ", ",\n"))
         return result
     elif isinstance(a, T.Sequence):

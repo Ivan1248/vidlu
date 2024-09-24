@@ -1,10 +1,8 @@
-import torch
+import functools
 
 import vidlu.training.extensions as te
 from vidlu.utils.collections import NameDict
 from vidlu.utils.func import params, partial, Required, ArgTree, tree_partial
-from vidlu.optim import OptimizerMaker
-import functools
 
 
 # Trainer config

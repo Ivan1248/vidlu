@@ -7,34 +7,42 @@ from vidlu.transforms import image
 from vidlu.utils.presentation.visualization import view_predictions
 from vidlu.utils.tree import print_tree
 from vidlu.factories import prepare_dataset, get_data
+from vidlu.utils import debug
 
 import dirs
 
 # python view_dataset.py
-#   mnist all
-#   inaturalist2018 train
-#   voc2012 test
-#   wilddash bench
+#   Cityscapes
+#   Cityscapes --subset all
+#   Cityscapes --subset train
+#   "VOC2012Segmentation(pad=True,size_unit=32)" --subset val
 
 parser = argparse.ArgumentParser()
 parser.add_argument('ds', type=str)
-parser.add_argument('part', type=str)
+parser.add_argument('--subset', type=str, default=None)
 parser.add_argument('--jitter', type=str, default=None)
 parser.add_argument('--permute', action='store_true')
+parser.add_argument('--debug', action='store_true')
 args = parser.parse_args()
 
-[[ds], [name], _] = get_data(f"{args.ds}{{{args.part}}}", datasets_dir=dirs.datasets,
-                          cache_dir=dirs.cache)
-ds = prepare_dataset(ds)
+debug.set_traceback_format(call_pdb=args.debug, verbose=False)
 
-print("Name:", ds.identifier, f'({" ".join(name)})')
+subset_expr = f'{{{args.subset}}}' if args.subset else ''
+
+[[ds], [name], _] = get_data(f"{args.ds}{subset_expr}", datasets_dir=dirs.datasets,
+                             cache_dir=dirs.cache)
+
+ds = prepare_dataset(ds)
+if isinstance(name, tuple):
+    name = f'({" ".join(name)})'
+print("Name:", ds.identifier, name)
 print("Info:")
 print_tree(ds.info.dict_, depth=1)
 print("Number of examples:", len(ds))
 print(f"Size estimate: {pickle_sizeof(ds[0]) * len(ds) / 2 ** 30:.3f} GiB")
 
 if 'class_count' not in ds.info:
-    ds.info['class_count'] = 2
+    raise RuntimeError("ds.info.class_count not defined.")
 
 if args.jitter:
     jitter = eval("jitter." + args.jitter)
