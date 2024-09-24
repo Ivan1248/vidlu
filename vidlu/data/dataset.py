@@ -37,7 +37,7 @@ from .record import Record, DictRecord, LazyField
 
 def _compress_indices(indices, max):
     for dtype in [np.uint8, np.uint16, np.uint32, np.uint64]:
-        if max <= dtype(-1):
+        if max <= np.array(-1).astype(dtype):
             return np.array(indices, dtype=dtype)
     return indices
 

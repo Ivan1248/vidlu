@@ -1,5 +1,6 @@
 from functools import partialmethod, partial
 import typing as T
+import numbers as num
 
 import torch.utils.data as tud
 import numpy as np
@@ -52,7 +53,7 @@ def _repeat(iterable, n):
 class MultiDataLoaderBase:
     def __init__(self, *data_loaders,
                  primary_index: T.Optional[
-                     T.Union[int, T.Literal['longest', 'shortest', 'equal']]] = 'shortest'):
+                     T.Union[num.Integral, T.Literal['longest', 'shortest', 'equal']]] = 'shortest'):
         self.data_loaders = data_loaders
         lengths = np.array([len(d) for d in self.data_loaders])
         if primary_index == 'equal':
