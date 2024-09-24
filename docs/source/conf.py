@@ -21,6 +21,8 @@ project = 'Vidlu'
 copyright = '2020, Ivan Grubišić'
 author = 'Ivan Grubišić'
 
+version = '0.2.0'
+
 # -- General configuration ---------------------------------------------------
 
 # Add any Sphinx extension module names here, as strings. They can be
@@ -30,6 +32,7 @@ extensions = ['sphinx.ext.napoleon',  # Google-style docstrings
               'sphinx.ext.todo',
               'sphinx.ext.viewcode',
               'sphinx.ext.autodoc',  # automodule
+              'sphinx.ext.autosummary',
               #'m2r'  # md to rst -- m2r unmaintained, bug
               ]
 
@@ -54,5 +57,5 @@ html_theme = 'alabaster'
 html_static_path = ['_static']
 
 #
-master_doc = 'index'
-html_theme = "sphinx_rtd_theme"
+#master_doc = 'index'
+#html_theme = "sphinx_rtd_theme"
