@@ -36,6 +36,9 @@ extensions = ['sphinx.ext.napoleon',  # Google-style docstrings
               #'m2r'  # md to rst -- m2r unmaintained, bug
               ]
 
+# Turn on sphinx.ext.autosummary
+autosummary_generate = True
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 
@@ -49,7 +52,7 @@ exclude_patterns = []
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'sphinx_rtd_theme'
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -58,4 +61,7 @@ html_static_path = ['_static']
 
 #
 #master_doc = 'index'
-#html_theme = "sphinx_rtd_theme"
+#html_theme = "alabaster"
+
+# -- Options for EPUB output
+epub_show_urls = 'footnote'
