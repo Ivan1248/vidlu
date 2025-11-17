@@ -12,19 +12,20 @@ Welcome to Vidlu's documentation!
    :recursive:
 
    vidlu
-
-.. autosummary::
-   :toctree: _autosummary
-   :template: custom-module-template.rst
-   :recursive:
-
    vidlu.training
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
+
+   API: vidlu <_autosummary/vidlu>
+   API: vidlu.training <_autosummary/vidlu.training>
 
 .. toctree::
    :maxdepth: 4
    :caption: Contents:
 
-   README <../../README.md>
+   README <README>
 
 Indices and tables
 ==================
