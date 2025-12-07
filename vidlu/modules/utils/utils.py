@@ -65,3 +65,18 @@ def map_tensors(a, f):
         return type(a)(map_tensors(x, f) for x in a)
     elif isinstance(a, T.Mapping):
         return type(a)({k: map_tensors(x, f) for k, x in a.items()})
+
+
+class KeepingTrainingMode(nn.Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def forward(self, *args, **kwargs):
+        return self.module(*args, **kwargs)
+
+    def eval(self):
+        pass
+
+    def train(self, mode: bool = True):
+        pass

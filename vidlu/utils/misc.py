@@ -19,6 +19,7 @@ import pickle
 
 from tqdm import tqdm
 import numpy as np
+#from transformers import pipeline
 
 
 # Slicing ##########################################################################################
@@ -31,7 +32,7 @@ def slice_len(s, sequence_length):
 
 # Deep attribute access ############################################################################
 
-def deep_getattr(root_obj, path: T.Union[T.List[str], str]):
+def deep_getattr(root_obj, path: str | list[str]):
     """Retrieves a descendant object of `root_obj` that corresponds to `path`.
     Args:
         root_obj (object): an object.
@@ -44,30 +45,40 @@ def deep_getattr(root_obj, path: T.Union[T.List[str], str]):
     return root_obj
 
 
-# Argument broadcasting ############################################################################
+# Mappings #########################################################################################
 
-def broadcast(obj: T.Union[object, T.Sequence], n: int, seq_type=T.Sequence) -> list:
-    if isinstance(obj, seq_type):
-        if len(obj) == 1:
-            return list(obj) * n
-        elif len(obj) != n:
-            raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
-                               f"not `n` = {n}. Check whether `batch_size` and"
-                               f" `evaL_batch_size` are correctly set.")
-        return obj
-    return [obj] * n
+def fuse(*dicts, overriding=None, ignore_if_equal=True, factory=None):
+    factory = factory or type(dicts[0])
+
+    if overriding is None and ignore_if_equal is False:
+        return factory(*dicts)
+
+    result = factory(**dicts[0])
+    for d in dicts[1:]:
+        for k, v in d.items():
+            if k in result and not (ignore_if_equal and result[k] is v):
+                raise RuntimeError(f"Key '{k}' is already assigned.")
+            result[k] = v
+
+    overriding = overriding or factory()
+    result.update(overriding)
+
+    return result
 
 
-# Import module ####################################################################################
+def dict_difference(a, b):
+    return type(a)({k: v for k, v in a.items() if k not in b})
 
-def import_module(path):  # from morsic
-    spec = importlib.util.spec_from_file_location(Path(path).stem, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+
+def update_existing_items(dest, src, copy=False):
+    if copy:
+        dest = dest.copy()
+    dest.update({k: v for k, v in src.items() if k in dest})
+    return dest
 
 
 # Event ############################################################################################
+
 
 class RemovableHandle(object):
     """An object that can be used to remove a handler from an event.
@@ -126,8 +137,8 @@ class Event:
         return RemovableHandle(self, handler)  # can be used as context manager or decorator
 
     def handler(self, handler: callable):
-        """Adds an event handler (callback) and returns it. It should only be
-        used as a decorator. `add_handler` should be used otherwise."""
+        """Adds an event handler (callback) and returns it. It should be used as a decorator.
+        `add_handler` should be used otherwise."""
         self.handlers.append(handler)
         return handler
 
@@ -157,8 +168,7 @@ def try_input(default=None):
         if platform.system() == 'Windows':
             import msvcrt
             return msvcrt.kbhit()
-        if sys.stdin.isatty():
-            return select.select([sys.stdin], [], [], 0)[0]
+        return sys.stdin.isatty() and select.select([sys.stdin], [], [], 0)[0]
 
     try:
         return input() if input_available() else default
@@ -205,9 +215,8 @@ def extract_zip(path, dest_path):
 
 
 def extract_gz(path, dest_path):
-    with gzip.open(path, 'rb') as gz:
-        with open(dest_path, 'wb') as raw:
-            raw.write(gz.read())
+    with gzip.open(path, 'rb') as gz, open(dest_path, 'wb') as raw:
+        raw.write(gz.read())
     return dest_path
 
 
@@ -257,38 +266,6 @@ def download_git_repo(url, output_path, branch=None):
             print(message)
 
     return git.Repo.clone_from(url, output_path, branch=branch, progress=progress)
-
-
-# Mappings #########################################################################################
-
-def fuse(*dicts, overriding=None, ignore_if_equal=True, factory=None):
-    factory = factory or type(dicts[0])
-
-    if overriding is None and ignore_if_equal is False:
-        return factory(*dicts)
-
-    result = factory(**dicts[0])
-    for d in dicts[1:]:
-        for k, v in d.items():
-            if k in result and not (ignore_if_equal and result[k] is v):
-                raise RuntimeError(f"Key '{k}' is already assigned.")
-            result[k] = v
-
-    overriding = overriding or factory()
-    result.update(overriding)
-
-    return result
-
-
-def dict_difference(a, b):
-    return type(a)({k: v for k, v in a.items() if k not in b})
-
-
-def update_existing_items(dest, src, copy=False):
-    if copy:
-        dest = dest.copy()
-    dest.update({k: v for k, v in src.items() if k in dest})
-    return dest
 
 
 # Context managet timer ############################################################################
@@ -400,6 +377,20 @@ def indent_print(*args, indent="   "):
     builtins.print = orig_print
 
 
+# Argument broadcasting ############################################################################
+
+def broadcast(obj: object | T.Sequence, n: int, seq_type=T.Sequence) -> list:
+    if isinstance(obj, seq_type):
+        if len(obj) == 1:
+            return list(obj) * n
+        elif len(obj) != n:
+            raise RuntimeError(f"`obj` already is a `Sequence` but its size ({len(obj)}) is "
+                               f"not `n` = {n}. Check whether `batch_size` and"
+                               f" `evaL_batch_size` are correctly set.")
+        return obj
+    return [obj] * n
+
+
 # Checks ###########################################################################################
 
 def check_arg_type(name, value, type_):
@@ -411,6 +402,21 @@ def check_arg_type(name, value, type_):
 def check_value_in(name, value, values: T.Collection):
     if value not in values:
         raise TypeError(f"{name} should have a value from {values}, not {value}.")
+
+
+# Serialization ####################################################################################
+
+def pickle_sizeof(obj):
+    """An alternative to `sys.getsizeof` which works for lazily initialized objects (e.g. objects of
+    type `vidlu.data.Record`) that can be much larger when pickled.
+
+    Args:
+        obj: the object to be pickled.
+
+    Returns:
+        int: the size of the pickled object in bytes.
+    """
+    return len(pickle.dumps(obj))
 
 
 # Typing ###########################################################################################
@@ -462,18 +468,3 @@ class Intersection(TypeOperationBase):
     @classmethod
     def __subclasscheck__(cls, subclass):
         return all(issubclass(subclass, c) for c in cls.classes)
-
-
-# Serialization ####################################################################################
-
-def pickle_sizeof(obj):
-    """An alternative to `sys.getsizeof` which works for lazily initialized objects (e.g. objects of
-    type `vidlu.data.Record`) that can be much larger when pickled.
-
-    Args:
-        obj: the object to be pickled.
-
-    Returns:
-        int: the size of the pickled object in bytes.
-    """
-    return len(pickle.dumps(obj))

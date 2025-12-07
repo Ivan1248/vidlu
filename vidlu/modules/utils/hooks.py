@@ -32,7 +32,7 @@ def check_no_inf_nan(module, input, output):
         if (inf := torch.isinf(out).any()) or (nan := torch.isnan(out).any()):
             module_name = try_get_module_name_from_call_stack(module)
             print(f"{module_name=}, {output_index=} {inf=}, {nan=}")
-            breakpoint()
+            (breakpoint)()
 
 
 def print_norm(module, input, output):

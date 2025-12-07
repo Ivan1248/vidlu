@@ -1116,10 +1116,10 @@ class VATTrainStep:
             target = attack.output_to_target(out)  # usually the same as target.sogtmax(1)
             if self.block_grad_for_clean:
                 target = target.detach()
-        with vtu.switch_training(model, False) if self.attack_eval_model else ctx.suppress():
-            with vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
-                x_p, y_p = attack.perturb(model, x, target)
-                out_p = model(untag(x_p))
+        with vtu.switch_training(model, False) if self.attack_eval_model else ctx.suppress(), \
+                vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
+            x_p, y_p = attack.perturb(model, x, target)
+            out_p = model(untag(x_p))
         loss_p = attack.loss(out_p, y_p, reduction="mean")
         loss = loss + self.alpha * loss_p
         loss_ent = vml.entropy_l(out_p, reduction="mean")

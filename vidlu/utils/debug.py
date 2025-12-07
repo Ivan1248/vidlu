@@ -87,7 +87,7 @@ def crash_after(*args, format='%Y-%m-%d', message=None):
 
 def set_traceback_format(call_pdb=False, verbose=False):
     sys.excepthook = ultratb.FormattedTB(mode='Verbose' if verbose else 'Plain',
-                                         color_scheme='Linux', call_pdb=call_pdb)
+                                         call_pdb=call_pdb)
 
 
 def set_warnings_with_traceback():

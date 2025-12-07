@@ -71,7 +71,7 @@ def fetch_remote_experiment(args, dirs):
 
 def get_profiler():
     from torch.autograd.profiler import profile
-    return profile(use_cuda=True)
+    return profile(use_cuda=torch.cuda.is_available())
 
 
 def make_experiment(args, dirs):
@@ -106,8 +106,7 @@ def eval_on_test_sets(exp):
     for name, ds in exp.data.items():
         if name.startswith("test"):
             print(f"Evaluating on {name} {getattr(ds, 'identifier', '')}...")
-            exp.trainer.eval(ds)
-
+            exp.trainer.eval(ds, split_name=name)
 
 def train(args):
     try:
@@ -156,7 +155,7 @@ def train(args):
                 for name, ds in training_datasets.items():
                     print(f'\nEvaluating on training data ({name})...')
                     try:
-                        exp.trainer.eval(ds)
+                        exp.trainer.eval(ds, split_name=name)
                     except ValueError as e:
                         if 'not enough values to unpack' in e.args[0]:
                             warnings.warn(e.args[0])
@@ -176,7 +175,7 @@ def train(args):
             cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
             clean_up_dataset_cache(dirs.cache / 'datasets', timedelta(days=cache_cleanup_time))
     finally:
-        if args.distributed:
+        if args.distributed and dist.is_initialized():
             dist.destroy_process_group()
 
 
@@ -230,6 +229,11 @@ def add_standard_arguments(parser, func):
                         help='The name of the file containing parameters.')
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
+    parser.add_argument("--imports", type=str, default="",
+                        help="List of package names optional aliases to be imported into the factory namespace.")
+    parser.add_argument("--pre", type=str, default="",
+                        help="Expression to evaluate in the factory namespace before calling the factories")
+    parser.add_argument("--attach", type=str, default="[]", help="List of objects")
     parser.add_argument("--eval_with_pop_stats", action='store_true',
                         help="Computes actual population statistics for batchnorm layers.")
 
@@ -261,7 +265,7 @@ def add_standard_arguments(parser, func):
                         help="RNG seed. Default: int(time()) %% 100.")
     parser.add_argument("--deterministic", action='store_true',
                         help="Usage of deterministic operations.")
-    parser.add_argument("--data_factory_version", type=int, default=1)
+    parser.add_argument("--factory_version", type=int, default=2)
     # reporting, debugging
     parser.add_argument("--debug", help="", action='store_true')
     parser.add_argument("--print_calls", help="", action='store_true')

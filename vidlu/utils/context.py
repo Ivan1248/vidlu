@@ -41,9 +41,19 @@ def switch_attribute_if_exists(objects, attrib_name, value):
     return switch_attribute((k for k in objects if hasattr(k, attrib_name)), attrib_name, value)
 
 
+class _ClassAttr:
+    pass
+
+
 @contextlib.contextmanager
 def preserve_attribute(objects, attrib_name, copy_func=lambda x: x):
-    state = {m: copy_func(getattr(m, attrib_name)) for m in objects}
+    state = {obj: copy_func(getattr(obj, attrib_name)) 
+             if attrib_name in vars(obj) else _ClassAttr
+             for obj in objects}
     yield
-    for m, v in state.items():
-        setattr(m, attrib_name, v)
+    for obj, v in state.items():
+        if v is _ClassAttr:
+            if attrib_name in vars(obj):
+                del vars(obj)[attrib_name]
+        else:
+            setattr(obj, attrib_name, v)

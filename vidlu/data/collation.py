@@ -4,7 +4,7 @@ import dataclasses as dc
 import numpy as np
 from torch.utils.data.dataloader import default_collate as torch_collate
 
-from .record import Record, LazyField
+from .record import Record, LazyItem
 import vidlu.data.types as dt
 
 
@@ -76,8 +76,8 @@ class DefaultCollate(ExtendableCollate):
             batch_dicts = tuple((dict(r.items()) for r in batch) if self.evaluate_lazy_data else
                                 (r.dict_ for r in batch))
             return Record(self(batch_dicts))
-        elif elem_type is LazyField:
-            return LazyField(lambda: self(tuple(x() for x in batch)))
+        elif elem_type is LazyItem:
+            return LazyItem(lambda: self(tuple(x() for x in batch)))
         elif isinstance(batch[0], dt.AABBsOnImage):
             return batch
         return super().__call__(batch)

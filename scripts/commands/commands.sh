@@ -76,7 +76,7 @@ python run.py train "Cifar10{trainval,test}" id "ResNetV2,backbone_f=t(depth=18,
 python run.py train "mnist{trainval,test}" id "MNISTNet,backbone_f=t(act_f=C.Tent,use_bn=False)" "tc.mnistnet_tent,tc.adversarial,attack_f=attacks.DummyAttack,eval_attack_f=tc.mnistnet_tent_eval_attack"
 
 # show_summary.py
-python show_summary.py /home/igrubisic/data/states/Cifar10\{trainval\,test\}/ResNetV2\,backbone_f\=t\(depth\=18\,small_input\=True\)/Trainer\,++\{++tc.resnet_cifar\,++dict\(train_step\=tc.SupervisedTrainMultiStep\(8\)\,epoch_count\=200/8\)\}/train_eval_after_multistep/25/summary.p
+python show_summary.py ~/data/states/Cifar10\{trainval\,test\}/ResNetV2\,backbone_f\=t\(depth\=18\,small_input\=True\)/Trainer\,++\{++tc.resnet_cifar\,++dict\(train_step\=tc.SupervisedTrainMultiStep\(8\)\,epoch_count\=200/8\)\}/train_eval_after_multistep/25/summary.p
 
 
 # Semi-supervised VAT
@@ -110,3 +110,7 @@ CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2
 CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:372],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 # https://docs.google.com/spreadsheets/d/1Tqydw1Hhvjyflo412UJJ1Y6720sRpCkYUjH3FRvYeLw/edit#gid=851257437
+
+# IRAP
+
+IRAP_HOME=~/projects/IRAP_HOME/ CUDA_VISIBLE_DEVICES=1 python -m pdb scripts/run.py train "irap_gaim.make_bih_data()" "id" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" -e 2 -r restart

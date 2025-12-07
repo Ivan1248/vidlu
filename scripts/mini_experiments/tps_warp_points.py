@@ -87,8 +87,9 @@ timages += [warp.inverse(x_warped)]
 from vidlu.modules.components import GaussianFilter2D
 
 gridrand = torch.randn_like(base_grid) * 6
-gridrand = GaussianFilter2D(sigma=20, padding_mode='reflect')(gridrand.permute(0, 3, 1, 2)).permute(
-    0, 2, 3, 1)
+gaussian_filter = GaussianFilter2D(sigma=20, padding_mode='reflect')
+gaussian_filter.to(gridrand.device)
+gridrand = gaussian_filter(gridrand.permute(0, 3, 1, 2)).permute(0, 2, 3, 1)
 # timages += [F.grid_sample(x, base_grid + gridrand).squeeze_(1)]
 
 for x in timages:

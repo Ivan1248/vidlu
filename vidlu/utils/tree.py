@@ -95,7 +95,7 @@ def flatten(tree, tree_type=None) -> list:
     return out
 
 
-def unflatten(path_to_value: T.Union[T.Iterable[tuple], T.Mapping], tree_type=dict):
+def unflatten(path_to_value: T.Iterable[tuple] | T.Mapping, tree_type=dict):
     class Leaf:  # used to encode leaves to distinguish lists that are values
         def __init__(self, item):
             self.item = item

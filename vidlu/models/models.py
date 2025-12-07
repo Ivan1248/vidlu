@@ -41,6 +41,7 @@ def resnet_v1_backbone(depth, base_width=default_args(vmc.ResNetV1Backbone).base
             10: ([1] * 4, basic),  # [1] bw 64
             18: ([2] * 4, basic),  # [1] bw 64
             34: ([3, 4, 6, 3], basic),  # [1] bw 64
+            56: ([9] * 3, basic),  # CIFAR ResNet-56: 3 groups with 9 blocks each
             110: ([18] * 3, basic),  # [1] bw 16
             50: ([3, 4, 6, 3], bottleneck),  # [1] bw 64
             101: ([3, 4, 23, 3], bottleneck),  # [1] bw 64
