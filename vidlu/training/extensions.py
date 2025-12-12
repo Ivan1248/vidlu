@@ -12,25 +12,6 @@ class TrainerExtension:
         pass
 
 
-class Stage(TrainerExtension):
-    def __init__(self):
-        self.stage = 0
-        self._handle = None
-
-    def initialize(self, trainer):
-        self.stage = 0
-        self._handle = trainer.training.completed.add_handler(lambda e: self.increment_stage())
-
-    def state_dict(self):
-        return self.__dict__
-
-    def load_state_dict(self, state_dict):
-        self.__dict__.update(state_dict)
-
-    def increment_stage(self):
-        self.stage += 1
-
-
 class _AdversarialTrainingBase(TrainerExtension):
     def __init__(self, attack_f, eval_attack_f=None):
         self.attack_f, self.eval_attack_f = attack_f, eval_attack_f or ArgTree()

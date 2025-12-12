@@ -417,6 +417,7 @@ def func_to_class(func, call_params_count=1, *, superclasses=(), method_name='__
     call_pnames = pnames[0:call_params_count]
     init_pnames = pnames[call_params_count:]
 
+    locals_ = locals()
     exec(f"""
 class {name}(*superclasses):
     func=func
@@ -425,8 +426,8 @@ class {name}(*superclasses):
         self.args=dict({', '.join(k + '=' + k for k in init_pnames)})
     def {method_name}(self, {', '.join(call_pnames)}):
         return func({', '.join(call_pnames)}, **self.args)""",
-         {'func': func}, locals())
-    class_ = locals()[name]
+         {'func': func}, locals_)
+    class_ = locals_[name]
     defargs = default_args(func)
     defaults = tuple(defargs.values())  # works for decorated procedures
     if tuple(defargs.keys()) != tuple(init_pnames[len(init_pnames) - len(defargs):]):
@@ -450,11 +451,12 @@ def class_to_func(class_, name=None):
     call_pnames = list(signature(class_.__call__).parameters.keys())[1:]
     pnames = call_pnames + init_pnames
 
+    locals_ = locals()
     exec(f"""
 def {name}({', '.join(pnames)}):
     return class_({', '.join(init_pnames)})({', '.join(call_pnames)})""",
-         {'class_': class_}, locals())
-    func = locals()[name]
+         {'class_': class_}, locals_)
+    func = locals_[name]
     func.__defaults__ = class_.__init__.__defaults__
     if class_.__init__.__defaults__ is None and len(default_args(class_.__init__)) > 0:
         raise NotImplementedError("Not implemented for decorated __init__.")

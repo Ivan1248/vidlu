@@ -14,7 +14,6 @@ from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
 import vidlu.utils.func as uf
 from vidlu.utils.func import Reserved, partial
-from vidlu.utils.importing import parse_aliased_imports_expression
 from vidlu.extensions import extensions
 from vidlu.transforms.data_preparation import prepare_element
 
@@ -23,20 +22,16 @@ from . import defaults
 
 # eval
 
-def factory_eval(expr: str, globals=None, locals=None, eval_func=eval):
+def factory_eval(expr: str, globals=None, locals=None):
     try:
-        return eval_func(expr, globals, locals)
+        return eval(expr, globals, locals)
     except NameError as e:
         available_names = sorted([*(globals or {}).keys(), *(locals or {}).keys()])
-        raise NameError(
-            f"NameError: {e.args[0]}.\nAvailable names: {str(available_names)[1:-1]}.",
-            *e.args[1:])
-    except SyntaxError as e:
-        available_names = sorted([*(globals or {}).keys(), *(locals or {}).keys()])
-        raise type(e)(f"In the factory expression '{expr}: '{e.args[0]}.", *e.args[1:])
+        raise NameError(f"{e.args[0]}. Available: {str(available_names)[1:-1]}.", *e.args[1:])
 
 
-factory_exec = partial(factory_eval, eval_func=exec)
+def module_to_dict(module):
+    return {k: v for k, v in vars(module).items() if not k.startswith("_")}
 
 
 # Factory messages #################################################################################
@@ -62,63 +57,6 @@ def _print_args_messages(kind, type_, factory, argtree, verbosity=1):
         if verbosity > 1:
             _print_all_args_message(factory)
         _print_missing_args_message(factory)
-
-
-# Namespace with aliases ###########################################################################
-
-def make_namespace(imports_expr: str, pre_expr: str):
-    factory_namespace = parse_aliased_imports_expression(imports_expr)
-    factory_namespace.update(extensions)
-    factory_exec(pre_expr, factory_namespace)
-
-    def get_data_namespace():
-        import vidlu.transforms as vt
-        import vidlu.transforms.image as vti
-        import torchvision.transforms.functional as tvt
-        import vidlu.modules.functional as vmf
-        from vidlu.data.datasets import taxonomies
-
-        def module_to_dict(module):
-            return {k: v for k, v in vars(module).items() if not k.startswith("_")}
-
-        namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
-                     **module_to_dict(vdu.dataset_ops)}
-        namespace.update(vt=vt, vti=vti, taxonomies=taxonomies, Record=Record)
-        return namespace
-
-    # from torch import nn
-    # import vidlu.modules as vm
-    # import vidlu.modules.components as vmc
-    # import vidlu.modules.other as vmo
-    # import torchvision.models as tvmodels
-    # from fractions import Fraction as Frac
-    #
-    # namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
-    #                  Reserved=Reserved, Frac=Frac, **_func_short, **extensions)
-
-    def short_symbols_for_get_trainer():
-        import math
-        import numpy as np
-        import os
-        from torch import optim
-        import vidlu.optim.lr_schedulers as lr
-        import vidlu.optim as opt
-        from vidlu.modules import losses
-        import vidlu.data as vd
-        import vidlu.configs.training as ct
-        import vidlu.configs.robustness as cr
-        import vidlu.training.robustness as ta
-        import vidlu.training.steps as ts
-        from vidlu.training.robustness import attacks
-        from vidlu.transforms import jitter
-        import vidlu.modules.utils as mu
-        import vidlu.utils.func as uf
-        from vidlu.utils.func import partial
-        from vidlu.data import class_mapping
-        tc = ct  # backward compatibility
-        return {**locals(), **_func_short, **extensions}
-
-    return factory_namespace
 
 
 # Data #############################################################################################
@@ -167,6 +105,70 @@ def apply_default_transforms(datasets, cache_dir):
     return datasets
 
 
+def get_data_namespace():
+    import vidlu.transforms as vt
+    import vidlu.transforms.image as vti
+    import torchvision.transforms.functional as tvt
+    import vidlu.modules.functional as vmf
+    from vidlu.data.datasets import taxonomies
+
+    namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
+                 **module_to_dict(vdu.dataset_ops)}
+    namespace.update(vt=vt, vti=vti, taxonomies=taxonomies, Record=Record)
+    return namespace
+
+
+def evaluate_data_transforms_string(datasets, transform_str):
+    # TODO: improve names if necessary
+    return factory_eval(transform_str, dict(**get_data_namespace(), d=datasets))
+
+
+def get_data(data_str: str, datasets_dir, cache_dir=None, return_datasets_only=False,
+             factory_version=1) \
+        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
+    from vidlu import data
+    from vidlu.data import Record
+
+    if ':' in data_str:
+        data_str, transform_str = data_str.split(':', 1)
+    else:
+        transform_str = None
+
+    name_options_subsets_tuples = parse_data_str(data_str)
+
+    get_dataset = data.DatasetFactory(datasets_dir)
+
+    keys = []
+    datasets = []
+    for name, options_str, subsets in name_options_subsets_tuples:
+        options = factory_eval(f'dict{options_str or "()"}', dict(Record=Record))
+        full_name = f"{name}{options_str or ''}"
+        for subset in subsets or [None]:
+            if subset is None:
+                ds = get_dataset(name, **options)
+                keys.append(full_name)
+            else:
+                ds = get_dataset(name, subset=subset, **options)
+                keys.append((full_name, subset))
+            datasets.append(ds)
+
+    datasets = apply_default_transforms(datasets, cache_dir=cache_dir)
+
+    if transform_str is not None:  # TODO: improve names if necessary
+        datasets = evaluate_data_transforms_string(datasets, transform_str)
+
+    if return_datasets_only:
+        return datasets
+    return datasets, keys, transform_str
+
+
+get_data.help = \
+    ('Dataset configuration with syntax'
+     + ' "(dataset1`{`(subset1_1, ..)`}`, dataset2`{`(subset2_1, ..)`}`, ..)",'
+     + ' e.g. "cifar10{train,val}", "cityscapes(remove_hood=True){trainval,val,test}",'
+     + ' "inaturalist{train,all}", or "camvid{trainval}, wilddash(downsampling=2){val}"')
+
+
 def get_default_transforms(cache_dir):
     import os
     if int(os.environ.get("VIDLU_DUMMY_DATA", 0)):
@@ -177,8 +179,11 @@ def get_default_transforms(cache_dir):
         cache=partial(vdu.cache_lazily, cache_dir=cache_dir))
 
 
-def get_data(data_str: str, datasets_dir, cache_dir=None, namespace=None) \
-        -> T.Sequence[tuple[tuple[str], Dataset]]:
+def get_data_new(data_str: str, datasets_dir, cache_dir=None, namespace=None) \
+        -> T.Sequence[T.Tuple[T.Tuple[str], Dataset]]:
+    if namespace is None:
+        namespace = get_data_namespace()
+
     from vidlu import data
 
     factories = data.DatasetFactory(datasets_dir).as_namespace()
@@ -187,14 +192,12 @@ def get_data(data_str: str, datasets_dir, cache_dir=None, namespace=None) \
         dt.add_seg_class_info(ds))}
 
     try:
-        return factory_eval(data_str, glob)
+        data = factory_eval(data_str, glob)
     except SyntaxError as e:
-        factory_exec(data_str, glob)
-        return glob['data']
-
-
-get_data.help = \
-    ('Dataset objects')
+        # loc = {}
+        exec(data_str, glob)
+        data = glob['data']
+    return data
 
 
 def prepare_dataset(dataset):
@@ -202,18 +205,30 @@ def prepare_dataset(dataset):
                        func_name='prepare')
 
 
-def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, namespace,
-                                  factory_version=1):
-    assert factory_version > 1
-    datasets = get_data(data_str, datasets_dir, cache_dir, namespace=namespace)
+def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, factory_version=1):
+    names = None
+
+    if factory_version > 1:
+        datasets = get_data_new(data_str, datasets_dir, cache_dir)
+    if factory_version == 1:
+        if ':' in data_str:  # TODO: remove names
+            names, data_str = [x.strip() for x in data_str.split(':', 1)]
+            names = [x.strip() for x in names.split(',')]
+            if not all(x.startswith('train') or x.startswith('test') for x in names):
+                raise ValueError(
+                    'All dataset identifiers should start with either "train" or "test".'
+                    + f' Some of {names} do not.')
+        datasets = get_data(data_str, datasets_dir, cache_dir, return_datasets_only=True,
+                            factory_version=factory_version)
 
     if not isinstance(datasets, T.Mapping):
-        names = [f'train{i}' for i in range(len(datasets) - 1)] if len(datasets) > 2 else [
-            'train']
-        names.extend([f'test{i}' for i in range(len(datasets[0]) - 1)] if isinstance(
-            datasets[-1], tuple) else ['test'])
-        datasets = list(datasets[:-1]) + (list(datasets[-1]) if isinstance(
-            datasets[-1], tuple) else [datasets[-1]])
+        if names is None:
+            names = [f'train{i}' for i in range(len(datasets) - 1)] if len(datasets) > 2 else [
+                'train']
+            names.extend([f'test{i}' for i in range(len(datasets[0]) - 1)] if isinstance(
+                datasets[-1], tuple) else ['test'])
+            datasets = list(datasets[:-1]) + (list(datasets[-1]) if isinstance(
+                datasets[-1], tuple) else [datasets[-1]])
         datasets = dict(zip(names, datasets))
 
     datasets = {k: prepare_dataset(ds) for k, ds in datasets.items()}
@@ -281,7 +296,17 @@ _func_short = dict(partial=partial, t=uf.ArgTree, ft=uf.FuncTree, ot=uf.ObjectUp
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
-              prep_dataset=None, device=None, namespace=dict(), verbosity=1) -> torch.nn.Module:
+              prep_dataset=None, device=None, verbosity=1) -> torch.nn.Module:
+    from torch import nn
+    import vidlu.modules as vm
+    import vidlu.modules.components as vmc
+    import vidlu.modules.other as vmo
+    import torchvision.models as tvmodels
+    from fractions import Fraction as Frac
+
+    namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
+                     Reserved=Reserved, Frac=Frac, **_func_short, **extensions)
+
     if prep_dataset is None:
         if problem is None or init_input is None:
             raise ValueError("`problem` and `init_input` are required if `prep_dataset` is `None`.")
@@ -308,8 +333,7 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
 
         argtree = defaults.get_model_argtree_for_problem(model_f, problem)
         if len(argtree_arg) != 0:
-            # Ensure short factory symbols like t/ft are available when evaluating ArgTrees
-            argtree.update(factory_eval(f"t({argtree_arg[0]})", {**_func_short, **namespace}))
+            argtree.update(factory_eval(f"t({argtree_arg[0]})", namespace))
         model_f = argtree.apply(model_f)
         input_adapter = get_input_adapter(
             input_adapter_str, data_stats=prep_dataset.info[
@@ -403,30 +427,41 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
 # Training and evaluation ##########################################################################
 
 # noinspection PyUnresolvedReferences
+def short_symbols_for_get_trainer():
+    import math
+    import numpy as np
+    import os
+    from torch import optim
+    import vidlu.optim.lr_schedulers as lr
+    import vidlu.optim as opt
+    from vidlu.modules import losses
+    import vidlu.data as vd
+    import vidlu.configs.training as ct
+    import vidlu.configs.robustness as cr
+    import vidlu.training.robustness as ta
+    import vidlu.training.steps as ts
+    from vidlu.training.robustness import attacks
+    from vidlu.transforms import jitter
+    import vidlu.modules.utils as mu
+    import vidlu.utils.func as uf
+    from vidlu.utils.func import partial
+    from vidlu.data import class_mapping
+    tc = ct  # backward compatibility
+    return {**locals(), **_func_short, **extensions}
 
 
-def get_trainer(trainer_str: str, *, model, data=None, deterministic=False, distributed=False,
-                namespace=dict(), verbosity=1) -> Trainer:
+def get_trainer(trainer_str: str, *, model, deterministic=False, distributed=False,
+                verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
-    ah = factory_eval(f"uf.ArgHolder({trainer_str})", {**_func_short, **namespace, **dict(uf=uf)})
+    ah = factory_eval(f"uf.ArgHolder({trainer_str})", short_symbols_for_get_trainer())
     config = ct.TrainerConfig(*ah.args)
     updatree = uf.ObjectUpdatree(**ah.kwargs)
     config = updatree.apply(config)
-    
-    # Automatically inject namespace values needed by extension factories
-    # This allows extension factories to access dirs, cache_dir, etc. without
-    # requiring them to be explicitly passed in the trainer string
-    for ext_f in config.extension_fs:
-        ext_param_names = tuple(uf.params(ext_f).keys())
-        for param_name in ext_param_names:
-            if param_name in namespace and param_name not in config:
-                config[param_name] = namespace[param_name]
 
     trainer_f = partial(Trainer, **config.normalized())
 
-    trainer = trainer_f(model=model, data=data, deterministic=deterministic,
-                        distributed=distributed)
+    trainer = trainer_f(model=model, deterministic=deterministic, distributed=distributed)
     _print_args_messages('Trainer', Trainer, factory=trainer_f, argtree=config, verbosity=verbosity)
     return trainer
 
@@ -439,7 +474,7 @@ get_trainer.help = \
 
 
 def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
-    # TODO: require something like metrics-str == "default()" for default metrics
+    # TODO: require something like metrics-str == "default" for default metrics
     if problem is None:
         if dataset is None:
             raise ValueError("get_metrics: either the dataset argument"
@@ -451,9 +486,6 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
         metrics_str = metrics_str[:-1]
         from .problem import get_universal_metrics
         default_metrics, main_metrics = get_universal_metrics(), ()
-
-    additional_metrics = factory_eval(f'[{metrics_str}]', {**metrics.__dict__, **_func_short, **extensions})
-    if isinstance(additional_metrics[0], T.Sequence):
-        additional_metrics = list(additional_metrics[0])
     
+    additional_metrics = factory_eval(f'[{metrics_str}]', {**metrics.__dict__, **_func_short})
     return default_metrics + additional_metrics, main_metrics

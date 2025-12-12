@@ -15,7 +15,7 @@ def find_in_directories(dirs, child):
     raise FileNotFoundError(f"None of {dirs} contains '{child}'.")
 
 
-def find_in_ancestors(start, subpath, include_start=False):
+def find_in_ancestors(start, subpath, include_start=False, ignore_broken_symlinks=False):
     """
     `ancestor_sibling_path` can be the name of a sibling directory (or some
     descendant of the sibling) to some ancestor of `path` or `path`
@@ -25,7 +25,7 @@ def find_in_ancestors(start, subpath, include_start=False):
         start /= "_"
     for anc in start.parents:
         candidate = anc / subpath
-        if candidate.exists():
+        if candidate.exists(follow_symlinks=not ignore_broken_symlinks):
             return candidate
     raise FileNotFoundError(f"No ancestor of {start} has a child {subpath}.")
 
@@ -98,7 +98,7 @@ def create_file_atomic(path, write_action, mode="w+b"):
     Args:
         path: The path of the output file.
         write_action: A procedure that accepts a file as the only argument.
-        mode: Tile opening mode.
+        mode: File opening mode.
     """
     tmp = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=Path(path).parent)
     try:

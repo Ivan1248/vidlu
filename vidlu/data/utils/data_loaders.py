@@ -1,5 +1,4 @@
 import typing as T
-import os
 from functools import partial
 
 import numpy as np
@@ -127,30 +126,6 @@ def mixed_semisup_collate(batch, collate):
     return Record(x_l=x[:len(y_l)], x_u=x[len(y_l):], y_l=y_l)
 
 
-def morsic_semisup_data_loader(
-        ds_l: Dataset, ds_u: Dataset,
-        data_loader_f: TDataLoaderF = DataLoader,
-        labeled_multiplier: T.Union[int, T.Callable[[int, int], int]] = \
-                lambda l, u: max(1, int(u / l)),
-        **kwargs):
-    if kwargs.get("shuffle", False):
-        raise ValueError("The shuffle argument should be False.")
-    nl, nu = len(ds_l), len(ds_u)
-    if callable(labeled_multiplier):
-        labeled_multiplier = labeled_multiplier(nl, nu)
-    ds_l = ds_l.map(lambda r: Record(x=r[0], y=r[1], labeled=True))
-    ds_u = ds_u.map(lambda r: Record(x=r[0], y=None, labeled=False))
-    ds_all = ds_l.join(ds_u)
-    indices_l = list(range(nl)) * labeled_multiplier
-    indices_u = list(range(nl, nl + nu))
-    indices = indices_l * labeled_multiplier + indices_u
-    sampler = tud.SubsetRandomSampler(indices=indices)
-    kwargs['collate_fn'] = partial(
-        mixed_semisup_collate,
-        collate=(kwargs if 'collate_fn' in kwargs else params(data_loader_f))['collate_fn'])
-    return data_loader_f(ds_all, sampler=sampler, shuffle=False, **kwargs)
-
-
 def multiset_data_loader(
         dataset: T.Tuple[Dataset],
         data_loader_f: TDataLoaderF = DataLoader,
@@ -167,7 +142,7 @@ def is_dataloader(obj):
 
 
 def get_children(data_loader, filter_=is_dataloader):
-    for k, ch in vars(data_loader):
+    for k, ch in vars(data_loader).items():
         if filter_(ch):
             yield ch
         elif isinstance(ch, T.Sequence) and len(ch) > 0 and filter_(ch[0]):
@@ -181,12 +156,12 @@ def get_components(data_loader, filter_=is_dataloader):
 
 
 def update_components(data_loader, func, filter_=is_dataloader):
-    for k, ch in vars(data_loader):
-        if is_dataloader(ch):
+    for k, ch in vars(data_loader).items():
+        if filter_(ch):
             setattr(data_loader, k, update_components(ch, func, filter_=filter_))
         elif isinstance(ch, T.Sequence) and len(ch) > 0 and filter_(ch[0]):
             setattr(data_loader, k, [update_components(c, func, filter_=filter_) for c in ch])
-    return data_loader
+    return func(data_loader)
 
 
 def is_sampler(obj):
@@ -265,10 +240,10 @@ def make_data_loader_distributed(data_loader, keep_worker_init_fn=False,
         if not keep_worker_init_fn:
             # adds worker_init_fn for correct seeding in worker processes
             # TODO: Update vidlu.data.data_loader.worker_init_fn?
-            if hasattr(data_loader, "worker_init_fn"):
+            if hasattr(dl, "worker_init_fn"):
                 from lightning.fabric.utilities.seed import pl_worker_init_function
-                data_loader.worker_init_fn = partial(pl_worker_init_function,
-                                                     rank=vud.get_global_rank())
+                dl.worker_init_fn = partial(pl_worker_init_function,
+                                            rank=vud.get_global_rank())
 
         return dl
 

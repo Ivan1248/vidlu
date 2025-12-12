@@ -49,8 +49,8 @@ class TrainerConfig(NameDict):
 
     def normalized(self):
         """Creates an equivalent TrainerConfig where arguments for extensions
-         are bound to corresponding extension factories and removed from the
-         main namespace.
+        are bound to corresponding extension factories and removed from the
+        main namespace.
 
         A normalized TrainerConfig can be given to the Trainer constructor.
 
@@ -60,16 +60,16 @@ class TrainerConfig(NameDict):
             >>> trainer = Trainer(**tc.normalized())
         """
         result = TrainerConfig(**self)
-        arg_name_to_ext = dict()
         ext = []
+        used_keys = set()
         for ext_f in result.extension_fs:
             names = tuple(params(ext_f).keys())
-            values = [result.pop(name, Required) for name in names]
-            args = {k: v for k, v in zip(names, values) if v is not Required}
+            args = {name: result[name] for name in names if name in result}
+            used_keys.update(args.keys())
             ext.append(partial(ext_f, **args) if len(args) > 0 else ext_f)
-            for name in names:
-                if name in arg_name_to_ext:
-                    raise RuntimeError(f'Multiple extension factories have a parameter "{name}".')
-                arg_name_to_ext[name] = ext_f
+
+        for k in used_keys:
+            del result[k]
+
         result.extension_fs = ext
         return result

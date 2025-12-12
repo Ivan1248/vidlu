@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 
 from vidlu.data import DatasetFactory
-from vidlu.data.record import Record, LazyField
+from vidlu.data.record import Record, LazyItem
 from vidlu.utils import path
 from vidlu.data.utils import class_incidence
 from vidlu.data.data_loader import SingleDataLoader
@@ -38,7 +38,7 @@ def _compute_pixel_stats_d(ds):
 
 def add_pixel_stats_to_info_lazily(ds, cache_dir):
     return ds.info_cache_hdd(dict(pixel_stats=_compute_pixel_stats_d), cache_dir,
-                             simplify_dataset=lambda ds: ds[:4], name='pixel_stats')
+                             simplify_dataset=lambda ds: ds[:4])
 
 
 def add_segmentation_class_info_lazily(ds, cache_dir):
@@ -47,7 +47,7 @@ def add_segmentation_class_info_lazily(ds, cache_dir):
         return ds
 
     def add_seg_class_info(example):
-        info = LazyField(partial(class_incidence.example_seg_class_info, example))
+        info = LazyItem(partial(class_incidence.example_seg_class_info, example))
         return Record(classes_=lambda: info()['classes'],
                       class_incidences_=lambda: info()['class_incidences'],
                       class_aabbs_=lambda: info()['class_aabbs'])

@@ -9,8 +9,8 @@ __doc__ = """
 `scripts/dirs.py` searches for and stores directory paths for datasets, cache, results and other data in the following variables:
 -   `datasets: list[Path]` can point to multiple directories, each of which can contain dataset directories.
 -   `cache: Path` points to a directory for caching data.
--   `pretrained: Path` points to a directory for pre-trained parameters.
 -   `experiments: Path` points to a directory for experiment results. The directory `saved_states = experiments / "states"` is automatically created for storing intermediate and complete training states.
+-   `pretrained: Path` points to a directory for pre-trained parameters.
 
 It might be easiest to create the following directory structure. Symbolic links can be useful.
 
@@ -48,10 +48,6 @@ def _find(path_end, start=__file__, warn=False):
         return None
 
 
-def opt(func, x):
-    return func(x) if x else None
-
-
 def _check_dir_path(path, kind=None):
     if path is None:
         raise FileNotFoundError(f'No {kind} directory provided or found.\n{__doc__}')
@@ -67,12 +63,14 @@ class _Dirs:
         """Optional root directory that can contain "datasets", "pretrained"
         and "experiments" directories.
         """
-        return opt(Path, os.environ.get("VIDLU_DATA", None))
+        path = os.environ.get("VIDLU_DATA", None)
+        return None if path is None else Path(path)
 
     @cached_property
     def datasets(self):
         """List of directories that contain datasets"""
-        datasets = [self._get_path("datasets"), _find('datasets'), _find('datasets', start='tmp/_')]
+        datasets = [self._get_path_from_env_or_find_in_data_dir("datasets"), _find('datasets'),
+                    _find('datasets', start='tmp/_')]
         datasets = [x for x in datasets if x is not None]
         _check_dir_path(None if len(datasets) == 0 else datasets[0], "datasets")
         return datasets
@@ -80,21 +78,21 @@ class _Dirs:
     @cached_property
     def pretrained(self):
         """Pretrained parameters"""
-        pretrained = self._get_path("pretrained")
+        pretrained = self._get_path_from_env_or_find_in_data_dir("pretrained")
         _check_dir_path(pretrained, "pretrained")
         return pretrained
 
     @cached_property
     def experiments(self):
         """Cache and experimental results/states"""
-        experiments = self._get_path("experiments")
+        experiments = self._get_path_from_env_or_find_in_data_dir("experiments")
         _check_dir_path(experiments, "experiments")
         return experiments
 
     @cached_property
     def cache(self):
         """Various cache"""
-        cache = self._get_path("cache")
+        cache = self._get_path_from_env_or_find_in_data_dir("cache")
         _check_dir_path(cache, "cache")
         return cache
 
@@ -105,10 +103,11 @@ class _Dirs:
         saved_states.mkdir(exist_ok=True)
         return saved_states
 
-    def _get_path(self, dir_name: str):
-        return opt(Path, self.data / dir_name if self.data else (
+    def _get_path_from_env_or_find_in_data_dir(self, dir_name: str):
+        path = self.data / dir_name if self.data is not None else (
                 os.environ.get(f"VIDLU_{dir_name.upper()}", None)
-                or _find(f"data/{dir_name}", warn=True)))
+                or _find(f"data/{dir_name}", warn=True))
+        return None if path is None else Path(path)
 
 
 _dirs = _Dirs()

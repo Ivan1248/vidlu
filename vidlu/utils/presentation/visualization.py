@@ -29,7 +29,7 @@ def get_cmap(cmap):
         return cmap
 
 
-def get_color_palette(n, cmap='jet'):
+def get_color_palette(n, cmap="turbo"):
     cmap = get_cmap(cmap)
     return np.stack([np.array(cmap(i / (n - 1))[:3]) for i in range(n)])
 
@@ -48,12 +48,14 @@ def colorize_segmentation(seg, colors):
 
 ####
 
+
 def show_batch(x, nrows=None, ncols=None):
     if x.shape[1] not in (1, 3):
         if nrows is None:
             nrows = len(x)
         x = x.view(-1, *x.shape[2:])
     from torchvision.utils import make_grid
+
     grid = make_grid(x, nrow=nrows or (len(x) // (ncols or int(len(x) ** 0.5))))
     plt.imshow(grid.cpu().numpy().transpose(1, 2, 0))
     plt.show()
@@ -85,6 +87,7 @@ def composef(images, fmt):
 
 def compose(images_array):
     import torch  # np.concatenate somtimes gets stuck for some reason
+
     if not isinstance(images_array[0], list):
         images_array = [images_array]
     rows = [torch.cat(list(map(torch.from_numpy, row)), dim=1) for row in images_array]
@@ -98,7 +101,7 @@ class Viewer:
     composite image. Press "a" to return to the previous image.
     """
 
-    def __init__(self, name='Viewer'):
+    def __init__(self, name="Viewer"):
         self.name = name
 
     def display(self, dataset, mapping=lambda x: x):
@@ -114,16 +117,16 @@ class Viewer:
             images = get_images(i)
             for axim, im in zip(aximgs, images):
                 axim.set_data(im)
-            #fig.canvas.set_window_title(str(i) + "-" + self.name)
+            # fig.canvas.set_window_title(str(i) + "-" + self.name)
             fig.canvas.draw()
 
         def on_press(event):
             nonlocal i
-            if event.key == 'left':
+            if event.key == "left":
                 i -= 1
-            elif event.key == 'right':
+            elif event.key == "right":
                 i += 1
-            elif event.key == 'q' or event.key == 'esc':
+            elif event.key == "q" or event.key == "esc":
                 plt.close(event.canvas.figure)
                 return
             i = i % len(dataset)
@@ -132,7 +135,7 @@ class Viewer:
         images = get_images(0)
         subplot_count = len(images)
 
-        nrows = int(subplot_count ** 0.5)
+        nrows = int(subplot_count**0.5)
         ncols = int(subplot_count // nrows + 0.5)
 
         fig, axes = plt.subplots(nrows, ncols)
@@ -140,8 +143,8 @@ class Viewer:
             axes = [axes]
         else:
             axes = axes.flat[:subplot_count]
-        fig.canvas.mpl_connect('key_press_event', on_press)
-        #fig.canvas.set_window_title(self.name)
+        fig.canvas.mpl_connect("key_press_event", on_press)
+        # fig.canvas.set_window_title(self.name)
 
         def make_valid(im):
             if np.min(im) < 0 or np.max(im) > 0:
@@ -151,10 +154,11 @@ class Viewer:
         plot = lambda ax, im: ax.imshow(make_valid(im)) if len(im.shape) == 3 else ax.imshow(im)
         aximgs = [plot(ax, im) for ax, im in zip(axes, images)]
         from mpl_toolkits.axes_grid1 import make_axes_locatable
+
         for ax, axim in zip(axes, aximgs):
             divider = make_axes_locatable(ax)
-            cax = divider.append_axes('right', size='5%', pad=0.05)
-            fig.colorbar(axim, cax=cax, orientation='vertical')
+            cax = divider.append_axes("right", size="5%", pad=0.05)
+            fig.colorbar(axim, cax=cax, orientation="vertical")
         plt.show()
         show(0)
 
@@ -167,12 +171,12 @@ def normalize_colors(colors, insert_zeros=False):
 
 
 def view_predictions_2(dataset, infer=None, save_dir=None):
-    if 'class_colors' in dataset.info:
-        colors = list(map(np.array, dataset.info['class_colors']))
+    if "class_colors" in dataset.info:
+        colors = list(map(np.array, dataset.info["class_colors"]))
         if np.max(np.array(colors)) > 1:
             colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
     else:
-        colors = get_color_palette(dataset.info['class_count'])
+        colors = get_color_palette(dataset.info["class_count"])
     colors = [np.zeros(3)] + list(map(np.array, colors))  # unknown black
 
     def get_frame(datapoint):
@@ -188,11 +192,12 @@ def view_predictions_2(dataset, infer=None, save_dir=None):
     if save_dir is not None:
         from skimage.io import imsave
         from tqdm import tqdm
+
         print("Saving predictions")
 
         os.makedirs(save_dir, exist_ok=True)
         for i, d in enumerate(tqdm(dataset)):
-            imsave(f'{save_dir}/p{i}.png', get_frame(d))
+            imsave(f"{save_dir}/p{i}.png", get_frame(d))
 
     return Viewer().display(dataset, get_frame)
 
@@ -202,14 +207,13 @@ def view_predictions(dataset, infer=None, save_dir=None, colors=None, class_coun
         colors = [np.zeros(3)] + colors  # unknown black
     elif class_count is not None:
         colors = get_color_palette(class_count)
-    elif 'class_colors' in dataset.info:
-        colors = list(map(np.array, dataset.info['class_colors']))
+    elif "class_colors" in dataset.info:
+        colors = list(map(np.array, dataset.info["class_colors"]))
         if np.max(np.array(colors)) > 1:
             colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
     else:
-        colors = get_color_palette(dataset.info['class_count'])
+        colors = get_color_palette(dataset.info["class_count"])
     colors = np.array([np.zeros(3)] + colors)  # unknown black
-
 
     @lru_cache(maxsize=1000)
     def get_class_representative(label):  # classification
@@ -238,8 +242,7 @@ def view_predictions(dataset, infer=None, save_dir=None, colors=None, class_coun
                 cr = get_class_representative(int(pred))
                 return black if cr is None else scale_min_max(cr)
 
-            pred_img = (_get_class_representative() if classification
-                        else fuse_images(img_scal, pred_disp))
+            pred_img = _get_class_representative() if classification else fuse_images(img_scal, pred_disp)
             comp_arr.append([pred_img, pred_disp])
 
         add_prediction(lab)
@@ -257,7 +260,7 @@ def view_predictions(dataset, infer=None, save_dir=None, colors=None, class_coun
         step = bar_height // len(colors)
         bar = np.zeros((bar_height, bar_width), dtype=np.int8)
         for i in range(len(colors)):
-            bar[i * step:(i + 1) * step, 1:] = len(colors) - 1 - i
+            bar[i * step : (i + 1) * step, 1:] = len(colors) - 1 - i
         bar = colorize_segmentation(bar, colors)
 
         return compose([comp, bar])
@@ -265,23 +268,24 @@ def view_predictions(dataset, infer=None, save_dir=None, colors=None, class_coun
     if save_dir is not None:
         from PIL import Image
         from tqdm import tqdm
+
         print("Saving predictions")
 
         os.makedirs(save_dir, exist_ok=True)
         for i, d in enumerate(tqdm(dataset)):
-            im = np.round(get_frame(d) * 255).astype('uint8')
-            Image.fromarray(im).save(f'{save_dir}/p{i:05d}.png')
+            im = np.round(get_frame(d) * 255).astype("uint8")
+            Image.fromarray(im).save(f"{save_dir}/p{i:05d}.png")
 
     return Viewer().display(dataset, get_frame)
 
 
 def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
-    if 'class_colors' in dataset.info:
-        colors = list(map(np.array, dataset.info['class_colors']))
+    if "class_colors" in dataset.info:
+        colors = list(map(np.array, dataset.info["class_colors"]))
         if np.max(np.array(colors)) > 1:
             colors = [(c % 256) / 255 * 0.99 + 0.01 for c in colors]
     else:
-        colors = get_color_palette(dataset.info['class_count'])
+        colors = get_color_palette(dataset.info["class_count"])
     colors = np.array([np.zeros(3)] + colors)  # unknown black
 
     def get_frame(img, lab, img_adv, pred):
@@ -289,25 +293,25 @@ def generate_adv_iter_segmentations(dataset, model, attack, save_dir):
         return compose([[img, img_adv], [fuse(img_adv, lab), fuse(img_adv, pred)]])
 
     from PIL import Image
+
     print("Saving predictions")
 
     os.makedirs(save_dir, exist_ok=True)
     for i, d in enumerate(tqdm(dataset)):
-        dir = f'{save_dir}/p{i:05d}'
+        dir = f"{save_dir}/p{i:05d}"
         os.makedirs(dir, exist_ok=True)
 
         def save_frame(s):
             import torch
+
             with torch.no_grad():
-                args = [s.x.permute(0, 2, 3, 1), s.y_adv, s.x_adv.permute(0, 2, 3, 1),
-                        s.out.argmax(1)]
+                args = [s.x.permute(0, 2, 3, 1), s.y_adv, s.x_adv.permute(0, 2, 3, 1), s.out.argmax(1)]
                 args = [a[0].detach().cpu().numpy() for a in args]
                 x = get_frame(*args)
-                im = np.round(x * 255).astype('uint8')
-                Image.fromarray(im).save(f'{dir}/{s.step:05d}.png')
+                im = np.round(x * 255).astype("uint8")
+                Image.fromarray(im).save(f"{dir}/{s.step:05d}.png")
 
-        attack.perturb(model, d.x.unsqueeze(0).cuda(), d.y.unsqueeze(0).cuda(),
-                       backward_callback=save_frame)
+        attack.perturb(model, d.x.unsqueeze(0).cuda(), d.y.unsqueeze(0).cuda(), backward_callback=save_frame)
 
 
 def plot_curves(curves, xlim=None, ylim=None, xticks=None, yticks=None):
@@ -321,7 +325,7 @@ def plot_curves(curves, xlim=None, ylim=None, xticks=None, yticks=None):
         axes.set_ylim(xlim)
     if ylim:
         axes.set_ylim(ylim)
-    axes.grid(color='0.9', linestyle='-', linewidth=1)
+    axes.grid(color="0.9", linestyle="-", linewidth=1)
     for name, (x, y) in curves.items():
         plt.plot(x, y, label=name, linewidth=1)
     plt.xlabel("broj završenih epoha")

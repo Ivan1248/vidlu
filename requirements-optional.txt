@@ -1,9 +1,10 @@
-cupy
-pillow-simd
+#cupy  # softmax splatting
+Pillow-SIMD
 pydot
 pudb
 psutil
 xmltodict
-cupy  # softmax splatting
 timm
 typeguard
+tensorboard
+imageio

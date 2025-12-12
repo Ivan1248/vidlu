@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import pickle
+from functools import partial
 
 import torch
 import numpy as np
@@ -29,7 +30,7 @@ class BaseTextLoadSave(LoadSave):
 
 class TorchLoadSave(BinaryLoadSave):
     save = torch.save
-    load = torch.load
+    load = partial(torch.load, weights_only=False)
 
 
 class NumpyLoadSave(BinaryLoadSave):

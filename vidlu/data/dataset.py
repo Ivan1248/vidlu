@@ -27,10 +27,10 @@ from torchvision.datasets.utils import download_and_extract_archive
 
 import vidlu.utils.path as vup
 from vidlu.utils.misc import Stopwatch, slice_len, query_user, pickle_sizeof
-from vidlu.utils.path import to_valid_path
+from vidlu.utils.path import to_valid_path, create_file_atomic
 from vidlu.utils.storage import DefaultCompressor
 
-from .record import Record, DictRecord, LazyField
+from .record import Record, DictRecord, LazyItem
 
 
 # Helpers ######################################################################
@@ -100,8 +100,8 @@ class ChangeInfo:
             a single info instance per dataset.
     """
     name: str
-    data_change: T.Union[bool, T.Sequence[str]] = None
-    info_change: T.Union[bool, T.Sequence[str]] = None
+    data_change: bool | T.Sequence[str] = None
+    info_change: bool | T.Sequence[str] = None
 
     def __repr__(self):
         return self.name
@@ -123,8 +123,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
     from {0 .. len(self)-1}.
     """
 
-    def __init__(self, *, name: str = None, subset: str = None, data=None, info: T.Mapping = None,
-                 data_change=None, info_change=None):
+    def __init__(self, *, name: str = None, subset: str = None, data: T.Optional[T.Sequence] = None,
+                 info: T.Mapping = None, data_change=None, info_change=None):
         self.name = name or getattr(data, 'name', type(self).__name__)
         if subset is not None:
             self.name += f'-{subset}'
@@ -279,6 +279,12 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
             self._getitem(indices, subset=f'filter({func_name})', **kwargs)
             for indices, func_name in zip(indiceses, func_names)]
 
+    def filter_fields(self, fields, **kwargs):
+        """Creates a dataset with fields filtered to the given list.
+        """
+        return self.map(lambda r: r[fields], func_name=f'filter_fields' + ','.join(fields),
+                        **kwargs)
+
     def map(self, func, *, func_name=None, unpack=False, **kwargs):
         """Creates a dataset with elements transformed with `func`."""
         return MapDataset(self, func, func_name=func_name, unpack=unpack, **kwargs)
@@ -301,8 +307,13 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """
         return self.map(FieldsMap(field_to_func), func_name=func_name, **kwargs)
 
-    def enumerate(self):
-        return EnumerateDataset(self)
+    def enumerate(self, as_field: T.Union[bool, str] = False):
+        enumerate_ds = EnumerateDataset(self)
+        if as_field:
+            field_name = 'i' if as_field is True else as_field
+            return enumerate_ds.map_unpack(lambda i, r: Record(r, **{field_name: i}))
+        else:
+            return enumerate_ds
 
     def permute(self, seed=53, **kwargs):
         """Creates a permutation of the dataset."""
@@ -375,8 +386,12 @@ def clear_hdd_cache(ds):
 
 
 def clean_up_dataset_cache(cache_dir, max_time_since_access: dt.timedelta):
+    cache_path = Path(cache_dir)
+    if not cache_path.exists():
+        return
+
     to_delete = []
-    for dir in Path(cache_dir).iterdir():
+    for dir in cache_path.iterdir():
         file = next(dir.iterdir(), None)
         if file is None or (vup.time_since_access(file) > max_time_since_access):
             to_delete.append(dir)
@@ -566,9 +581,12 @@ class HDDCacheDataset(Dataset):
         return Path(f"{path}_{field}.p" if field else path + '.p')
 
     def _save(self, cache_path, obj):
-        with open(cache_path, 'wb') as cache_file:
-            cobj = self.compressor.compress(obj)
-            pickle.dump(cobj, cache_file, protocol=4)
+        cobj = self.compressor.compress(obj)
+        create_file_atomic(cache_path, lambda cache_file: pickle.dump(cobj, cache_file, protocol=4),
+                           mode="wb")
+        # with open(cache_path, 'wb') as cache_file:
+        #     cobj = self.compressor.compress(obj)
+        #     pickle.dump(cobj, cache_file, protocol=4)
 
     def _load(self, cache_path):
         with open(cache_path, 'rb') as cache_file:
@@ -696,7 +714,7 @@ class InfoCacheDataset(Dataset):  # lazy
         self.initialized = {k: multiprocessing.Value('i', 0)
                             for k in name_to_func}  # must be before super
         info = DictRecord(dataset.info or kwargs.get('info', dict()),
-                          **{k: LazyField(f) for k, f in name_to_func.items()})  # lazyness support
+                          **{k: LazyItem(f) for k, f in name_to_func.items()})  # lazyness support
 
         super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
                          data_change=False, info_change=list(name_to_func), **kwargs)
@@ -769,7 +787,7 @@ class SubDataset(Dataset):
                          data_change=kwargs.pop("data_change", [choice_name_]), **kwargs)
 
     def get_example(self, idx):
-        return self.data[self.indices(idx)]
+        return self.data[self.indices[idx]]
 
     def __len__(self):
         return len(self.indices)

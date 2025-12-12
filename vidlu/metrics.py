@@ -155,16 +155,29 @@ def classification_metrics_np(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=
     return {k: locals_[k] for k in returns}
 
 
-def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), eps=1e-8):
+def masked_mean(values, mask):
+    return (values if mask is None else values[mask]).mean()
+
+
+def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), eps=1e-8, only_present=False):
     """Computes macro-averaged classification evaluation metrics based on the
     accumulated confusion matrix.
 
     Supports batches (when `cm` is a batch of matrices).
 
+    **Important**: By default, macro-averaged metrics (mP, mR, mF1, mIoU) are 
+    computed over all classes, including classes with no samples (metric=0).
+    
+    This differs from sklearn's `f1_score(average='macro')`, which only averages
+    over classes that appear in `y_true` or `y_pred`. Set `only_present=True` 
+    to match sklearn's behavior.
+    
     Args:
-        cm (np.array): a confusion matrix.
-        returns (Sequence): a list of metrics that should be returned.
-        eps (float): a number to add to the denominator to avoid division by 0.
+        cm (Tensor): A confusion matrix of shape (C, C) or batch (B, C, C).
+        returns (Sequence): A list of metrics that should be returned.
+        eps (float): A number to add to the denominator to avoid division by 0.
+        only_present (bool): If True, compute macro metrics only over classes 
+            with samples (matches sklearn). Default False (existing behavior).
 
     Returns:
         A dictionary with computed classification evaluation metrics.
@@ -183,12 +196,16 @@ def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), e
     for x in [P, R, F1, IoU]:  # 0 where tp=0
         x[torch.isnan(x)] = 0
 
-    mP, mR, mF1, mIoU = map(torch.mean, [P, R, F1, IoU])
-    A = tp.sum(dim=is_batch) / pos.sum(dim=is_batch)
-    locals_ = locals()
+    metrics = dict(P=P, R=R, F1=F1, IoU=IoU)
+
+    # Compute macro metrics with optional masking
+    mask = (actual_pos + fp) > 0 if only_present else None  
+    metrics.update({'m' + k: masked_mean(v, mask) for k, v in metrics.items()})
+    metrics['A'] = tp.sum(dim=is_batch) / pos.sum(dim=is_batch)
+    metrics['num_correct'] = tp.sum(dim=is_batch)
     if isinstance(returns, str):
-        return locals_[returns]
-    return {k: locals_[k] for k in returns}
+        return metrics[returns]
+    return {k: metrics[k] for k in returns}
 
 
 def mIoU(cm, eps=1e-8):
@@ -204,9 +221,32 @@ def mIoU(cm, eps=1e-8):
 
 
 class ClassificationMetrics(AccumulatingMetric):
+    """
+    Computes classification metrics based on a confusion matrix.
+
+    Supported metrics:
+    - 'A': accuracy (Global accuracy: total TP / total samples)
+    - 'mP': macro-averaged precision (mean of per-class precision)
+    - 'mR': macro-averaged recall (mean of per-class recall)
+    - 'mF1': macro-averaged F1 score (mean of per-class F1)
+    - 'mIoU': macro-averaged intersection over union (mean of per-class IoU)
+    - 'P': per-class precision (TP / (TP + FP))
+    - 'R': per-class recall (TP / (TP + FN))
+    - 'F1': per-class F1 score
+    - 'IoU': per-class IoU
+    - 'cm': confusion matrix
+    
+    **Important**: By default, macro-averaged metrics (mP, mR, mF1, mIoU) are 
+    computed over all classes, including classes with no samples (metric=0).
+    
+    This differs from sklearn's `f1_score(average='macro')`, which only averages
+    over classes that appear in `y_true` or `y_pred`. Set `only_present=True` 
+    to match sklearn's behavior.
+    """
     def __init__(self, class_count, get_target=lambda r: r.target,
                  get_hard_prediction=lambda r: r.out.argmax(1),
-                 metrics=('A', 'mP', 'mR', 'mIoU'), device=None, cm=None):
+                 metrics=('A', 'mP', 'mR', 'mIoU'), device=None, cm=None,
+                 only_present_classes=False):
         self.class_count = class_count
         if cm is not None:
             assert list(cm.shape) == [class_count] * 2
@@ -217,6 +257,7 @@ class ClassificationMetrics(AccumulatingMetric):
         self.get_target = get_target
         self.get_hard_prediction = get_hard_prediction
         self.metrics = metrics
+        self.only_present = only_present_classes
 
     @torch.no_grad()
     def reset(self):
@@ -234,7 +275,8 @@ class ClassificationMetrics(AccumulatingMetric):
     @torch.no_grad()
     def compute(self, eps=1e-8):
         return {k: v.item() if v.dim() == 0 else v.cpu().numpy().copy() for k, v in
-                classification_metrics(self.cm, returns=self.metrics, eps=eps).items()}
+                classification_metrics(self.cm, returns=self.metrics, eps=eps, 
+                                     only_present=self.only_present).items()}
 
     def __repr__(self):
         return f"{type(self).__name__}(class_count={self.class_count}, metrics={self.metrics})"

@@ -150,14 +150,14 @@ class BaseAttack:
             model (Module): Model.
             x (Tensor): Input tensor.
             y (Tensor, optional): Target/label tensor. If `None`, the prediction
-                obtained from `self.to_virtual_target(output)` is used as the
+                obtained from `self.output_to_target(output)` is used as the
                 label.
             loss_mask (BoolTensor): Mask to be multiplied with unreduced loss.
             output (Tensor, optional): Output for use as a target. If `None`
-                it is obtained by calling `model(x)` (and then transformad with
-                `self.to_virtual_target`).
+                it is obtained by calling `model(x)` (and then transformed with
+                `self.output_to_target`).
 
-        Return:
+        Returns:
             Perturbed input.
         """
         perturb = self(model, x, y=y, loss_mask=loss_mask, output=output, **kwargs)
@@ -168,7 +168,7 @@ class BaseAttack:
         return NotImplemented
 
     def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
-        # either this or _perturb  has to be implemented in subclasses
+        # either this or _perturb has to be implemented in subclasses
         return NotImplemented
 
 
@@ -200,11 +200,11 @@ class Attack(BaseAttack):
             model (Module): model.
             x (Tensor): input tensor.
             y (Tensor, optional): target/label tensor. If `None`, the prediction
-                obtained from `self.to_virtual_target(output)` is used as the
+                obtained from `self.output_to_target(output)` is used as the
                 label.
             output (Tensor, optional): output for use as a target. If `None`
                 it is obtained by calling `model(x)` (and then transformad with
-                `self.to_virtual_target`).
+                `self.output_to_target`).
 
         Return:
             (torch.nn.Module) An adversarial perturbation model with parameters.
@@ -268,8 +268,10 @@ class EarlyStoppingMixin:
     stop_on_success: bool = False
     similar: T.Callable = dc.field(default_factory=ClassMatches)
 
-
+@dataclass
 class DummyAttack(OptimizingAttack):
+    output_to_target: T.Callable = lambda x: x
+
     def _get_perturbation(self, model, x, y=None, loss_mask=None, output=None, **kwargs):
         return lambda *x: x[0] if isinstance(x, tuple) and len(x) == 1 else x  # TODO
 

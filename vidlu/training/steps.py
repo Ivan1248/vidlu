@@ -1116,10 +1116,10 @@ class VATTrainStep:
             target = attack.output_to_target(out)  # usually the same as target.sogtmax(1)
             if self.block_grad_for_clean:
                 target = target.detach()
-        with vtu.switch_training(model, False) if self.attack_eval_model else ctx.suppress():
-            with vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
-                x_p, y_p = attack.perturb(model, x, target)
-                out_p = model(untag(x_p))
+        with vtu.switch_training(model, False) if self.attack_eval_model else ctx.suppress(), \
+                vtu.norm_stats_tracking_off(model) if model.training else ctx.suppress():
+            x_p, y_p = attack.perturb(model, x, target)
+            out_p = model(untag(x_p))
         loss_p = attack.loss(out_p, y_p, reduction="mean")
         loss = loss + self.alpha * loss_p
         loss_ent = vml.entropy_l(out_p, reduction="mean")
@@ -1211,11 +1211,17 @@ def _prepare_semisup_batch_s(batch, unsup_loss_on_all, joint_batch):
     return x_l, y_l, x_u, x_all, other
 
 
+def detach_tensor_or_tuple(x):
+    if isinstance(x, tuple):  # multi-taxonomy classification
+        return tuple(t.detach() for t in x)
+    else: # single-taxonomy classification
+        return x.detach()
+
 def _cons_output_to_target(out_uns, stop_grad, output_to_target):
     with torch.no_grad() if stop_grad else ctx.suppress():
         target_uns = output_to_target(out_uns)
     if stop_grad:  # for the case when output_to_target is identity
-        target_uns = target_uns.detach()
+        target_uns = detach_tensor_or_tuple(target_uns)
     return target_uns
 
 
@@ -1323,7 +1329,7 @@ class SemisupCleanTargetConsStepBase(AmpMixin):
                     # !del perturb_x_u, attack, teacher, additional, out_u  # TODO: keep out_u
                     del pert.pmodel  # memory saving
                     if detach_clean:
-                        pert.target = pert.target.detach()  # pseudo-label
+                        pert.target = detach_tensor_or_tuple(pert.target)  # pseudo-label
 
                 with torch.no_grad() if self.eval else ctx.suppress():
                     with ctx.suppress() if self.pert_bn_stats_updating else \
@@ -1341,7 +1347,7 @@ class SemisupCleanTargetConsStepBase(AmpMixin):
                             if self.entropy_loss_coef:
                                 loss.add_(loss_ent, alpha=self.entropy_loss_coef)
                     else:
-                        loss_ent = -1
+                        loss_ent = torch.tensor(-1, device=loss.device, dtype=loss.dtype)
                     if not self.eval:
                         self.amp_backward(loss)
 

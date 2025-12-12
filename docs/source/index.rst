@@ -6,72 +6,26 @@
 Welcome to Vidlu's documentation!
 =================================
 
-.. automodule:: vidlu
-   :imported-members:
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. autosummary::
+   :toctree: _autosummary
+   :template: custom-module-template.rst
+   :recursive:
 
-.. automodule:: vidlu.data
-    :members:
+   vidlu
+   vidlu.training
 
-.. automodule:: vidlu.data_utils
-    :members:
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
 
-.. automodule:: vidlu.modules
-    :members:
-
-.. automodule:: vidlu.ops
-    :members:
-
-.. automodule:: vidlu.training
-    :members:
-
-.. automodule:: vidlu.transforms
-    :members:
-
-.. automodule:: vidlu.utils
-    :members:
-
-.. automodule:: vidlu.utils
-    :members:
-
-.. automodule:: vidlu.defaults
-    :members:
-
-.. automodule:: vidlu.experiments
-    :members:
-
-.. automodule:: vidlu.factories
-    :members:
-
-.. automodule:: vidlu.gpu_utils
-    :members:
-
-.. automodule:: vidlu.initialization
-    :members:
-
-.. automodule:: vidlu.models
-    :members:
-
-.. automodule:: vidlu.optim
-    :members:
-
-.. automodule:: vidlu.parameters
-    :members:
-
-.. automodule:: vidlu.problem
-    :members:
-
-.. automodule:: vidlu.torch_utils
-    :members:
-
+   API: vidlu <_autosummary/vidlu>
+   API: vidlu.training <_autosummary/vidlu.training>
 
 .. toctree::
    :maxdepth: 4
    :caption: Contents:
 
-   README <../../README.md>
+   README <README>
 
 Indices and tables
 ==================

@@ -10,10 +10,11 @@ import random
 
 from tqdm import tqdm
 import torch
+from torch import nn
 import numpy as np
 
 import vidlu.utils.distributed as vud
-from vidlu.data import DataLoader, BatchTuple
+from vidlu.data import DataLoader, BatchTuple, Dataset
 import vidlu.data.utils as vdu
 import vidlu.modules.utils as vmu
 from vidlu.optim.lr_schedulers import ConstLR
@@ -33,7 +34,7 @@ def _to_hours_mins_secs(t_s):
     return h, m, s
 
 
-class State(NameDict):
+class IterState(NameDict):
     """An object that is used to pass internal and user-defined state between event handlers"""
 
     def __init__(self, **kwargs):
@@ -42,6 +43,7 @@ class State(NameDict):
 
     def reset(self, **kwargs):
         self.iteration = -1
+        self.abs_iteration = -1
         self.epoch = -1
         self.result = None
         self.batch = None
@@ -55,7 +57,7 @@ class EpochLoop(object):
     Based on Ignite Engine (https://pytorch.org/ignite).
 
     Args:
-        iter_procedure (Callable): A procedure receiving a handle to the engine
+        step (Callable): A procedure receiving a handle to the engine
             and the current batch in each iteration, and returns data to be
             stored in the engine's state.
 
@@ -76,13 +78,13 @@ class EpochLoop(object):
         engine.run(data_loader)
     """
 
-    def __init__(self, iter_procedure):
+    def __init__(self, step):
         self.logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self.logger.addHandler(logging.NullHandler())
-        self.iter_procedure = iter_procedure
+        self.step = step
         self.should_terminate = False
         self.should_terminate_epoch = False
-        self.state = State()
+        self.state = IterState()
 
         # events
         self.started = Event()
@@ -107,11 +109,15 @@ class EpochLoop(object):
         self.should_terminate_epoch = True
 
     def _run_once_on_dataset(self):
-        for self.state.iteration, batch in enumerate(self.state.data_loader):
+        for i, batch in enumerate(self.state.data_loader):
             try:
                 self.state.batch = batch
                 self.iter_started(self.state)
-                self.state.result = self.iter_procedure(self, batch)
+
+                self.state.result = self.step(self, batch)
+
+                self.state.iteration = i
+                self.state.abs_iteration += 1
                 self.iter_completed(self.state)
                 del self.state.batch, self.state.result
             finally:
@@ -130,7 +136,7 @@ class EpochLoop(object):
                 running. Default: `True`.
             **kwargs (dict): additional data to be stored in the state.
         Returns:
-            State: output state
+            IterState: output state
         """
         if restart or self.state is None:
             self.state.reset(metrics={})
@@ -216,7 +222,7 @@ def deterministic_data_loader_args(distributed):
 
 @dataclass
 class Evaluator:
-    model: T.Callable = Required
+    model: nn.Module = Required
     loss: T.Callable = Required
     prepare_batch: T.Callable = default_prepare_batch
     data_loader_f: vdu.TMultiDataLoaderF = partial(
@@ -280,26 +286,26 @@ class Evaluator:
             output['mem'] = torch.cuda.max_memory_allocated() // 2 ** 20
         return output
 
-    def _make_data_loader(self, *datasets, batch_size, **kwargs):
+    def get_data_loader(self, *datasets, batch_size, **kwargs):
         """Creates a dataloader based on a data loader factory, batch size, and other potential
         arguments.
 
         If distributed training is required, the samplers in the data loader are modified and batch
         size is divided by the number of processes.
         """
-        if self.distributed:
-            batch_size = divide_batch_size_over_processes(batch_size)
-        data_loader = self.data_loader_f(*datasets, batch_size=batch_size, **kwargs)
+        dl_kwargs = dict(kwargs)
+        if self.deterministic:
+            dl_kwargs.update(deterministic_data_loader_args(self.distributed))
+        worker_batch_size = (divide_batch_size_over_processes(batch_size) if self.distributed else
+                             batch_size)
+        data_loader = self.data_loader_f(*datasets, batch_size=worker_batch_size, **kwargs)
         if self.distributed:
             data_loader = vdu.make_data_loader_distributed(data_loader)
         return data_loader
 
     def eval(self, *datasets, batch_size=None, **kwargs):
-        dl_kwargs = dict(drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
-        if self.deterministic:
-            dl_kwargs.update(deterministic_data_loader_args(self.distributed))
-        data_loader = self._make_data_loader(*datasets, **dl_kwargs)
-
+        data_loader = self.get_data_loader(
+            *datasets, drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
         return self.evaluation.run(tqdm(data_loader), **kwargs)
 
 
@@ -315,7 +321,7 @@ def divide_batch_size_over_processes(batch_size: T.Union[int, T.Sequence[int]]):
 
 # Trainer ##########################################################################################
 
-# TODO: support for distributed training for metrics and iteration step proedures
+# TODO: support for distributed training for metrics and iteration step procedures
 @dataclass
 class Trainer(Evaluator):
     """A class encapsulating all machine learning algorithm components.
@@ -326,11 +332,15 @@ class Trainer(Evaluator):
     state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler', 'train_step', 'eval_step')
 
     eval_batch_size: T.Union[int, T.Sequence[int]] = None
+    # Mapping from split names (e.g., "train", "val", "test") to datasets used by this trainer.
+    # Consumers should treat this as read-only. Keys depend on experiment setup.
+    data: T.Optional[T.Mapping[str, Dataset]] = None
 
     epoch_count: int = Required  # optimization
     optimizer_f: T.Callable = None  # optimization; vidlu.optim
     lr_scheduler_f: T.Callable = ConstLR  # optimization; vidlu.optim.lr_schedulers
     jitter: T.Callable = None  # learning
+    eval_count: T.Optional[int] = None  # Number of evaluations required per training run. Use if training depends on validation metrics.
     train_step: T.Optional[T.Callable] = Required  # learning; vidlu.training.steps
     extension_fs: InitVar[T.Sequence[T.Callable]] = ()  # learning
 
@@ -380,21 +390,30 @@ class Trainer(Evaluator):
                 result.eval = True
         return result
 
-    def train(self, *datasets, restart=False):
-        if self.jitter is not None:
+    def get_training_data_loader(self, *datasets, disable_jittering=False, **kwargs):
+        if len(datasets) == 0:
+            datasets = tuple(ds for name, ds in self.data.items() if name.startswith("train"))
+            if len(datasets) == 0:
+                raise ValueError("No datasets provided for training.")
+        if not disable_jittering and self.jitter is not None:
             jitters = broadcast(self.jitter, len(datasets))
             datasets_jitt = [ds.map(jitter) for jitter, ds in zip(jitters, datasets)]
         else:
             datasets_jitt = datasets
+        return self.get_data_loader(*datasets_jitt, drop_last=True, batch_size=self.batch_size,
+                                    **kwargs)
 
-        dl_kwargs = dict(drop_last=True, batch_size=self.batch_size)
-        if self.deterministic:
-            dl_kwargs.update(deterministic_data_loader_args(self.distributed))
-        data_loader = self._make_data_loader(*datasets_jitt, **dl_kwargs)
-
+    def train(self, *datasets, restart=False):
+        data_loader = self.get_training_data_loader(*datasets)
         return self.training.run(data_loader, max_epochs=self.epoch_count, restart=restart)
 
     def eval(self, *datasets, batch_size=None, **kwargs):
+        if len(datasets) == 0:
+            val_splits = [ds for name, ds in self.data.items() if name.startswith("val")]
+            test_splits = [ds for name, ds in self.data.items() if name.startswith("test")]
+            datasets = tuple(val_splits or test_splits)
+            if len(datasets) == 0:
+                raise ValueError("No datasets provided for evaluation.")
         return super().eval(*datasets,
                             batch_size=self.eval_batch_size if batch_size is None else batch_size,
                             **kwargs)
@@ -427,3 +446,4 @@ class Trainer(Evaluator):
                 return setattr(e, key, value)
         raise AttributeError(f'Neither the `Trainer` object nor its extensions'
                              + f' have a "{key}" attribute.')
+

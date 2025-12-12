@@ -78,12 +78,12 @@ def get_experiment(resume=True, restart=False):
                           loss=modules.losses.nll_loss_l, model=model)
         metrics, main_metrics = factories.get_metrics("", trainer, dataset=first_ds)
         for m in metrics:
-            trainer.metrics.append(m())
+            trainer.metrics.append(m)
 
     define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
 
     if resume:
-        state, summary = cpman.load_last(map_location=device)
+        state, summary, _ = cpman.load_last(map_location=device)
         logger.load_state_dict(summary.get('logger', summary))
         logger.print_all()
         trainer.load_state_dict(state)

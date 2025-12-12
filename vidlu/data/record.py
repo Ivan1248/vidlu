@@ -10,17 +10,20 @@ import vidlu.utils.func as vuf
 
 # Record
 
+
 class _NoValue:
     pass
 
 
-class LazyField:
+class LazyItem:
     __slots__ = "_get", "_value"
 
     def __init__(self, get):
         if vuf.positional_param_count(get) not in [0, 1]:
-            raise ValueError("get should be a callable with either 0 (simple lazy evaluation) or 1"
-                             + "positional parameter (for referring back to the 'Record' object).")
+            raise ValueError(
+                "get should be a callable with either 0 (simple lazy evaluation) or 1"
+                + "positional parameter (for referring back to the 'Record' object)."
+            )
         self._get = get
         self._value = _NoValue
 
@@ -28,13 +31,14 @@ class LazyField:
         """Although the Record instance discards the LazyField instance after calling it,
         we cache the value in case some other Record instance uses it too."""
         if self._value is _NoValue:
-            self._value = self._get() if vuf.positional_param_count(self._get) == 0 else self._get(
-                record)
+            self._value = (
+                self._get() if vuf.positional_param_count(self._get) == 0 else self._get(record)
+            )
         return self._value
 
 
 def _process_lazy_arg(k, v):
-    return (k[:-1], LazyField(v)) if k.endswith('_') else (k, v)
+    return (k[:-1], LazyItem(v)) if k.endswith("_") else (k, v)
 
 
 def _process_lazy_args(d):
@@ -47,30 +51,31 @@ def _process_lazy_args(d):
 
 def _check_key(record, key, error_type=KeyError):
     if key not in record.dict_:
-        raise error_type(f'{repr(key)} not in available keys: {str(list(record.keys()))[1:-1]}')
+        raise error_type(f"{repr(key)} not in available keys: {str(list(record.keys()))[1:-1]}")
 
 
 class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
-    __slots__ = "dict_"
+    __slots__ = ("dict_",)
 
     def __init__(self, *args, **kwargs):
         if len(args) > 1:
-            raise ValueError("All arguments but the first one must be keyword arguments."
-                             + " The optional positional argument can only be a Record or Mapping.")
-        self.dict_ = _process_lazy_args(kwargs)
+            raise ValueError(
+                "All arguments but the first one must be keyword arguments."
+                + " The optional positional argument can only be a Record or Mapping.")
+        dict_ = _process_lazy_args(kwargs)
         if len(args) == 1:
-            self.dict_ = dict(_process_lazy_args(args[0]), **self.dict_)
+            dict_ = dict(_process_lazy_args(args[0]), **dict_)
+        # `self.dict_ = dict_` would not work here because __setattr__ is modified
+        self.__setstate__(dict_)
         if any(isinstance(k, int) for k in self.dict_.keys()):
             raise ValueError("Record keys must be non-ints.")
-        if int(os.environ.get('VIDLU_EAGER_RECORD', '0')) == 1:
+        if int(os.environ.get("VIDLU_EAGER_RECORD", "0")) == 1:
             self.evaluate()
-            if 'classes' in self.keys() and self.classes[0] is None:
-                breakpoint()
 
     def __getitem__(self, key):
         _check_key(self, key, KeyError)
         val = self.dict_[key]
-        if isinstance(val, LazyField):
+        if isinstance(val, LazyItem):
             val = self.dict_[key] = val(self)
         return val
 
@@ -84,12 +89,15 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
         _check_key(self, key, AttributeError)
         return self[key]
 
+    def __setattr__(self, key, value):
+        self.__setitem__(key, value)
+
     def __eq__(self, other):
         if isinstance(other, RecordBase) and self.dict_ == other.dict_:
             return True
         try:
-            return self.keys() == other.keys() and all(a == b for a, b in zip(self.items(),
-                                                                              other.items()))
+            return self.keys() == other.keys() and all(
+                a == b for a, b in zip(self.items(), other.items()))
         except AttributeError as e:
             return False
 
@@ -97,7 +105,8 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
         return {k: v for k, v in self.items()}
 
     def __setstate__(self, state):
-        self.dict_ = state
+        # `self.dict_ = state` would not work here because __setattr__ is modified
+        object.__setattr__(self, "dict_", state)
 
     def __str__(self):
         return self._to_string(str)
@@ -110,9 +119,9 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
             _ = self[k]
 
     def is_evaluated(self, key):
-        return not isinstance(self.dict_[key], LazyField)
+        return not isinstance(self.dict_[key], LazyItem)
 
-    def join(self, other: 'RecordBase', *others, overwrite=False):  # sequence
+    def join(self, other: "RecordBase", *others, overwrite=False):  # sequence
         if len(others) > 0:
             return reduce(lambda a, b: a.join(b, overwrite=overwrite), [self, other, *others])
         if not overwrite and any(a in self.keys() for a in other.keys()):
@@ -140,13 +149,13 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
 
 class Record(RecordBase, abc.Sequence):  # Sized, Iterable len, iter
     r"""
-    An immutable sequence (supports numeric indexes) that behaves as a mapping
-    as well (supports string keys) and supports the dot operator for accessing
-    elements.
+    An immutable data structure that combines the features of a sequence
+    (numeric indexes), a mapping (string keys), and dot notation for
+    attribute-style access.
 
-    A field of a record can be lazily evaluated. Such a field is represented
-    with a function. The output of the function is cached when accessed for
-    the first time.
+    Fields can be lazily evaluated by providing a function. The function is
+    executed only once when the field is accessed for the first time, and its
+    result is cached for subsequent accesses.
 
     Example:
         >>> r = Record(a=2, b=53)
@@ -209,7 +218,7 @@ def arrange(r, field_names):
 class RecordView(Record):
     def __init__(self, record):
         super().__init__()
-        self.dict_ = record.dict_
+        self.__setstate__(record.dict_)
 
 
 class DictRecordView(RecordView):

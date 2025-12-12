@@ -159,7 +159,7 @@ class FileDict(abc.MutableMapping):
 
     def __init__(self, path: os.PathLike, load_proc=pickle.load, save_proc=pickle.dump,
                  load_in_init=False,
-                 corrupt_file_action: T.Union[T.Literal['delete', 'error']] = 'error'):
+                 corrupt_file_action: T.Literal['delete', 'error'] = 'error'):
         self.path = Path(path)
         self.load_proc, self.save_proc = load_proc, save_proc
         self._dict = dict()

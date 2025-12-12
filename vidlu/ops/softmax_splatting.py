@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Taken from https://github.com/sniklaus/softmax-splatting
+# Modified from https://github.com/sniklaus/softmax-splatting
 
 import torch
 
@@ -235,105 +235,95 @@ def cupy_kernel(strFunction, objVariables):
 
 @cupy.memoize(for_each_device=True)
 def cupy_launch(strFunction, strKernel):
-    return cupy.cuda.compile_with_cache(strKernel).get_function(strFunction)
+    module = cupy.RawModule(code=strKernel)
+    return module.get_function(strFunction)
 
 
 class _FunctionSoftsplat(torch.autograd.Function):
     @staticmethod
-    def forward(self, input, flow):
-        self.save_for_backward(input, flow)
+    def forward(ctx, input, flow):
+        ctx.save_for_backward(input, flow)
 
         intSamples = input.shape[0]
-        intInputDepth, intInputHeight, intInputWidth = input.shape[1], input.shape[2], input.shape[
-            3]
+        intInputDepth, intInputHeight, intInputWidth = input.shape[1], input.shape[2], input.shape[3]
         intFlowDepth, intFlowHeight, intFlowWidth = flow.shape[1], flow.shape[2], flow.shape[3]
 
-        assert (intFlowDepth == 2)
-        assert (intInputHeight == intFlowHeight)
-        assert (intInputWidth == intFlowWidth)
+        assert intFlowDepth == 2
+        assert intInputHeight == intFlowHeight
+        assert intInputWidth == intFlowWidth
 
-        input = input.contiguous();
-        assert (input.is_cuda == True)
-        flow = flow.contiguous();
-        assert (flow.is_cuda == True)
+        input = input.contiguous()
+        assert input.is_cuda
+        flow = flow.contiguous()
+        assert flow.is_cuda
 
         output = input.new_zeros([intSamples, intInputDepth, intInputHeight, intInputWidth])
 
-        if input.is_cuda == True:
-            n = output.nelement()
-            cupy_launch('kernel_Softsplat_updateOutput',
-                        cupy_kernel('kernel_Softsplat_updateOutput', {
-                            'input': input,
-                            'flow': flow,
-                            'output': output
-                        }))(
-                grid=tuple([int((n + 512 - 1) / 512), 1, 1]),
-                block=tuple([512, 1, 1]),
-                args=[n, input.data_ptr(), flow.data_ptr(), output.data_ptr()]
-            )
-
-        elif input.is_cuda == False:
-            raise NotImplementedError()
+        n = output.nelement()
+        cupy_launch('kernel_Softsplat_updateOutput',
+                    cupy_kernel('kernel_Softsplat_updateOutput', {
+                        'input': input,
+                        'flow': flow,
+                        'output': output
+                    }))(
+            grid=tuple([int((n + 512 - 1) / 512), 1, 1]),
+            block=tuple([512, 1, 1]),
+            args=[n, input.data_ptr(), flow.data_ptr(), output.data_ptr()]
+        )
 
         return output
 
     @staticmethod
-    def backward(self, gradOutput):
-        input, flow = self.saved_tensors
+    def backward(ctx, gradOutput):
+        input, flow = ctx.saved_tensors
 
         intSamples = input.shape[0]
-        intInputDepth, intInputHeight, intInputWidth = input.shape[1], input.shape[2], input.shape[
-            3]
+        intInputDepth, intInputHeight, intInputWidth = input.shape[1], input.shape[2], input.shape[3]
         intFlowDepth, intFlowHeight, intFlowWidth = flow.shape[1], flow.shape[2], flow.shape[3]
 
-        assert (intFlowDepth == 2)
-        assert (intInputHeight == intFlowHeight)
-        assert (intInputWidth == intFlowWidth)
+        assert intFlowDepth == 2
+        assert intInputHeight == intFlowHeight
+        assert intInputWidth == intFlowWidth
 
-        gradOutput = gradOutput.contiguous();
-        assert (gradOutput.is_cuda == True)
+        gradOutput = gradOutput.contiguous()
+        assert gradOutput.is_cuda
 
         gradInput = input.new_zeros([intSamples, intInputDepth, intInputHeight, intInputWidth]) if \
-            self.needs_input_grad[0] == True else None
+            ctx.needs_input_grad[0] else None
         gradFlow = input.new_zeros([intSamples, intFlowDepth, intFlowHeight, intFlowWidth]) if \
-            self.needs_input_grad[1] == True else None
+            ctx.needs_input_grad[1] else None
 
-        if input.is_cuda == True:
-            if gradInput is not None:
-                n = gradInput.nelement()
-                cupy_launch('kernel_Softsplat_updateGradInput',
-                            cupy_kernel('kernel_Softsplat_updateGradInput', {
-                                'input': input,
-                                'flow': flow,
-                                'gradOutput': gradOutput,
-                                'gradInput': gradInput,
-                                'gradFlow': gradFlow
-                            }))(
-                    grid=tuple([int((n + 512 - 1) / 512), 1, 1]),
-                    block=tuple([512, 1, 1]),
-                    args=[n, input.data_ptr(), flow.data_ptr(), gradOutput.data_ptr(),
-                          gradInput.data_ptr(), None]
-                )
+        if gradInput is not None:
+            n = gradInput.nelement()
+            cupy_launch('kernel_Softsplat_updateGradInput',
+                        cupy_kernel('kernel_Softsplat_updateGradInput', {
+                            'input': input,
+                            'flow': flow,
+                            'gradOutput': gradOutput,
+                            'gradInput': gradInput,
+                            'gradFlow': gradFlow
+                        }))(
+                grid=tuple([int((n + 512 - 1) / 512), 1, 1]),
+                block=tuple([512, 1, 1]),
+                args=[n, input.data_ptr(), flow.data_ptr(), gradOutput.data_ptr(),
+                      gradInput.data_ptr(), None]
+            )
 
-            if gradFlow is not None:
-                n = gradFlow.nelement()
-                cupy_launch('kernel_Softsplat_updateGradFlow',
-                            cupy_kernel('kernel_Softsplat_updateGradFlow', {
-                                'input': input,
-                                'flow': flow,
-                                'gradOutput': gradOutput,
-                                'gradInput': gradInput,
-                                'gradFlow': gradFlow
-                            }))(
-                    grid=tuple([int((n + 512 - 1) / 512), 1, 1]),
-                    block=tuple([512, 1, 1]),
-                    args=[n, input.data_ptr(), flow.data_ptr(), gradOutput.data_ptr(), None,
-                          gradFlow.data_ptr()]
-                )
-
-
-        elif input.is_cuda == False:
-            raise NotImplementedError()
+        if gradFlow is not None:
+            n = gradFlow.nelement()
+            cupy_launch('kernel_Softsplat_updateGradFlow',
+                        cupy_kernel('kernel_Softsplat_updateGradFlow', {
+                            'input': input,
+                            'flow': flow,
+                            'gradOutput': gradOutput,
+                            'gradInput': gradInput,
+                            'gradFlow': gradFlow
+                        }))(
+                grid=tuple([int((n + 512 - 1) / 512), 1, 1]),
+                block=tuple([512, 1, 1]),
+                args=[n, input.data_ptr(), flow.data_ptr(), gradOutput.data_ptr(), None,
+                      gradFlow.data_ptr()]
+            )
 
         return gradInput, gradFlow
 

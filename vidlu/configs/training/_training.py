@@ -224,17 +224,6 @@ semisup_cons_cutmix = TrainerConfig(
     eval_step=ts.SemisupConsEvalStep(),
 )
 
-semisup_cons_phtps20_seg_morsic = TrainerConfig(
-    semisup_cons_phtps20,
-    data_loader_f=partial(
-        vdu.auto_data_loader,
-        dl_f=vd.DataLoader,
-        multi_dl_f=partial(vdu.morsic_semisup_data_loader,
-                           labeled_multiplier=lambda l, u: int(max(1, u / l))),
-        num_workers=2,
-    ),
-)
-
 # Semi-supervised: mean teacher
 
 mean_teacher_custom_tps = TrainerConfig(
