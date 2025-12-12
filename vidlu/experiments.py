@@ -24,6 +24,8 @@ from vidlu.utils.path import to_valid_path
 from vidlu.utils.misc import try_input, Stopwatch, query_user
 
 
+DEFAULT_INTERACT_SHORTCUTS: T.Mapping[str, str] = {"i": "embed()", "skip": "loop.terminate()"}
+
 # TODO: logger instead of verbosity
 
 @dataclass
@@ -246,32 +248,32 @@ class ValidationCheckpointHandler(TrainingCallback):
 
 
 class InteractiveController(TrainingCallback):
-    def __init__(self, data, cpman, logger, main_metrics, interact_shortcuts=None):
+    def __init__(self, data, cpman, logger, main_metrics, interact_shortcuts=DEFAULT_INTERACT_SHORTCUTS):
         self.data = data
         self.cpman = cpman
         self.logger = logger
         self.main_metrics = main_metrics
-        self.interact_shortcuts = interact_shortcuts or dict(i='embed()', skip='loop.terminate()')
+        self.interact_shortcuts = dict() if interact_shortcuts is None else interact_shortcuts
         self.sleepiness = 0
 
         def populate_interactive_shell_namespace():
             import vidlu.utils.presentation.visualization as visualization
             from IPython import embed
-            self.__dict__.update(locals())  
+            self.__dict__.update({"visualization": visualization, "embed": embed})
         populate_interactive_shell_namespace()
 
     def interact(self, state: IterState, loop: EpochLoop):
         if (optional_input := try_input()) is None:
             return
 
-        namespace = {**self.__dict__.copy(), **locals()}
+        namespace = {**vars(self).copy(), "state": state, "loop": loop}
+        cmd = self.interact_shortcuts.get(optional_input, optional_input)
+        print(f"Iteration: {state.iteration}, namespace: " + ", ".join(namespace.keys()))
         try:
-            cmd = self.interact_shortcuts.get(optional_input, optional_input)
-            print(f"Iteration: {state.iteration}, namespace: " + ", ".join(self.__dict__.keys()))
-            exec(cmd, globals(), self.__dict__)
-            for k in self.__dict__.keys():
+            exec(cmd, globals(), namespace)
+            for k in vars(self).keys():
                 if k in namespace:
-                    self.setattr(k, namespace[k])
+                    setattr(self, k, namespace[k])
         except Exception as e:
             print(f'Cannot execute "{optional_input}". Error:\n{e}.')
 
@@ -298,7 +300,7 @@ def define_training_loop_actions(
         main_metrics: T.Sequence[str],
         eval_count: int | None = None,
         min_train_report_count: int = 800, 
-        interact_shortcuts: dict[str, str] = dict(i='embed()', skip='loop.terminate()'),
+        interact_shortcuts: dict[str, str] | None = DEFAULT_INTERACT_SHORTCUTS,
         special_format: dict[str, callable] = {'mem': lambda k, v: f'{v}MiB', 'freq': lambda k, v: f'{v:.1f}/s',
                                                'freq_max': lambda k, v: f'freq_max={k, v:.1f}'},
         line_width: int = 120, 
@@ -426,7 +428,7 @@ def get_device_and_distributed_flag(device_id, distributed_arg: bool | None):
 def make_model_distributed(model):
     model = DistributedDataParallel(model, device_ids=[vud.get_local_rank()])
     for m in model.modules():
-        if (module_type_name := type(m).__name__).startswith("Batch"):
+        if type(m).__name__.startswith("Batch"):
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
             break
     return model

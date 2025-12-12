@@ -26,11 +26,14 @@ from . import defaults
 def factory_eval(expr: str, globals=None, locals=None, eval_func=eval):
     try:
         return eval_func(expr, globals, locals)
-    except Exception as e:
+    except NameError as e:
         available_names = sorted([*(globals or {}).keys(), *(locals or {}).keys()])
-        raise type(e)(
-            f"In the factory expression '{expr}: '{e.args[0]}. Available: {str(available_names)[1:-1]}.",
+        raise NameError(
+            f"NameError: {e.args[0]}.\nAvailable names: {str(available_names)[1:-1]}.",
             *e.args[1:])
+    except SyntaxError as e:
+        available_names = sorted([*(globals or {}).keys(), *(locals or {}).keys()])
+        raise type(e)(f"In the factory expression '{expr}: '{e.args[0]}.", *e.args[1:])
 
 
 factory_exec = partial(factory_eval, eval_func=exec)

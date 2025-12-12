@@ -848,11 +848,13 @@ class Permute(Module):
         return x.permute(*self.dims)
 
     def inverse_module(self):
-        dims = self.dims
-        inv_dims = [-1] * len(dims)
-        for i, d in enumerate(dims):
+        inv_dims = [-1] * len(self.dims)
+        for i, d in enumerate(self.dims):
             inv_dims[d] = i
         return Permute(*inv_dims)
+
+    def extra_repr(self):
+        return f"{self.dims}"[1:-1]
 
 
 @zero_log_abs_det_jac
