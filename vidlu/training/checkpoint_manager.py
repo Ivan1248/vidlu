@@ -30,12 +30,12 @@ smallest = _SmallestFloat()
 
 class Files:
     extracted_state = (None, TorchLoadSave)
-    state = ('training_state.pth', TorchLoadSave)
-    progress_info = ('progress.info', TorchLoadSave)
-    info = ('experiment.info', TorchLoadSave)
-    summary = ('summary.p', TorchLoadSave)
-    perf = ('perf.json', JsonLoadSave)
-    log = ('log.txt', TextLoadSave)
+    state = ("training_state.pth", TorchLoadSave)
+    progress_info = ("progress.info", TorchLoadSave)
+    info = ("experiment.info", TorchLoadSave)
+    summary = ("summary.p", TorchLoadSave)
+    perf = ("perf.json", JsonLoadSave)
+    log = ("log.txt", TextLoadSave)
 
 
 @dc.dataclass
@@ -49,12 +49,12 @@ class Checkpoint:  # TODO
     log: str = ""
 
     def save(self, path):
-        separately_saved_state_parts = self.info['separately_saved_state_parts']
+        separately_saved_state_parts = self.info["separately_saved_state_parts"]
         extracted_state_parts = {f"{k}_state": self.state[k] for k in separately_saved_state_parts}
         other_state = {k: v for k, v in self.state.items() if k not in separately_saved_state_parts}
 
         fields = {k: getattr(self, k) for k in self.__annotations__}
-        stuff = dict(**{**fields, 'state': other_state}, **extracted_state_parts)
+        stuff = dict(**{**fields, "state": other_state}, **extracted_state_parts)
 
         try:
             for k, v in stuff.items():
@@ -72,9 +72,9 @@ class Checkpoint:  # TODO
         fields = {k: (getattr(cls, k) if k in ("perf", "log") else
                       Checkpoint._load(path, k, map_location=map_location))
                   for k in cls.__annotations__}
-        for k in fields['info']['separately_saved_state_parts'] \
-                if isinstance(fields['info'], T.Mapping) else ['model']:  # TODO: remove ['model']
-            fields['state'][k] = cls._load(path, f"{k}_state", map_location=map_location)
+        for k in fields["info"]["separately_saved_state_parts"] \
+                if isinstance(fields["info"], T.Mapping) else ["model"]:  # TODO: remove ['model']
+            fields["state"][k] = cls._load(path, f"{k}_state", map_location=map_location)
         return Checkpoint(**fields)
 
     @staticmethod
@@ -88,7 +88,7 @@ class Checkpoint:  # TODO
             raise RuntimeError(f"Could not load checkpoint at {path.parent}. Error {e}.")
 
 
-ModeArg = T.Literal['restart', 'resume', 'resume_or_start', 'start']
+ModeArg = T.Literal["restart", "resume", "resume_or_start", "start"]
 
 
 class CheckpointManager(object):
@@ -108,14 +108,14 @@ class CheckpointManager(object):
             disk. Older checkpoints are removed. Setting the value to `inf` keeps all checkpoints.
             Default: 1.
         n_best_kept (int, optional): Maximum number of best checkpoints kept on disk. Default: 0.
-        start_mode (Literal['restart', 'resume', 'resume_or_start', 'start'], optional): Controls
+        start_mode (Literal["restart", "resume", "resume_or_start", "start"], optional): Controls
             whether an exception should be raised depending on whether checkpoints of the experiment
             already exist and whether the user will load a checkpoint before saving a new one:
             - "restart" removes all existing checkpoints on initialization,
             - "resume" expects that the user will first load an existing checkpoint,
             - "resume_or_start" expects that the user will first load a checkpoint if any exist,
             - "start" expects that there are no existing checkpoints.
-            Default; 'start'.
+            Default; "start".
         separately_saved_state_parts (Sequence[str], optional): Keys of entries in the state
             dictionary that are to be saved as separate files in checkpoint directories. This does
             not affect the external behavior of the `save` and `load_*` methods. Default: `()`.
@@ -150,37 +150,42 @@ class CheckpointManager(object):
         >>> import os
         >>> from vidlu.training.checkpoint_manager import CheckpointManager
         >>> from torch import nn
-        >>> checkpoints_root = '~/data/experiments/states'
+        >>> checkpoints_root = "~/data/experiments/states"
         >>> model = nn.Linear(3, 3)
         >>> cpman = CheckpointManager(
         ...     checkpoints_root=checkpoints_root,  # directory that contains experiment directories
-        ...     experiment_name='lin33',  # name of experiment directory, which contains checkpoints
+        ...     experiment_name="lin33",  # name of experiment directory, which contains checkpoints
         ...     n_recent_kept=2,  # store only the 2 most recent checkpoint
-        ...     start_mode='resume_or_start',  # resume if any checkpoints exist
-        ...     perf_func=lambda s: s.get('perf', 0),  # extract performance from summary
-        ...     log_func=lambda s: s.get('log', ""),
-        ...     name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.2f}")
+        ...     start_mode="resume_or_start",  # resume if any checkpoints exist
+        ...     perf_func=lambda s: s.get("perf", 0),  # extract performance from summary
+        ...     log_func=lambda s: s.get("log", ""),
+        ...     name_suffix_func=lambda s: f"{s["epoch"]}_{s["perf"]:.2f}")
         >>> if cpman.resuming_required:
-        >>>     state, summary = cpman.load_last(map_location='cuda:0')
-        >>>     print(summary['log'])
-        >>> cpman.save(model.state_dict(), summary=dict(perf=0.11, log='Starting', epoch=0))
-        >>> cpman.save(model.state_dict(), summary=dict(perf=0.25, epoch=10, log='Starting\\nBaz'))
-        >>> state, summary = cpman.load_last(map_location='cuda:0')
+        >>>     state, summary = cpman.load_last(map_location="cuda:0")
+        >>>     print(summary["log"])
+        >>> cpman.save(model.state_dict(), summary=dict(perf=0.11, log="Starting", epoch=0))
+        >>> cpman.save(model.state_dict(), summary=dict(perf=0.25, epoch=10, log="Starting\\nBaz"))
+        >>> state, summary = cpman.load_last(map_location="cuda:0")
         >>> model.load_state_dict(state)
-        >>> assert summary['log'] == 'Starting\\nBaz'
+        >>> assert summary["log"] == "Starting\\nBaz"
         >>> os.listdir(f'{checkpoints_dir}/lin33')
-        ['0_0_0.11', '1_10_0.25']
+        ["0_0_0.11", "1_10_0.25"]
     """
 
-    def __init__(self, checkpoints_root: str | os.PathLike, experiment_name: str,
-                 experiment_info: T.Mapping = None,
-                 n_recent_kept: T.Union[int, T.Literal[math.inf]] = 1, n_best_kept: int = 0,
-                 start_mode: T.Optional[ModeArg] = 'start',
-                 separately_saved_state_parts: T.Sequence[str] = (),
-                 state_loaded: bool = False,
-                 perf_func: T.Callable[[T.Mapping], float] = lambda s: smallest,
-                 log_func: T.Callable[[T.Mapping], str] = lambda s: "",
-                 name_suffix_func=lambda s: ""):
+    def __init__(
+        self,
+        checkpoints_root: str | os.PathLike,
+        experiment_name: str,
+        experiment_info: T.Mapping = None,
+        n_recent_kept: T.Union[int, T.Literal[math.inf]] = 1,
+        n_best_kept: int = 0,
+        start_mode: T.Optional[ModeArg] = "start",
+        separately_saved_state_parts: T.Sequence[str] = (),
+        state_loaded: bool = False,
+        perf_func: T.Callable[[T.Mapping], float] = lambda s: smallest,
+        log_func: T.Callable[[T.Mapping], str] = lambda s: "",
+        name_suffix_func=lambda s: "",
+    ):
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         self._logger.addHandler(logging.NullHandler())
 
@@ -225,15 +230,19 @@ class CheckpointManager(object):
         def get_existing_checkpoints():
             if not self.experiment_dir.exists():
                 return []
-            return sorted([p.name for p in self.experiment_dir.iterdir() if not p.is_file()],
-                          key=lambda p: int(p.split("_")[0]))
+            # Only directories starting with an integer are checkpoints
+            index_to_checkpoint_dir = [
+                (int(index), p.name)
+                for p in self.experiment_dir.iterdir()
+                if not p.is_file() and (index := p.name.split("_")[0]).isdigit()
+            ]
+            return [p[1] for p in sorted(index_to_checkpoint_dir, key=lambda p: p[0])]
 
         self.saved = get_existing_checkpoints()
         self.id_to_perf = dict()
         for id in list(self.saved):
             try:
-                self.id_to_perf[id] = self.perf_func(
-                    Checkpoint.load(self.experiment_dir / id).summary)
+                self.id_to_perf[id] = self.perf_func(Checkpoint.load(self.experiment_dir / id).summary)
             except EOFError as e:
                 warnings.warn(f"Checkpoint loading error:\n{e}")
                 self.saved.remove(id)
@@ -267,12 +276,10 @@ class CheckpointManager(object):
 
     @property
     def best_checkpoint_path(self):
-        return self.experiment_dir / max(self.saved, key=self.id_to_perf.__getitem__) \
-            if len(self.saved) > 0 else None
+        return self.experiment_dir / max(self.saved, key=self.id_to_perf.__getitem__) if len(self.saved) > 0 else None
 
     def load(self, idx=-1, map_location=None):
-        return self._load_cp_in_path(self.experiment_dir / self.saved[idx],
-                                     map_location=map_location)
+        return self._load_cp_in_path(self.experiment_dir / self.saved[idx], map_location=map_location)
 
     def load_last(self, map_location=None):
         return self.load(map_location=map_location)
@@ -287,7 +294,7 @@ class CheckpointManager(object):
     def _load_cp_in_path(self, path, map_location=None):
         self._logger.info(f"Loading checkpoint {path.name}.")
         cp = Checkpoint.load(path, map_location=map_location)
-        self.last_index = (pi if isinstance(pi := cp.progress_info, dict) else pi.__dict__)['index']
+        self.last_index = (pi if isinstance(pi := cp.progress_info, dict) else pi.__dict__)["index"]
         self.info = cp.info
         self.resuming_required = False
         return cp.state, cp.summary, self.last_index
@@ -296,7 +303,8 @@ class CheckpointManager(object):
         n_recent_kept = self.n_recent_kept if n_recent_kept is None else n_recent_kept
         n_best_kept = self.n_best_kept if n_best_kept is None else n_best_kept
         best = set(sorted(self.saved, key=self.id_to_perf.__getitem__, reverse=True)[:n_best_kept])
-        olds = [] if math.isinf(max(n_best_kept, n_recent_kept)) else self.saved[:-n_recent_kept]
+        n_kept = max(n_best_kept, n_recent_kept)
+        olds = [] if math.isinf(n_kept) else self.saved if n_kept == 0 else self.saved[:-n_recent_kept]
         to_remove = [x for x in olds if x not in best]
         for p in to_remove:
             path = self.experiment_dir / p
