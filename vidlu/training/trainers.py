@@ -8,7 +8,6 @@ from warnings import warn
 import os
 import random
 
-from tqdm import tqdm
 import torch
 from torch import nn
 import numpy as np
@@ -306,7 +305,7 @@ class Evaluator:
     def eval(self, *datasets, batch_size=None, **kwargs):
         data_loader = self.get_data_loader(
             *datasets, drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
-        return self.evaluation.run(tqdm(data_loader), **kwargs)
+        return self.evaluation.run(data_loader, **kwargs)
 
 
 def divide_batch_size_over_processes(batch_size: T.Union[int, T.Sequence[int]]):
@@ -446,4 +445,3 @@ class Trainer(Evaluator):
                 return setattr(e, key, value)
         raise AttributeError(f'Neither the `Trainer` object nor its extensions'
                              + f' have a "{key}" attribute.')
-

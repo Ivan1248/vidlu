@@ -5,7 +5,6 @@ from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
 import typing as T
-
 import numpy as np
 import time
 import torch
@@ -19,12 +18,13 @@ import vidlu.modules as vm
 from vidlu.training import Trainer, CheckpointManager, EpochLoop, IterState
 from vidlu.utils.misc import indent_print
 import vidlu.utils.distributed as vud
+from tqdm import tqdm
 from vidlu.utils.logger import Logger
 from vidlu.utils.path import to_valid_path
 from vidlu.utils.misc import try_input, Stopwatch, query_user
 
-
 DEFAULT_INTERACT_SHORTCUTS: T.Mapping[str, str] = {"i": "embed()", "skip": "loop.terminate()"}
+
 
 # TODO: logger instead of verbosity
 
@@ -84,7 +84,8 @@ def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: in
                 return (f"{v:.{scalar_prec}f}".lstrip('0') if v >= 1e-3 else
                         f"{v:.2e}")
             elif isinstance(v, dict):
-                return "{" + ", ".join(f"{k}: {fmt(val, scalar_prec=array_prec)}" for k, val in v.items()) + "}"
+                return "{" + ", ".join(
+                    f"{k}: {fmt(val, scalar_prec=array_prec)}" for k, val in v.items()) + "}"
             elif isinstance(v, np.ndarray) and v.ndim > 1:
                 return f"\n{v}"
             else:
@@ -107,9 +108,12 @@ def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: in
         epoch_fmt, iter_fmt = f'{len(str(epoch_count))}d', f'{len(str(state.batch_count))}d'
         iter_ = state.iteration % state.batch_count
         if prefix is None:
-            prefix = (f'{format(epoch + 1, epoch_fmt)}.{format(iter_ % state.batch_count + 1, iter_fmt)}' if is_training else 
-                      f'{format(epoch + 1, epoch_fmt)} {split_name or "(?)"}')
-        logger.log(f"{prefix}: {make_eval_str(metrics)}")
+            prefix = (
+                f'{format(epoch + 1, epoch_fmt)}.{format(iter_ % state.batch_count + 1, iter_fmt)}' if is_training else
+                f'{format(epoch + 1, epoch_fmt)} {split_name or "(?)"}')
+        # When training, hide metrics with "_" prefix (per-attr metrics kept for eval/MultiAttributeScorePrinter)
+        metrics_to_report = {k: v for k, v in metrics.items() if not (is_training and k.startswith("_"))}
+        logger.log(f"{prefix}: {make_eval_str(metrics_to_report)}")
         # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
 
 
@@ -147,15 +151,16 @@ class TrainingCallback:
 class ProgressMonitor(TrainingCallback):
     def __init__(self, logger: Logger, eval_count, epoch_count, min_train_report_count=800,
                  line_width=120, special_format=None):
-        self.logger = logger
+        self.logger = logger.sublogger(print_fn=tqdm.write)
         self.eval_count = eval_count
         self.epoch_count = epoch_count
         self.min_train_report_count = min_train_report_count
         self.line_width = line_width
         self.special_format = special_format or {}
-        
+
         self.eval_epochs = get_report_iters(eval_count, epoch_count)
-        self._report_iters = None  # Computed on first epoch when batch_count is known
+        self.batch_count = None
+        self.report_iters = None  # Computed on first epoch when batch_count is known
         self.epoch_time = -1
         self.inter_epoch_time = -1
         self.eval_time = -1
@@ -168,14 +173,18 @@ class ProgressMonitor(TrainingCallback):
         evaluation and other information."""
         es = state
         self.sw_epoch.reset().start()
-        
-        if self._report_iters is None:
+
+        # Inline _update_report_iters
+        if self.report_iters is None:
+            self.batch_count = es.batch_count
             report_count = max(1, self.min_train_report_count // self.epoch_count)
-            self._report_iters = get_report_iters(report_count, es.batch_count)
-        
+            self.report_iters = get_report_iters(report_count, self.batch_count)
+
+
         time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * self.epoch_time)
-        time_left = time_left_training + (1 - es.epoch / es.max_epochs) * (self.eval_count * self.eval_time)
-        
+        time_left = time_left_training + (1 - es.epoch / es.max_epochs) * (
+                self.eval_count * self.eval_time)
+
         info_str = (f"Epoch {es.epoch + 1}/{es.max_epochs}:"
                     + f" {es.batch_count} batches,"
                     + f" lr=({', '.join(f'{x:.2e}' for x in self.trainer.lr_scheduler.get_last_lr())}),"
@@ -184,18 +193,39 @@ class ProgressMonitor(TrainingCallback):
             info_str += f", left {to_dhm_str(time_left)} ({self.epoch_time:0.0f}s+{self.eval_time:0.0f}s per epoch)"
         self.logger.log(info_str)
 
+    def on_training_started(self, state: IterState):
+        """Create progress bar for training (manual updates, no data loader mutation)."""
+        total = state.batch_count * state.max_epochs
+        self.train_pbar = tqdm(total=total, desc="Training", leave=True, dynamic_ncols=True)
+
+    def on_training_completed(self, state: IterState):
+        if hasattr(self, 'train_pbar'):
+            self.train_pbar.close()
+
     def on_training_epoch_completed(self, state: IterState):
         self.epoch_time = self.sw_epoch.time
         self.sw_inter_epoch.reset().start()
 
     def on_training_iter_completed(self, state: IterState):
+        self.train_pbar.update(1)
         iter_ = state.iteration % state.batch_count
-        if iter_ in self._report_iters:
+        if iter_ in self.report_iters:
             metrics = self.trainer.get_metric_values(reset=True)
-            report_metrics(state, is_training=True, metrics=metrics, 
+            report_metrics(state, is_training=True, metrics=metrics,
                            epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
-                           line_width=self.line_width, special_format=self.special_format, 
+                           line_width=self.line_width, special_format=self.special_format,
                            logger=self.logger)
+
+    def on_evaluation_started(self, state: IterState):
+        """Create progress bar for evaluation (manual updates, no data loader mutation)."""
+        self.eval_pbar = tqdm(total=state.batch_count, desc="Evaluation", leave=True, dynamic_ncols=True)
+
+    def on_evaluation_completed(self, state: IterState):
+        if hasattr(self, 'eval_pbar'):
+            self.eval_pbar.close()
+
+    def on_evaluation_iter_completed(self, state: IterState):
+        self.eval_pbar.update(1)
 
     def on_evaluation_epoch_started(self, state: IterState):
         self.inter_epoch_time = self.sw_inter_epoch.time
@@ -207,13 +237,17 @@ class ProgressMonitor(TrainingCallback):
         metrics = self.trainer.get_metric_values(reset=True)
         report_metrics(state, is_training=False, metrics=metrics,
                        epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
-                       split_name=split_name, line_width=self.line_width, 
+                       split_name=split_name, line_width=self.line_width,
                        special_format=self.special_format, logger=self.logger)
+
+    def __repr__(self):
+        return f"ProgressMonitor(eval_count={self.eval_count}, epoch_count={self.epoch_count}, min_train_report_count={self.min_train_report_count}, line_width={self.line_width}, special_format={self.special_format})"
 
 
 class ValidationCheckpointHandler(TrainingCallback):
-    def __init__(self, data, cpman: CheckpointManager, main_metrics: T.Sequence[str], 
-                 eval_count, epoch_count, logger: Logger, checkpoint_split_prefix: str | None = None):
+    def __init__(self, data, cpman: CheckpointManager, main_metrics: T.Sequence[str],
+                 eval_count, epoch_count, logger: Logger,
+                 checkpoint_split_prefix: str | None = None):
         self.data = data
         self.cpman = cpman
         self.main_metrics = main_metrics
@@ -224,42 +258,85 @@ class ValidationCheckpointHandler(TrainingCallback):
     def on_training_epoch_completed(self, state: IterState):
         if state.epoch not in self.eval_epochs:
             return
-            
+
         checkpoint_saved = False
         for name, ds in sorted(self.data.items()):
             if name.startswith("val"):
                 # Run evaluation on the validation set
                 es_val = self.trainer.eval(ds, split_name=name)
-                
+
                 should_checkpoint = (
-                    not checkpoint_saved and 
-                    (self.checkpoint_split_prefix is None or name.startswith(self.checkpoint_split_prefix))
-                )
+                        not checkpoint_saved and (self.checkpoint_split_prefix is None or
+                                                  name.startswith(self.checkpoint_split_prefix)))
                 if should_checkpoint:
                     main_metric_name = self.main_metrics[0] if len(self.main_metrics) > 0 else next(
                         iter(es_val.metrics.keys()))
                     self.cpman.save(self.trainer.state_dict(),
-                               summary=dict(logger=self.logger.state_dict(),
-                                            perf=es_val.metrics[main_metric_name],
-                                            log="\n".join(self.logger.lines),
-                                            epoch=state.epoch))
+                                    summary=dict(logger=self.logger.state_dict(),
+                                                 perf=es_val.metrics[main_metric_name],
+                                                 log="\n".join(self.logger.lines),
+                                                 epoch=state.epoch))
                     checkpoint_saved = True
 
+    def __repr__(self):
+        return f"ValidationCheckpointHandler({list(self.data.keys())}, cpman={self.cpman}, main_metrics={self.main_metrics}, eval_count={self.eval_count}, epoch_count={self.epoch_count}, checkpoint_split_prefix={self.checkpoint_split_prefix})"
+
+
+class QuickValidationHandler(TrainingCallback):
+    """Runs periodic in-epoch evaluation on a small validation dataset (val_quick).
+
+    Enabled when data contains a "val_quick" key. Does not affect checkpointing.
+    quick_eval_count is the total number of quick validations for the whole
+    training run, distributed evenly across all iterations (like eval_count).
+    """
+
+    def __init__(self, data, quick_eval_count: int = 5, logger: Logger = None,
+                 line_width: int = 120, special_format: T.Mapping[str, T.Callable] = None,
+                 epoch_count: int = 1):
+        self.val_quick_ds = data.get("val_quick")
+        self.quick_eval_count = quick_eval_count
+        self.report_iters = None
+        self.logger = logger.sublogger(print_fn=tqdm.write) if logger is not None else logger
+        self.line_width = line_width
+        self.special_format = special_format or {}
+        self.epoch_count = epoch_count
+
+    def on_training_iter_completed(self, state: IterState):
+        if self.val_quick_ds is None:
+            return
+        if self.report_iters is None:
+            total_iters = self.epoch_count * state.batch_count
+            self.report_iters = get_report_iters(self.quick_eval_count, total_iters)
+        if state.abs_iteration not in self.report_iters:
+            return
+        self.trainer.eval(self.val_quick_ds, split_name="val_quick")
+        metrics = self.trainer.get_metric_values(reset=True)
+        report_metrics(
+            state, is_training=False, metrics=metrics,
+            epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
+            split_name="val_quick", line_width=self.line_width,
+            special_format=self.special_format, logger=self.logger)
+
+    def __repr__(self):
+        return f"QuickValidationHandler(quick_eval_count={self.quick_eval_count})"
 
 
 class InteractiveController(TrainingCallback):
-    def __init__(self, data, cpman, logger, main_metrics, interact_shortcuts=DEFAULT_INTERACT_SHORTCUTS):
+    def __init__(self, data, cpman, logger, main_metrics,
+                 interact_shortcuts=DEFAULT_INTERACT_SHORTCUTS, training_callbacks=None):
         self.data = data
         self.cpman = cpman
         self.logger = logger
         self.main_metrics = main_metrics
         self.interact_shortcuts = dict() if interact_shortcuts is None else interact_shortcuts
         self.sleepiness = 0
+        self.training_callbacks = training_callbacks or []
 
         def populate_interactive_shell_namespace():
             import vidlu.utils.presentation.visualization as visualization
             from IPython import embed
             self.__dict__.update({"visualization": visualization, "embed": embed})
+
         populate_interactive_shell_namespace()
 
     def interact(self, state: IterState, loop: EpochLoop):
@@ -270,12 +347,16 @@ class InteractiveController(TrainingCallback):
         cmd = self.interact_shortcuts.get(optional_input, optional_input)
         print(f"Iteration: {state.iteration}, namespace: " + ", ".join(namespace.keys()))
         try:
-            exec(cmd, globals(), namespace)
+            # The compile call is needed to print the value if `cmd` is an expression
+            code = compile(cmd, "<input>", "single")
+            exec(code, globals(), namespace)
             for k in vars(self).keys():
                 if k in namespace:
-                    setattr(self, k, namespace[k])
+                    if getattr(self, k) is not namespace[k]:
+                        print(f"Setting attribute \"{k}\" to {namespace[k]}")
+                        setattr(self, k, namespace[k])
         except Exception as e:
-            print(f'Cannot execute "{optional_input}". Error:\n{e}.')
+            print(f'Cannot execute \"{optional_input}\". Error:\n{e}.')
 
     def on_training_epoch_started(self, state: IterState):
         if self.sleepiness > 0:
@@ -291,26 +372,32 @@ class InteractiveController(TrainingCallback):
         if self.sleepiness > 0:
             time.sleep(self.sleepiness / state.batch_count)
 
+    def __repr__(self):
+        return f"InteractiveController(sleepiness={self.sleepiness}, main_metrics={self.main_metrics}, training_callbacks={self.training_callbacks}, interact_shortcuts={self.interact_shortcuts})"
+
 
 def define_training_loop_actions(
         trainer: Trainer,
-        cpman: CheckpointManager, 
-        data: dict[str, T.Sequence], 
-        logger: Logger, 
+        cpman: CheckpointManager,
+        data: dict[str, T.Sequence],
+        logger: Logger,
         main_metrics: T.Sequence[str],
         eval_count: int | None = None,
-        min_train_report_count: int = 800, 
+        min_train_report_count: int = 800,
         interact_shortcuts: dict[str, str] | None = DEFAULT_INTERACT_SHORTCUTS,
-        special_format: dict[str, callable] = {'mem': lambda k, v: f'{v}MiB', 'freq': lambda k, v: f'{v:.1f}/s',
+        special_format: dict[str, callable] = {'mem': lambda k, v: f'{v}MiB',
+                                               'freq': lambda k, v: f'{v:.1f}/s',
                                                'freq_max': lambda k, v: f'freq_max={k, v:.1f}'},
-        line_width: int = 120, 
-        checkpoint_split_prefix: str | None = None) -> T.Sequence[TrainingCallback]:
+        line_width: int = 120,
+        checkpoint_split_prefix: str | None = None,
+        quick_eval_count: int = 8000) -> T.Sequence[TrainingCallback]:
     """
     Args:
         checkpoint_split_prefix: Prefix for split to use for checkpointing (default: None).
             If None, uses first evaluated split (current behavior).
             If provided (e.g., 'test'), checkpoints are saved only when evaluating splits
             starting with that prefix. This ensures checkpoints use metrics from the intended split.
+        quick_eval_count: Total number of quick validations for the training run when val_quick is in data.
     """
     if trainer.eval_count is not None:
         if eval_count is not None and eval_count != trainer.eval_count:
@@ -322,23 +409,30 @@ def define_training_loop_actions(
     elif eval_count is None:
         eval_count = int(os.environ.get('VIDLU_EVAL_COUNT', 200))
 
-    progress_mon = ProgressMonitor(
-        logger=logger, eval_count=eval_count, epoch_count=trainer.epoch_count, 
-        min_train_report_count=min_train_report_count, line_width=line_width, 
-        special_format=special_format)
-    validator = ValidationCheckpointHandler(
-        data=data, cpman=cpman, main_metrics=main_metrics, eval_count=eval_count, 
-        epoch_count=trainer.epoch_count, logger=logger, 
-        checkpoint_split_prefix=checkpoint_split_prefix)
-    interactor = InteractiveController(data=data, cpman=cpman, logger=logger, 
-                                       main_metrics=main_metrics, interact_shortcuts=interact_shortcuts)
+    callbacks = [ProgressMonitor(
+        logger=logger, eval_count=eval_count, epoch_count=trainer.epoch_count,
+        min_train_report_count=min_train_report_count, line_width=line_width,
+        special_format=special_format),
+        ValidationCheckpointHandler(
+            data=data, cpman=cpman, main_metrics=main_metrics, eval_count=eval_count,
+            epoch_count=trainer.epoch_count, logger=logger,
+            checkpoint_split_prefix=checkpoint_split_prefix)]
+    if "val_quick" in data:
+        callbacks.append(QuickValidationHandler(
+            data=data, quick_eval_count=quick_eval_count, logger=logger,
+            line_width=line_width, special_format=special_format,
+            epoch_count=trainer.epoch_count))
+    callbacks.append(InteractiveController(data=data, cpman=cpman, logger=logger,
+                                           main_metrics=main_metrics,
+                                           interact_shortcuts=interact_shortcuts,
+                                           training_callbacks=callbacks))
 
     # Attach components
-    progress_mon.attach(trainer)
-    validator.attach(trainer)
-    interactor.attach(trainer)
+    for callback in callbacks:
+        callback.attach(trainer)
 
-    return [progress_mon, validator, interactor]
+    return callbacks
+
 
 # Experiment #######################################################################################
 
@@ -538,6 +632,7 @@ class TrainingExperimentBuilder(Namespace):
         missing = [key for key in required if not hasattr(self, key)]
         if missing:
             raise ValueError(f"Missing required attributes: {', '.join(missing)}")
-        return TrainingExperiment(model=self.model, trainer=self.trainer, data=self.data, 
-                                  cpman=self.cpman, attachments=self.attachments, logger=self.logger, 
+        return TrainingExperiment(model=self.model, trainer=self.trainer, data=self.data,
+                                  cpman=self.cpman, attachments=self.attachments,
+                                  logger=self.logger,
                                   callbacks=self.callbacks)
