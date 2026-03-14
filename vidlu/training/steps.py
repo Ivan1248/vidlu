@@ -157,11 +157,11 @@ class DummyStep:
 @dc.dataclass
 class AmpMixin:
     amp: bool = False
-    amp_scaler: T.Union[torch.cuda.amp.GradScaler, T.Type[vtu.DummyGradScaler]] = dc.field(
+    amp_scaler: T.Union[torch.amp.GradScaler, T.Type[vtu.DummyGradScaler]] = dc.field(
         init=False, default=None)
 
     def __post_init__(self):
-        self.amp_scaler = torch.cuda.amp.GradScaler() if self.amp else vtu.DummyGradScaler
+        self.amp_scaler = torch.amp.GradScaler('cuda') if self.amp else vtu.DummyGradScaler
 
     def state_dict(self):
         return dict(amp_scaler=self.amp_scaler.state_dict())

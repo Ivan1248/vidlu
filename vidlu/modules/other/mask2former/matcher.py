@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 from vidlu.modules.other.point_rend.point_features import point_sample
 
@@ -132,7 +132,7 @@ class HungarianMatcher(nn.Module):
                 align_corners=False,
             ).squeeze(1)
 
-            with autocast(enabled=False):
+            with autocast(enabled=False, device_type=out_mask.device.type):
                 out_mask = out_mask.float()
                 tgt_mask = tgt_mask.float()
                 # Compute the focal loss between masks
