@@ -33,7 +33,7 @@ class LazyItem:
         if self._value is _NoValue:
             self._value = (
                 self._get() if vuf.positional_param_count(self._get) == 0 else self._get(record)
-            )
+            )  # TODO: is positional_param_count the best way?
         return self._value
 
 
@@ -140,6 +140,11 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
     def items(self):  # Mapping
         return ItemsRecordView(self)  # TODO
 
+    def __contains__(self, item):  # Collection
+        raise TypeError(
+            "`in` is ambiguous for Record (iteration yields values, but field-name"
+            " lookup is more common). Use `item in r.keys()` or `item in r.values()`.")
+
     def _to_string(self, func=repr):
         fields = ", ".join(
             [f"{k}={func(self[k])}" if type(self).is_evaluated(self, k) else f"{k}=<unevaluated>"
@@ -147,15 +152,16 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
         return f"{type(self).__name__}({fields})"
 
 
-class Record(RecordBase, abc.Sequence):  # Sized, Iterable len, iter
-    r"""
-    An immutable data structure that combines the features of a sequence
-    (numeric indexes), a mapping (string keys), and dot notation for
-    attribute-style access.
+class Record(RecordBase):  # Sized, Iterable len, iter
+    r"""An ordered data structure with named fields that combines mapping-style
+    keyed access, positional integer indexing, and dot notation.
+    Supports lazy field evaluation and value-based iteration (unpacking).
 
-    Fields can be lazily evaluated by providing a function. The function is
-    executed only once when the field is accessed for the first time, and its
-    result is cached for subsequent accesses.
+    Iteration yields values (enabling ``x, y = record``), while ``keys()``,
+    ``values()``, and ``items()`` provide explicit views. The ``in`` operator
+    is intentionally disabled because iteration yields values but field-name
+    lookup is the more common membership query — use ``key in r.keys()`` or
+    ``val in r.values()`` instead.
 
     Example:
         >>> r = Record(a=2, b=53)
@@ -196,19 +202,20 @@ class Record(RecordBase, abc.Sequence):  # Sized, Iterable len, iter
             key = tuple(self.keys())[key]
         return super().__getitem__(key)
 
-    def __iter__(self):  # Sequence (returns values)
+    def __iter__(self):  # yields values (for unpacking: x, y = record)
         return iter(self.values())
 
-    def __contains__(self, item):  # Mapping
-        raise TypeError("`in` operator not supported. Use the `values` or the `keys` method.")
+    def __reversed__(self):
+        keys = list(self.keys())
+        return (self[k] for k in reversed(keys))
 
 
 class DictRecord(RecordBase, abc.Mapping):  # Sized, Iterable len, iter
     def __iter__(self):
         return iter(self.dict_.keys())
 
-    def __contains__(self, item):
-        return any(v == item for v in self)
+    def __contains__(self, item):  # Mapping contract: checks keys, O(1)
+        return item in self.dict_
 
 
 def arrange(r, field_names):
@@ -225,8 +232,8 @@ class DictRecordView(RecordView):
     def __iter__(self):
         return iter(self.dict_.keys())
 
-    def __contains__(self, item):
-        return any(v == item for v in self)
+    def __contains__(self, item):  # checks keys, O(1)
+        return item in self.dict_
 
     def _to_string(self, func=repr):
         fields = ", ".join([k for k in self])
