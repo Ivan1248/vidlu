@@ -29,12 +29,12 @@ _project_root = _current_file.parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from vidlu_irap_gaim.attrs import get_attrs_to_include  # noqa: E402
+from vidlu_irap_gaim.data.attrs import get_attrs_to_include  # noqa: E402
 from vidlu_irap_gaim.compat.legacy_seq_enh_model import LegacyGeneralLSTMModel  # noqa: E402
-from vidlu_irap_gaim.datasets import make_bih_data, resolve_irap_paths  # noqa: E402
+from vidlu_irap_gaim.data import make_bih_data, resolve_irap_paths  # noqa: E402
 from vidlu_irap_gaim.models.classification import ImageSequenceClassifier  # noqa: E402
 from vidlu_irap_gaim.models.encoders.resnet import ResNetEncoder  # noqa: E402
-from vidlu_irap_gaim.vis_utils import AttributeMetadataDecoder, save_inference_visualization  # noqa: E402
+from vidlu_irap_gaim.tools.vis_utils import AttributeMetadataDecoder, save_inference_visualization  # noqa: E402
 
 
 def _parse_int_list_csv(x: str) -> tuple[int, ...]:

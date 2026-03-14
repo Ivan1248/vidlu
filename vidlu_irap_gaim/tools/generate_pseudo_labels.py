@@ -10,7 +10,7 @@ from tqdm import tqdm
 from pathlib import Path
 import typing as T
 
-from vidlu_irap_gaim.semisup import get_hard_pseudo_labels
+from vidlu_irap_gaim.training.semisup import get_hard_pseudo_labels
 
 
 def generate_pseudo_labels(

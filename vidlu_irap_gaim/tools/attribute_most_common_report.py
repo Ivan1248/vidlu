@@ -11,8 +11,8 @@ import argparse
 import json
 from pathlib import Path
 
-from vidlu_irap_gaim.attribute_frequencies import compute_attribute_frequency_stats
-from vidlu_irap_gaim.datasets import make_bih_data
+from vidlu_irap_gaim.data.attribute_frequencies import compute_attribute_frequency_stats
+from vidlu_irap_gaim.data import make_bih_data
 from vidlu_irap_gaim.vlm.response_parser import build_idx_to_value
 
 

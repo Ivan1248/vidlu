@@ -4,7 +4,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from ...resnet_backbone import resnet18
+from ..resnet_backbone import resnet18
 
 
 class ResNetEncoder(nn.Module):

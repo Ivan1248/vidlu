@@ -483,7 +483,7 @@ class VLMEvalStep:
         """Lazily load the attribute list."""
         if self._attrs_to_include is not None:
             return
-        from vidlu_irap_gaim.attrs import get_attrs_to_include
+        from vidlu_irap_gaim.data.attrs import get_attrs_to_include
 
         self._attrs_to_include = list(get_attrs_to_include())
 

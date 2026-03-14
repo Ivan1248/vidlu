@@ -2,7 +2,7 @@
 
 This document details the exact hyperparameters and definitions used in the IRAP GAIM training pipeline, comparing the original implementation (`train_local_rec.py`) with the Vidlu adaptations (`hybrid_training_v3.py` and `scripts/run.py`).
 
-## 1. Optimizer Configuration (Adam)
+## 1. Optimizer configuration (Adam)
 
 The training uses the Adam optimizer with standard betas `(0.9, 0.999)`.
 
@@ -15,7 +15,7 @@ The training uses the Adam optimizer with standard betas `(0.9, 0.999)`.
 | | Weight Decay | `1e-3` | |
 | | Scheduler Gamma | `0.88` | Multiplicative decay per epoch |
 
-## 2. Training Loop Configuration
+## 2. Training loop configuration
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
@@ -27,7 +27,7 @@ The training uses the Adam optimizer with standard betas `(0.9, 0.999)`.
 | **AMP** | `True` | Automatic Mixed Precision enabled |
 | **Drop Last** | `True` | Drop last incomplete batch during training |
 
-## 3. Loss Function
+## 3. Loss function
 
 **Type:** `MultiAttributeCrossEntropyLoss` (Vidlu) / `F.cross_entropy` loop (Original)
 
@@ -42,7 +42,7 @@ total_loss = mean(cross_entropy(logits[attr], target[attr], weight=class_weights
 1.  **Per-attribute:** `mean` over the batch dimension.
 2.  **Global:** `mean` over the attribute dimension.
 
-## 4. Class Weight Calculation
+## 4. Class weight calculation
 
 Class weights are dynamic and updated after every epoch based on validation recall.
 
@@ -60,7 +60,7 @@ Where:
 *   `inv_freq = total_occurrences / class_occurrences`
 *   `recall` = Per-class recall (or `1/n_classes` initially)
 
-## 5. Data Augmentation
+## 5. Data augmentation
 
 Applied via `ColorJitter` in the dataset transformation pipeline.
 
@@ -74,7 +74,7 @@ Applied via `ColorJitter` in the dataset transformation pipeline.
 *   Original: `build_rgb_transform()`
 *   Vidlu: `make_bih_data(jitter=(0.6, 0.3, 0.2, 0.02))`
 
-## 6. Model Architecture & Initialization
+## 6. Model architecture & initialization
 
 **Backbone:** ResNet (loaded from `vistas.pt`)
 **Initialization:**
@@ -86,13 +86,13 @@ Applied via `ColorJitter` in the dataset transformation pipeline.
 *   **Frozen Phase:** Only parameters returned by `get_trainable_parameters()` (Heads + SPP) are trainable. Backbone is frozen.
 *   **Finetune Phase:** All parameters are trainable.
 
-## 7. Scheduler Timing
+## 7. Scheduler timing
 
 *   **Type:** `MultiplicativeLR`
 *   **Step Frequency:** Once per epoch.
 *   **Timing:** Called after the training loop and before/after validation (consistent across implementations).
 
-## 8. Loss Reporting
+## 8. Loss reporting
 
 All implementations report loss averaged **over the reporting interval** (~218 batches), not cumulatively from the epoch start.
 

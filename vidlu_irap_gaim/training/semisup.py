@@ -14,7 +14,7 @@ import numpy as np
 
 from vidlu.modules.losses import kl_div_ll
 
-from .datasets import make_bih_data
+from vidlu_irap_gaim.data.bih_dataset import make_bih_data
 
 
 def multi_attribute_kl_div_ll(
@@ -87,7 +87,7 @@ def make_semisup_bih_data(
     """
     ds = make_bih_data(metadata_dir=metadata_dir, **kwargs)
     train_ds = ds["train"]
-    
+
 
     if labeled_ratio is None and labeled_size is None:
         raise ValueError("Either labeled_ratio or labeled_size must be provided.")
@@ -155,14 +155,14 @@ def update_adaptive_thresholds(
 ) -> dict[int, float]:
     """Update per-attribute confidence thresholds using exponential moving average (MC-PanDA++ style).
 
-    This allows threshold τ_a to adapt to the evolving confidence distribution of each attribute,
+    This allows threshold tau_a to adapt to the evolving confidence distribution of each attribute,
     automatically handling class imbalance within attributes. Each attribute may have different
     dominant/rare class distributions.
 
     Args:
         logits_tuple: Tuple of (B, K_i) logit tensors from teacher on clean unlabeled data.
         thresholds: Current per-attribute thresholds dict, mapping attr_idx -> float.
-        ema_momentum: EMA momentum (α in Eq. 5 of MC-PanDA++). Higher = slower updates.
+        ema_momentum: EMA momentum (alpha in Eq. 5 of MC-PanDA++). Higher = slower updates.
         aggregation_fn: Function to aggregate confidence scores per attribute (default: 75th percentile).
                        Called as aggregation_fn(confidences_array) -> scalar.
 
@@ -180,7 +180,7 @@ def update_adaptive_thresholds(
         # Aggregate confidence for this attribute (e.g., 75th percentile)
         delta = aggregation_fn(max_probs)
 
-        # EMA update: τ_a^n = α * τ_a^(n-1) + (1 - α) * δ_a^n
+        # EMA update: tau_a^n = alpha * tau_a^(n-1) + (1 - alpha) * delta_a^n
         old_thresh = thresholds.get(i, 0.0)
         new_thresh = ema_momentum * old_thresh + (1 - ema_momentum) * delta
         updated[i] = new_thresh

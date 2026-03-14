@@ -1,6 +1,6 @@
-# Prefix Caching Benchmark Results
+# Prefix caching benchmark results
 
-## Run: Long output (~1500 chars target)
+## Run: long output (~1500 chars target)
 
 Command:
 ```bash
@@ -19,7 +19,7 @@ Result:
 ```
 
 
-## Run: Short output (~325 chars)
+## Run: short output (~325 chars)
 
 Command:
 ```bash

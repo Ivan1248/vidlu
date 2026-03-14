@@ -1,12 +1,33 @@
-from .datasets import BihSequence, make_bih_data, get_class_counts, load_ncontext_segment_ids, resolve_irap_paths, InferenceImageDataset, RGB_MEAN, RGB_STD
+# Data
+from .data import (
+    BihSequence,
+    make_bih_data,
+    get_class_counts,
+    load_ncontext_segment_ids,
+    resolve_irap_paths,
+    InferenceImageDataset,
+    RGB_MEAN,
+    RGB_STD,
+    get_attrs_to_include,
+    map_attr_names_to_indices,
+    ATTRS_TO_INCLUDE,
+)
+
+# Models
 from .models import (
     ImageSequenceClassifier,
     ResNetEncoder,
     ViTEncoder,
     dinov2_vit_encoder,
+    MultiScaleSequenceInference,
 )
+from .models.pretraining import vistas_params_spec
+
+# Losses & Metrics
 from .losses import multi_attribute_cross_entropy, MultiAttributeCrossEntropyLoss
 from .metrics import MultiAttributeClassificationMetrics, MultiAttributeAccuracy, get_irap_metrics
+
+# Training
 from .training import (
     irap_local_rec_trainer,
     irap_local_rec_trainer_multiscale,
@@ -19,18 +40,16 @@ from .training import (
     MultiScaleSupervisedStep,
     vlm_finetune_trainer,
     MultiAttributePseudoLabelStep,
+    DynamicBalancedRecallWeights,
+    add_attr_idx_to_class_occurrence_counts_to_info_lazily,
+    multi_attribute_kl_div_ll,
+    make_semisup_bih_data,
 )
-from .models.multiscale import MultiScaleSequenceInference
 
-from .dynamic import DynamicBalancedRecallWeights, add_attr_idx_to_class_occurrence_counts_to_info_lazily
-from .feats import export_feats
-from .seq_dataset import make_seq_enh_data
-from .seq_models import GeneralLSTMModel
-from .attrs import get_attrs_to_include, map_attr_names_to_indices, ATTRS_TO_INCLUDE
-from .pretraining import vistas_params_spec
-from .semisup import multi_attribute_kl_div_ll, make_semisup_bih_data
+# Sequential enhancement
+from .seq import export_feats, make_seq_enh_data, GeneralLSTMModel
 
-# VLM fine-tuning components
+# VLM fine-tuning
 from .vlm.finetuning import (
     Qwen3VLClassifier,
     make_vlm_bih_data,

@@ -8,12 +8,12 @@ from pathlib import Path
 
 from vidlu.data import Dataset, Record
 
-from vidlu_irap_gaim.attrs import get_attrs_to_include
-from vidlu_irap_gaim.attribute_frequencies import (
+from vidlu_irap_gaim.data.attrs import get_attrs_to_include
+from vidlu_irap_gaim.data.attribute_frequencies import (
     compute_attribute_frequency_stats,
     frequency_stats_to_attr_to_default_class_idx,
 )
-from vidlu_irap_gaim.datasets import make_bih_data
+from vidlu_irap_gaim.data import make_bih_data
 from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
 from vidlu_irap_gaim.vlm.response_scheme import (
     ResponseScheme,

@@ -14,9 +14,9 @@ project_root = current_file.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from vidlu_irap_gaim.datasets import make_bih_data, resolve_irap_paths
+from vidlu_irap_gaim.data import make_bih_data, resolve_irap_paths
 from vidlu_irap_gaim.training import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
-from vidlu_irap_gaim.vis_utils import (
+from vidlu_irap_gaim.tools.vis_utils import (
     AttributeMetadataDecoder,
     create_composite_view_strip,
     get_index_color,

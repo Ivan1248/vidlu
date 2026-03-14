@@ -1,7 +1,7 @@
 import torch
 import shutil
 from pathlib import Path
-from vidlu_irap_gaim.dynamic import DynamicBalancedRecallWeights
+from vidlu_irap_gaim.training.dynamic_weights import DynamicBalancedRecallWeights
 from vidlu.utils.collections import NameDict
 import os
 

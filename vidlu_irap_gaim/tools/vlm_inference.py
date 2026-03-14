@@ -76,8 +76,8 @@ def _load_dataset(
     Returns:
         Tuple of (dataset, attr_to_value_to_class_idx, attrs_order)
     """
-    from vidlu_irap_gaim.datasets import make_bih_data, InferenceImageDataset
-    from vidlu_irap_gaim.attrs import get_attrs_to_include
+    from vidlu_irap_gaim.data import make_bih_data, InferenceImageDataset
+    from vidlu_irap_gaim.data.attrs import get_attrs_to_include
 
     if image_folder is not None:
         # Custom folder - need reference dataset for metadata
@@ -309,7 +309,7 @@ def run_evaluation(
     )
     from vidlu.utils.collections import NameDict
     from vidlu.utils.misc import try_input
-    from vidlu_irap_gaim.attrs import get_attrs_to_include
+    from vidlu_irap_gaim.data.attrs import get_attrs_to_include
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

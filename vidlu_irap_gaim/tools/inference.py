@@ -21,7 +21,7 @@ from vidlu.experiments import TrainingExperiment
 from vidlu.utils.misc import RemovableHandle
 from vidlu.utils.collections import NameDict
 
-from vidlu_irap_gaim.vis_utils import (
+from vidlu_irap_gaim.tools.vis_utils import (
     AttributeMetadataDecoder,
     composite_to_fitted_pil_layout,
     PredictionRow,

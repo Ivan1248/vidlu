@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from vidlu.training.extensions import TrainerExtension
 from vidlu.data.dataset import Dataset
-from .metrics import InternalMetricsProvider
+from vidlu_irap_gaim.metrics import InternalMetricsProvider
 
 
 def _get_underlying_dataset(dataset):
@@ -278,7 +278,7 @@ class DynamicBalancedRecallWeights(TrainerExtension):
 
         # Construct Key -> Index mapping
         if self.attrs_to_include is not None:
-            from .attrs import map_attr_names_to_indices
+            from vidlu_irap_gaim.data.attrs import map_attr_names_to_indices
 
             attrs_idx_list = map_attr_names_to_indices(
                 self.attrs_to_include, train_ds.info.attr_to_value_to_class_idx.keys()
@@ -305,7 +305,7 @@ class DynamicBalancedRecallWeights(TrainerExtension):
             attrs_idx = list(self.attr_to_index.values())
             self.loss_adapter.set_attrs_idx(attrs_idx)
         else:
-            # Keys are indices
+            # Keys are already indices
             self.loss_adapter.set_attrs_idx(list(attr_to_class_count.keys()))
 
         # Initialize weights

@@ -1,7 +1,7 @@
 import torch
 from unittest.mock import patch
 
-from vidlu_irap_gaim.semisup import multi_attribute_kl_div_ll, make_semisup_bih_data
+from vidlu_irap_gaim.training.semisup import multi_attribute_kl_div_ll, make_semisup_bih_data
 from vidlu.data import Dataset
 
 

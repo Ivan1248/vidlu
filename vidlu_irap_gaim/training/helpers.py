@@ -7,13 +7,14 @@ from typing import Sequence, Callable
 
 from vidlu.configs.training import TrainerConfig
 from vidlu.training.steps import SupervisedStep
-from vidlu.optim.schedulers import MultiplicativeLR
+from torch.optim.lr_scheduler import MultiplicativeLR
 import torch
 
-from .losses import MultiAttributeCrossEntropyLoss
-from .dynamic import DynamicBalancedRecallWeights
-from .training import FreezeThenFinetune, make_sequence_color_jitter
-from .attrs import get_attrs_to_include
+from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
+from .dynamic_weights import DynamicBalancedRecallWeights
+from .extensions import FreezeThenFinetune
+from .jitter import make_sequence_color_jitter
+from vidlu_irap_gaim.data.attrs import get_attrs_to_include
 
 
 def make_irap_trainer_with_attrs(

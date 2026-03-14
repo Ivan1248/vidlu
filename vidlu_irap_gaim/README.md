@@ -1,15 +1,44 @@
 # vidlu_irap_gaim
 
-ViDLU extension for the IRAP GAIM local attribute recognition workflow on road segments (BiH dataset).
+ViDLU extension for the IRAP GAIM local attribute recognition workflow on road segments (BiH dataset). Provides a complete pipeline for multi-attribute road segment classification — from supervised and semi-supervised training to VLM-based zero-shot inference — using temporal image sequences.
 
 The extension is discovered by ViDLU via the `vidlu_` extension naming convention:
 - Python package name: `vidlu_irap_gaim`
 - Factory namespace name: `irap_gaim`
 
-## Install / import
+## Table of contents
 
-- If you run from the repository checkout, make sure the repo root is on `PYTHONPATH` so `vidlu_irap_gaim` is importable.
-- No separate install step is required.
+- [Installation & requirements](#installation--requirements)
+- [Data layout](#data-layout)
+- [Package structure](#package-structure)
+- [Quickstart (supervised training)](#quickstart-supervised-training)
+- [Encoders](#encoders)
+- [Metrics & dynamic weighting](#metrics--dynamic-weighting)
+- [Semi-supervised learning with pseudo-labels](#semi-supervised-learning-with-pseudo-labels)
+- [Multi-scale inference](#multi-scale-inference)
+- [VLM integration (zero-shot & fine-tuning)](#vlm-integration-zero-shot--fine-tuning)
+- [Inference & visualization](#inference--visualization)
+- [Feature export & sequential enhancement](#feature-export--sequential-enhancement)
+- [API reference](#api-reference)
+- [Troubleshooting](#troubleshooting)
+
+## Installation & requirements
+
+If you run from the repository checkout, make sure the repo root is on `PYTHONPATH` so `vidlu_irap_gaim` is importable. No separate install step is required.
+
+Core dependencies (see `requirements.txt`):
+
+```
+numpy, opencv-python, pillow, tqdm
+torch>=1.9.0, torchvision>=0.9.0
+matplotlib, scikit-learn, streamlit
+```
+
+For VLM inference (optional):
+
+```
+transformers>=4.40.0, qwen-vl-utils>=0.0.8, accelerate>=0.30.0, pyyaml>=6.0
+```
 
 ## Data layout
 
@@ -37,16 +66,81 @@ To disable this filtering (use all segments that pass label/context checks):
 python scripts/run.py train \
   "irap_gaim.make_bih_data(use_ncontext_filter=False)" \
   "standardize" \
-  "..." "..."  # (model/trainer as below)
+  "..." "..."
 ```
 
-## Quickstart (training)
+## Package structure
+
+```
+vidlu_irap_gaim/
+├── __init__.py                  # Public API exports
+├── losses.py                    # MultiAttributeCrossEntropyLoss
+├── metrics.py                   # Per-attribute accuracy, precision, recall, F1, IoU
+├── data/                        # Dataset and attribute management
+│   ├── bih_dataset.py           # BihSequence dataset, make_bih_data factory
+│   ├── inference_dataset.py     # InferenceImageDataset for unlabeled data
+│   ├── attrs.py                 # Canonical 41-attribute subset definitions
+│   ├── attribute_frequencies.py # Class distribution analysis
+│   └── constants.py             # RGB normalization constants
+├── models/                      # Neural network models and encoders
+│   ├── classification.py        # ImageSequenceClassifier
+│   ├── multiscale.py            # MultiScaleSequenceInference
+│   ├── pretraining.py           # Vistas pre-training helpers
+│   ├── resnet_backbone.py       # Legacy ResNet implementation
+│   └── encoders/
+│       ├── resnet.py            # ResNetEncoder (ImageNet / Vistas)
+│       ├── vit.py               # ViTEncoder, dinov2_vit_encoder
+│       └── attention.py         # Attention pooling
+├── training/                    # Training infrastructure
+│   ├── configs.py               # Trainer configurations (supervised, semi-sup, pseudo-label, VLM)
+│   ├── steps.py                 # MultiScaleSupervisedStep, MultiAttributePseudoLabelStep
+│   ├── extensions.py            # FreezeThenFinetune, MultiAttributeScorePrinter, VisualizationExtension
+│   ├── dynamic_weights.py       # DynamicBalancedRecallWeights (per-epoch class reweighting)
+│   ├── semisup.py               # Semi-supervised splits, pseudo-label generation, adaptive thresholds
+│   ├── jitter.py                # Color jitter augmentation
+│   └── helpers.py               # Trainer configuration helpers
+├── seq/                         # Sequential enhancement (LSTM smoothing)
+│   ├── dataset.py               # SeqEnhDataset, make_seq_enh_data factory
+│   ├── models.py                # GeneralLSTMModel for temporal smoothing
+│   └── feats.py                 # Feature export to .npy files
+├── vlm/                         # Vision-Language Model integration
+│   ├── base.py                  # BaseVLMPredictor, VLMPredictionResult
+│   ├── qwen3_vl.py              # Qwen3VLPredictor (HuggingFace)
+│   ├── qwen3_vl_vllm.py         # Qwen3VLvLLMPredictor (vLLM engine)
+│   ├── prompts.py               # PromptBuilder with configurable detail levels
+│   ├── response_scheme.py       # Response format schemes (Standard, JSON, Indexed, Sparse)
+│   ├── response_parser.py       # Parse VLM text responses to structured predictions
+│   ├── attribute_prompts.yaml   # YAML prompt configuration
+│   └── finetuning/              # LoRA fine-tuning pipeline
+│       ├── model.py             # Qwen3VLClassifier (LoRA wrapper)
+│       ├── dataset.py           # VLMBihDataset, make_vlm_bih_data
+│       ├── predictor.py         # FineTunedVLMPredictor
+│       └── steps.py             # VLMTrainStep, VLMEvalStep
+├── tools/                       # Utility scripts and visualization
+│   ├── vis_utils.py             # Visualization utilities (color palettes, composite images)
+│   ├── dataset_viewer.py        # Streamlit interactive data browser
+│   ├── inference.py             # Evaluation hook for structured predictions
+│   ├── inference_visualization.py  # Standalone PNG generation
+│   ├── generate_pseudo_labels.py   # Offline pseudo-label generation
+│   ├── baseline_random.py       # Random baseline predictor
+│   ├── attribute_most_common_report.py  # Attribute frequency analysis
+│   ├── vlm_benchmark.py         # VLM benchmarking
+│   └── vlm_inference.py         # VLM inference pipeline
+├── compat/
+│   └── legacy_seq_enh_model.py  # Backward-compatible legacy LSTM models
+└── tests/
+    ├── test_semisup.py
+    ├── test_qwen3.py
+    └── test_vlm.py
+```
+
+## Quickstart (supervised training)
 
 **Important**: the dataset returns RGB in \([0,1]\) and the default pipeline expects normalization via the **`standardize` input adapter** (it uses `dataset.info.pixel_stats`).
 
 ### ResNet encoder (Vistas-pretrained backbone)
 
-This matches the current code path: deterministic loading + center crop in the dataset, photometric jitter in the trainer (`irap_gaim.irap_local_rec_trainer`).
+Deterministic loading + center crop in the dataset, photometric jitter in the trainer.
 
 ```bash
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
@@ -73,36 +167,57 @@ IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
   -e imagenet_rn18_s3
 ```
 
-### Metrics and attribute filtering
+### DINOv2 ViT encoder
 
-- `irap_gaim.get_irap_metrics(...)` configures metrics over the canonical paper subset (`attrs_to_include`) by mapping attribute names to indices using `dataset.info.attribute_names`.
-- Metrics used here **require** `attrs_idx` internally; that’s why using `get_irap_metrics()` is recommended.
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.dinov2_vit_encoder,variant='dinov2_vitb14',params_dir=dirs.pretrained)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  --metrics "irap_gaim.get_irap_metrics()"
+```
 
-## Semi-Supervised Learning with Pseudo-Labels
+## Encoders
+
+| Encoder | Factory | Pretrained weights | Notes |
+|---------|---------|-------------------|-------|
+| ResNet-18 | `ResNetEncoder(pretrained=True)` | ImageNet (torchvision) | Good baseline |
+| ResNet-18 + Vistas | `ResNetEncoder(pretrained=False)` + `--params` | Vistas `.pt` file | Best for road scenes; load via `--params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt"` |
+| DINOv2 ViT-B/14 | `dinov2_vit_encoder(variant='dinov2_vitb14')` | Auto-downloaded | Self-supervised; no `--params` needed |
+
+## Metrics & dynamic weighting
+
+### Metrics
+
+`irap_gaim.get_irap_metrics(...)` configures per-attribute accuracy, precision, recall, F1, and IoU over the canonical 41-attribute subset. It maps attribute names to indices using `dataset.info.attribute_names`.
+
+```bash
+--metrics "irap_gaim.get_irap_metrics()"
+```
+
+### Dynamic balanced recall weights
+
+`DynamicBalancedRecallWeights` is a trainer extension that recomputes per-attribute class weights after each validation epoch. The weighting formula balances inverse class frequency with observed recall:
+
+```
+w = inv_freq * (1 - recall) + sqrt(inv_freq) * recall
+```
+
+This is configured automatically in the standard trainers. It requires `MultiAttributeClassificationMetrics` (which implements `InternalMetricsProvider`) to access per-class TP/FP/FN statistics.
+
+## Semi-supervised learning with pseudo-labels
 
 This extension supports FixMatch-style pseudo-label self-training for leveraging unlabeled data. A frozen pre-trained teacher generates hard argmax pseudo-labels with per-attribute confidence thresholding and temperature scaling.
 
-### Quick start: On-the-fly pseudo-labeling (teacher runs each batch)
+### On-the-fly pseudo-labeling (teacher runs each batch)
 
 ```bash
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
   "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
   "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
-  "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/pretrained_checkpoint.pth',conf_thresh=0.8,temperature=1.0)" \
-  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics()" \
-  -e 1
-```
-
-The trainer specification inherits from the base `irap_pseudo_label_trainer` config and overrides just the `train_step` with custom parameters. You can also use adaptive per-attribute thresholding:
-
-```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
-  "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
-  "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/pretrained_checkpoint.pth',conf_thresh={0: 0.0, 1: 0.0, 2: 0.0},temperature=1.0)" \
+  "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/checkpoint.pth',conf_thresh=0.8,temperature=1.0)" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
   --metrics "irap_gaim.get_irap_metrics()" \
   -e 1
@@ -110,109 +225,121 @@ IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
 
 ### Offline pseudo-label generation (one-time preprocessing)
 
-First, generate pseudo-labels for the unlabeled set using a pre-trained teacher:
+Generate pseudo-labels, then train on the combined labeled + pseudo-labeled data:
 
 ```python
-# Example script: generate_pseudo_labels.py
-import torch
 from vidlu_irap_gaim.tools.generate_pseudo_labels import generate_pseudo_labels, save_pseudo_labels
-from vidlu_irap_gaim import make_bih_data
 
-# Load dataset and model
-data = make_bih_data()
-dataset_unlabeled = data['train_u']
-model = torch.load('pretrained_model.pth')  # your pre-trained checkpoint
-
-# Generate pseudo-labels with fixed thresholding
-result = generate_pseudo_labels(
-    model,
-    dataset_unlabeled,
-    conf_thresh=0.8,       # mask predictions below 80% confidence
-    temperature=1.0,        # standard softmax (no temperature scaling)
-    batch_size=32,
-    device='cuda'
-)
+result = generate_pseudo_labels(model, dataset_unlabeled, conf_thresh=0.8, temperature=1.0, batch_size=32, device='cuda')
 save_pseudo_labels(result, 'pseudo_labels_fixed.npz')
 ```
 
-Then train on labeled + pseudo-labeled data:
-
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
-  "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+# Train on labeled + offline pseudo-labels
+python scripts/run.py train \
+  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" "standardize" \
+  "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_pseudo_label_offline_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics()" \
-  -e 1
+  --metrics "irap_gaim.get_irap_metrics()" -e 1
 ```
 
-### Confidence thresholding heuristics
+### Confidence thresholding
 
-#### Fixed global threshold
-
-All attributes use the same confidence threshold. Best for balanced datasets.
-
-```python
-conf_thresh = 0.8  # (float) all attributes masked below 80% confidence
-```
-
-#### Per-attribute adaptive thresholding (MC-PanDA++ style)
-
-Each attribute gets its own threshold updated via EMA based on observed confidence distribution. Recommended for handling class imbalance within attributes.
-
-Initialize with a dict mapping attribute indices to thresholds (starting at 0.0). They adapt per iteration:
-
-```python
-# Initialize with zeros; thresholds adapt per batch during training
-conf_thresh = {i: 0.0 for i in range(41)}  # dict with one threshold per attribute
-```
-
-Pass it in the trainer specification:
-
-```bash
-"irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='...',conf_thresh={0: 0.0, 1: 0.0, ..., 40: 0.0},temperature=1.0)"
-```
-
-For offline mode, pre-compute with a fixed threshold:
-
-```python
-result = generate_pseudo_labels(model, dataset, conf_thresh=0.5, ...)
-```
+| Strategy | `conf_thresh` value | Description |
+|----------|-------------------|-------------|
+| Fixed global | `0.8` (float) | All attributes use the same threshold. Best for balanced datasets. |
+| Per-attribute adaptive | `{0: 0.0, 1: 0.0, ..., 40: 0.0}` (dict) | MC-PanDA++ style: each attribute's threshold adapts via EMA based on observed confidence distribution. Recommended for class imbalance. |
 
 ### Temperature scaling
 
-Sharpen or soften confidence estimates before thresholding. Especially useful with adaptive thresholds.
+| `temperature` | Effect |
+|---------------|--------|
+| `1.0` | Standard softmax (no scaling) |
+| `< 1.0` (e.g. `0.8`) | Sharpened confidence — more selective, fewer pseudo-labels |
+| `> 1.0` (e.g. `1.2`) | Softened confidence — less selective, more pseudo-labels |
+
+## Multi-scale inference
+
+`MultiScaleSequenceInference` wraps an `ImageSequenceClassifier` and applies it at multiple scales (default: 1.0, 0.75, 1/0.75), averaging probabilities across scales for each attribute.
 
 ```python
-# Standard (no scaling)
-temperature = 1.0
+from vidlu_irap_gaim import MultiScaleSequenceInference
 
-# Sharpen confidence (more selective, fewer pseudo-labels)
-temperature = 0.8
-
-# Soften confidence (less selective, more pseudo-labels)
-temperature = 1.2
+ms_model = MultiScaleSequenceInference(base_model, scales=(1.0, 0.75, 1/0.75))
+probs = ms_model(x)  # x: (B, S, C, H, W) -> tuple of (B, K_i) probability tensors
 ```
 
-### More commands
+For training with multi-scale supervision, use the `irap_local_rec_trainer_multiscale` trainer or the `MultiScaleSupervisedStep` train step.
 
-- **Dataset viewer**: `IRAP_HOME=/path/to/IRAP_HOME streamlit run vidlu_irap_gaim/tools/dataset_viewer.py`
-- See `commands.md` for additional recipes (ViT/DINOv2 encoder, legacy inference).
+## VLM integration (zero-shot & fine-tuning)
 
-## Inference and Visualization
+The `vlm/` subpackage integrates Vision-Language Models (Qwen3-VL) for zero-shot and fine-tuned road attribute classification.
 
-We use `vidlu_irap_gaim.tools.inference` to run model evaluation and generate rich visualizations (images with predicted attributes, colored probability bars, and ground truth comparison).
+### Zero-shot inference
+
+Two predictor backends are available:
+
+| Predictor | Backend | Best for |
+|-----------|---------|----------|
+| `Qwen3VLPredictor` | HuggingFace Transformers | Single-GPU, small-scale |
+| `Qwen3VLvLLMPredictor` | vLLM engine | Batched inference, prefix caching |
+
+```python
+from vidlu_irap_gaim.vlm import Qwen3VLPredictor
+
+predictor = Qwen3VLPredictor(model_id="Qwen/Qwen3-VL-8B-Instruct", device="cuda")
+result = predictor.predict(image, attribute_names, attr_to_value_to_class_idx)
+# result.predictions: dict[str, AttributePrediction]
+```
+
+### Prompt configuration
+
+`PromptBuilder` supports multiple detail levels for prompt construction:
+
+| Detail level | Content |
+|-------------|---------|
+| `attr_desc_vals` | Attribute description + valid values + default (most verbose, default) |
+| `attr_vals` | Attribute name + valid values + default |
+| `attr` | Attribute names only |
+| `none` | Empty preamble |
+
+Prompts can be configured via `attribute_prompts.yaml` without code changes.
+
+### Response schemes
+
+Response parsing supports multiple formats via `ResponseScheme` subclasses:
+
+- `StandardResponseScheme` — plain text attribute-value pairs
+- `JsonResponseScheme` — structured JSON output
+- `IndexedResponseScheme` — numbered attribute-value pairs
+- `SparseStandardResponseScheme` / `SparseIndexedResponseScheme` — only non-default values
+
+### Fine-tuning with LoRA
+
+`Qwen3VLClassifier` wraps Qwen3-VL with LoRA adapters for Vidlu training integration:
+
+```bash
+python scripts/run.py train \
+  "irap_gaim.make_vlm_bih_data()" "id" \
+  "irap_gaim.Qwen3VLClassifier,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=64" \
+  "irap_gaim.vlm_finetune_trainer"
+```
+
+Key design: adapter-only state dict (~100MB vs ~16GB full model), eager loading for optimizer compatibility, 4-bit quantization support.
+
+### VLM tools
+
+- **`tools/vlm_inference.py`** — full VLM inference pipeline on BiH data
+- **`tools/vlm_benchmark.py`** — benchmarking script (prefix caching, throughput)
+
+## Inference & visualization
 
 ### Evaluation on standard splits
 
-To run inference on the `test` split and save visualizations:
-
 ```bash
 VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
-  "irap_gaim.make_bih_data()" \
-  "standardize" \
+  "irap_gaim.make_bih_data()" "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_local_rec_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
@@ -221,50 +348,67 @@ VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
   -m "irap_gaim.tools.inference"
 ```
 
-- This will create a `visualizations/test` directory inside your experiment folder.
-- Results include a `predictions.json` and PNG images for each sample.
+Creates a `visualizations/test` directory with `predictions.json` and PNG images per sample.
 
 ### Inference on a custom image folder (unlabeled)
 
-You can run the model on any folder of images (sorted alphabetically) using `InferenceImageDataset`:
-
 ```bash
-VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
-  "irap_gaim.make_bih_data()" \
-  "standardize" \
+python scripts/run.py test \
+  "irap_gaim.make_bih_data()" "standardize" \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
   -m "irap_gaim.tools.inference:run,e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test,context_sequence=(0,-1,-4))"
 ```
 
-- `InferenceImageDataset.from_folder` automatically detects unlabeled images and skips loss/metrics computation.
-- `reference_dataset=e.data.test` is used to copy attribute metadata and pixel normalization stats.
+`InferenceImageDataset.from_folder` detects unlabeled images and skips loss/metrics computation. Use `reference_dataset` to copy attribute metadata and pixel normalization stats.
 
-## Feature export (optional)
+### Standalone visualization tool
+
+Generate per-segment PNGs with predicted attributes, colored probability bars, and ground truth comparison:
+
+```bash
+python vidlu_irap_gaim/tools/inference_visualization.py \
+  --mode local \
+  --split val \
+  --context_sequence "0,-1,-4" \
+  --input_adapter standardize \
+  --checkpoint_dir "/path/to/checkpoint" \
+  --output_dir visualization_output \
+  --limit 50 --verbose
+```
+
+For legacy sequential enhancement models, use `--mode sequential_legacy` with `--seq_config_path`, `--seq_models_root`, and `--feat_dir`.
+
+### Dataset viewer (Streamlit)
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME streamlit run vidlu_irap_gaim/tools/dataset_viewer.py
+```
+
+## Feature export & sequential enhancement
+
+### Feature export
 
 Export per-segment features (for sequential enhancement / smoothing):
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
-  "irap_gaim.make_bih_data()" \
-  "standardize" \
+python scripts/run.py test \
+  "irap_gaim.make_bih_data()" "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
   -m "irap_gaim:export_feats,split='val',feat_dir='FEATS/val'"
 ```
 
-**Requirement**: the model must support `forward(..., return_features=True)` (the provided `ImageSequenceClassifier` does).
+The model must support `forward(..., return_features=True)` (the provided `ImageSequenceClassifier` does).
 
-## Sequential enhancement (optional)
+### Sequential enhancement (LSTM smoothing)
 
-`irap_gaim.make_seq_enh_data(...)` builds a per-attribute sequence dataset from exported `.npy` features.
-
-`irap_gaim.GeneralLSTMModel` expects **`input_encoders`**, not a raw `input_dim`. Example (features-only input):
+`irap_gaim.make_seq_enh_data(...)` builds a per-attribute sequence dataset from exported `.npy` features. `irap_gaim.GeneralLSTMModel` expects `input_encoders`, not a raw `input_dim`:
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+python scripts/run.py train \
   "irap_gaim.make_seq_enh_data(feat_dir='FEATS/train',attribute=0)" \
   "id" \
   "irap_gaim.GeneralLSTMModel,n_classes=<N_CLASSES>,input_encoders=dict(feats=irap_gaim.IdentityEncoder(input_dim=<FEATURE_DIM>))" \
@@ -272,30 +416,92 @@ IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
   --metrics "A"
 ```
 
-Notes:
-- Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`.
-- Replace `<N_CLASSES>` with the class count for the chosen attribute.
+Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, and `<N_CLASSES>` with the class count for the chosen attribute.
 
-## Key components (API sketch)
+## API reference
 
-- **Data**:
-  - `irap_gaim.make_bih_data(..., use_ncontext_filter=True, seg_to_res_path=None)`
-  - `irap_gaim.BihSequence(...)` (populates `info.class_counts`, `info.pixel_stats`, `info.attribute_names`)
-  - `irap_gaim.get_class_counts(...)`
-- **Models**:
-  - `irap_gaim.ImageSequenceClassifier(class_counts, sequence_length, attention=False, encoder_f=...)`
-  - `irap_gaim.ResNetEncoder(pretrained=True|False, ...)`
-  - `irap_gaim.dinov2_vit_encoder(...)`
-- **Training**:
-  - `irap_gaim.irap_local_rec_trainer` (freeze-then-finetune schedule + color jitter + dynamic balanced recall weights)
-- **Metrics**:
-  - `irap_gaim.get_irap_metrics(dataset=None, class_counts=None, attrs_to_include=None)`
-- **Pretraining helper**:
-  - `irap_gaim.vistas_params_spec(...)` (Python helper to construct a `--params` translation string)
+### Data
 
-## Troubleshooting (high-signal)
+| Symbol | Description |
+|--------|-------------|
+| `make_bih_data(use_ncontext_filter=True, ...)` | Load BiH dataset with train/val/test splits |
+| `make_semisup_bih_data(labeled_ratio=..., ...)` | Semi-supervised split (labeled + unlabeled) |
+| `BihSequence(...)` | Dataset class (`info.class_counts`, `info.pixel_stats`, `info.attribute_names`) |
+| `InferenceImageDataset.from_folder(...)` | Inference on unlabeled image folders |
+| `get_class_counts(...)` | Class count tuple for model construction |
+| `make_seq_enh_data(feat_dir, attribute)` | Sequential enhancement dataset from `.npy` features |
+
+### Models
+
+| Symbol | Description |
+|--------|-------------|
+| `ImageSequenceClassifier(class_counts, sequence_length, attention, encoder_f)` | Temporal sequence classifier |
+| `ResNetEncoder(pretrained=True\|False)` | ResNet-18/34/50 backbone |
+| `dinov2_vit_encoder(variant, params_dir)` | DINOv2 ViT encoder factory |
+| `MultiScaleSequenceInference(base_model, scales)` | Multi-scale probability averaging wrapper |
+| `GeneralLSTMModel(n_classes, input_encoders)` | Per-attribute LSTM for temporal smoothing |
+| `Qwen3VLClassifier(model_id, lora_r, ...)` | Qwen3-VL with LoRA for fine-tuning |
+
+### Training
+
+| Symbol | Description |
+|--------|-------------|
+| `irap_local_rec_trainer` | Supervised trainer (2 frozen + 8 finetune epochs, color jitter, dynamic weights) |
+| `irap_local_rec_trainer_multiscale` | Supervised trainer with multi-scale augmentation |
+| `irap_semisup_trainer` | Semi-supervised consistency regularization trainer |
+| `irap_pseudo_label_trainer` | On-the-fly pseudo-label trainer |
+| `irap_pseudo_label_offline_trainer` | Offline pseudo-label trainer |
+| `vlm_finetune_trainer` | VLM LoRA fine-tuning trainer |
+| `FreezeThenFinetune` | Extension managing backbone freezing schedule |
+| `MultiScaleSupervisedStep` | Multi-scale train step |
+| `MultiAttributePseudoLabelStep(pre_trained_teacher, conf_thresh, temperature)` | Pseudo-label train step |
+
+### Metrics & Loss
+
+| Symbol | Description |
+|--------|-------------|
+| `get_irap_metrics(dataset, class_counts, attrs_to_include)` | Canonical metric factory |
+| `MultiAttributeClassificationMetrics` | Per-attribute accuracy, precision, recall, F1, IoU |
+| `MultiAttributeCrossEntropyLoss` | Per-attribute CE loss with optional class weighting |
+| `DynamicBalancedRecallWeights` | Trainer extension for per-epoch class weight recomputation |
+
+### Semi-supervised
+
+| Symbol | Description |
+|--------|-------------|
+| `make_semisup_bih_data(labeled_ratio, ...)` | Create labeled/unlabeled splits |
+| `multi_attribute_kl_div_ll()` | KL divergence across attribute tuples |
+
+### VLM
+
+| Symbol | Description |
+|--------|-------------|
+| `vlm.Qwen3VLPredictor` | Zero-shot predictor (HuggingFace) |
+| `vlm.Qwen3VLvLLMPredictor` | Zero-shot predictor (vLLM) |
+| `vlm.PromptBuilder` | Prompt builder with configurable detail levels |
+| `vlm.make_response_scheme(name)` | Response scheme factory |
+| `make_vlm_bih_data()` | VLM fine-tuning dataset factory |
+| `FineTunedVLMPredictor` | Inference from fine-tuned VLM checkpoints |
+
+### Utilities
+
+| Symbol | Description |
+|--------|-------------|
+| `export_feats(split, feat_dir)` | Export model features as `.npy` |
+| `vistas_params_spec(...)` | Construct `--params` translation string for Vistas weights |
+| `get_attrs_to_include()` | Canonical 41-attribute subset |
+| `map_attr_names_to_indices(...)` | Map attribute names to dataset indices |
+
+## Troubleshooting
 
 - **Missing `seg_to_res/*.pickle`**:
-  - Either create the pickle files under `IRAP_BIH_METADATA/seg_to_res/`, or disable filtering with `make_bih_data(use_ncontext_filter=False)`.
+  Either create the pickle files under `IRAP_BIH_METADATA/seg_to_res/`, or disable filtering with `make_bih_data(use_ncontext_filter=False)`.
+
 - **`vistas.pt` not found**:
-  - Put it at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt`, or use an absolute path in the `--params` string.
+  Put it at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt`, or use an absolute path in the `--params` string.
+
+- **VLM out of memory**:
+  Use `load_in_4bit=True` (default) for `Qwen3VLClassifier`, or switch to `Qwen3VLvLLMPredictor` with vLLM's memory-efficient batching.
+
+- **VLM response parsing failures**:
+  Try a different `ResponseScheme` (e.g., `JsonResponseScheme` for more structured output) or increase the `detail_level` to give the model more context about valid values.

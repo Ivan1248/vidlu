@@ -1,4 +1,4 @@
-# Attribute Baseline Values for iRAP VLM Classification
+# Attribute baseline values for iRAP VLM classification
 
 Reference: `vidlu_irap_gaim/vlm/attribute_prompts.yaml`
 
@@ -16,7 +16,7 @@ Definitions:
 
 ---
 
-## Observed Flows (exposure-related)
+## Observed flows (exposure-related)
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -28,7 +28,7 @@ Definitions:
 
 ---
 
-## Speed & Traffic Calming
+## Speed & traffic calming
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -40,7 +40,7 @@ Definitions:
 
 ---
 
-## Lane Geometry
+## Lane geometry
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -58,7 +58,7 @@ Definitions:
 
 ---
 
-## Infrastructure Quality
+## Infrastructure quality
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -70,7 +70,7 @@ Definitions:
 
 ---
 
-## Median (Head-on Risk)
+## Median (head-on risk)
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -92,7 +92,7 @@ Definitions:
 
 ---
 
-## Roadside Severity
+## Roadside severity
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -123,7 +123,7 @@ Definitions:
 
 ---
 
-## Property Access & Land Use
+## Property access & land use
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -134,7 +134,7 @@ Definitions:
 
 ---
 
-## Pedestrian Facilities
+## Pedestrian facilities
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -147,7 +147,7 @@ Definitions:
 
 ---
 
-## Motorcycle & Bicycle Facilities
+## Motorcycle & bicycle facilities
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
@@ -156,7 +156,7 @@ Definitions:
 
 ---
 
-## School Zone
+## School zone
 
 | Attribute | Most Common | Most Pessimistic |
 |-----------|-------------|------------------|
