@@ -102,9 +102,9 @@ def approximate_pop_stats(exp, stats_dataset):
     exp.trainer.model.eval()
 
 
-def eval_on_test_sets(exp):
+def eval_on_test_sets(exp, prefix="test"):
     for name, ds in exp.data.items():
-        if name.startswith("test"):
+        if name.startswith(prefix):
             print(f"Evaluating on {name} {getattr(ds, 'identifier', '')}...")
             exp.trainer.eval(ds, split_name=name)
 
@@ -133,7 +133,8 @@ def train(args):
         with get_profiler() if args.profile else ctx.suppress() as prof:
             if not args.no_init_eval:
                 print('\nEvaluating initially...')
-                eval_on_test_sets(exp)
+                eval_on_test_sets(exp, prefix="val")
+                eval_on_test_sets(exp, prefix="test")
             log_run('cont.' if args.resume else 'start')
 
             print(('\nContinuing' if args.resume not in (
@@ -148,6 +149,7 @@ def train(args):
                     approximate_pop_stats(exp, exp.data.train)
                     print(f'\nEvaluating using approximate population statistics...')
                     eval_on_test_sets(exp)
+                    eval_on_test_sets(exp, prefix="val")
 
             log_run('done', str(exp.cpman.id_to_perf))
 
@@ -202,10 +204,10 @@ def test(args):
             module = importlib.import_module(module_name)
         if ',' in proc_name:
             proc_name, args_str = proc_name.split(",", 1)
-            result = eval(f"{proc_name}({args_str})", vars(module), locals())
+            eval_globals = {**vars(module), **extensions}
+            result = eval(f"{proc_name}({args_str})", eval_globals, locals())
         else:
             result = getattr(module, proc_name)(e)
-
     else:
         print('Starting evaluation (test/val):...')
         eval_on_test_sets(e)
