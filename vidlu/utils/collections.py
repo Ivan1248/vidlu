@@ -102,27 +102,52 @@ class AttrDict(dict):
 
 
 class Registry(collections.UserDict):
-    def __init__(self, filter_=None):
+    def __init__(self, filter_=None, name_transform=None):
         super().__init__()
         self.filter = (lambda x: x) if filter_ is None else filter_
+        self.name_transform = (
+            (lambda x: x.__name__) if name_transform is None else name_transform
+        )
 
     def register(self, *args):
         """
-        Register the given object under the the name `obj.__name__`.
-        Can be used as either a decorator or not. See docstring of this class for usage.
+        Register the given object under a name.
+
+        Usage:
+            registry.register(obj)           # name = name_transform(obj)
+            registry.register(name, obj)     # explicit name
+            @registry.register               # name = name_transform(obj)
+            @registry.register("short_name") # explicit name (returns decorator)
         """
         if len(args) == 1:
             obj = args[0]
-            name = obj.__name__
+            if isinstance(obj, str):
+                # Decorator with explicit name: @registry.register("name")
+                name_for_attr = obj
+
+                def decorator(registered_obj):
+                    self[name_for_attr] = registered_obj
+                    return registered_obj
+                return decorator
+            name = self.name_transform(obj)
         else:
             name, obj = args
         self[name] = obj
-        return obj  # in case that it is used as a decorator
+        return obj
 
     def register_from(self, namespace):
         for k, v in vars(namespace).items():
             if self.filter(v):
                 self.register(k, v)
+
+    def get_name(self, obj):
+        """Return the registry key for the given object, or raise KeyError if not found."""
+        for name, registered in self.items():
+            if registered is obj:
+                return name
+        raise KeyError(
+            f"{obj!r} is not registered. Available: {', '.join(sorted(self))}."
+        )
 
 
 class SingleWriteDict(dict):
