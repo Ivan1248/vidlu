@@ -1,7 +1,6 @@
 """
 Canonical attribute subset definitions and helpers for IRAP GAIM experiments.
 """
-from __future__ import annotations
 
 from typing import Sequence
 
@@ -51,11 +50,8 @@ ATTRS_TO_INCLUDE = (
     "School zone crossing supervisor",
 )
 
-
 def get_attrs_to_include() -> tuple[str, ...]:
-    """Returns the canonical attribute subset used in the paper experiments."""
     return ATTRS_TO_INCLUDE
-
 
 def map_attr_names_to_indices(
     attr_names: Sequence[str],
@@ -63,26 +59,13 @@ def map_attr_names_to_indices(
 ) -> list[int] | None:
     """
     Maps a sequence of attribute names to their indices in the dataset's attribute order.
-    
+
     Args:
         attr_names: Sequence of attribute names to include.
         dataset_attribute_names: Ordered sequence of all attribute names from the dataset.
-    
+
     Returns:
-        List of attribute indices, or None if attr_names is None/empty (meaning include all).
+        List of attribute indices.
     """
-    if attr_names is None or len(attr_names) == 0:
-        return None
-    
     attr_name_to_idx = {name: idx for idx, name in enumerate(dataset_attribute_names)}
-    indices = []
-    for name in attr_names:
-        if name not in attr_name_to_idx:
-            raise ValueError(
-                f"Attribute '{name}' not found in dataset attributes. "
-                f"Available: {list(dataset_attribute_names)[:5]}..."
-            )
-        indices.append(attr_name_to_idx[name])
-    return indices
-
-
+    return [attr_name_to_idx[name] for name in attr_names]

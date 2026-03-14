@@ -1,6 +1,6 @@
 # IRAP GAIM Training Commands
 
-Data loading is deterministic (no jittering). Normalization is handled by the `standardize` input adapter.
+Data loading is deterministic (no photometric jitter). Normalization is handled by the `standardize` input adapter.
 Photometric jittering (ColorJitter) is configured in the TrainerConfig (`irap_gaim.irap_local_rec_trainer`).
 
 ## ResNet encoder with pretrained Vistas weights
@@ -8,6 +8,10 @@ Photometric jittering (ColorJitter) is configured in the TrainerConfig (`irap_ga
 ```bash
 IRAP_HOME=~/projects/IRAP_HOME python scripts/run.py train "irap_gaim.make_bih_data()" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics()"
 ```
+
+Notes:
+- `--params "...:irap_gaim/vistas.pt"` resolves `vistas.pt` via your ViDLU pretrained directory (`dirs.pretrained` / `VIDLU_PRETRAINED`). Place the file at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt`.
+- The dataset emits RGB in \([0,1]\), so `standardize` is recommended when using pretrained encoders.
 
 ## Semi-supervised (same dataset unlabeled) - ResNet encoder with pretrained Vistas weights
 

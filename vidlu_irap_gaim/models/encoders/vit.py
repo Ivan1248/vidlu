@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +23,7 @@ class ViTEncoder(nn.Module):
 
     def __init__(self, *, local_dir: str):
         """Args:
-            local_dir: Path to directory containing config.json and model.safetensors
+        local_dir: Path to directory containing config.json and model.safetensors
         """
         super().__init__()
         self.config = AutoConfig.from_pretrained(local_dir, local_files_only=True)
@@ -51,7 +49,7 @@ class ViTEncoder(nn.Module):
         grid_h = frame.shape[-2] // self.patch_size
         grid_w = frame.shape[-1] // self.patch_size
         if grid_h * grid_w != patch_count:
-            grid_h = int(round(patch_count ** 0.5))
+            grid_h = int(round(patch_count**0.5))
             grid_w = patch_count // grid_h
             if grid_h * grid_w != patch_count:
                 raise ValueError(f"Cannot reshape {patch_count} tokens into a grid.")
@@ -91,8 +89,4 @@ def dinov2_vit_encoder(
     local_dir = _download_hf_model_files(repo_id, params_dir)
 
     return ViTEncoder(local_dir=str(local_dir), **encoder_kwargs)
-
-
-
-
 

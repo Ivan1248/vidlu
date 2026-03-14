@@ -1,19 +1,19 @@
 """
 Helper functions for configuring IRAP GAIM experiments with attrs_to_include.
 """
-from __future__ import annotations
 
 from functools import partial
-from typing import Sequence
+from typing import Sequence, Callable
 
 from vidlu.configs.training import TrainerConfig
 from vidlu.training.steps import SupervisedStep
+from vidlu.optim.schedulers import MultiplicativeLR
 import torch
 
 from .losses import MultiAttributeCrossEntropyLoss
 from .dynamic import DynamicBalancedRecallWeights
 from .training import FreezeThenFinetune, make_sequence_color_jitter
-from .attrs import get_attrs_to_include, map_attr_names_to_indices
+from .attrs import get_attrs_to_include
 
 
 def make_irap_trainer_with_attrs(
@@ -26,17 +26,17 @@ def make_irap_trainer_with_attrs(
     finetune_lr: float = 1e-5,
     frozen_weight_decay: float = 1e-3,
     finetune_weight_decay: float = 1e-3,
-    frozen_scheduler: float = 0.8,
-    finetune_scheduler: float = 0.88,
+    frozen_scheduler: float | Callable = 0.8,
+    finetune_scheduler: float | Callable = 0.88,
     jitter=make_sequence_color_jitter(),
 ) -> TrainerConfig:
     """
     Creates an IRAP trainer config with attribute subset filtering.
-    
+
     This helper configures the trainer to use `attrs_to_include` for loss computation,
     dynamic weighting, and metrics. If `attrs_to_include` is None, uses the canonical
     paper subset from `get_attrs_to_include()`.
-    
+
     Args:
         attrs_to_include: Optional sequence of attribute names to include. If None,
             uses the canonical paper subset.
@@ -50,10 +50,10 @@ def make_irap_trainer_with_attrs(
         finetune_weight_decay: Weight decay for finetune phase.
         frozen_scheduler: Multiplicative LR decay factor for frozen phase.
         finetune_scheduler: Multiplicative LR decay factor for finetune phase.
-    
+
     Returns:
         A TrainerConfig configured for IRAP local recognition with attribute filtering.
-    
+
     Note:
         The returned config will need `attrs_idx` to be set on the metrics and loss
         at runtime based on the dataset's attribute order. This is typically done via
@@ -61,11 +61,16 @@ def make_irap_trainer_with_attrs(
     """
     if attrs_to_include is None:
         attrs_to_include = get_attrs_to_include()
-    
-    # Note: attrs_idx will be set at runtime based on dataset
-    # The loss and extensions will receive attrs_idx via partial application or
-    # by being configured in the factory expression
-    
+
+    # Convert float scheduler factors to MultiplicativeLR callables
+    def _make_scheduler_f(factor):
+        if callable(factor):
+            return factor
+        return partial(MultiplicativeLR, lr_lambda=lambda epoch: factor)
+
+    frozen_lr_scheduler_f = _make_scheduler_f(frozen_scheduler)
+    finetune_lr_scheduler_f = _make_scheduler_f(finetune_scheduler)
+
     return TrainerConfig(
         eval_step=SupervisedStep(eval=True, amp=True),
         train_step=SupervisedStep(amp=True),
@@ -78,17 +83,14 @@ def make_irap_trainer_with_attrs(
         extension_fs=[
             partial(
                 FreezeThenFinetune,
-                frozen_epochs=frozen_epochs,
-                finetune_epochs=finetune_epochs,
+                num_frozen_epochs=frozen_epochs,
                 frozen_lr=frozen_lr,
                 finetune_lr=finetune_lr,
                 frozen_weight_decay=frozen_weight_decay,
                 finetune_weight_decay=finetune_weight_decay,
-                frozen_scheduler=frozen_scheduler,
-                finetune_scheduler=finetune_scheduler,
+                frozen_lr_scheduler_f=frozen_lr_scheduler_f,
+                finetune_lr_scheduler_f=finetune_lr_scheduler_f,
             ),
             DynamicBalancedRecallWeights,  # attrs_idx set at runtime
         ],
     )
-
-

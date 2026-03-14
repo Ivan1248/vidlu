@@ -1,0 +1,510 @@
+preamble: |-
+  Analyze the road segment and classify each iRAP attribute by selecting a single valid value.
+response_instructions: |-
+  Respond with a valid JSON object with one key-value pair per attribute.
+attributes:
+  Carriageway label:
+    description: Identification of the carriageway being surveyed.
+    values:
+      Carriageway A of a divided road: ''
+      Carriageway B of a divided road: ''
+      Undivided road: ''
+      Carriageway A of a motorcycle facility: ''
+      Carriageway B of a motorcycle facility: ''
+  Motorcycle observed flow:
+    description: Count of motorcycles (motorised 2/3 wheelers) observed in the segment.
+    values:
+      None: ''
+      1 motorcycle: ''
+      2 to 3 motorcycles: ''
+      4 to 5 motorcycles: ''
+      6 to 7 motorcycles: ''
+      8+ motorcycles: ''
+  Bicycle observed flow:
+    description: Count of bicycles (pedal/mobility vehicles <30km/h) observed in the segment.
+    values:
+      None: ''
+      1 bicycle: ''
+      2 to 3 bicycles: ''
+      4 to 5 bicycles: ''
+      6 to 7 bicycles: ''
+      8+ bicycles: ''
+    tips:
+    - Look for cyclists or parked bicycles
+    - Consider if the road appears to be used by cyclists
+  Pedestrian observed flow across the road:
+    description: Count of pedestrians observed crossing the road.
+    values:
+      None: ''
+      1 pedestrian: ''
+      2 to 3 pedestrians: ''
+      4 to 5 pedestrians: ''
+      6 to 7 pedestrians: ''
+      8+ pedestrians: ''
+  Pedestrian observed flow along the road driver-side:
+    description: Count of pedestrians walking along the driver side (left in Drive-on-Right).
+    values:
+      None: ''
+      1 pedestrian: ''
+      2 to 3 pedestrians: ''
+      4 to 5 pedestrians: ''
+      6 to 7 pedestrians: ''
+      8+ pedestrians: ''
+  Pedestrian observed flow along the road passenger-side:
+    description: Count of pedestrians walking along the passenger side (right in Drive-on-Right).
+    values:
+      None: ''
+      1 pedestrian: ''
+      2 to 3 pedestrians: ''
+      4 to 5 pedestrians: ''
+      6 to 7 pedestrians: ''
+      8+ pedestrians: ''
+  Speed limit:
+    description: The actual posted numerical speed limit for general traffic.
+  Motorcycle speed limit:
+    description: Assessment of Motorcycle speed limit.
+  Truck Speed limit:
+    description: Assessment of Truck Speed limit.
+  Truck Speed limit:
+    description: Assessment of Truck Speed limit.
+  Differential speed limits:
+    description: Presence of different speed limits for motorcycles or trucks.
+    values:
+      Not present: ''
+      Present: ''
+  Speed management / traffic calming:
+    description: Presence of physical speed reduction measures like speed bumps or chicanes.
+    values:
+      Not present: ''
+      Present: ''
+    tips:
+    - Look for physical speed reduction measures
+    - Consider both vertical (bumps) and horizontal (chicanes) measures
+  Number of lanes:
+    description: Count of through-lanes in the direction of travel.
+    values:
+      One: ''
+      Two: ''
+      Three: ''
+      Four or more: ''
+      Two and one: ''
+      Three and two: ''
+    tips:
+    - Count lanes in travel direction only, not opposing lanes
+    - Shoulders and parking lanes are not counted
+  Lane width:
+    description: Typical width of travel lanes (Narrow <2.75m, Medium 2.75-3.25m, Wide ≥3.25m).
+    values:
+      Wide ≥3.25m: ''
+      Medium 2.75m to <3.25m: ''
+      Narrow 0m to <2.75m: ''
+    tips:
+    - Compare lane width to vehicle widths visible in image
+    - Consider if lanes feel cramped or spacious
+  Curvature:
+    description: Degree of horizontal curvature.
+    values:
+      Straight or gently curving: ''
+      Moderate: ''
+      Sharp: ''
+      Very sharp: ''
+    tips:
+    - Look ahead along the road to assess curve severity
+    - Consider if speed reduction would be needed for the curve
+  Quality of curve:
+    description: Assessment of curve design, delineation, and warning signs.
+    values:
+      Adequate: ''
+      Poor: ''
+      Not applicable: ''
+  Upgrade cost:
+    description: |
+      An assessment of the likely cost category for road safety upgrades based on current infrastructure and deficiencies.
+    values:
+      Low: ''
+      Medium: ''
+      'High ': ''
+  Median Type:
+    description: Type of divider separating opposing traffic flows.
+    values:
+      Safety barrier – metal: ''
+      Safety barrier – concrete: ''
+      Physical median width ≥20m: ''
+      Physical median width 10 to <20m: ''
+      Physical median width 5 to <10m: ''
+      Physical median width 1 to <5m: ''
+      Physical median width 0 to <1m: ''
+      Continuous central turning lane: ''
+      Flexible posts: ''
+      Central hatching >1m: ''
+      Centre line: ''
+      Safety barrier – motorcycle friendly: ''
+      One way: 'This is a one-way road or there is just no divider/centerline.'
+      Wide centre line 0.3m to 1m: ''
+      Safety barrier – wire rope: ''
+    tips:
+    - Look for physical barriers, painted lines, or raised islands
+    - Center turning lanes are typically not protective medians
+  Skid resistance / grip:
+    description: Surface friction and texture characteristics.
+    values:
+      Sealed – adequate: ''
+      Sealed – medium: ''
+      Sealed – poor: ''
+      Unsealed – adequate: ''
+      Unsealed – poor: ''
+    tips:
+    - Look for surface type (asphalt, concrete, gravel)
+    - Consider visible wear, polishing, or contamination
+  Road condition:
+    description: Presence of surface defects like potholes or rutting.
+    values:
+      Good: ''
+      Medium: ''
+      Poor: ''
+    tips:
+    - Look for visible surface defects
+    - Consider if the surface appears well-maintained
+  Vehicle parking:
+    description: Presence of parked vehicles along the roadside.
+    values:
+      None: ''
+      One side: ''
+      Two side: ''
+    tips:
+    - Look for parked vehicles on either side of the road
+    - Consider if parking creates visibility issues
+  Grade:
+    description: Vertical gradient/slope of the road.
+    values:
+      0% to <7.5%: ''
+      7.5% to <10%: ''
+      ≥10%: ''
+    tips:
+    - Look at the horizon line relative to the road
+    - Consider if the road appears to climb or descend
+  Roadworks:
+    description: |
+      Whether road construction or maintenance work is present that may affect traffic flow or create hazards.
+    values:
+      No road works: ''
+      Minor road works: ''
+      Major road works: ''
+    tips:
+    - Look for construction equipment, barriers, or signs
+    - Consider temporary road conditions
+  Sight distance:
+    description: Forward visibility distance ahead of the driver.
+    values:
+      Adequate: ''
+      Poor: ''
+    tips:
+    - Consider how far ahead you can see the road clearly
+    - Look for obstructions to forward visibility
+  Delineation:
+    description: Adequacy of lane markings, signs, and reflective markers.
+    values:
+      Adequate: ''
+      Poor: ''
+    tips:
+    - Look for lane markings, edge lines, reflective markers
+    - Consider if markings are clear and visible
+  Street lighting:
+    description: Presence of artificial lighting.
+    values:
+      Not present: ''
+      Present: ''
+    tips:
+    - Look for light poles along the roadside
+    - Consider spacing and coverage of lighting
+  Service road:
+    description: |
+      Whether a parallel service road or frontage road is present that provides alternative access to adjacent properties.
+    values:
+      Not present: ''
+      Present: ''
+  Centreline rumble strips code:
+    description: Assessment of Centreline rumble strips code.
+    values:
+      Not present: ''
+      Present: ''
+  Roadside severity - driver-side distance:
+    description: Distance to the nearest hazardous object on the driver side.
+    values:
+      0 to <1m: ''
+      1 to <5m: ''
+      5 to <10m: ''
+      ≥10m: ''
+    tips:
+    - Estimate distance from lane edge, not from camera position
+    - Consider the clear zone available for recovery
+  Roadside severity - driver-side object:
+    description: Most hazardous fixed object within the recovery zone.
+    values:
+      Safety barrier – metal: ''
+      Safety barrier – concrete: ''
+      Safety barrier – motorcycle friendly: ''
+      Safety barrier – wire rope: ''
+      Aggressive vertical face: ''
+      Upwards slope – roll over: ''
+      Upwards slope – no roll over: ''
+      Deep drainage ditch: ''
+      Downwards slope: ''
+      Cliff: ''
+      Tree ≥10cm: ''
+      Rigid sign, post or pole ≥10cm: ''
+      Rigid structure or building: ''
+      Semi-rigid structure or building: ''
+      Unprotected safety barrier end: ''
+      Low rigid object ≥20cm high: ''
+      No object: ''
+    tips:
+    - Look for objects in the immediate roadside, not distant background
+    - Prioritize rigid objects (trees, poles, barriers) over soft terrain
+    - Consider what would cause the most severe crash outcome
+  Roadside severity - passenger-side distance:
+    description: Distance to the nearest hazardous object on the passenger side.
+    values:
+      0 to <1m: ''
+      1 to <5m: ''
+      5 to <10m: ''
+      ≥10m: ''
+  Roadside severity - passenger-side object:
+    description: Most hazardous fixed object on the passenger side.
+    values:
+      Safety barrier – metal: ''
+      Safety barrier – concrete: ''
+      Safety barrier – motorcycle friendly: ''
+      Safety barrier – wire rope: ''
+      Aggressive vertical face: ''
+      Upwards slope – roll over: ''
+      Upwards slope – no roll over: ''
+      Deep drainage ditch: ''
+      Downwards slope: ''
+      Cliff: ''
+      Tree ≥10cm: ''
+      Rigid sign, post or pole ≥10cm: ''
+      Rigid structure or building: ''
+      Semi-rigid structure or building: ''
+      Unprotected safety barrier end: ''
+      Low rigid object ≥20cm high: ''
+      No object: ''
+    tips:
+    - Apply same criteria as driver-side object assessment
+  Shoulder rumble strips:
+    description: Assessment of Shoulder rumble strips.
+    values:
+      Not present: ''
+      Present: ''
+  Paved shoulder - driver-side:
+    description: |
+      Whether a paved (sealed) shoulder is present on the driver's side of the road that provides recovery space for errant vehicles.
+    values:
+      Wide ≥2.4m: ''
+      Medium 1m to <2.4m: ''
+      Narrow 0m to <1m: ''
+      None: ''
+    tips:
+    - Look for paved area beyond the travel lane edge line
+    - Shoulders should be sealed/paved, not just gravel
+  Paved shoulder - passenger-side:
+    description: |
+      Whether a paved (sealed) shoulder is present on the passenger's side of the road.
+    values:
+      Wide ≥2.4m: ''
+      Medium 1m to <2.4m: ''
+      Narrow 0m to <1m: ''
+      None: ''
+  Intersection type:
+    description: Type of intersection or junction visible.
+    values:
+      Merge lane: ''
+      Roundabout: ''
+      3-leg with protected turn lane: ''
+      3-leg: ''
+      3-leg signalised with protected turn lane: ''
+      3-leg signalised: ''
+      4-leg with protected turn lane: ''
+      4-leg: ''
+      4-leg signalised with protected turn lane: ''
+      4-leg signalised: ''
+      None: ''
+      Railway Crossing – passive: ''
+      Railway Crossing – active: ''
+      Median crossing point – informal: ''
+      Median crossing point – formal: ''
+      Mini roundabout: ''
+    tips:
+    - Look for cross streets, T-junctions, or roundabouts
+    - No intersection if road continues straight without junctions
+  Intersection channelisation:
+    description: |
+      For intersections, whether channelization (islands, turn lanes, painted guidance) is present to organize traffic movements.
+    values:
+      Not present: ''
+      Present: ''
+  Intersection quality:
+    description: |
+      The overall design quality of the intersection including sight lines, turn lanes, and traffic control adequacy.
+    values:
+      Adequate: ''
+      Poor: ''
+      Not applicable: ''
+  Property access points:
+    description: |
+      The frequency of driveways and private property access points along the road that create potential conflict points.
+    values:
+      Commercial access ≥1: ''
+      Residential access ≥3: ''
+      Residential access <3: ''
+      None: ''
+    tips:
+    - Count visible driveways and entrances
+    - Consider density of access points
+  Intersecting road volume:
+    description: Assessment of Intersecting road volume.
+    values:
+      ≥15,000 vehicles: ''
+      10,000 to 15,000 vehicles: ''
+      5,000 to 10,000 vehicles: ''
+      1,000 to 5,000 vehicles: ''
+      100 to 1,000 vehicles: ''
+      1 to 100 vehicles: ''
+      Not applicable: ''
+  Land use - driver-side:
+    description: |
+      The dominant land use visible on the driver's side of the road (left side in right-hand traffic countries). Consider what buildings, facilities, or terrain are present within approximately 100m of the road.
+    values:
+      Educational: ''
+      Commercial: Shops, offices, business districts
+      Industrial and manufacturing: Factories, warehouses, industrial facilities
+      Residential: Housing, apartments, residential neighborhoods
+      Farming and agricultural: Farmland, crops, livestock areas
+      Undeveloped areas: Vacant land, no significant development
+      Not Recorded: ''
+  Land use - passenger-side:
+    description: |
+      The dominant land use visible on the passenger's side of the road (right side in right-hand traffic countries). Consider what buildings, facilities, or terrain are present within approximately 100m of the road.
+    values:
+      Educational: ''
+      Commercial: Shops, offices, business districts
+      Industrial and manufacturing: Factories, warehouses, industrial facilities
+      Residential: Housing, apartments, residential neighborhoods
+      Farming and agricultural: Farmland, crops, livestock areas
+      Undeveloped areas: Vacant land, no significant development
+      Not Recorded: ''
+  Area type:
+    description: Classification as Urban (dense) or Rural (open) area.
+    values:
+      Urban: Dense buildings, sidewalks, speed limits ≤60 km/h
+      Rural: Open countryside, agricultural land, higher speed limits
+    tips:
+    - Look for building density and sidewalk presence
+    - Urban areas typically have more signage and road markings
+  Pedestrian crossing - inspected road:
+    description: |
+      Whether a marked pedestrian crossing is present on the inspected road segment.
+    values:
+      No facility: ''
+      Refuge only: ''
+      Marked crossing only: ''
+      Raised unmarked crossing: ''
+      Marked crossing with refuge: ''
+      Raised unmarked crossing with refuge: ''
+      Raised marked crossing: ''
+      Raised marked crossing with refuge: ''
+      Signalised crossing: ''
+      Signalised crossing with refuge: ''
+      Grade separated facility: ''
+    tips:
+    - Look for zebra crossings, painted crosswalks
+    - Consider both signalized and unsignalized crossings
+  Pedestrian crossing quality:
+    description: |
+      For pedestrian crossings present, assess the quality including visibility, marking condition, and presence of refuge islands.
+    values:
+      Adequate: ''
+      Poor: ''
+      Not applicable: ''
+  Pedestrian crossing - side road:
+    description: |
+      Whether pedestrian crossings are present on side roads at intersections.
+    values:
+      Grade separated facility: ''
+      Signalised crossing with refuge: ''
+      Signalised crossing: ''
+      Marked crossing with refuge: ''
+      Marked crossing only: ''
+      Refuge only: ''
+      No facility: ''
+      Raised marked crossing with refuge: ''
+      Raised marked crossing: ''
+      Raised unmarked crossing with refuge: ''
+      Raised unmarked crossing: ''
+  Pedestrian fencing:
+    description: Assessment of Pedestrian fencing.
+    values:
+      Not present: ''
+      Present: ''
+  Sidewalk - driver-side:
+    description: Presence and separation of pedestrian footpaths on the driver side.
+    values:
+      Sidewalk with barrier: ''
+      Sidewalk ≥3 from road: ''
+      Sidewalk 1m to <3m from road: ''
+      Sidewalk 0m to <1m from road: ''
+      None: ''
+      Informal path ≥1m: ''
+      Informal path 0m to <1m: ''
+    tips:
+    - Look for paved pedestrian paths separated from roadway
+    - Gravel paths or informal tracks may not count as sidewalks
+  Sidewalk - passanger-side:
+    description: Presence and separation of pedestrian footpaths on the passenger side.
+    values:
+      Sidewalk with barrier: ''
+      Sidewalk ≥3 from road: ''
+      Sidewalk 1m to <3m from road: ''
+      Sidewalk 0m to <1m from road: ''
+      None: ''
+      Informal path ≥1m: ''
+      Informal path 0m to <1m: ''
+  Motorcycle facilities:
+    description: Assessment of Motorcycle facilities.
+    values:
+      Motorcycle path – two way with barrier: ''
+      Motorcycle path – one way: ''
+      Motorcycle path – one way with barrier: ''
+      Motorcycle path – two way: ''
+      Motorcycle lane on roadway: ''
+      None: ''
+  Bicycle facility:
+    description: |
+      Whether dedicated bicycle infrastructure is present such as bike lanes, cycle tracks, or shared paths.
+    values:
+      Segregated bicycle path with barrier: ''
+      Segregated bicycle path: ''
+      Dedicated bicycle lane on roadway: ''
+      None: ''
+      Extra wide outside ≥4.2m: ''
+      Signed shared roadway: ''
+      Shared use path: ''
+    tips:
+    - Look for marked bike lanes or separated cycle paths
+    - Consider both on-road and off-road facilities
+  School zone warning:
+    description: Presence of warning signs or beacons for a school.
+    values:
+      School zone flashing beacons: ''
+      School zone static signs or road markings: ''
+      No school zone warning (school present): ''
+      Not applicable (no school at the location): ''
+    tips:
+    - Look for school crossing signs or speed limit signs near schools
+  School zone crossing supervisor:
+    description: |
+      Whether a crossing supervisor (lollipop person/crossing guard) is present to assist children crossing.
+    values:
+      School zone crossing supervisor present at school start and finish times: ''
+      School zone crossing supervisor not present: ''
+      Not applicable (no school at the location): ''

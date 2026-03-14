@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Callable
 
 import numpy as np
@@ -80,9 +78,7 @@ class ImageSequenceClassifier(nn.Module):
         elif callable(encoder_f):
             self.frame_encoder = encoder_f()
         else:
-            raise TypeError(
-                f"encoder_f must be a FrameEncoder instance or a callable factory, got {type(encoder_f)}"
-            )
+            raise TypeError(f"encoder_f must be a FrameEncoder instance or a callable factory, got {type(encoder_f)}")
         self.class_counts = class_counts
 
         dummy_input = torch.zeros(2, 3, 224, 224)
@@ -154,8 +150,4 @@ class ImageSequenceClassifier(nn.Module):
             for attn_block in self.attn_blocks:
                 trainable_params.extend(attn_block.parameters())
         return list(trainable_params)
-
-
-
-
 

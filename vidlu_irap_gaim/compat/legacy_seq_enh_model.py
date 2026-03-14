@@ -5,9 +5,11 @@ This module is intentionally compatible with checkpoints produced by the origina
 `libs/irap_gaim-main(-m)` codebase.
 
 Only the minimal subset needed for inference is included here.
-"""
 
-from __future__ import annotations
+Used by:
+- `vidlu_irap_gaim.tools.inference_visualization.run_sequential_legacy()` for loading
+  legacy per-attribute LSTM smoothing checkpoints in sequential_legacy mode.
+"""
 
 import torch
 from torch import nn
@@ -57,9 +59,7 @@ class LegacyGeneralLSTMModel(nn.Module):
             input_type_to_layers["multi_logit"] = layer_dict
 
         if "street_level" in self.input_type_to_metadata:
-            raise NotImplementedError(
-                "legacy 'street_level' input is not supported in vidlu_irap_gaim compat model."
-            )
+            raise NotImplementedError("legacy 'street_level' input is not supported in vidlu_irap_gaim compat model.")
 
         self.input_type_to_layers = input_type_to_layers
         self.total_input_dim = sum(m["output_dim"] for m in self.input_type_to_layers.values())
@@ -148,5 +148,16 @@ class LegacyGeneralLSTMModel(nn.Module):
         concated = torch.cat([hn, middle_out], dim=1)
         logits = self.fc(concated)
         return logits
+
+
+
+
+
+
+
+
+
+
+
 
 

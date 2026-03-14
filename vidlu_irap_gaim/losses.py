@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Sequence
 import torch
 import torch.nn.functional as F
@@ -17,11 +15,13 @@ class MultiAttributeCrossEntropyLoss:
         self,
         reduction: str = "mean",
         attrs_idx: Sequence[int] | None = None,
+        ignore_index: int = -1,
     ) -> None:
         if reduction not in ("mean", "sum"):
             raise ValueError(f"Unsupported reduction: {reduction}")
         self.default_reduction = reduction
         self.attrs_idx = list(attrs_idx) if attrs_idx is not None else None
+        self.ignore_index = ignore_index
         self._attr_idx_to_class_weights: dict[int, torch.Tensor] | None = None
 
     def set_attrs_idx(self, attrs_idx: Sequence[int]) -> None:
@@ -33,9 +33,7 @@ class MultiAttributeCrossEntropyLoss:
         if attr_idx_to_class_weights is None:
             self._attr_idx_to_class_weights = None
         else:
-            self._attr_idx_to_class_weights = {
-                k: w.clone().detach() for k, w in attr_idx_to_class_weights.items()
-            }
+            self._attr_idx_to_class_weights = {k: w.clone().detach() for k, w in attr_idx_to_class_weights.items()}
 
     def _weight_for(self, global_attr_idx: int, device: torch.device) -> torch.Tensor | None:
         if self._attr_idx_to_class_weights is None:
@@ -71,14 +69,20 @@ class MultiAttributeCrossEntropyLoss:
         for global_attr_idx in attr_indices:
             weight = self._weight_for(global_attr_idx, outputs[global_attr_idx].device)
             per_attr_losses.append(
-                F.cross_entropy(outputs[global_attr_idx], targets[:, global_attr_idx], reduction=effective_reduction, weight=weight)
+                F.cross_entropy(
+                    outputs[global_attr_idx], targets[:, global_attr_idx], reduction=effective_reduction, weight=weight, ignore_index=self.ignore_index
+                )
             )
 
         if len(per_attr_losses) == 0:
             raise ValueError("No attributes selected for loss computation")
 
         if effective_reduction == "mean":
-            return torch.stack(per_attr_losses).mean()
+            # Filter out NaN losses that can occur when all samples are masked for an attribute
+            valid_losses = [l for l in per_attr_losses if not l.isnan()]
+            if not valid_losses:
+                return outputs[0].new_zeros(()).requires_grad_()
+            return torch.stack(valid_losses).mean()
         return torch.stack(per_attr_losses).sum()
 
 
@@ -93,7 +97,7 @@ def multi_attribute_cross_entropy(
     Supports reduction argument to be consistent with ViDLU training steps.
     - reduction="mean": mean over batch per attribute, then mean over attributes (default)
     - reduction="sum": sum over batch per attribute, then sum over attributes
-    
+
     Args:
         outputs: Tuple of logits tensors, one per attribute.
         targets: Target tensor of shape (B, A) where A=len(outputs).
@@ -104,20 +108,18 @@ def multi_attribute_cross_entropy(
         raise TypeError("outputs should be a tuple/list of logits per attribute")
     if reduction not in ("mean", "sum"):
         raise ValueError(f"Unsupported reduction: {reduction}")
-    
+
     if attrs_idx is None:
         attrs_idx = list(range(len(outputs)))
-    
+
     per_attr_losses = []
     for i in attrs_idx:
         per_attr_losses.append(F.cross_entropy(outputs[i], targets[:, i], reduction=reduction))
-    
+
     if len(per_attr_losses) == 0:
         raise ValueError("No attributes selected for loss computation")
-    
+
     if reduction == "mean":
         return torch.stack(per_attr_losses).mean()
     else:
         return torch.stack(per_attr_losses).sum()
-
-

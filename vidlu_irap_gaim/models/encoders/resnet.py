@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any
 
@@ -31,8 +29,4 @@ class ResNetEncoder(nn.Module):
 
     def pooling_parameters(self) -> list[nn.Parameter]:
         return list(self.resnet.spp.parameters())
-
-
-
-
 

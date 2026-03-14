@@ -1,223 +1,301 @@
 # vidlu_irap_gaim
 
-ViDLU extension re-implementing the IRAP GAIM local attribute recognition workflow on road segments.
+ViDLU extension for the IRAP GAIM local attribute recognition workflow on road segments (BiH dataset).
 
-This extension provides:
+The extension is discovered by ViDLU via the `vidlu_` extension naming convention:
+- Python package name: `vidlu_irap_gaim`
+- Factory namespace name: `irap_gaim`
 
-- Dataset construction from IRAP/BiH metadata with context windows
-- A sequence model (ResNet18 backbone + SPP + multi-attribute heads, optional attention). SPP matches the original per-frame feature size (2100 with grids [6,3,2,1]). Heads are sized to the sequence length times the SPP output, as in the original implementation.
-- A two-phase training schedule (frozen then finetune)
-- Multi-attribute losses and metrics (macro-F1, accuracy)
-- Attribute subset filtering (`attrs_to_include`) matching the paper experiments
+## Install / import
 
-It is designed to reproduce the original pipeline modulo randomness, using the same data selection and similar preprocessing.
+- If you run from the repository checkout, make sure the repo root is on `PYTHONPATH` so `vidlu_irap_gaim` is importable.
+- No separate install step is required.
 
-> [!note] **📖 For detailed usage instructions, see [[INSTRUCTIONS.md]]**
+## Data layout
 
-## Install/use
+Set `IRAP_HOME` to a directory that contains:
+- `IRAP_BIH/` (images)
+- `IRAP_BIH_METADATA/` (metadata JSONs)
 
-No separate install required if the repository root is on `PYTHONPATH`. The extension is auto-discovered as `irap_gaim` by ViDLU.
+The metadata directory is expected to include (at minimum):
+- `splits.json`
+- `segment_id_to_data_paths_rel.json`
+- `segment_id_to_road_data.json`
+- `attribute_metadata.json`
+- `road_id_to_segment_id_sequence.json`
 
-## Data layout and configuration
+### N-context filtering (default behavior)
 
-This extension no longer needs a `config.json`. It uses a ViDLU-style configuration:
+`irap_gaim.make_bih_data()` applies an N-context filter by default (`use_ncontext_filter=True`) using precomputed pickle files:
+- `$IRAP_HOME/IRAP_BIH_METADATA/seg_to_res/train.pickle`
+- `$IRAP_HOME/IRAP_BIH_METADATA/seg_to_res/val.pickle`
+- `$IRAP_HOME/IRAP_BIH_METADATA/seg_to_res/test.pickle`
 
-- Set `IRAP_HOME` to the IRAP root directory containing `IRAP_BIH/` (images) and `IRAP_BIH_METADATA/` (JSONs), or pass explicit directories via factory args.
-- All other options are provided as function arguments in expressions.
-
-## Examples (training/eval)
-
-### Basic training (matches `train_local_rec_paper.sh` with ImageNet pretraining)
-
-```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
-  "id" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,pretrained_backbone=True" \
-  "irap_gaim.irap_local_rec_trainer" \
-  --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" \
-  -e 1
-```
-
-> [!important] **Metrics configuration**: The `MultiAttributeMacroF1` and `MultiAttributeAccuracy` metrics **require** `attrs_idx` to be set. Use the `get_irap_metrics()` helper to automatically configure metrics with `attrs_to_include` filtering.
-
-### With Vistas pretraining (requires vistas.pt in pretrained directory)
-
-```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
-  "id" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,pretrained_backbone=False" \
-  "irap_gaim.irap_local_rec_trainer" \
-  --params "identity:vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" \
-  -e vistas1
-```
-
-> [!note] **Attribute filtering**: The default trainer config (`irap_local_rec_trainer`) uses `attrs_to_include` filtering (canonical paper subset of 40 attributes). `DynamicBalancedRecallWeights` automatically filters to these attributes. Metrics must be configured with `attrs_idx` (via `get_irap_metrics()` helper). To use all attributes, create a custom trainer config without attribute filtering.
-
-### Export features for sequential enhancement (optional)
-
-```bash
-IRAP_HOME=/path/to/IRAP_HOME PRECOMPUTED_FEATURES_DIR=/path/to/precomputed_features \
-python scripts/run.py test \
-  "irap_gaim.make_bih_data()" \
-  "id" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False" \
-  "irap_gaim.irap_local_rec_trainer" \
-  -m "irap_gaim:export_feats,split='val',feat_dir='$PRECOMPUTED_FEATURES_DIR/val'"
-```
-The `PRECOMPUTED_FEATURES_DIR` env var matches the `precomputed_features_dir` key in `libs/irap_gaim-main/config.json`; both can be overridden as needed.
-
-## Sequential enhancement (optional)
-
-After exporting features, train an LSTM enhancement model per attribute using the feature sequences (no config.json needed):
+To disable this filtering (use all segments that pass label/context checks):
 
 ```bash
 python scripts/run.py train \
-  "irap_gaim.make_seq_enh_data(feat_dir='$PRECOMPUTED_FEATURES_DIR/train',attribute=0)" \
+  "irap_gaim.make_bih_data(use_ncontext_filter=False)" \
+  "standardize" \
+  "..." "..."  # (model/trainer as below)
+```
+
+## Quickstart (training)
+
+**Important**: the dataset returns RGB in \([0,1]\) and the default pipeline expects normalization via the **`standardize` input adapter** (it uses `dataset.info.pixel_stats`).
+
+### ResNet encoder (Vistas-pretrained backbone)
+
+This matches the current code path: deterministic loading + center crop in the dataset, photometric jitter in the trainer (`irap_gaim.irap_local_rec_trainer`).
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics()" \
+  -e vistas_rn18_s3
+```
+
+**Where to put `vistas.pt`**: place it at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt` so `--params "...:irap_gaim/vistas.pt"` resolves correctly.
+
+### ResNet encoder (ImageNet-pretrained backbone only)
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=True)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  --metrics "irap_gaim.get_irap_metrics()" \
+  -e imagenet_rn18_s3
+```
+
+### Metrics and attribute filtering
+
+- `irap_gaim.get_irap_metrics(...)` configures metrics over the canonical paper subset (`attrs_to_include`) by mapping attribute names to indices using `dataset.info.attribute_names`.
+- Metrics used here **require** `attrs_idx` internally; that’s why using `get_irap_metrics()` is recommended.
+
+## Semi-Supervised Learning with Pseudo-Labels
+
+This extension supports FixMatch-style pseudo-label self-training for leveraging unlabeled data. A frozen pre-trained teacher generates hard argmax pseudo-labels with per-attribute confidence thresholding and temperature scaling.
+
+### Quick start: On-the-fly pseudo-labeling (teacher runs each batch)
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/pretrained_checkpoint.pth',conf_thresh=0.8,temperature=1.0)" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics()" \
+  -e 1
+```
+
+The trainer specification inherits from the base `irap_pseudo_label_trainer` config and overrides just the `train_step` with custom parameters. You can also use adaptive per-attribute thresholding:
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/pretrained_checkpoint.pth',conf_thresh={0: 0.0, 1: 0.0, 2: 0.0},temperature=1.0)" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics()" \
+  -e 1
+```
+
+### Offline pseudo-label generation (one-time preprocessing)
+
+First, generate pseudo-labels for the unlabeled set using a pre-trained teacher:
+
+```python
+# Example script: generate_pseudo_labels.py
+import torch
+from vidlu_irap_gaim.tools.generate_pseudo_labels import generate_pseudo_labels, save_pseudo_labels
+from vidlu_irap_gaim import make_bih_data
+
+# Load dataset and model
+data = make_bih_data()
+dataset_unlabeled = data['train_u']
+model = torch.load('pretrained_model.pth')  # your pre-trained checkpoint
+
+# Generate pseudo-labels with fixed thresholding
+result = generate_pseudo_labels(
+    model,
+    dataset_unlabeled,
+    conf_thresh=0.8,       # mask predictions below 80% confidence
+    temperature=1.0,        # standard softmax (no temperature scaling)
+    batch_size=32,
+    device='cuda'
+)
+save_pseudo_labels(result, 'pseudo_labels_fixed.npz')
+```
+
+Then train on labeled + pseudo-labeled data:
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_pseudo_label_offline_trainer" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics()" \
+  -e 1
+```
+
+### Confidence thresholding heuristics
+
+#### Fixed global threshold
+
+All attributes use the same confidence threshold. Best for balanced datasets.
+
+```python
+conf_thresh = 0.8  # (float) all attributes masked below 80% confidence
+```
+
+#### Per-attribute adaptive thresholding (MC-PanDA++ style)
+
+Each attribute gets its own threshold updated via EMA based on observed confidence distribution. Recommended for handling class imbalance within attributes.
+
+Initialize with a dict mapping attribute indices to thresholds (starting at 0.0). They adapt per iteration:
+
+```python
+# Initialize with zeros; thresholds adapt per batch during training
+conf_thresh = {i: 0.0 for i in range(41)}  # dict with one threshold per attribute
+```
+
+Pass it in the trainer specification:
+
+```bash
+"irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='...',conf_thresh={0: 0.0, 1: 0.0, ..., 40: 0.0},temperature=1.0)"
+```
+
+For offline mode, pre-compute with a fixed threshold:
+
+```python
+result = generate_pseudo_labels(model, dataset, conf_thresh=0.5, ...)
+```
+
+### Temperature scaling
+
+Sharpen or soften confidence estimates before thresholding. Especially useful with adaptive thresholds.
+
+```python
+# Standard (no scaling)
+temperature = 1.0
+
+# Sharpen confidence (more selective, fewer pseudo-labels)
+temperature = 0.8
+
+# Soften confidence (less selective, more pseudo-labels)
+temperature = 1.2
+```
+
+### More commands
+
+- **Dataset viewer**: `IRAP_HOME=/path/to/IRAP_HOME streamlit run vidlu_irap_gaim/tools/dataset_viewer.py`
+- See `commands.md` for additional recipes (ViT/DINOv2 encoder, legacy inference).
+
+## Inference and Visualization
+
+We use `vidlu_irap_gaim.tools.inference` to run model evaluation and generate rich visualizations (images with predicted attributes, colored probability bars, and ground truth comparison).
+
+### Evaluation on standard splits
+
+To run inference on the `test` split and save visualizations:
+
+```bash
+VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics()" \
+  -r best \
+  -m "irap_gaim.tools.inference"
+```
+
+- This will create a `visualizations/test` directory inside your experiment folder.
+- Results include a `predictions.json` and PNG images for each sample.
+
+### Inference on a custom image folder (unlabeled)
+
+You can run the model on any folder of images (sorted alphabetically) using `InferenceImageDataset`:
+
+```bash
+VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,..." \
+  "irap_gaim.irap_local_rec_trainer" \
+  -r best \
+  -m "irap_gaim.tools.inference:run,e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test,context_sequence=(0,-1,-4))"
+```
+
+- `InferenceImageDataset.from_folder` automatically detects unlabeled images and skips loss/metrics computation.
+- `reference_dataset=e.data.test` is used to copy attribute metadata and pixel normalization stats.
+
+## Feature export (optional)
+
+Export per-segment features (for sequential enhancement / smoothing):
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  -r best \
+  -m "irap_gaim:export_feats,split='val',feat_dir='FEATS/val'"
+```
+
+**Requirement**: the model must support `forward(..., return_features=True)` (the provided `ImageSequenceClassifier` does).
+
+## Sequential enhancement (optional)
+
+`irap_gaim.make_seq_enh_data(...)` builds a per-attribute sequence dataset from exported `.npy` features.
+
+`irap_gaim.GeneralLSTMModel` expects **`input_encoders`**, not a raw `input_dim`. Example (features-only input):
+
+```bash
+IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+  "irap_gaim.make_seq_enh_data(feat_dir='FEATS/train',attribute=0)" \
   "id" \
-  "irap_gaim.GeneralLSTMModel,input_dim=<FEATURE_DIM>,n_classes=<N_CLASSES>,hidden_dim=64,n_layers=2" \
+  "irap_gaim.GeneralLSTMModel,n_classes=<N_CLASSES>,input_encoders=dict(feats=irap_gaim.IdentityEncoder(input_dim=<FEATURE_DIM>))" \
   "ct.classification" \
   --metrics "A"
 ```
 
-**Notes**:
-- Replace `<FEATURE_DIM>` with the flattened per-sample feature dim (inspect any `.npy` from FEATS), and `<N_CLASSES>` with the class count for the chosen attribute.
-- Repeat across attributes as needed.
-- `make_seq_enh_data` resolves metadata via `IRAP_HOME/IRAP_BIH_METADATA` or an explicit `metadata_dir=`.
+Notes:
+- Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`.
+- Replace `<N_CLASSES>` with the class count for the chosen attribute.
 
-## Data configuration
+## Key components (API sketch)
 
-- `make_bih_data` will use `IRAP_HOME/IRAP_BIH` and `IRAP_HOME/IRAP_BIH_METADATA` if `dataset_dir`/`metadata_dir` are not provided.
-- To be explicit, pass both:
-  - Data: `"irap_gaim.make_bih_data(dataset_dir='/path/to/IRAP_BIH',metadata_dir='/path/to/IRAP_BIH_METADATA')"`
-  - This ensures no reliance on environment variables.
+- **Data**:
+  - `irap_gaim.make_bih_data(..., use_ncontext_filter=True, seg_to_res_path=None)`
+  - `irap_gaim.BihSequence(...)` (populates `info.class_counts`, `info.pixel_stats`, `info.attribute_names`)
+  - `irap_gaim.get_class_counts(...)`
+- **Models**:
+  - `irap_gaim.ImageSequenceClassifier(class_counts, sequence_length, attention=False, encoder_f=...)`
+  - `irap_gaim.ResNetEncoder(pretrained=True|False, ...)`
+  - `irap_gaim.dinov2_vit_encoder(...)`
+- **Training**:
+  - `irap_gaim.irap_local_rec_trainer` (freeze-then-finetune schedule + color jitter + dynamic balanced recall weights)
+- **Metrics**:
+  - `irap_gaim.get_irap_metrics(dataset=None, class_counts=None, attrs_to_include=None)`
+- **Pretraining helper**:
+  - `irap_gaim.vistas_params_spec(...)` (Python helper to construct a `--params` translation string)
 
-**Notes**:
-- `irap_gaim.irap_local_rec_trainer` reproduces a two-stage schedule: freeze then finetune.
-- The default transforms mimic color jitter on train, center crop to `input_dim`, then normalization.
-- Metrics compute macro F1 and attribute-wise accuracy over `attrs_to_include` subset.
-- Dynamic class weighting strictly requires a validation split (prefix `val`) and dataset `info.class_counts` and `info.attribute_names`.
+## Troubleshooting (high-signal)
 
-## Components
-
-### Data factories
-
-- `irap_gaim.make_bih_data(dataset_dir=None, metadata_dir=None, context_sequence=(0,-1,-4), data_types=("rgb",), mean=..., std=..., input_dim_rgb=(384,288,3), attribute_value_mapping_path=None, transforms=None, label_map=None, ncontext_segment_id_subset=None)`
-  - Builds `{train,val,test}` datasets using `IRAP_HOME` for paths if not provided.
-  - Supports `ncontext_segment_id_subset` parameter for filtering segments globally across all splits.
-
-- `irap_gaim.get_class_counts(metadata_dir=None, attribute_metadata_path=None, attribute_value_mapping_path=None)`
-  - Computes number of classes per attribute (after optional value mapping).
-
-- `irap_gaim.BihSequence(dataset_dir, metadata_dir, ...)`
-  - Reads metadata, filters to segments with full context, outputs sequences and targets.
-
-### Models
-
-- `irap_gaim.ImageSequenceClassifier(class_counts, attention=False, pretrained_backbone=True)`
-  - ResNet18 backbone (exact port from original), SPP, optional per-attribute attention; one linear head per attribute.
-  - Implements `get_trainable_parameters()` method for frozen-phase training.
-
-### Training
-
-- `irap_gaim.irap_local_rec_trainer`
-  - `TrainerConfig` using supervised step, `MultiAttributeCrossEntropyLoss`, `FreezeThenFinetune` (2 frozen + 8 finetune epochs), and `DynamicBalancedRecallWeights`.
-  - Defaults match `train_local_rec_paper.sh`.
-  - `DynamicBalancedRecallWeights` automatically uses `attrs_to_include` filtering when `attrs_idx` is `None`.
-
-### Attribute filtering helpers
-
-- `irap_gaim.get_attrs_to_include()` → Returns canonical paper subset tuple (40 attributes)
-- `irap_gaim.map_attr_names_to_indices(attr_names, dataset_attribute_names)` → Maps attribute names to indices
-- `irap_gaim.ATTRS_TO_INCLUDE` → Canonical tuple constant
-
-### Losses and metrics
-
-- `MultiAttributeCrossEntropyLoss()` → Stateful callable that supports attribute subset filtering plus dynamic per-class weights (required for `DynamicBalancedRecallWeights`)
-- `multi_attribute_cross_entropy(outputs, targets, attrs_idx=None)` → Stateless helper for manual usage without dynamic weighting
-- `MultiAttributeMacroF1(class_counts, attrs_idx)` → **Requires** `attrs_idx` (raises `RuntimeError` if `None`)
-- `MultiAttributeAccuracy(attrs_idx)` → **Requires** `attrs_idx` (raises `RuntimeError` if `None`)
-- `get_irap_metrics(dataset, class_counts=None, attrs_to_include=None)` → Helper that automatically configures metrics with `attrs_to_include` filtering (defaults to canonical paper subset)
-
-### Feature export and pretraining
-
-- `export_feats(exp, split, feat_dir)` → Exports per-segment feature `.npy` files (as a `--module` callable)
-- `vistas_params_spec(vistas_weights_path=None)` → Returns path to vistas.pt for `--params`
-
-### Sequential enhancement
-
-- Data: `make_seq_enh_data(feat_dir, attribute, context_sequence, metadata_dir=None, irap_home=None, attribute_value_mapping_path=None)`
-- Model: `GeneralLSTMModel(input_dim, n_classes, hidden_dim, n_layers, bidirectional)`
-
-## Dynamic class weighting and attribute subset
-
-The default `irap_local_rec_trainer` enables `DynamicBalancedRecallWeights`, which:
-
-- Periodically recomputes per-attribute class weights from validation recalls
-- Reweights cross-entropy loss per attribute
-- Reproduces "dynamic balanced recall" from the original paper
-- Automatically uses `attrs_to_include` filtering when `attrs_idx` is `None` (requires dataset `info.attribute_names`)
-
-By default, training and metrics are restricted to `attrs_to_include` (canonical paper subset of 40 attributes). This matches the original `train_local_rec_paper.sh` behavior. The extension automatically:
-
-- Filters loss computation to selected attributes (via `DynamicBalancedRecallWeights`)
-- Filters dynamic weight updates to selected attributes
-- Filters metric accumulation to selected attributes (via `get_irap_metrics()` helper)
-
-To use all attributes or a custom subset, create a custom trainer config and pass `attrs_idx` to metrics/loss explicitly.
-
-## Reproducibility
-
-- Set `--deterministic` and seed in `scripts/run.py` for full determinism where possible.
-- Data selection: we replicate filtering to segments that have a valid context window across the split, using `road_id_to_segment_id_sequence_path` and `context_sequence`.
-- Preprocessing: jitter + crop + normalize to match provided `normalization_statistics`.
-- Two-phase schedule mirrors original hyperparameters (can be overridden by editing `FreezeThenFinetune` init or adding a wrapper TrainerConfig).
-
-## Known differences vs. original
-
-See [[.devdocs/irap_gaim_discrepancies.md]] for detailed comparison.
-
-Key differences:
-- Depth/raster inputs not yet supported (RGB only)
-- Sequential enhancement pipeline simplified (LSTM only, no transformer)
-- Attribute value mapping segment filtering differs slightly (`_remove_filtered_out_segments` logic not fully replicated)
-- Transforms always apply center crop (even when image size matches `input_dim_rgb`)
-
-## Configuration summary
-
-- Directories: set via args or `IRAP_HOME`.
-- Pixel stats: defaults to BiH mean/std (hard-coded), can be overridden via args.
-- Context: `context_sequence` argument (default `[0,-1,-4]`).
-
-## TODOs
-
-- Add additional models (LSTM/Transformer) for sequential smoothing (`seq_enh_model.py`).
-- Add attention mode parity tests, more unit tests, and a preset launcher that encapsulates data+model+trainer+metrics.
-- Add a transformer-based sequential enhancement model preset and exact parity with original feature shapes.
-- Implement depth/raster input support for multi-stream models.
-
-## Troubleshooting
-
-- Ensure `VIDLU_DATA` and other dirs are set (see `scripts/dirs.py`) and the config paths are correct.
-- If `torchvision` pretrained weights download fails, set `pretrained_backbone=False` in the model config.
-- Use `--debug` to enable anomaly detection.
-
-### Common errors
-
-**"MultiAttributeMacroF1.attrs_idx must be set"**
-- **Solution**: Use `get_irap_metrics(dataset)` helper instead of creating metrics directly.
-
-**"DynamicBalancedRecallWeights requires dataset.info.attribute_names"**
-- **Solution**: Ensure you're using `make_bih_data()` which automatically sets `info.attribute_names`.
-
-**"vistas.pt not found"**
-- **Solution**: Place `vistas.pt` at `$IRAP_HOME/weights/vistas.pt` (requires `IRAP_HOME` environment variable), or use `vistas_params_spec(vistas_weights_path='/path/to/vistas.pt')`.
-
-## Strict requirements
-
-- Validation data with prefix `val` must be present; otherwise training will error where dynamic weights are computed.
-- Datasets must populate `info.class_counts` with per-attribute class counts.
-- Datasets must populate `info.attribute_names` for automatic `attrs_to_include` filtering.
-- Models used for feature export must implement `forward(..., return_features=True)`; otherwise export will error.
+- **Missing `seg_to_res/*.pickle`**:
+  - Either create the pickle files under `IRAP_BIH_METADATA/seg_to_res/`, or disable filtering with `make_bih_data(use_ncontext_filter=False)`.
+- **`vistas.pt` not found**:
+  - Put it at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt`, or use an absolute path in the `--params` string.

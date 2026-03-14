@@ -1,0 +1,52 @@
+"""
+VLM fine-tuning components for Vidlu integration.
+
+This module provides Qwen3-VL fine-tuning with LoRA, designed to integrate
+with Vidlu's run.py training infrastructure.
+
+The response scheme controls both how ground-truth responses are formatted
+during training and how the model's generated text is parsed during evaluation.
+Select it via the ``response_scheme_name`` argument of ``make_vlm_bih_data``.
+
+Available scheme names (see RESPONSE_SCHEME_REGISTRY):
+    "standard"        - numbered lines, full value text (default)
+    "sparse_standard" - numbered lines, only non-default attributes
+    "indexed"        - numbered lines, integer value indices
+    "sparse_indexed" - numbered lines, only non-default attrs, integer indices
+    "json"           - JSON object with attribute name keys
+
+Prompt detail levels (``detail_level`` argument of ``make_vlm_bih_data``):
+    "attr_desc_vals" - attribute description + valid values + default (default)
+    "attr_vals"      - attribute name + valid values (no descriptions)
+    "attr"           - attribute names only (values learned from data)
+    "none"           - empty preamble, no attribute list
+
+Usage examples (one per response scheme)::
+
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data()" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='json')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='indexed')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='sparse_standard')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='sparse_indexed')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+ 
+Usage examples (one per prompt detail level)::
+
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='standard', detail_level='attr_desc_vals')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='standard', detail_level='attr_vals')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='standard', detail_level='attr')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+    CUDA_VISIBLE_DEVICES=1 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_vlm_bih_data(response_scheme='standard', detail_level='none')" "standardize" "irap_gaim.Qwen3VLClassifier,lora_r=64" "irap_gaim.vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics()"
+"""
+
+from .model import Qwen3VLClassifier
+from .dataset import VLMBihDataset, make_vlm_bih_data
+from .steps import VLMTrainStep, VLMEvalStep
+from .predictor import FineTunedVLMPredictor
+
+__all__ = [
+    "Qwen3VLClassifier",
+    "VLMBihDataset",
+    "make_vlm_bih_data",
+    "VLMTrainStep",
+    "VLMEvalStep",
+    "FineTunedVLMPredictor",
+]

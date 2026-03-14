@@ -117,8 +117,6 @@ class _BNReluConv(nn.Sequential):
 
         conv_class = nn.Conv2d
 
-        warnings.warn(f'Using conv type {k}x{k}: {conv_class}')
-
         self.add_module('conv', conv_class(num_maps_in, num_maps_out, kernel_size=k, padding=padding, bias=bias, dilation=dilation))
         if drop_rate > 0:
             warnings.warn(f'Using dropout with p: {drop_rate}')
@@ -184,13 +182,10 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, *, num_features=128, use_bn=True,
                  spp_grids=(6, 3, 2, 1), spp_square_grid=True, spp_drop_rate=0.0,
                  target_size=None, output_stride=4,
-                 scale=1, **kwargs):
+                 **kwargs):
         super(ResNet, self).__init__()
         self.inplanes = 64
         self.use_bn = use_bn
-
-        if scale != 1:
-            self.register_buffer('img_scale', torch.tensor(scale).view(1, -1, 1, 1).float())
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64) if self.use_bn else lambda x: x
@@ -266,10 +261,6 @@ class ResNet(nn.Module):
         return x, skip
 
     def rn_backbone(self, image):
-        if hasattr(self, 'img_scale'):
-            raise RuntimeError('img_scale is not supported for rn_backbone')
-            image /= self.img_scale
-
         x = self.conv1(image)
         x = self.bn1(x)
         x = self.relu(x)

@@ -11,8 +11,6 @@ The script writes per-segment images combining:
 - a text panel with predicted attribute values
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys
@@ -20,6 +18,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 import numpy as np
+from vidlu_irap_gaim import RGB_MEAN, RGB_STD
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -236,7 +235,7 @@ def run_sequential_legacy(args) -> None:
     if len(args.context_sequence) != 2 * max_N + 1:
         raise ValueError(
             f"Legacy sequential models expect context_sequence length 2*max_N+1.\n"
-            f"Got len(context_sequence)={len(args.context_sequence)} but max_N={max_N} -> expected {2*max_N+1}."
+            f"Got len(context_sequence)={len(args.context_sequence)} but max_N={max_N} -> expected {2 * max_N + 1}."
         )
     if args.context_sequence[max_N] != 0:
         raise ValueError(
@@ -268,7 +267,13 @@ def run_sequential_legacy(args) -> None:
     for attribute, n_classes in attribute_to_n_classes.items():
         input_type_to_metadata = attribute_to_input_type_to_metadata[attribute]
         lstm_hparams = attribute_to_lstm_hyperparams[attribute]
-        m = LegacyGeneralLSTMModel(max_N=max_N, N=N, n_classes=int(n_classes), input_type_to_metadata=input_type_to_metadata, lstm_hyperparams=lstm_hparams)
+        m = LegacyGeneralLSTMModel(
+            max_N=max_N,
+            N=N,
+            n_classes=int(n_classes),
+            input_type_to_metadata=input_type_to_metadata,
+            lstm_hyperparams=lstm_hparams,
+        )
         ckpt_path = attribute_to_checkpoint.get(attribute)
         if ckpt_path is None:
             continue
@@ -332,12 +337,26 @@ def parse_args(argv: Sequence[str] | None = None):
     p = argparse.ArgumentParser(description="IRAP BiH inference + visualization (vidlu_irap_gaim)")
     p.add_argument("--mode", choices=("local", "sequential_legacy"), default="local")
     p.add_argument("--dataset_dir", type=str, default=None, help="Path to IRAP_BIH (optional; else from IRAP_HOME)")
-    p.add_argument("--metadata_dir", type=str, default=None, help="Path to IRAP_BIH_METADATA (optional; else from IRAP_HOME)")
-    p.add_argument("--attribute_value_mapping_path", type=str, default=None, help="Optional value mapping JSON (must match dataset build)")
-    p.add_argument("--seg_to_res_path", type=str, default=None, help="Optional seg_to_res directory for n-context filtering")
+    p.add_argument(
+        "--metadata_dir", type=str, default=None, help="Path to IRAP_BIH_METADATA (optional; else from IRAP_HOME)"
+    )
+    p.add_argument(
+        "--attribute_value_mapping_path",
+        type=str,
+        default=None,
+        help="Optional value mapping JSON (must match dataset build)",
+    )
+    p.add_argument(
+        "--seg_to_res_path", type=str, default=None, help="Optional seg_to_res directory for n-context filtering"
+    )
     p.add_argument("--no_ncontext_filter", action="store_true", help="Disable N-context filtering")
     p.add_argument("--split", choices=("train", "val", "test"), default="val")
-    p.add_argument("--context_sequence", type=_parse_int_list_csv, default=(0, -1, -4), help="CSV list of integer offsets, e.g. '0,-1,-4'")
+    p.add_argument(
+        "--context_sequence",
+        type=_parse_int_list_csv,
+        default=(0, -1, -4),
+        help="CSV list of integer offsets, e.g. '0,-1,-4'",
+    )
 
     p.add_argument("--output_dir", type=str, default="visualization_output")
     p.add_argument("--out_width", type=int, default=1920)
@@ -351,19 +370,23 @@ def parse_args(argv: Sequence[str] | None = None):
     p.add_argument("--verbose", action="store_true")
 
     # Local model args
-    p.add_argument("--checkpoint_dir", type=str, default=None, help="Vidlu checkpoint directory containing model_state.pth")
+    p.add_argument(
+        "--checkpoint_dir", type=str, default=None, help="Vidlu checkpoint directory containing model_state.pth"
+    )
     p.add_argument("--model_state_path", type=str, default=None, help="Direct path to a model state dict (.pth/.pt)")
     p.add_argument("--attention", action="store_true")
     p.add_argument("--pretrained_backbone", action="store_true", help="Use ImageNet pretrained ResNet18 backbone")
 
     # Input adapter emulation (match training)
     p.add_argument("--input_adapter", choices=("id", "standardize"), default="id")
-    p.add_argument("--mean", type=float, nargs=3, default=(0.53354913, 0.52727484, 0.48752149))
-    p.add_argument("--std", type=float, nargs=3, default=(0.20401913, 0.20417478, 0.25402164))
+    p.add_argument("--mean", type=float, nargs=3, default=RGB_MEAN)
+    p.add_argument("--std", type=float, nargs=3, default=RGB_STD)
 
     # Sequential legacy args
     p.add_argument("--seq_config_path", type=str, default=None, help="Legacy sequential config.json path")
-    p.add_argument("--seq_models_root", type=str, default=None, help="Root directory containing sequential model subdirs")
+    p.add_argument(
+        "--seq_models_root", type=str, default=None, help="Root directory containing sequential model subdirs"
+    )
     p.add_argument("--feat_dir", type=str, default=None, help="Directory with exported per-segment feature .npy files")
 
     return p.parse_args(argv)
@@ -381,5 +404,3 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
-

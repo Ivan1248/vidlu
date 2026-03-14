@@ -1,13 +1,16 @@
 import json
 import os
 import pickle
+import math
 from pathlib import Path
 import typing as T
+import warnings
 
 import numpy as np
 import torch
 import cv2
 from tqdm import tqdm
+from torchvision.transforms import transforms as T_trans
 
 from vidlu.data import Dataset, Record
 from vidlu.data.datasets.datasets import _check_subset
@@ -158,7 +161,6 @@ def make_bih_data(
     mean: T.Sequence[float] = RGB_MEAN,
     std: T.Sequence[float] = RGB_STD,
     input_dim_rgb: T.Sequence[int] = INPUT_DIM_RGB,
-    attribute_value_mapping_path: str | Path | None = None,
     transforms: T.Mapping[str, T.Callable] | None = None,
     label_map: T.Mapping[str, T.Sequence[int]] | None = None,
     ncontext_segment_id_subset: set[str] | None = None,
@@ -175,7 +177,6 @@ def make_bih_data(
         mean: RGB channel means for normalization.
         std: RGB channel stds for normalization.
         input_dim_rgb: Target image dimensions (W, H, C).
-        attribute_value_mapping_path: Path to attribute value mapping JSON.
         transforms: Custom transforms dict.
         label_map: Custom label mapping.
         ncontext_segment_id_subset: Explicit set of segment IDs to include.
@@ -198,8 +199,6 @@ def make_bih_data(
 
     if transforms is None:
         # Build default transforms similar to original
-        from torchvision.transforms import transforms as T_trans
-
         def build_rgb_transform(train: bool):
             # Photometric jittering is handled in TrainerConfig; keep loading deterministic here.
             ops = [
@@ -210,8 +209,6 @@ def make_bih_data(
             return T_trans.Compose(ops)
 
         def build_depth_transform():
-            from torchvision.transforms import transforms as T_trans
-
             return T_trans.Compose([T_trans.ToPILImage(), T_trans.ToTensor()])
 
         transforms = dict(
@@ -221,11 +218,8 @@ def make_bih_data(
         )
 
     ds_kwargs = dict(
-        dataset_dir=ds_dir,
-        metadata_dir=md_dir,
         context_sequence=tuple(context_sequence),
         data_types=tuple(str(x) for x in data_types),
-        attribute_value_mapping_path=(Path(attribute_value_mapping_path) if attribute_value_mapping_path else None),
         mean=tuple(float(x) for x in mean),
         std=tuple(float(x) for x in std),
         label_map=label_map,
@@ -234,7 +228,7 @@ def make_bih_data(
 
     return {
         split: BihSequence(
-            ".",
+            ds_dir,
             split,
             transforms=transforms.get(split) if isinstance(transforms, dict) else transforms,
             **ds_kwargs,
@@ -243,46 +237,45 @@ def make_bih_data(
     }
 
 
+def load_attribute_metadata(
+    metadata_dir: str | Path,
+) -> tuple[list[str], dict[str, dict[str, int]]]:
+    """Load IRAP attribute metadata and return attributes in canonical order.
+
+    Args:
+        metadata_dir: Metadata directory.
+
+    Returns:
+        ordered_attrs: Attribute names ordered by their index in the metadata.
+        attribute_value_to_irap: Mapping attr -> {value -> irap_number}.
+    """
+    with open(metadata_dir / "attribute_metadata.json", "r") as f:
+        attr_meta = json.load(f)
+
+    idx_to_attribute = {v: k for k, v in attr_meta["attribute_to_idx"].items()}
+    ordered_attrs = [idx_to_attribute[i] for i in range(len(idx_to_attribute))]
+
+    attribute_value_to_irap_number = attr_meta["attribute_value_to_irap_number"]
+    return ordered_attrs, attribute_value_to_irap_number
+
+
 def get_class_counts(
-    *,
-    metadata_dir: str | Path | None = None,
-    attribute_metadata_path: str | Path | None = None,
-    attribute_value_mapping_path: str | Path | None = None,
+    metadata_dir: str | Path = None,
 ) -> tuple[int, ...]:
     """Get the number of classes for each attribute.
 
     Args:
         metadata_dir: Metadata directory.
-        attribute_metadata_path: Direct path to attribute_metadata.json (overrides metadata_dir).
-        attribute_value_mapping_path: Path to attribute value mapping JSON for filtering.
 
     Returns:
         Tuple of class counts, one per attribute.
     """
-    if attribute_metadata_path is None:
-        _, md_dir = resolve_irap_paths(metadata_dir=metadata_dir)
-        attribute_metadata_path = md_dir / "attribute_metadata.json"
+    warnings.warn("get_class_counts is deprecated. Use Dataset.info.attr_to_class_count instead")
+    _, metadata_dir = resolve_irap_paths(metadata_dir=metadata_dir)
+    ordered_attrs, attribute_value_to_irap = load_attribute_metadata(metadata_dir=metadata_dir)
+    return tuple(len(attribute_value_to_irap[attr]) for attr in ordered_attrs)
 
-    with open(attribute_metadata_path, "r") as f:
-        attr_meta = json.load(f)
-
-    idx_to_attribute = {v: k for k, v in attr_meta["attribute_to_idx"].items()}
-    ordered_attrs = [idx_to_attribute[i] for i in range(len(idx_to_attribute))]
-    attribute_value_to_irap = attr_meta["attribute_value_to_irap_number"]
-
-    # If attribute_value_mapping provided, filter attributes and use mapped values
-    if attribute_value_mapping_path is not None:
-        with open(attribute_value_mapping_path, "r") as f:
-            attribute_to_value_to_new_value = json.load(f)
-        ordered_attrs = [a for a in ordered_attrs if a in attribute_to_value_to_new_value]
-    else:
-        attribute_to_value_to_new_value = {
-            attr: {v: v for v in attribute_value_to_irap[attr].keys()} for attr in ordered_attrs
-        }
-
-    return tuple(len(attribute_to_value_to_new_value[attr]) for attr in ordered_attrs)
-
-
+   
 class BihSequence(Dataset):
     """
     Minimal reimplementation of IRAP GAIM sequence dataset for ViDLU.
@@ -309,24 +302,19 @@ class BihSequence(Dataset):
         root: T.Union[str, Path],
         subset: str = "train",
         *,
-        dataset_dir: T.Union[str, Path],
-        metadata_dir: T.Union[str, Path],
         context_sequence: T.Sequence[int] = (0, -1, -4),
         data_types: T.Sequence[str] = ("rgb",),
-        attribute_value_mapping_path: str | Path | None = None,
         mean: T.Sequence[float] = (0.53354913, 0.52727484, 0.48752149),
         std: T.Sequence[float] = (0.20401913, 0.20417478, 0.25402164),
         transforms: T.Mapping[str, T.Callable] | None = None,
-        label_map: T.Mapping[str, T.Sequence[int]] | None = None,
         ncontext_segment_id_subset: set[str] | None = None,
     ) -> None:
         _check_subset(self.__class__, subset)
-        self.root = Path(root)
+        # unused attributes
         self.transforms = transforms or {}
-        self.label_map = label_map or {}
 
-        self.dataset_dir = Path(dataset_dir)
-        self.metadata_dir = Path(metadata_dir)
+        self.root = Path(root)
+        self.metadata_dir = self.root.parent / (self.root.name + "_METADATA")
         self.context_sequence = list(context_sequence)
         self.data_types = set(data_types)
 
@@ -335,7 +323,7 @@ class BihSequence(Dataset):
         with open(self.metadata_dir / "segment_id_to_data_paths_rel.json", "r") as f:
             seg_to_paths_rel = json.load(f)
         self.seg_to_paths = {
-            sid: {k: (None if v == "NONE" else (self.dataset_dir / v)) for k, v in d.items()}
+            sid: {k: (None if v == "NONE" else (self.root / v)) for k, v in d.items()}
             for sid, d in tqdm(seg_to_paths_rel.items(), desc="Building seg_to_paths")
         }
 
@@ -349,89 +337,50 @@ class BihSequence(Dataset):
         }
 
         # Valid segment IDs for subset (must exist in data paths)
-        subset_ids = list(tqdm(splits[subset], desc="Filtering subset IDs (have data paths)"))
+        subset_ids = list(splits[subset])
 
-        # Store attribute value mapping path for later use
-        self.attribute_value_mapping_path = attribute_value_mapping_path
-
+        # Load attribute metadata and derive class indices
+        ordered_attrs, attr_to_value_to_irap_number = load_attribute_metadata(metadata_dir=self.metadata_dir)
         # Build segment_id_to_labels FIRST (before context filtering) to match original order
         # This matches SeqEnhDatasetFromFeats which builds labels for all segments first
-        if label_map is None:
-            # Load attribute metadata and derive class indices
-            with open(self.metadata_dir / "attribute_metadata.json", "r") as f:
-                attr_meta = json.load(f)
-            # attribute order
-            idx_to_attribute = {v: k for k, v in attr_meta["attribute_to_idx"].items()}
-            ordered_attrs = [idx_to_attribute[i] for i in range(len(idx_to_attribute))]
-            # invert value->irap_number mapping
-            attr_value_to_irap = attr_meta["attribute_value_to_irap_number"]
-            attr_irap_to_value = {attr: {v: k for k, v in attr_value_to_irap[attr].items()} for attr in ordered_attrs}
-            # mapping of values if provided
-            if attribute_value_mapping_path is not None:
-                with open(attribute_value_mapping_path, "r") as f:
-                    attribute_value_mapping = json.load(f)
-                # filter attributes to those defined in mapping (match original behavior)
-                ordered_attrs = [a for a in ordered_attrs if a in attribute_value_mapping]
-                attribute_to_value_to_new_value = attribute_value_mapping
-            else:
-                attribute_value_mapping = None
-                attribute_to_value_to_new_value = {
-                    attr: {v: v for v in attr_value_to_irap[attr].keys()} for attr in ordered_attrs
-                }
-            # enumerate new values per attribute to class indices
-            attribute_new_value_to_class_idx = {
-                attr: {nv: i for i, nv in enumerate(attribute_to_value_to_new_value[attr].values())}
-                for attr in ordered_attrs
-            }
-            # Store attribute information directly from metadata computation
-            attribute_names = list(ordered_attrs)
-            class_counts = tuple(len(attribute_to_value_to_new_value[attr]) for attr in ordered_attrs)
+        # invert value->irap_number mapping
+        attr_irap_to_value = {attr: {v: k for k, v in attr_to_value_to_irap_number[attr].items()} for attr in ordered_attrs}
+        # enumerate new values per attribute to class indices
+        attr_to_value_to_class_idx = {
+            attr: {nv: i for i, nv in enumerate(attr_to_value_to_irap_number[attr].keys())}
+            for attr in ordered_attrs
+        }
+        # Store attribute information directly from metadata computation
+        attribute_names = list(ordered_attrs)
+        class_counts = tuple(len(attr_to_value_to_irap_number[attr]) for attr in ordered_attrs)
 
-            # Build labels for ALL segments in subset_ids (before context filtering)
-            # This matches the original implementation which filters by labels first.
-            # Additionally, we replicate DatasetWrapper._remove_filtered_out_segments:
-            # segments for which the mapping changes the value (value != new_value)
-            # are discarded entirely.
-            with open(self.metadata_dir / "segment_id_to_road_data.json", "r") as f:
-                seg_to_road = json.load(f)
-            lm = {}
-            for sid in tqdm(subset_ids, desc="Building label_map"):
-                attrs_irap = seg_to_road.get(sid, {}).get("required_attributes", {})
-                labels = []
-                ok = True
-                for attr in ordered_attrs:
-                    irap_code = attrs_irap.get(attr)
-                    if irap_code is None:
-                        ok = False
-                        break
-                    # Canonical value from IRAP code
-                    value = attr_irap_to_value[attr].get(irap_code, None)
-                    if value is None:
-                        ok = False
-                        break
-                    # Mapped value according to attribute_value_mapping
-                    new_value = attribute_to_value_to_new_value[attr].get(value, value)
-                    # If mapping changes the value, drop the segment (matches original)
-                    if new_value != value:
-                        ok = False
-                        break
-                    labels.append(attribute_new_value_to_class_idx[attr][new_value])
-                if ok:
-                    lm[sid] = labels
-            self.segment_id_to_labels = lm
-        else:
-            self.segment_id_to_labels = label_map
-            # When label_map is provided, compute attribute info from metadata
-            with open(self.metadata_dir / "attribute_metadata.json", "r") as f:
-                attr_meta = json.load(f)
-            idx_to_attribute = {v: k for k, v in attr_meta["attribute_to_idx"].items()}
-            ordered_attrs = [idx_to_attribute[i] for i in range(len(idx_to_attribute))]
-            # Compute class_counts from metadata using the same logic as get_class_counts
-            class_counts = get_class_counts(
-                metadata_dir=self.metadata_dir,
-                attribute_value_mapping_path=self.attribute_value_mapping_path,
-            )
-            attribute_names = ordered_attrs
+        # Build labels for ALL segments in subset_ids (before context filtering)
+        # This matches the original implementation which filters by labels first.
+        # Additionally, we replicate DatasetWrapper._remove_filtered_out_segments:
+        # segments for which the mapping changes the value (value != new_value)
+        # are discarded entirely.
+        with open(self.metadata_dir / "segment_id_to_road_data.json", "r") as f:
+            seg_to_road = json.load(f)
+        lm = {}
+        for sid in tqdm(subset_ids, desc="Building label_map"):
+            attrs_irap = seg_to_road.get(sid, {}).get("required_attributes", {})
+            labels = []
+            ok = True
+            for attr in ordered_attrs:
+                irap_code = attrs_irap.get(attr)
+                if irap_code is None:
+                    ok = False
+                    break
+                # Canonical value from IRAP code
+                value = attr_irap_to_value[attr].get(irap_code, None)
+                if value is None:
+                    ok = False
+                    break
+                # If mapping changes the value, drop the segment (matches original)
+                labels.append(attr_to_value_to_class_idx[attr][value])
+            if ok:
+                lm[sid] = labels
+        self.segment_id_to_labels = lm
 
         # Filter subset_ids by labels FIRST (matches original: filter by labels, then context)
         subset_ids = [sid for sid in subset_ids if sid in self.segment_id_to_labels]
@@ -454,7 +403,7 @@ class BihSequence(Dataset):
         # Context validity is computed over segments that *have data paths*.
         # So we build `all_segment_ids_int` from the filtered `splits` dict.
         all_splits_all_ids = []
-        for split_name, segment_ids in splits.items():
+        for split_name, segment_ids in tqdm(splits.items(), desc="Building all_segment_ids_int"):
             all_splits_all_ids.extend(segment_ids)
         all_segment_ids_int = set(map(int, all_splits_all_ids))
 
@@ -503,7 +452,7 @@ class BihSequence(Dataset):
                 problem="multi_attribute_classification",
                 class_counts=class_counts,
                 pixel_stats=Record(mean=np.array(mean), std=np.array(std)),
-                attribute_names=attribute_names,
+                attr_to_value_to_class_idx=attr_to_value_to_class_idx,
             ),
         )
 
@@ -551,12 +500,16 @@ class BihSequence(Dataset):
 
         items = []
 
-        # RGB sequence as a tensor (no extra wrapping) – this will be the input `x`
+        # RGB sequence as a tensor (lazy-loaded to avoid IO when only labels are needed)
         if "rgb" in self.data_types:
-            seq = self._load_sequence(context_ids, "rgb")
-            if isinstance(seq, np.ndarray):
-                seq = torch.from_numpy(seq).float()
-            items.append(("rgb", seq))
+            # Use keyword-only parameter (after *) to ensure positional_param_count returns 0
+            # This prevents LazyItem from passing the record as an argument
+            def load_rgb(*, ctx_ids=context_ids):
+                seq = self._load_sequence(ctx_ids, "rgb")
+                if isinstance(seq, np.ndarray):
+                    seq = torch.from_numpy(seq).float()
+                return seq
+            items.append(("rgb_", load_rgb))  # "_" suffix for lazy evaluation
 
         # Labels are small, can be loaded directly – this will be `y`
         if sid in self.segment_id_to_labels:
@@ -565,3 +518,200 @@ class BihSequence(Dataset):
         # Keep segment_id for bookkeeping/metrics
         items.append(("segment_id", sid))
         return Record(dict(items))
+
+
+class InferenceImageDataset(Dataset):
+    """
+    Dataset for running inference on arbitrary images with temporal context.
+
+    Unlike BihSequence, this dataset:
+    - Does NOT require labels (for pure inference without ground truth)
+    - Uses alphabetical order of images to determine temporal context
+    - Borrows attribute metadata from a reference dataset or explicit config
+
+    Context sequence example:
+        context_sequence=(0, -1, -4) means for image at index i, load images at i, i-1, i-4.
+        Images without valid context (near the start) are excluded.
+
+    Example usage:
+        # From folder with context matching BihSequence
+        ds = InferenceImageDataset.from_folder(
+            "/path/to/images",
+            reference_dataset=bih_test,
+            context_sequence=(0, -1, -4),
+        )
+    """
+
+    def __init__(
+        self,
+        image_paths: T.Sequence[Path],
+        *,
+        attr_to_value_to_class_idx: dict[str, dict[str, int]],
+        class_counts: tuple[int, ...],
+        context_sequence: T.Sequence[int] = (0, -1, -4),
+        mean: T.Sequence[float] = RGB_MEAN,
+        std: T.Sequence[float] = RGB_STD,
+        input_size: tuple[int, int] = (INPUT_DIM_RGB[0], INPUT_DIM_RGB[1]),  # (W, H)
+    ):
+        """
+        Args:
+            image_paths: Ordered sequence of image paths (alphabetical order assumed).
+            attr_to_value_to_class_idx: Attribute metadata for decoding predictions.
+            class_counts: Number of classes per attribute.
+            context_sequence: Offsets for context frames, e.g., (0, -1, -4).
+                The frames are ordered by offset (so (0, -1, -4) gives [img_0, img_-1, img_-4]).
+            mean, std: Normalization stats (used by input adapter, stored in info).
+            input_size: Target image size (W, H).
+        """
+        all_image_paths = [Path(p) for p in image_paths]
+        self.context_sequence = tuple(context_sequence)
+        self.input_size = input_size
+
+        # Determine which images have valid context (all context indices in bounds)
+        min_offset = min(self.context_sequence)
+        max_offset = max(self.context_sequence)
+        num_images = len(all_image_paths)
+
+        # Valid indices: those where idx + min_offset >= 0 and idx + max_offset < num_images
+        self.valid_indices: list[int] = []
+        for idx in range(num_images):
+            if idx + min_offset >= 0 and idx + max_offset < num_images:
+                self.valid_indices.append(idx)
+
+        self.all_image_paths = all_image_paths
+
+        # Build transform: preserve aspect ratio (no stretching).
+        #
+        # We do a "resize-to-cover + center-crop" to match the fixed model input size while
+        # avoiding geometric distortion:
+        #   scale = max(target_w / w, target_h / h)
+        #   resize(w*scale, h*scale) then center-crop to (target_h, target_w)
+        self._to_tensor = T_trans.ToTensor()  # [0, 1]
+
+        super().__init__(
+            subset="inference",
+            info=Record(
+                problem="multi_attribute_classification",
+                class_counts=class_counts,
+                pixel_stats=Record(mean=np.array(mean), std=np.array(std)),
+                attr_to_value_to_class_idx=attr_to_value_to_class_idx,
+            ),
+        )
+
+        print(
+            f"[InferenceImageDataset] {len(all_image_paths)} images, "
+            f"{len(self.valid_indices)} with valid context (sequence={self.context_sequence})"
+        )
+
+    def __len__(self) -> int:
+        return len(self.valid_indices)
+
+    def get_example(self, idx: int) -> Record:
+        # Map dataset index to actual image index
+        img_idx = self.valid_indices[idx]
+        path = self.all_image_paths[img_idx]
+
+        # Use keyword-only parameters (after *) to ensure positional_param_count returns 0
+        # This prevents LazyItem from passing the record as an argument
+        def load_rgb(
+            *,
+            img_idx=img_idx,
+            context_sequence=self.context_sequence,
+            all_paths=self.all_image_paths,
+            input_size=self.input_size,
+            to_tensor=self._to_tensor,
+        ):
+            """Lazy-load and preprocess RGB sequence."""
+            target_w, target_h = input_size
+
+            def preprocess_rgb_np(rgb_np: np.ndarray, img_path) -> torch.Tensor:
+                from PIL import Image
+
+                pil = Image.fromarray(rgb_np)
+                w, h = pil.size
+                if w <= 0 or h <= 0:
+                    raise ValueError(f"Invalid image size: {(w, h)} for {img_path}")
+
+                scale = max(target_w / w, target_h / h)
+                new_w = max(target_w, int(math.ceil(w * scale)))
+                new_h = max(target_h, int(math.ceil(h * scale)))
+                if (new_w, new_h) != (w, h):
+                    pil = pil.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
+
+                left = max(0, (new_w - target_w) // 2)
+                top = max(0, (new_h - target_h) // 2)
+                pil = pil.crop((left, top, left + target_w, top + target_h))
+
+                return to_tensor(pil)
+
+            frames = []
+            for offset in context_sequence:
+                ctx_idx = img_idx + offset
+                ctx_path = all_paths[ctx_idx]
+                img = _load_image_cv2(str(ctx_path))
+                img_t = preprocess_rgb_np(img, ctx_path)
+                frames.append(img_t)
+
+            return torch.stack(frames, dim=0)
+
+        return Record(
+            rgb_=load_rgb,  # "_" suffix for lazy evaluation
+            segment_id=path.stem,
+            # No 'target' key - unlabeled
+        )
+
+    @classmethod
+    def from_folder(
+        cls,
+        folder: str | Path,
+        *,
+        reference_dataset: "BihSequence | None" = None,
+        attr_to_value_to_class_idx: dict | None = None,
+        class_counts: tuple[int, ...] | None = None,
+        context_sequence: T.Sequence[int] = (0, -1, -4),
+        extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".bmp", ".webp"),
+        **kwargs,
+    ) -> "InferenceImageDataset":
+        """
+        Create dataset from a folder of images.
+
+        Images are sorted alphabetically to determine temporal order.
+        Only images with valid context (all context indices in bounds) are included.
+
+        Args:
+            folder: Path to folder containing images.
+            reference_dataset: A BihSequence to copy metadata from (alternative to explicit args).
+            attr_to_value_to_class_idx: Explicit attribute metadata (if no reference_dataset).
+            class_counts: Explicit class counts (if no reference_dataset).
+            context_sequence: Offsets for context frames, e.g., (0, -1, -4).
+            extensions: Image file extensions to include.
+            **kwargs: Additional arguments passed to __init__.
+        """
+        folder = Path(folder).expanduser().resolve()
+        if not folder.is_dir():
+            raise ValueError(f"Not a directory: {folder}")
+
+        # Collect image paths in alphabetical order
+        image_paths = sorted([
+            p for p in folder.iterdir()
+            if p.suffix.lower() in extensions
+        ])
+        if not image_paths:
+            raise ValueError(f"No images with extensions {extensions} found in {folder}")
+
+        # Get metadata
+        if reference_dataset is not None:
+            attr_to_value_to_class_idx = reference_dataset.info.attr_to_value_to_class_idx
+            class_counts = reference_dataset.info.class_counts
+        elif attr_to_value_to_class_idx is None or class_counts is None:
+            raise ValueError(
+                "Either reference_dataset or both attr_to_value_to_class_idx and class_counts must be provided"
+            )
+
+        return cls(
+            image_paths,
+            attr_to_value_to_class_idx=attr_to_value_to_class_idx,
+            class_counts=class_counts,
+            context_sequence=context_sequence,
+            **kwargs,
+        )

@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import random
 from pathlib import Path
 import typing as T
@@ -8,7 +7,6 @@ import typing as T
 import streamlit as st
 import torch
 import numpy as np
-import cv2
 
 # Add project root to path so we can import vidlu_irap_gaim
 current_file = Path(__file__).resolve()
@@ -21,53 +19,12 @@ from vidlu_irap_gaim.training import make_sequence_color_jitter, JITTER_STANDARD
 from vidlu_irap_gaim.vis_utils import (
     AttributeMetadataDecoder,
     create_composite_view_strip,
+    get_index_color,
     tensor_image_to_uint8_np,
 )
 
 
 # --- Utilities ---
-
-
-def tensor_image_to_np(tensor: torch.Tensor) -> np.ndarray:
-    """
-    Converts a (C, H, W) or (S, C, H, W) float tensor to (H, W, C) or (S, H, W, C) uint8 numpy array.
-    Handles permutation, clipping, and type casting.
-    """
-    return tensor_image_to_uint8_np(tensor)
-
-
-def get_index_color(idx: int) -> str:
-    """Returns a hex color code based on the class index."""
-    if idx == 0:
-        return "#808080"  # Gray for index 0 (often 'None')
-
-    # Palette designed for contrast against light/dark backgrounds
-    palette = [
-        "#E6194B",
-        "#3CB44B",
-        "#D3B900",
-        "#4363D8",
-        "#F58231",
-        "#911EB4",
-        "#00C0C0",
-        "#F032E6",
-        "#7CB60C",
-        "#008080",
-        "#9A6324",
-        "#800000",
-        "#808000",
-        "#000075",
-        "#505050",
-    ]
-    return palette[(idx - 1) % len(palette)]
-
-
-def create_composite_view(images: np.ndarray) -> np.ndarray:
-    """
-    Creates a composite image with the first image as 'main' and the rest as 'context' below it.
-    Resizes the context strip to match the width of the main image.
-    """
-    return create_composite_view_strip(images)
 
 
 class DatasetAdapter:
@@ -100,11 +57,6 @@ class DatasetAdapter:
         # Cache for loaded datasets
         self.datasets = {}
 
-    def _load_attribute_metadata(self):
-        # Kept for backward compatibility with any external calls.
-        # All metadata decoding is handled by `AttributeMetadataDecoder`.
-        return
-
     def get_dataset(self, split: str):
         if split not in self.datasets:
             datasets = make_bih_data(
@@ -113,7 +65,7 @@ class DatasetAdapter:
                 context_sequence=self.context_sequence,
                 data_types=("rgb", "depth"),
             )
-            self.datasets = datasets
+            self.datasets.update(datasets)
 
         return self.datasets.get(split)
 
@@ -371,10 +323,10 @@ def main():
                 jitter_caption_suffix = " [strong jitter]"
 
             # Data is already in [0,1]; convert directly to uint8 numpy image
-            imgs_np = tensor_image_to_np(rgb)
+            imgs_np = tensor_image_to_uint8_np(rgb)
 
             # Create composite view
-            final_img = create_composite_view(imgs_np)
+            final_img = create_composite_view_strip(imgs_np)
 
             # Construct caption
             caption = f"Segment: {data.get('segment_id', 'Unknown')}{jitter_caption_suffix}"

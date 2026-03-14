@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import torch
 from torch import nn
 from torch.nn import init
@@ -23,8 +21,4 @@ class AttentionBlock(nn.Module):
         unnormalized_attn_map = r.sum(1)
         attn_map = softmax(unnormalized_attn_map, dim=1)
         return (torch.unsqueeze(attn_map, 1) * x).sum(2)
-
-
-
-
 

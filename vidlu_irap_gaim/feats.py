@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -7,7 +5,7 @@ import numpy as np
 import torch
 
 
-def export_feats(exp, split: str = 'train', feat_dir: str = 'FEATS/train', dtype: str = 'float16'):
+def export_feats(exp, split: str = "train", feat_dir: str = "FEATS/train", dtype: str = "float16"):
     """
     Export per-segment features for the given split.
 
@@ -20,7 +18,7 @@ def export_feats(exp, split: str = 'train', feat_dir: str = 'FEATS/train', dtype
       feat_dir: output directory; files are saved as <segment_id>.npy
       dtype: float16|float32 for saving
     """
-    assert hasattr(exp, 'trainer') and hasattr(exp, 'data')
+    assert hasattr(exp, "trainer") and hasattr(exp, "data")
     trainer = exp.trainer
     device = next(trainer.model.parameters()).device
     trainer.model.eval()
@@ -50,14 +48,12 @@ def export_feats(exp, split: str = 'train', feat_dir: str = 'FEATS/train', dtype
             except TypeError as e:
                 raise RuntimeError("Model must support return_features=True for IRAP GAIM feature export.") from e
             feats = feats.detach().cpu().numpy()
-            if dtype == 'float16':
+            if dtype == "float16":
                 feats = feats.astype(np.float16)
             # Persist per sample
-            segment_ids = batch['segment_id'] if isinstance(batch, dict) else batch[2]
+            segment_ids = batch["segment_id"] if isinstance(batch, dict) else batch[2]
             for i, sid in enumerate(segment_ids):
                 sid_str = str(sid)
                 np.save(out_dir / f"{sid_str}.npy", feats[i])
 
     return dict(saved_to=str(out_dir))
-
-

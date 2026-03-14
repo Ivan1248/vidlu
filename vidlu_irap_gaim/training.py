@@ -1,6 +1,8 @@
-from functools import partial
+from functools import partial, wraps
 import dataclasses as dc
 import typing as T
+import copy
+import os
 
 import torch
 from torch.optim.lr_scheduler import MultiplicativeLR
@@ -10,38 +12,38 @@ from vidlu.configs.training import TrainerConfig
 from vidlu_irap_gaim.dynamic import DynamicBalancedRecallWeights
 from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
 from vidlu_irap_gaim.semisup import multi_attribute_kl_div_ll
-from vidlu.training.steps import SupervisedStep
-from vidlu.training.steps import SemisupConsStep
+from vidlu.training.steps import SupervisedStep, SemisupConsStep, SemisupCleanTargetConsStepBase
 from vidlu.training.extensions import SemisupVAT
 from vidlu_irap_gaim.visualization import VisualizationExtension
+from vidlu_irap_gaim.extensions import MultiAttributeScorePrinter
 from vidlu.training.extensions import TrainerExtension
-from vidlu.configs.robustness import ph20_attack
+from vidlu.configs.robustness import ph20_attack, ph3_attack
 
 
 class FreezeThenFinetune(TrainerExtension):
     def __init__(
         self,
-        frozen_epochs: int = 2,
+        num_frozen_epochs: int = 2,
         frozen_lr: float = 5e-5,
         finetune_lr: float = 1e-5,
         frozen_weight_decay: float = 1e-3,
         finetune_weight_decay: float = 1e-3,
-        frozen_scheduler: float = 0.8,
-        finetune_scheduler: float = 0.88,
+        frozen_lr_scheduler_f: T.Callable = partial(MultiplicativeLR, lr_lambda=lambda epoch: 0.8),
+        finetune_lr_scheduler_f: T.Callable = partial(MultiplicativeLR, lr_lambda=lambda epoch: 0.88),
     ):
         # Phase lengths (the trainer's epoch_count should normally match frozen+finetune)
-        self.frozen_epochs = frozen_epochs
+        self.num_frozen_epochs = num_frozen_epochs
 
         # Optimizer / scheduler hyperparameters per phase
         self.frozen_lr = frozen_lr
         self.finetune_lr = finetune_lr
         self.frozen_wd = frozen_weight_decay
         self.finetune_wd = finetune_weight_decay
-        self.frozen_sched = frozen_scheduler
-        self.finetune_sched = finetune_scheduler
+        self.frozen_lr_scheduler_f = frozen_lr_scheduler_f
+        self.finetune_lr_scheduler_f = finetune_lr_scheduler_f
 
     def initialize(self, trainer):
-        def reinit_optimizer_and_scheduler(lr, wd, scheduler_gamma):
+        def reinit_optimizer_and_scheduler(lr, wd, lr_scheduler):
             # preserve optimizer state? start fresh as in original code
             opt = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, trainer.model.parameters()),
@@ -49,7 +51,7 @@ class FreezeThenFinetune(TrainerExtension):
                 weight_decay=wd,
             )
             trainer.optimizer = opt
-            trainer.lr_scheduler = MultiplicativeLR(opt, lr_lambda=lambda ep: scheduler_gamma)
+            trainer.lr_scheduler = lr_scheduler(optimizer=opt)
 
         def get_trainable_parameters():
             """Get trainable parameters following original logic: use model's method if available"""
@@ -79,19 +81,43 @@ class FreezeThenFinetune(TrainerExtension):
                 trainable_params = get_trainable_parameters()
                 for p in trainable_params:
                     p.requires_grad = True
-                reinit_optimizer_and_scheduler(self.frozen_lr, self.frozen_wd, self.frozen_sched)
+                reinit_optimizer_and_scheduler(self.frozen_lr, self.frozen_wd, self.frozen_lr_scheduler_f)
             else:  # finetune
                 # Enable all parameters in finetune phase
                 for p in trainer.model.parameters():
                     p.requires_grad = True
-                reinit_optimizer_and_scheduler(self.finetune_lr, self.finetune_wd, self.finetune_sched)
+                reinit_optimizer_and_scheduler(self.finetune_lr, self.finetune_wd, self.finetune_lr_scheduler_f)
 
         # Initialize in frozen phase at start
         set_phase("frozen")
 
+        # Handle resumption: ensure phase is correct before loading optimizer state
+        original_load_state_dict = trainer.load_state_dict
+
+        def load_state_dict_wrapper(state_dict):
+            # Check the epoch in the checkpoint
+            # state_dict['training'] is the EpochLoop state dict, containing 'epoch'
+            if "training" in state_dict and "epoch" in state_dict["training"]:
+                epoch = state_dict["training"]["epoch"]
+                # If we finished the frozen epochs, we should be in finetune phase
+                # (e.g. if num_frozen_epochs=2, epochs 0 and 1 are frozen.
+                #  If we save at end of epoch 1, stored epoch is 1. Next is 2.
+                #  Transition happens at START of epoch 2.
+                #  So if stored epoch >= 2, we are definitely in finetune.
+                #  Wait, if stored epoch is 1, we are at end of frozen. Optimizer is frozen.
+                #  If stored epoch is 2, we are at end of first finetune epoch. Optimizer is finetune.
+                if epoch >= self.num_frozen_epochs:
+                    set_phase("finetune")
+                else:
+                    set_phase("frozen")
+
+            original_load_state_dict(state_dict)
+
+        trainer.load_state_dict = load_state_dict_wrapper
+
         @trainer.training.epoch_started.handler
         def on_epoch_started(state):
-            if state.epoch == self.frozen_epochs:
+            if state.epoch == self.num_frozen_epochs:
                 set_phase("finetune")
 
 
@@ -172,7 +198,10 @@ def _make_dynamic_balanced_recall_weights(dirs):
     """
     # Handle case where dirs.cache might be a list (use first element)
     cache_dir = dirs.cache[0] if isinstance(dirs.cache, (list, tuple)) else dirs.cache
-    return DynamicBalancedRecallWeights(cache_dir=cache_dir)
+    from .attrs import get_attrs_to_include
+
+    attrs_to_include = get_attrs_to_include()
+    return DynamicBalancedRecallWeights(cache_dir=cache_dir, attrs_to_include=attrs_to_include)
 
 
 # Basic classification trainer with supervised step
@@ -180,7 +209,7 @@ def _make_dynamic_balanced_recall_weights(dirs):
 # Default configuration matches train_local_rec_paper.sh: 2 frozen + 8 finetune = 10 total epochs
 epoch_count = 2 + 8  # 2 frozen + 8 finetune (matches paper script)
 irap_local_rec_trainer = TrainerConfig(
-    eval_step=SupervisedStep(eval=True, amp=True),
+    eval_step=SupervisedStep(eval=True, amp=False),
     train_step=SupervisedStep(amp=True),
     loss=MultiAttributeCrossEntropyLoss(),
     optimizer_f=partial(torch.optim.Adam, lr=5e-5, weight_decay=1e-3),
@@ -191,9 +220,63 @@ irap_local_rec_trainer = TrainerConfig(
     jitter=make_sequence_color_jitter(),
     extension_fs=[
         # frozen_epochs controls the transition; finetune duration is implied by epoch_count
-        partial(FreezeThenFinetune, frozen_epochs=2),
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
         _make_dynamic_balanced_recall_weights,
         VisualizationExtension,
+        MultiAttributeScorePrinter,
+    ],
+)
+
+
+@dc.dataclass
+class MultiScaleSupervisedStep:
+    """Eval step with multi-scale inference and probability averaging.
+
+    Applies the model at multiple scales, converts logits to probabilities,
+    and averages probabilities across scales for each attribute.
+    """
+
+    scales: T.Sequence[float] = (1.0, 0.75, 1 / 0.75)
+    amp: bool = False
+
+    def __call__(self, trainer, batch):
+        from vidlu.training.steps import _unify_sup_batch, untag
+        from vidlu_irap_gaim.models.multiscale import MultiScaleSequenceInference
+        from vidlu.utils.collections import NameDict
+        import contextlib as ctx
+
+        model = trainer.model
+        model.eval()
+
+        # Lazy-create the multi-scale wrapper
+        if not hasattr(self, "_ms_model") or self._ms_model is None:
+            self._ms_model = MultiScaleSequenceInference(model, scales=self.scales)
+
+        amp_ctx = torch.cuda.amp.autocast() if self.amp else ctx.nullcontext()
+        with amp_ctx:
+            with torch.no_grad():
+                x, y = _unify_sup_batch(batch)[:2]
+                probs = self._ms_model(untag(x))  # Tuple of averaged probabilities
+                loss = trainer.loss(probs, y, reduction="mean")
+
+        return NameDict(x=x, target=y, out=probs, loss=loss.item())
+
+
+irap_local_rec_trainer_multiscale = TrainerConfig(
+    eval_step=MultiScaleSupervisedStep(scales=(1.0, 0.75, 1 / 0.75), amp=True),
+    train_step=SupervisedStep(amp=True),  # Single-scale during training
+    loss=MultiAttributeCrossEntropyLoss(),
+    optimizer_f=partial(torch.optim.Adam, lr=5e-5, weight_decay=1e-3),
+    epoch_count=epoch_count,
+    batch_size=12,
+    eval_batch_size=32,
+    eval_count=epoch_count,
+    jitter=make_sequence_color_jitter(),
+    extension_fs=[
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
+        _make_dynamic_balanced_recall_weights,
+        VisualizationExtension,
+        MultiAttributeScorePrinter,
     ],
 )
 
@@ -254,6 +337,72 @@ class ColorJitterAttack:
         return x_p, target, loss_mask
 
 
+@dc.dataclass
+class MultiAttributePseudoLabelStep(SemisupCleanTargetConsStepBase):
+    """Pseudo-label self-training step for multi-attribute classification.
+
+    Model output must be a tuple of (B, K_i) logit tensors; targets must be
+    (B, A) integer tensors. Uses a frozen pre-trained teacher (loaded from
+    checkpoint) to generate hard argmax pseudo-labels with per-(sample, attribute)
+    confidence thresholding and temperature scaling.
+
+    FixMatch-style: teacher runs on clean x_u, student is trained on jittered x_u
+    (requires SemisupVAT(ColorJitterAttack) extension in the trainer config).
+    """
+    pre_trained_teacher: T.Optional[T.Union[str, os.PathLike, torch.nn.Module]] = None
+    temperature: float = 1.0
+    conf_thresh: T.Union[float, dict] = 0.0
+    eval_mode_teacher: bool = True  # always True for frozen teacher
+    _teacher: T.Optional[torch.nn.Module] = dc.field(default=None, repr=False, compare=False)
+
+    def get_student_and_teacher(self, trainer):
+        model = trainer.model
+        if self._teacher is None:
+            if isinstance(self.pre_trained_teacher, (str, os.PathLike)):
+                path = self.pre_trained_teacher
+                if isinstance(path, str) and path.startswith('$'):
+                    path = os.environ[path[1:]]
+                teacher = copy.deepcopy(model)
+                params = torch.load(path, map_location='cpu')
+                teacher.load_state_dict(params)
+            elif self.pre_trained_teacher is None:
+                teacher = model  # self-training: student is its own teacher
+            else:
+                teacher = self.pre_trained_teacher
+            teacher.eval()
+            teacher.requires_grad_(False)
+            self._teacher = teacher
+        if self._teacher is not model:
+            # Ensure frozen teacher is on same device as model
+            model_dev = next(model.parameters()).device
+            if next(self._teacher.parameters()).device != model_dev:
+                self._teacher.to(model_dev)
+        return model, self._teacher
+
+    def _get_cons_loss_and_output_to_target(self, attack):
+        from vidlu_irap_gaim.semisup import get_hard_pseudo_labels, update_adaptive_thresholds
+        loss_cons = MultiAttributeCrossEntropyLoss(ignore_index=-1)
+
+        temperature = self.temperature
+        conf_thresh = self.conf_thresh  # can be float or dict
+        adaptive_thresholds = {}  # track per-attribute adaptive thresholds if conf_thresh is dict
+
+        def output_to_target(out_u):
+            nonlocal adaptive_thresholds
+            # Use adaptive thresholds if conf_thresh is a dict; otherwise use fixed value
+            thresh_to_use = adaptive_thresholds if isinstance(conf_thresh, dict) else conf_thresh
+            labels, _ = get_hard_pseudo_labels(out_u, temperature=temperature,
+                                               conf_thresh=thresh_to_use)
+            # Update adaptive thresholds for next iteration if in adaptive mode
+            if isinstance(conf_thresh, dict):
+                adaptive_thresholds = update_adaptive_thresholds(
+                    out_u, adaptive_thresholds, ema_momentum=0.999
+                )
+            return labels
+
+        return loss_cons, output_to_target
+
+
 irap_semisup_common_kwargs = dict(
     eval_step=SupervisedStep(eval=True, amp=True),
     train_step=SemisupConsStep(
@@ -275,9 +424,10 @@ irap_semisup_trainer = TrainerConfig(
     **irap_semisup_common_kwargs,
     extension_fs=[
         partial(SemisupVAT, attack_f=partial(ColorJitterAttack, preset=JITTER_STRONG)),
-        partial(FreezeThenFinetune, frozen_epochs=2),
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
         _make_dynamic_balanced_recall_weights,
         VisualizationExtension,
+        MultiAttributeScorePrinter,
     ],
 )
 
@@ -294,8 +444,122 @@ irap_semisup_trainer_ph20 = TrainerConfig(
                 output_to_target=lambda x: x,
             ),
         ),
-        partial(FreezeThenFinetune, frozen_epochs=2),
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
         _make_dynamic_balanced_recall_weights,
         VisualizationExtension,
+        MultiAttributeScorePrinter,
     ],
+)
+
+irap_semisup_trainer_ph3 = TrainerConfig(
+    **irap_semisup_common_kwargs,
+    extension_fs=[
+        partial(
+            SemisupVAT,
+            attack_f=partial(
+                ph3_attack,
+                step_count=0,
+                loss=multi_attribute_kl_div_ll,
+                output_to_target=lambda x: x,
+            ),
+        ),
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
+        _make_dynamic_balanced_recall_weights,
+        VisualizationExtension,
+        MultiAttributeScorePrinter,
+    ],
+)
+
+
+# =============================================================================
+# Pseudo-Label Self-Training Trainers
+# =============================================================================
+
+irap_pseudo_label_trainer = TrainerConfig(
+    eval_step=SupervisedStep(eval=True, amp=True),
+    train_step=MultiAttributePseudoLabelStep(
+        conf_thresh=0.0,    # override per experiment
+        temperature=1.0,    # override per experiment
+        alpha=1.0,
+        amp=True,
+    ),
+    loss=MultiAttributeCrossEntropyLoss(),
+    optimizer_f=partial(torch.optim.Adam, lr=5e-5, weight_decay=1e-3),
+    epoch_count=epoch_count,
+    batch_size=12,
+    eval_batch_size=32,
+    eval_count=epoch_count,
+    jitter=make_sequence_color_jitter(),
+    extension_fs=[
+        partial(SemisupVAT, attack_f=partial(ColorJitterAttack, preset=JITTER_STRONG)),
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
+        _make_dynamic_balanced_recall_weights,
+        VisualizationExtension,
+        MultiAttributeScorePrinter,
+    ],
+)
+
+irap_pseudo_label_offline_trainer = TrainerConfig(
+    eval_step=SupervisedStep(eval=True, amp=True),
+    train_step=SupervisedStep(amp=True),
+    loss=MultiAttributeCrossEntropyLoss(ignore_index=-1),
+    optimizer_f=partial(torch.optim.Adam, lr=5e-5, weight_decay=1e-3),
+    epoch_count=epoch_count,
+    batch_size=12,
+    eval_batch_size=32,
+    eval_count=epoch_count,
+    jitter=make_sequence_color_jitter(),
+    extension_fs=[
+        partial(FreezeThenFinetune, num_frozen_epochs=2),
+        _make_dynamic_balanced_recall_weights,
+        VisualizationExtension,
+        MultiAttributeScorePrinter,
+    ],
+)
+
+
+# =============================================================================
+# VLM Fine-tuning Trainer
+# =============================================================================
+
+# Import VLM-specific steps (lazy import to avoid loading heavy dependencies)
+def _get_vlm_train_step():
+    from vidlu_irap_gaim.vlm.finetuning.steps import VLMTrainStep
+    return VLMTrainStep(amp=True, gradient_accumulation_steps=4)
+
+
+def _get_vlm_eval_step():
+    from vidlu_irap_gaim.vlm.finetuning.steps import VLMEvalStep
+    return VLMEvalStep(amp=True)
+
+
+def trainable_parameters_optimizer(optimizer_f):
+    @wraps(optimizer_f)
+    def wrapper(params, *args, **kwargs):
+        trainable = [p for p in params if p.requires_grad]
+        if not trainable:
+            raise RuntimeError(
+                "No trainable parameters found. "
+                "Ensure Qwen3VLClassifier.initialize() was called before Trainer creation."
+            )
+        return optimizer_f(trainable, *args, **kwargs)
+    return wrapper
+
+
+# VLM fine-tuning trainer configuration
+# Uses loss as proxy metric during training; full generation eval done separately
+vlm_finetune_trainer = TrainerConfig(
+    train_step=_get_vlm_train_step(),
+    eval_step=_get_vlm_eval_step(),
+    # Loss is computed inside the train_step, not by Trainer
+    loss=lambda out, target, reduction="mean": torch.tensor(0.0),
+    optimizer_f=trainable_parameters_optimizer(partial(torch.optim.AdamW, lr=1e-5, weight_decay=0.1)),
+    epoch_count=3,
+    batch_size=2,
+    eval_batch_size=6,
+    eval_count=3,  # Evaluate every epoch
+    extension_fs=[
+        MultiAttributeScorePrinter,
+    ],
+    
 )
