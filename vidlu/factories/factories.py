@@ -203,7 +203,7 @@ def prepare_dataset(dataset):
 
 
 def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, namespace,
-                                  factory_version=1):
+                                  factory_version=2, prepare_func=prepare_dataset):
     assert factory_version > 1
     datasets = get_data(data_str, datasets_dir, cache_dir, namespace=namespace)
 
@@ -216,7 +216,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, namesp
             datasets[-1], tuple) else [datasets[-1]])
         datasets = dict(zip(names, datasets))
 
-    datasets = {k: prepare_dataset(ds) for k, ds in datasets.items()}
+    datasets = {k: prepare_func(ds) for k, ds in datasets.items()}
     print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
                                        for name, ds in datasets.items()))
     return NameDict(datasets)

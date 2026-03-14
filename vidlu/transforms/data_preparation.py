@@ -14,7 +14,13 @@ def prepare_element(x, key_or_type):
             x = torch.from_numpy(x)
         return x
     if dom is dt.Image:
-        x = vti.hwc_to_chw(vti.to_torch(x)).to(dtype=torch.float) / 255
+        if isinstance(x, torch.Tensor):
+            # Pre-tensorized path: caller must supply CHW float in [0, 1].
+            if x.ndim != 3:
+                raise ValueError(f"Expected 3-D CHW tensor, got shape {x.shape}")
+            x = x.to(dtype=torch.float)
+        else:
+            x = vti.hwc_to_chw(vti.to_torch(x)).to(dtype=torch.float) / 255
     elif dom in (dt.ClassLabel, dt.SegMap):
         if isinstance(x, torch.Tensor):
             x = x.to(torch.int64)
