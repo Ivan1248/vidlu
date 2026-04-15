@@ -153,7 +153,7 @@ def make_bih_data(
     std: T.Sequence[float] = RGB_STD,
     input_dim_rgb: T.Sequence[int] = INPUT_DIM_RGB,
     transforms: T.Mapping[str, T.Callable] | None = None,
-    label_map: T.Mapping[str, T.Sequence[int]] | None = None,
+    #label_map: T.Mapping[str, T.Sequence[int]] | None = None,
     ncontext_segment_id_subset: set[str] | None = None,
     use_ncontext_filter: bool = True,
     seg_to_res_path: str | Path | None = None,
@@ -213,7 +213,7 @@ def make_bih_data(
         data_types=tuple(str(x) for x in data_types),
         mean=tuple(float(x) for x in mean),
         std=tuple(float(x) for x in std),
-        label_map=label_map,
+        #label_map=label_map,
         ncontext_segment_id_subset=ncontext_segment_id_subset,
     )
 

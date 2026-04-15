@@ -182,8 +182,8 @@ def train(args):
 
 
 def get_path(args):
-    e = make_experiment(args, dirs=dirs)
-    print(e.cpman.experiment_dir)
+    a = call_with_assignable_args(TrainingExperimentFactoryArgs, args.__dict__)
+    print(dirs.saved_states / ve.get_experiment_name(a))
 
 
 def test(args):

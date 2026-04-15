@@ -149,6 +149,29 @@ def save_pseudo_labels(
     print(f"Saved pseudo-labels to {output_path}")
 
 
+def run_pipeline(e, output: T.Union[str, Path], conf_thresh: float = 0.0, temperature: float = 1.0) -> None:
+    """Run pseudo-label generation pipeline from a TrainingExperiment.
+
+    Intended to be called as a module hook via run.py:
+        test -r best -m vidlu_irap_gaim.tools.generate_pseudo_labels:run_pipeline,e,output='...',conf_thresh=0.8
+
+    Args:
+        e: TrainingExperiment with model already loaded from best checkpoint.
+        output: Path to save the resulting .npz file.
+        conf_thresh: Confidence threshold; predictions below are masked (-1).
+        temperature: Temperature for softmax scaling.
+    """
+    device = next(e.trainer.model.parameters()).device
+    result = generate_pseudo_labels(
+        model=e.trainer.model,
+        dataset=e.data.train_u,
+        conf_thresh=conf_thresh,
+        temperature=temperature,
+        device=str(device),
+    )
+    save_pseudo_labels(result, output)
+
+
 if __name__ == '__main__':
     import argparse
 

@@ -116,12 +116,13 @@ def _substitute_del_comments(source_code):
 
 
 def memory_tracking(substitute_del_comments=False,
-                    cond=lambda s, *a, **k: bool(int(os.environ.get('VIDLU_MEM_TRACKING', '0')))):
+                    cond=lambda s, *a, **k: bool(int(os.environ.get('VIDLU_MEM_TRACKING', '0'))), verbose=False):
     def memory_tracking_wrapper(func: types.FunctionType):
         transformed_func = transform_func_code(
             func, mem_tracking_plot_template,
             preprocess=_substitute_del_comments if substitute_del_comments else None,
-            additional_namespace=dict(MagicMock=MagicMock, MemoryTracker=MemoryTracker))
+            additional_namespace=dict(MagicMock=MagicMock, MemoryTracker=MemoryTracker), 
+            verbose=verbose)
 
         @functools.wraps(func)
         def wrapper(self, *args, **kwargs):

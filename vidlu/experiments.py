@@ -76,7 +76,8 @@ def to_dhm_str(time):
 def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: int, epoch_count: int,
                    split_name=None, line_width=120,
                    special_format: T.Mapping[str, T.Callable[[str, T.Any], str]] = None,
-                   prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None):
+                   prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None, 
+                   filter=lambda k, v: not k.startswith("_")):
     def fmt(v, scalar_prec=scalar_prec):
         with np.printoptions(precision=array_prec, threshold=4 if is_training else None,
                              linewidth=line_width, floatmode='maxprec_equal', suppress=True):
@@ -112,7 +113,7 @@ def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: in
                 f'{format(epoch + 1, epoch_fmt)}.{format(iter_ % state.batch_count + 1, iter_fmt)}' if is_training else
                 f'{format(epoch + 1, epoch_fmt)} {split_name or "(?)"}')
         # When training, hide metrics with "_" prefix (per-attr metrics kept for eval/MultiAttributeScorePrinter)
-        metrics_to_report = {k: v for k, v in metrics.items() if not (is_training and k.startswith("_"))}
+        metrics_to_report = {k: v for k, v in metrics.items() if filter(k, v)}
         logger.log(f"{prefix}: {make_eval_str(metrics_to_report)}")
         # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
 
@@ -179,7 +180,6 @@ class ProgressMonitor(TrainingCallback):
             self.batch_count = es.batch_count
             report_count = max(1, self.min_train_report_count // self.epoch_count)
             self.report_iters = get_report_iters(report_count, self.batch_count)
-
 
         time_left_training = (1 - es.epoch / es.max_epochs) * (es.max_epochs * self.epoch_time)
         time_left = time_left_training + (1 - es.epoch / es.max_epochs) * (

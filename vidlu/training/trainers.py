@@ -427,7 +427,18 @@ class Trainer(Evaluator):
             if hasattr(attr := getattr(self, k), "state_dict"):
                 attr.load_state_dict(state_dict[k])
         for e in self.extensions:
-            e.load_state_dict(state_dict['extensions'][f"{type(e)}"])
+            try:
+                e.load_state_dict(state_dict['extensions'][f"{type(e).__name__}"])
+            except KeyError:
+                for k, v in state_dict['extensions'].items():
+                    if f"{type(e).__name__}" in k:
+                        e.load_state_dict(v)
+                        break
+                else:
+                    raise KeyError(
+                        f"State dict for extension {type(e).__name__} not found in the provided state dict."
+                    )
+                
 
     def __getattr__(self, key):
         for e in self.extensions:

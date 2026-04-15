@@ -30,11 +30,15 @@ from .metrics import MultiAttributeClassificationMetrics, MultiAttributeAccuracy
 # Training
 from .training import (
     irap_local_rec_trainer,
+    irap_local_rec_trainer_nofreeze,
     irap_local_rec_trainer_multiscale,
     irap_semisup_trainer,
     irap_semisup_trainer_ph3,
+    irap_semisup_trainer_ph3_nofreeze,
     irap_semisup_trainer_ph20,
+    irap_semisup_trainer_ph20_nofreeze,
     irap_pseudo_label_trainer,
+    irap_pseudo_label_trainer_nofreeze,
     irap_pseudo_label_offline_trainer,
     FreezeThenFinetune,
     MultiScaleSupervisedStep,
@@ -44,6 +48,7 @@ from .training import (
     add_attr_idx_to_class_occurrence_counts_to_info_lazily,
     multi_attribute_kl_div_ll,
     make_semisup_bih_data,
+    make_pseudo_labeled_bih_data,
 )
 
 # Sequential enhancement

@@ -89,7 +89,7 @@ class TemplateNodeTransformer(ast.NodeTransformer):
 
 def transform_func_code(func: types.FunctionType, template: T.Callable,
                         preprocess: T.Optional[T.Callable[[str], str]] = None,
-                        additional_namespace: T.Mapping = None):
+                        additional_namespace: T.Mapping = None, verbose=False) -> types.FunctionType:
     if not isinstance(func, types.FunctionType):
         raise TypeError("The type of func is not FunctionType.")
 
@@ -104,7 +104,8 @@ def transform_func_code(func: types.FunctionType, template: T.Callable,
     new_ast = ast.fix_missing_locations(new_ast)
     ast.increment_lineno(new_ast, func.__code__.co_firstlineno - new_ast.body[0].lineno + 1)
 
-    logger.info(ast.unparse(new_ast))
+    if verbose:
+        logger.info(ast.unparse(new_ast))
 
     code = compile(new_ast, filename=func.__code__.co_filename, mode='exec')
     namespace = {**func.__globals__, **(additional_namespace or dict())}

@@ -87,7 +87,7 @@ python run.py train "train,train_u,test:Cifar10{trainval,test}:(*uniform_labels(
 rsync -avzhe ssh --progress pretrained/ igrubisic@treebeard:/home/igrubisic/data/pretrained/
 
 
-# Semi-supervised consistency
+# Semi-supervised consistency (old)
 
 #  CIFAR
 python run.py train "train,train_u,test:Cifar10{trainval,test}:(rotating_labels(d[0])[:4000],d[0],d[1])" id "WRN,backbone_f=t(depth=28,width_factor=2,small_input=True)" "tc.wrn_cifar,tc.semisup_cons_phtps20,batch_size=[128,512],eval_batch_size=640,epoch_count=1000,train_step=ts.SemisupVATTrainStep(consistency_loss_on_labeled=False)"
@@ -100,7 +100,7 @@ python run.py train "train,train_u,test:Cityscapes(downsampling=2){train,val}:(d
 
 python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
-# sup
+# supervised
 CUDA_VISIBLE_DEVICES=0 python run.py train "Cityscapes(downsampling=2){train,val}" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
 
 CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2){train,val}:(d[0].permute(53)[:1448],d[1])" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "tc.swiftnet_cityscapes_halfres,epoch_count=300*2" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
@@ -112,5 +112,6 @@ CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2
 # https://docs.google.com/spreadsheets/d/1Tqydw1Hhvjyflo412UJJ1Y6720sRpCkYUjH3FRvYeLw/edit#gid=851257437
 
 # IRAP
+# Jitter is configured in irap_gaim.irap_local_rec_trainer (dataset transforms remain deterministic).
 
-IRAP_HOME=~/projects/IRAP_HOME/ CUDA_VISIBLE_DEVICES=1 python -m pdb scripts/run.py train "irap_gaim.make_bih_data()" "id" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" -e 2 -r restart
+IRAP_HOME=~/projects/IRAP_HOME/ CUDA_VISIBLE_DEVICES=1 python -m pdb scripts/run.py train "irap_gaim.make_bih_data()" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" -e 2 -r restart

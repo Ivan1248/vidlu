@@ -108,6 +108,41 @@ def make_semisup_bih_data(
     return {"train": train_l, "train_u": train_u, "val": ds["val"], "test": ds["test"]}
 
 
+def make_pseudo_labeled_bih_data(
+    labeled_ratio: float | None = None,
+    labeled_size: int | None = None,
+    pseudo_labels_path: T.Union[str, Path, None] = None,
+    *,
+    seed: int = 42,
+    shuffle: bool = True,
+    **kwargs,
+) -> dict:
+    """Create semi-supervised BiH datasets with offline pseudo-labels on the unlabeled split.
+
+    Args:
+        labeled_ratio: Fraction of training data to use as labeled (0.0-1.0).
+        labeled_size: Number of labeled samples (alternative to labeled_ratio).
+        pseudo_labels_path: Path to .npz file produced by generate_pseudo_labels.
+        seed: Random seed for the labeled/unlabeled split.
+        shuffle: Whether to shuffle before splitting.
+        **kwargs: Passed to make_semisup_bih_data (e.g. metadata_dir).
+
+    Returns:
+        Dict with keys 'train', 'train_u' (pseudo-labeled), 'val', 'test'.
+    """
+    if pseudo_labels_path is None:
+        raise ValueError("pseudo_labels_path must be provided")
+    base = make_semisup_bih_data(
+        labeled_ratio=labeled_ratio,
+        labeled_size=labeled_size,
+        seed=seed,
+        shuffle=shuffle,
+        **kwargs,
+    )
+    base["train_u"] = PseudoLabeledDataset(base["train_u"], pseudo_labels_path)
+    return base
+
+
 def get_hard_pseudo_labels(
     logits_tuple: tuple[torch.Tensor, ...],
     temperature: float = 1.0,

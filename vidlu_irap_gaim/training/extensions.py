@@ -125,29 +125,9 @@ class MultiAttributeScorePrinter(TrainerExtension):
             if not hasattr(state, "metrics"):
                 return
 
-            print("\nEvaluation Results:")
-
-            # Separate scalar metrics from per-attribute metrics
-            scalars = {}
-            per_attr_metrics = {}
-
-            for name, value in state.metrics.items():
-                if isinstance(value, Mapping):
-                    per_attr_metrics[name] = value
-                else:
-                    try:
-                        val = float(value)
-                        scalars[name] = val
-                    except Exception:
-                        pass  # Skip non-scalar/non-dict stuff
-
-            # Print scalars first (Compact One-Lines)
-            if scalars:
-                scalar_str = ", ".join(f"{k}: {v:.4f}" for k, v in sorted(scalars.items()))
-                print(f"Aggregate Metrics: {scalar_str}")
+            per_attr_metrics = {name : value for name, value in state.metrics.items() if isinstance(value, Mapping)}
 
             if not per_attr_metrics:
-                print("\n")
                 return
 
             print("\nPer-Attribute Metrics:")

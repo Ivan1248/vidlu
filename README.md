@@ -26,6 +26,22 @@ cd vidlu
 pip install -r requirements.txt
 ```
 
+**Using uv.**
+You can create a virtual environment and install dependencies with
+
+```sh
+git clone https://github.com/Ivan1248/vidlu.git
+cd vidlu
+uv venv
+uv pip install -r requirements.txt
+```
+
+Then run scripts in that environment with `uv run`, for example:
+
+```sh
+uv run python scripts/run.py -h
+```
+
 **Pip installation.**
 Alternatively, you can install the package with
 

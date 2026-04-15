@@ -51,7 +51,7 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-# Lazy imports to avoid loading heavy dependencies at import time
+DEFAULT_THINKING_BUDGET = 4096
 
 
 @dataclass
@@ -143,8 +143,14 @@ def _create_predictor(
     gpu_memory_utilization: float = 0.80,
     tensor_parallel_size: int | None = None,
     max_model_len: int = 8192,
+    enable_thinking: bool = False,
+    thinking_budget: int = DEFAULT_THINKING_BUDGET,
+    temperature: float = 0.0,
 ):
     """Create a VLM predictor instance.
+
+    Handles auto-detection of thinking models from ``model_id`` and
+    adjustment of ``max_new_tokens`` when thinking is enabled.
 
     Args:
         model_id: HuggingFace model ID.
@@ -154,7 +160,7 @@ def _create_predictor(
         prompt_config: Path to YAML prompt config.
         chunk_size: Max attributes per VLM call.
         min_new_tokens: Minimum tokens to generate.
-        max_new_tokens: Maximum tokens to generate.
+        max_new_tokens: Maximum tokens to generate (answer tokens).
         debug: Enable debug output.
         backend: Backend to use ("auto", "hf", "vllm").
             - "auto": Use vLLM for FP8 models, HF otherwise
@@ -162,18 +168,32 @@ def _create_predictor(
             - "vllm": Force vLLM (required for FP8 models)
         gpu_memory_utilization: GPU memory fraction for vLLM (0.0-1.0).
         tensor_parallel_size: Number of GPUs for vLLM tensor parallelism.
+        enable_thinking: Enable thinking/reasoning mode.  Auto-enabled when
+            the model ID contains "thinking" (case-insensitive).
+        thinking_budget: Extra tokens reserved for thinking on top of
+            ``max_new_tokens``.
 
     Returns:
         A predictor instance with a `predict()` method.
     """
-    from vidlu_irap_gaim.vlm import (
-        Qwen3VLPredictor,
-        Qwen3VLvLLMPredictor,
-    )
+    # Detect thinking model variants used without --enable-thinking
+    if not enable_thinking and "thinking" in model_id.lower():
+        raise ValueError(
+            f"Model '{model_id}' is a thinking variant but --enable-thinking was not set. "
+            "Pass enable_thinking=True (or --enable-thinking on the CLI) to use this model."
+        )
 
-    # Determine backend
+    # Add thinking budget to max_new_tokens
+    if enable_thinking:
+        max_new_tokens += thinking_budget
+        print(f"[INFO] Thinking enabled: effective max_new_tokens = {max_new_tokens}"
+              f" ({max_new_tokens - thinking_budget} answer + {thinking_budget} thinking)")
+
+    # Determine model family
     is_fp8_model = "FP8" in model_id or "fp8" in model_id
     is_qwen3 = "Qwen3" in model_id
+    model_id_lower = model_id.lower()
+    is_gemma4 = "gemma-4" in model_id_lower or "gemma4" in model_id_lower
 
     if backend == "auto":
         if is_fp8_model:
@@ -189,19 +209,36 @@ def _create_predictor(
             backend = "hf"
 
     if backend == "vllm":
-        from vidlu_irap_gaim.vlm import Qwen3VLvLLMPredictor
-
-        return Qwen3VLvLLMPredictor(
-            model_id=model_id,
-            gpu_memory_utilization=gpu_memory_utilization,
-            tensor_parallel_size=tensor_parallel_size,
-            max_model_len=max_model_len,
-            max_new_tokens=max_new_tokens,
-            prompt_config_path=prompt_config,
-            chunk_size=chunk_size,
-            min_new_tokens=min_new_tokens,
-            debug=debug,
-        )
+        if is_gemma4:
+            from vidlu_irap_gaim.vlm import Gemma4VLvLLMPredictor
+            return Gemma4VLvLLMPredictor(
+                model_id=model_id,
+                gpu_memory_utilization=gpu_memory_utilization,
+                tensor_parallel_size=tensor_parallel_size,
+                max_model_len=max_model_len,
+                max_new_tokens=max_new_tokens,
+                prompt_config_path=prompt_config,
+                chunk_size=chunk_size,
+                min_new_tokens=min_new_tokens,
+                debug=debug,
+                enable_thinking=enable_thinking,
+                temperature=temperature,
+            )
+        else:
+            from vidlu_irap_gaim.vlm import Qwen3VLvLLMPredictor
+            return Qwen3VLvLLMPredictor(
+                model_id=model_id,
+                gpu_memory_utilization=gpu_memory_utilization,
+                tensor_parallel_size=tensor_parallel_size,
+                max_model_len=max_model_len,
+                max_new_tokens=max_new_tokens,
+                prompt_config_path=prompt_config,
+                chunk_size=chunk_size,
+                min_new_tokens=min_new_tokens,
+                debug=debug,
+                enable_thinking=enable_thinking,
+                temperature=temperature,
+            )
     else:
         # HuggingFace backend
         if is_fp8_model:
@@ -210,24 +247,42 @@ def _create_predictor(
                 "Consider using --backend vllm"
             )
 
-        if not is_qwen3:
-            raise ValueError(
-                f"Model '{model_id}' is not Qwen3-VL. "
-                "Qwen2.5-VL has been removed. Use a Qwen3-VL model "
-                "(e.g. Qwen/Qwen3-VL-8B-Instruct) or --backend vllm for Qwen3-VL."
+        if is_gemma4:
+            from vidlu_irap_gaim.vlm import Gemma4VLPredictor
+            return Gemma4VLPredictor(
+                model_id=model_id,
+                device=device,
+                torch_dtype=torch_dtype,
+                use_flash_attention=use_flash_attention,
+                prompt_config_path=prompt_config,
+                chunk_size=chunk_size,
+                min_new_tokens=min_new_tokens,
+                max_new_tokens=max_new_tokens,
+                debug=debug,
+                enable_thinking=enable_thinking,
+                temperature=temperature,
             )
-
-        return Qwen3VLPredictor(
-            model_id=model_id,
-            device=device,
-            torch_dtype=torch_dtype,
-            use_flash_attention=use_flash_attention,
-            prompt_config_path=prompt_config,
-            chunk_size=chunk_size,
-            min_new_tokens=min_new_tokens,
-            max_new_tokens=max_new_tokens,
-            debug=debug,
-        )
+        elif is_qwen3:
+            from vidlu_irap_gaim.vlm import Qwen3VLPredictor
+            return Qwen3VLPredictor(
+                model_id=model_id,
+                device=device,
+                torch_dtype=torch_dtype,
+                use_flash_attention=use_flash_attention,
+                prompt_config_path=prompt_config,
+                chunk_size=chunk_size,
+                min_new_tokens=min_new_tokens,
+                max_new_tokens=max_new_tokens,
+                debug=debug,
+                enable_thinking=enable_thinking,
+                temperature=temperature,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported model: '{model_id}'. "
+                "Supported model families: Qwen3-VL (e.g. Qwen/Qwen3-VL-8B-Instruct), "
+                "Gemma 4 (e.g. google/gemma-4-27b-it, google/gemma-4-31B-it)."
+            )
 
 
 def run_evaluation(
@@ -255,13 +310,16 @@ def run_evaluation(
     max_new_tokens: int = 512,
     debug: bool = False,
     interactive: bool = True,
-    print_prompt: bool = False,
+    print_prompt: bool = True,
     # Backend selection
     backend: str = "auto",
     gpu_memory_utilization: float = 0.80,
     tensor_parallel_size: int | None = None,
     max_model_len: int = 8192,
     batch_size: int = 1,
+    enable_thinking: bool = False,
+    thinking_budget: int = DEFAULT_THINKING_BUDGET,
+    temperature: float = 0.0,
 ) -> EvaluationResult:
     """Run VLM evaluation on a dataset.
 
@@ -289,7 +347,7 @@ def run_evaluation(
         max_new_tokens: Maximum tokens to generate per VLM call. Ignored if predictor provided.
         debug: Print detailed prompt/response debugging information.
         interactive: Enable interactive control (type "skip" to stop early). Default True.
-        print_prompt: Print the first prompt sent to the VLM (for debugging).
+        print_prompt: Print the first prompt sent to the VLM.
         backend: Backend for inference ("auto", "hf", "vllm"). Default "auto".
             - "auto": Use vLLM for FP8 models, HF otherwise
             - "hf": Force HuggingFace Transformers
@@ -298,6 +356,7 @@ def run_evaluation(
         tensor_parallel_size: Number of GPUs for vLLM tensor parallelism.
         batch_size: Number of images to process per batch. vLLM benefits from larger
             batches (e.g., 8). Default 1 for sequential compatibility.
+        temperature: Sampling temperature (0.0 = greedy). Ignored if predictor provided.
 
     Returns:
         EvaluationResult with summary statistics.
@@ -374,6 +433,9 @@ def run_evaluation(
             gpu_memory_utilization=gpu_memory_utilization,
             tensor_parallel_size=tensor_parallel_size,
             max_model_len=max_model_len,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+            temperature=temperature,
         )
     else:
         print("Using provided predictor")
@@ -437,7 +499,6 @@ def run_evaluation(
                 attr_to_value_to_class_idx,
                 attrs_to_include=attrs_to_include,
                 detail_level=prompt_detail,
-                output_format=output_format,
             )
 
             # Print the first prompt if requested (once only)
@@ -613,7 +674,10 @@ def main():
         "--model-id",
         type=str,
         default="Qwen/Qwen3-VL-8B-Instruct",
-        help="HuggingFace model ID (default: Qwen/Qwen3-VL-8B-Instruct)",
+        help=(
+            "HuggingFace model ID (default: Qwen/Qwen3-VL-8B-Instruct). "
+            "Also supports Gemma 4: google/gemma-4-27b-it, google/gemma-4-31B-it"
+        ),
     )
     parser.add_argument(
         "--prompt-detail",
@@ -637,9 +701,11 @@ def main():
         ),
     )
     parser.add_argument(
-        "--print-prompt",
-        action="store_true",
-        help="Print the first prompt sent to the VLM (for debugging)",
+        "--no-print-prompt",
+        action="store_false",
+        dest="print_prompt",
+        default=True,
+        help="Suppress printing the first prompt (enabled by default)",
     )
     parser.add_argument(
         "--backend",
@@ -746,6 +812,32 @@ def main():
         default=512,
         help="Maximum tokens to generate per VLM call (default: 512)",
     )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature (0.0 = greedy decoding, default: 0.0)",
+    )
+    parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help=(
+            "Enable thinking/reasoning mode. The model generates a chain-of-thought "
+            "reasoning block before the final answer.  Supported by Gemma 4 (all variants) "
+            "and Qwen3-VL (Instruct and Thinking variants). Adds --thinking-budget extra "
+            "tokens on top of --max-new-tokens. Auto-enabled when the model ID contains "
+            "'thinking' (case-insensitive)."
+        ),
+    )
+    parser.add_argument(
+        "--thinking-budget",
+        type=int,
+        default=DEFAULT_THINKING_BUDGET,
+        help=(
+            f"Extra tokens reserved for thinking on top of --max-new-tokens "
+            f"(default: {DEFAULT_THINKING_BUDGET})"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -783,6 +875,9 @@ def main():
         tensor_parallel_size=args.tensor_parallel_size,
         max_model_len=args.max_model_len,
         batch_size=effective_batch_size,
+        enable_thinking=args.enable_thinking,
+        thinking_budget=args.thinking_budget,
+        temperature=args.temperature,
     )
 
     status = "INTERRUPTED" if result.was_interrupted else "complete"
@@ -819,13 +914,16 @@ def run(
     max_new_tokens: int = 512,
     debug: bool = False,
     interactive: bool = True,
-    print_prompt: bool = False,
+    print_prompt: bool = True,
     # Backend selection
     backend: str = "auto",
     gpu_memory_utilization: float = 0.80,
     tensor_parallel_size: int | None = None,
     max_model_len: int = 8192,
     batch_size: int = 1,
+    enable_thinking: bool = False,
+    thinking_budget: int = DEFAULT_THINKING_BUDGET,
+    temperature: float = 0.0,
 ):
     """Run VLM evaluation using a Vidlu TrainingExperiment's datasets.
 
@@ -857,6 +955,9 @@ def run(
         gpu_memory_utilization: GPU memory fraction for vLLM (0.0-1.0).
         tensor_parallel_size: Number of GPUs for vLLM tensor parallelism.
         batch_size: Number of images to process per batch (default 1, auto-set to 8 for vLLM).
+        enable_thinking: Enable thinking/reasoning mode.
+        thinking_budget: Extra tokens reserved for thinking on top of max_new_tokens.
+        temperature: Sampling temperature (0.0 = greedy).
 
     Returns:
         Dict mapping split names to EvaluationResult.
@@ -903,6 +1004,9 @@ def run(
         gpu_memory_utilization=gpu_memory_utilization,
         tensor_parallel_size=tensor_parallel_size,
         max_model_len=max_model_len,
+        enable_thinking=enable_thinking,
+        thinking_budget=thinking_budget,
+        temperature=temperature,
     )
 
     # Evaluate each split

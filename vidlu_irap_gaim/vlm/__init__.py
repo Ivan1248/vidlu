@@ -9,6 +9,8 @@ from .base import (
 )
 from .qwen3_vl import Qwen3VLPredictor
 from .qwen3_vl_vllm import Qwen3VLvLLMPredictor
+from .gemma4_vl import Gemma4VLPredictor
+from .gemma4_vl_vllm import Gemma4VLvLLMPredictor
 from .prompts import PromptBuilder, DetailLevel
 from .response_scheme import (
     ResponseScheme,
@@ -35,6 +37,8 @@ __all__ = [
     # Predictors
     "Qwen3VLPredictor",
     "Qwen3VLvLLMPredictor",
+    "Gemma4VLPredictor",
+    "Gemma4VLvLLMPredictor",
     # Prompts
     "PromptBuilder",
     "DetailLevel",

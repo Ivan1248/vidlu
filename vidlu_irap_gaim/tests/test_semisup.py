@@ -1,7 +1,14 @@
 import torch
 from unittest.mock import patch
+import numpy as np
+import tempfile, os
 
-from vidlu_irap_gaim.training.semisup import multi_attribute_kl_div_ll, make_semisup_bih_data
+from vidlu_irap_gaim.training.semisup import (
+    multi_attribute_kl_div_ll,
+    make_semisup_bih_data,
+    make_pseudo_labeled_bih_data,
+    PseudoLabeledDataset,
+)
 from vidlu.data import Dataset
 
 
@@ -44,7 +51,7 @@ def test_make_semisup_bih_data_splitting():
     # Mock make_bih_data to return a dummy dataset
     mock_ds = {"train": MockDataset(100), "val": MockDataset(10), "test": MockDataset(10)}
 
-    with patch("vidlu_irap_gaim.semisup.make_bih_data", return_value=mock_ds):
+    with patch("vidlu_irap_gaim.training.semisup.make_bih_data", return_value=mock_ds):
         # 10% labeled -> 10 labeled, 90 unlabeled
         data = make_semisup_bih_data(labeled_ratio=0.1, seed=42)
 
@@ -68,7 +75,7 @@ def test_make_semisup_bih_data_no_shuffle():
     # Test that shuffle=False takes the first portion without shuffling
     mock_ds = {"train": MockDataset(100), "val": MockDataset(10), "test": MockDataset(10)}
 
-    with patch("vidlu_irap_gaim.semisup.make_bih_data", return_value=mock_ds):
+    with patch("vidlu_irap_gaim.training.semisup.make_bih_data", return_value=mock_ds):
         # 10% labeled without shuffling -> first 10 samples
         data = make_semisup_bih_data(labeled_ratio=0.1, shuffle=False)
 
@@ -80,3 +87,44 @@ def test_make_semisup_bih_data_no_shuffle():
         # Without shuffling, labeled should be first 10 indices (0-9)
         l_indices = list(train_l)
         assert l_indices == list(range(10))
+
+
+class MockRecordDataset(Dataset):
+    """MockDataset that returns dict items (compatible with Record wrapping)."""
+
+    def __init__(self, length=100):
+        super().__init__()
+        self._length = length
+        self.info = {"name": "mock"}
+
+    def __len__(self):
+        return self._length
+
+    def __getitem__(self, idx):
+        return {"x": idx}
+
+
+def test_make_pseudo_labeled_bih_data():
+    mock_ds = {"train": MockRecordDataset(100), "val": MockRecordDataset(10), "test": MockRecordDataset(10)}
+    # Write a tiny .npz with 90 pseudo-labels (unlabeled portion = 90)
+    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
+        npz_path = f.name
+    try:
+        np.savez_compressed(npz_path, labels=np.zeros((90, 2), dtype=np.int16))
+        with patch("vidlu_irap_gaim.training.semisup.make_bih_data", return_value=mock_ds):
+            data = make_pseudo_labeled_bih_data(
+                labeled_ratio=0.1, pseudo_labels_path=npz_path, seed=42
+            )
+        assert "train" in data
+        assert "train_u" in data
+        assert "val" in data
+        assert "test" in data
+        assert len(data["train"]) == 10
+        assert len(data["train_u"]) == 90
+        assert isinstance(data["train_u"], PseudoLabeledDataset)
+        # Verify __getitem__ works end-to-end (Record wrapping)
+        item = data["train_u"][0]
+        assert hasattr(item, "target")
+        assert item.target.shape == (2,)
+    finally:
+        os.unlink(npz_path)

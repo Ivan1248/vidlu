@@ -234,8 +234,8 @@ class JsonResponseScheme(ResponseScheme):
 RESPONSE FORMAT (JSON):
 - Return ONLY a JSON object.
 - Use the exact attribute names from the list above as keys.
-- Use exact values from the valid options for each key.
-- No extra text, no markdown.
+- Use EXACT values from the valid options for each key.
+- No extra text, no JSON, no markdown, no LaTeX.
 - Incomplete example:
 {
   "Area type": "Urban",
@@ -282,8 +282,8 @@ class StandardResponseScheme(ResponseScheme):
 RESPONSE FORMAT:
 - Return ONLY numbered lines, one per attribute: NUMBER: VALUE
 - Use the exact attribute number from the list above.
-- Use exact values from the valid options.
-- No extra text, no JSON, no markdown.
+- Use EXACT values from the valid options.
+- No extra text, no JSON, no markdown, no LaTeX.
 - Incomplete example:
 1: None
 2: Urban
@@ -329,7 +329,7 @@ RESPONSE FORMAT (INDEXED):
 - Return ONLY numbered lines, one per attribute: NUMBER: INDEX
 - Use the exact attribute number from the list above.
 - INDEX is the integer shown before "=" in the valid values list.
-- No extra text, no JSON, no markdown.
+- No extra text, no JSON, no markdown, no LaTeX.
 - Incomplete example:
 1: 0
 2: 3
@@ -439,7 +439,7 @@ class SparseResponseSchemeBase(ResponseScheme):
         value_instruction = (
             'INDEX is the integer shown before "=" in the valid values list.'
             if self.USE_VALUE_INDICES
-            else "Use exact values from the valid options."
+            else "Use EXACT values from the valid options."
         )
         example = "2: 3\n5: 1" if self.USE_VALUE_INDICES else "2: Urban\n5: Present"
         return f"""\
@@ -447,7 +447,7 @@ RESPONSE FORMAT ({format_name}):
 - Return ONLY numbered lines, one per non-default attribute: NUMBER: {value_or_index}
 - Use the exact attribute number from the list above.
 - {value_instruction}
-- No extra text, no JSON, no markdown.
+- No extra text, no JSON, no markdown, no LaTeX.
 - {default_phrase}
 - If ALL attributes are default, respond with exactly: All default
 - Incomplete example:

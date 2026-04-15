@@ -184,6 +184,39 @@ irap_pseudo_label_trainer = TrainerConfig(
     ],
 )
 
+irap_local_rec_trainer_nofreeze = TrainerConfig(
+    **{k: v for k, v in irap_local_rec_trainer.items() if k != 'extension_fs'},
+    extension_fs=[
+        ext for ext in irap_local_rec_trainer['extension_fs']
+        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
+    ],
+)
+
+irap_semisup_trainer_ph3_nofreeze = TrainerConfig(
+    **{k: v for k, v in irap_semisup_trainer_ph3.items() if k != 'extension_fs'},
+    extension_fs=[
+        ext for ext in irap_semisup_trainer_ph3['extension_fs']
+        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
+    ],
+)
+
+irap_semisup_trainer_ph20_nofreeze = TrainerConfig(
+    **{k: v for k, v in irap_semisup_trainer_ph20.items() if k != 'extension_fs'},
+    extension_fs=[
+        ext for ext in irap_semisup_trainer_ph20['extension_fs']
+        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
+    ],
+)
+
+irap_pseudo_label_trainer_nofreeze = TrainerConfig(
+    **{k: v for k, v in irap_pseudo_label_trainer.items() if k != 'extension_fs'},
+    extension_fs=[
+        ext for ext in irap_pseudo_label_trainer['extension_fs']
+        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
+    ],
+)
+
+
 irap_pseudo_label_offline_trainer = TrainerConfig(
     eval_step=SupervisedStep(eval=True, amp=True),
     train_step=SupervisedStep(amp=True),

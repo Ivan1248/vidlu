@@ -2,6 +2,7 @@
 Base class and utilities for zero-shot VLM road attribute predictors.
 """
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,31 @@ from PIL import Image
 from .prompts import DEFAULT_DETAIL_LEVEL, DetailLevel
 from .response_scheme import ResponseScheme, make_response_scheme
 from .response_parser import AttributePrediction
+
+# Regex patterns for stripping thinking blocks from model responses.
+# Qwen3: <think>...</think>
+_QWEN_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+# Gemma 4: <|channel>thought\n...\n<channel|>
+_GEMMA_THINK_RE = re.compile(r"<\|channel>thought\n.*?\n<channel\|>", re.DOTALL)
+
+
+def strip_thinking(raw_response: str) -> tuple[str, str | None]:
+    """Remove thinking/reasoning blocks from a VLM response.
+
+    Handles both Qwen3 (``<think>...</think>``) and Gemma 4
+    (``<|channel>thought\\n...\\n<channel|>``) formats.
+
+    Returns:
+        Tuple of (clean_response, thinking_text).  *thinking_text* is None
+        when no thinking block was found.
+    """
+    for pattern in (_QWEN_THINK_RE, _GEMMA_THINK_RE):
+        match = pattern.search(raw_response)
+        if match:
+            thinking_text = match.group(0)
+            clean = raw_response[:match.start()] + raw_response[match.end():]
+            return clean.strip(), thinking_text
+    return raw_response, None
 
 
 @dataclass
@@ -111,6 +137,8 @@ class BaseVLMPredictor(ABC):
         chunk_size: int = 10,
         min_new_tokens: int = 0,
         debug: bool = False,
+        enable_thinking: bool = False,
+        temperature: float = 0.0,
     ):
         self.model_id = model_id
         self.max_new_tokens = max_new_tokens
@@ -118,6 +146,8 @@ class BaseVLMPredictor(ABC):
         self.chunk_size = chunk_size
         self.min_new_tokens = int(min_new_tokens)
         self.debug = debug
+        self.enable_thinking = enable_thinking
+        self.temperature = temperature
 
         self._response_scheme: ResponseScheme | None = response_scheme
 

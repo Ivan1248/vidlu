@@ -55,6 +55,27 @@ class TestRecord:
         r5.evaluate()
         assert str(r5) == "Record(a=2, b=3, c=6, d=3)"
 
+    def test_record_contains_raises(self):
+        r = Record(a=1, b=2)
+        with pytest.raises(TypeError):
+            _ = 'a' in r
+        with pytest.raises(TypeError):
+            _ = 1 in r
+        # Explicit key/value membership works
+        assert 'a' in r.keys()
+        assert 'z' not in r.keys()
+        assert 1 in r.values()
+        assert 99 not in r.values()
+
+    def test_record_reversed(self):
+        r = Record(a=1, b=2, c=3)
+        assert list(reversed(r)) == [3, 2, 1]
+
+    def test_record_not_sequence(self):
+        import typing as T
+        r = Record(a=1)
+        assert not isinstance(r, T.Sequence)
+
 
 class TestDataset:
     def test_dataset_length(self):
