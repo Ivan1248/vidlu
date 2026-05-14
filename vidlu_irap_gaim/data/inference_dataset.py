@@ -1,14 +1,13 @@
-import math
 import typing as T
 from pathlib import Path
 
 import numpy as np
 import torch
-from torchvision.transforms import transforms as T_trans
 
 from vidlu.data import Dataset, Record
 
-from .constants import RGB_MEAN, RGB_STD, INPUT_DIM_RGB, _load_image_cv2
+from .constants import RGB_MEAN, RGB_STD, INPUT_DIM_RGB
+from .image_utils import load_image_cv2, rgb_to_chw_tensor
 
 
 class InferenceImageDataset(Dataset):
@@ -71,14 +70,6 @@ class InferenceImageDataset(Dataset):
 
         self.all_image_paths = all_image_paths
 
-        # Build transform: preserve aspect ratio (no stretching).
-        #
-        # We do a "resize-to-cover + center-crop" to match the fixed model input size while
-        # avoiding geometric distortion:
-        #   scale = max(target_w / w, target_h / h)
-        #   resize(w*scale, h*scale) then center-crop to (target_h, target_w)
-        self._to_tensor = T_trans.ToTensor()  # [0, 1]
-
         super().__init__(
             subset="inference",
             info=Record(
@@ -98,58 +89,18 @@ class InferenceImageDataset(Dataset):
         return len(self.valid_indices)
 
     def get_example(self, idx: int) -> Record:
-        # Map dataset index to actual image index
         img_idx = self.valid_indices[idx]
         path = self.all_image_paths[img_idx]
 
-        # Use keyword-only parameters (after *) to ensure positional_param_count returns 0
-        # This prevents LazyItem from passing the record as an argument
-        def load_rgb(
-            *,
-            img_idx=img_idx,
-            context_sequence=self.context_sequence,
-            all_paths=self.all_image_paths,
-            input_size=self.input_size,
-            to_tensor=self._to_tensor,
-        ):
-            """Lazy-load and preprocess RGB sequence."""
-            target_w, target_h = input_size
-
-            def preprocess_rgb_np(rgb_np: np.ndarray, img_path) -> torch.Tensor:
-                from PIL import Image
-
-                pil = Image.fromarray(rgb_np)
-                w, h = pil.size
-                if w <= 0 or h <= 0:
-                    raise ValueError(f"Invalid image size: {(w, h)} for {img_path}")
-
-                scale = max(target_w / w, target_h / h)
-                new_w = max(target_w, int(math.ceil(w * scale)))
-                new_h = max(target_h, int(math.ceil(h * scale)))
-                if (new_w, new_h) != (w, h):
-                    pil = pil.resize((new_w, new_h), resample=Image.Resampling.LANCZOS)
-
-                left = max(0, (new_w - target_w) // 2)
-                top = max(0, (new_h - target_h) // 2)
-                pil = pil.crop((left, top, left + target_w, top + target_h))
-
-                return to_tensor(pil)
-
-            frames = []
-            for offset in context_sequence:
-                ctx_idx = img_idx + offset
-                ctx_path = all_paths[ctx_idx]
-                img = _load_image_cv2(str(ctx_path))
-                img_t = preprocess_rgb_np(img, ctx_path)
-                frames.append(img_t)
-
+        def load_rgb() -> torch.Tensor:
+            frames = [
+                rgb_to_chw_tensor(load_image_cv2(str(self.all_image_paths[img_idx + offset])),
+                                  self.input_size)
+                for offset in self.context_sequence
+            ]
             return torch.stack(frames, dim=0)
 
-        return Record(
-            rgb_=load_rgb,  # "_" suffix for lazy evaluation
-            segment_id=path.stem,
-            # No 'target' key - unlabeled
-        )
+        return Record(rgb_=load_rgb, segment_id=path.stem)
 
     @classmethod
     def from_folder(

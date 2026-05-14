@@ -1,19 +1,24 @@
 import json
 import os
 import pickle
-import warnings
 from pathlib import Path
 import typing as T
 
 import numpy as np
 import torch
 from tqdm import tqdm
-from torchvision.transforms import transforms as T_trans
 
 from vidlu.data import Dataset, Record
 from vidlu.data.datasets.datasets import _check_subset
 
-from .constants import RGB_MEAN, RGB_STD, INPUT_DIM_RGB, _load_image_cv2
+from .constants import (
+    RGB_MEAN,
+    RGB_STD,
+    INPUT_DIM_RGB,
+    IGNORE_LABEL_INDEX,
+    MetaFiles,
+)
+from .image_utils import load_image_cv2, rgb_to_chw_tensor
 
 
 def resolve_irap_paths(
@@ -33,15 +38,19 @@ def resolve_irap_paths(
     Raises:
         RuntimeError: If irap_home cannot be resolved.
     """
-    env_home = None
-    if metadata_dir is None or dataset_dir is None:
+    if dataset_dir is None or metadata_dir is None:
         env_home = os.environ.get("IRAP_HOME", None)
         if env_home is None:
-            raise RuntimeError("Cannot resolve irap_home: provide irap_home parameter or set IRAP_HOME env var.")
+            raise RuntimeError(
+                "Cannot resolve IRAP paths: pass both dataset_dir and metadata_dir, "
+                "or set IRAP_HOME env var."
+            )
         irap_home = Path(env_home)
-    md_dir = irap_home / "IRAP_BIH_METADATA" if env_home is not None else Path(metadata_dir)
-    ds_dir = irap_home / "IRAP_BIH" if env_home is not None else Path(dataset_dir)
-    return ds_dir, md_dir
+        if dataset_dir is None:
+            dataset_dir = irap_home / "IRAP_BIH"
+        if metadata_dir is None:
+            metadata_dir = irap_home / "IRAP_BIH_METADATA"
+    return Path(dataset_dir), Path(metadata_dir)
 
 
 def load_ncontext_segment_ids(
@@ -186,28 +195,19 @@ def make_bih_data(
     if use_ncontext_filter and ncontext_segment_id_subset is None:
         if seg_to_res_path is None:
             seg_to_res_path = md_dir / "seg_to_res"
-        road_seq_path = md_dir / "road_id_to_segment_id_sequence.json"
+        road_seq_path = md_dir / MetaFiles.ROAD_ID_TO_SEGMENT_ID_SEQUENCE
         ncontext_segment_id_subset = load_ncontext_segment_ids(seg_to_res_path, road_seq_path)
 
     if transforms is None:
-        # Build default transforms similar to original
-        def build_rgb_transform(train: bool):
+        target_wh = (int(input_dim_rgb[0]), int(input_dim_rgb[1]))
+        per_kind: dict[str, T.Callable] = {}
+        if "rgb" in data_types:
             # Photometric jittering is handled in TrainerConfig; keep loading deterministic here.
-            ops = [
-                T_trans.ToPILImage(),
-                T_trans.CenterCrop((int(input_dim_rgb[1]), int(input_dim_rgb[0]))),
-                T_trans.ToTensor(),  # leave in [0,1]; normalization handled by input adapter
-            ]
-            return T_trans.Compose(ops)
-
-        def build_depth_transform():
-            return T_trans.Compose([T_trans.ToPILImage(), T_trans.ToTensor()])
-
-        transforms = dict(
-            train=dict(rgb=build_rgb_transform(True), depth=build_depth_transform()),
-            val=dict(rgb=build_rgb_transform(False), depth=build_depth_transform()),
-            test=dict(rgb=build_rgb_transform(False), depth=build_depth_transform()),
-        )
+            per_kind["rgb"] = lambda img, _twh=target_wh: rgb_to_chw_tensor(img, _twh)
+        if "depth" in data_types:
+            from torchvision.transforms import transforms as T_trans
+            per_kind["depth"] = T_trans.Compose([T_trans.ToPILImage(), T_trans.ToTensor()])
+        transforms = {split: per_kind for split in BihSequence.subsets}
 
     ds_kwargs = dict(
         context_sequence=tuple(context_sequence),
@@ -227,8 +227,20 @@ def make_bih_data(
             transforms=transforms.get(split) if isinstance(transforms, dict) else transforms,
             **ds_kwargs,
         )
-        for split in ["train", "val", "test"]
+        for split in BihSequence.subsets
     }
+
+
+def get_class_counts(metadata_dir: str | Path | None = None) -> tuple[int, ...]:
+    """Number of classes per attribute, read directly from metadata.
+
+    Lightweight: only loads ``attribute_metadata.json``. Useful in model
+    factory expressions where constructing a dataset just to read
+    ``info.class_counts`` would be wasteful.
+    """
+    _, metadata_dir = resolve_irap_paths(metadata_dir=metadata_dir)
+    ordered_attrs, attribute_value_to_irap = load_attribute_metadata(metadata_dir=metadata_dir)
+    return tuple(len(attribute_value_to_irap[attr]) for attr in ordered_attrs)
 
 
 def load_attribute_metadata(
@@ -243,7 +255,7 @@ def load_attribute_metadata(
         ordered_attrs: Attribute names ordered by their index in the metadata.
         attribute_value_to_irap: Mapping attr -> {value -> irap_number}.
     """
-    with open(metadata_dir / "attribute_metadata.json", "r") as f:
+    with open(metadata_dir / MetaFiles.ATTRIBUTE_METADATA, "r") as f:
         attr_meta = json.load(f)
 
     idx_to_attribute = {v: k for k, v in attr_meta["attribute_to_idx"].items()}
@@ -251,23 +263,6 @@ def load_attribute_metadata(
 
     attribute_value_to_irap_number = attr_meta["attribute_value_to_irap_number"]
     return ordered_attrs, attribute_value_to_irap_number
-
-
-def get_class_counts(
-    metadata_dir: str | Path = None,
-) -> tuple[int, ...]:
-    """Get the number of classes for each attribute.
-
-    Args:
-        metadata_dir: Metadata directory.
-
-    Returns:
-        Tuple of class counts, one per attribute.
-    """
-    warnings.warn("get_class_counts is deprecated. Use Dataset.info.attr_to_class_count instead")
-    _, metadata_dir = resolve_irap_paths(metadata_dir=metadata_dir)
-    ordered_attrs, attribute_value_to_irap = load_attribute_metadata(metadata_dir=metadata_dir)
-    return tuple(len(attribute_value_to_irap[attr]) for attr in ordered_attrs)
 
 
 class BihSequence(Dataset):
@@ -317,9 +312,9 @@ class BihSequence(Dataset):
         self.context_sequence = list(context_sequence)
         self.data_types = set(data_types)
 
-        with open(self.metadata_dir / "splits.json", "r") as f:
+        with open(self.metadata_dir / MetaFiles.SPLITS, "r") as f:
             all_splits = json.load(f)
-        with open(self.metadata_dir / "segment_id_to_data_paths_rel.json", "r") as f:
+        with open(self.metadata_dir / MetaFiles.SEGMENT_ID_TO_DATA_PATHS, "r") as f:
             seg_to_paths_rel = json.load(f)
         self.seg_to_paths = {
             sid: {k: (None if v == "NONE" else (self.root / v)) for k, v in d.items()}
@@ -357,13 +352,12 @@ class BihSequence(Dataset):
         # Additionally, we replicate DatasetWrapper._remove_filtered_out_segments:
         # segments for which the mapping changes the value (value != new_value)
         # are discarded entirely.
-        with open(self.metadata_dir / "segment_id_to_road_data.json", "r") as f:
+        with open(self.metadata_dir / MetaFiles.SEGMENT_ID_TO_ROAD_DATA, "r") as f:
             seg_to_road = json.load(f)
         # When `allow_missing_attributes` is True, missing or unmappable codes become
-        # class index -1 (PyTorch's standard ignore_index for cross-entropy). This is
-        # needed for datasets where some attribute columns are universally empty
+        # IGNORE_LABEL_INDEX (PyTorch's standard ignore_index for cross-entropy). This
+        # is needed for datasets where some attribute columns are universally empty
         # (e.g. IRAP-Vietnam's flow attributes), so segments aren't all dropped.
-        MISSING = -1
         lm = {}
         for sid in tqdm(subset_ids, desc="Building label_map"):
             attrs_irap = seg_to_road.get(sid, {}).get("required_attributes", {})
@@ -373,14 +367,14 @@ class BihSequence(Dataset):
                 irap_code = attrs_irap.get(attr)
                 if irap_code is None:
                     if allow_missing_attributes:
-                        labels.append(MISSING)
+                        labels.append(IGNORE_LABEL_INDEX)
                         continue
                     ok = False
                     break
                 value = attr_irap_to_value[attr].get(irap_code, None)
                 if value is None:
                     if allow_missing_attributes:
-                        labels.append(MISSING)
+                        labels.append(IGNORE_LABEL_INDEX)
                         continue
                     ok = False
                     break
@@ -395,7 +389,7 @@ class BihSequence(Dataset):
         # Load road sequence mapping BEFORE context filtering (needed for validation)
         # The file is optional: if it does not exist, we proceed without road sequences.
         try:
-            with open(self.metadata_dir / "road_id_to_segment_id_sequence.json", "r") as f:
+            with open(self.metadata_dir / MetaFiles.ROAD_ID_TO_SEGMENT_ID_SEQUENCE, "r") as f:
                 self.road_to_seq = json.load(f)
         except FileNotFoundError:
             self.road_to_seq = {}
@@ -466,33 +460,21 @@ class BihSequence(Dataset):
     def __len__(self) -> int:
         return len(self.segment_ids)
 
-    def _load_sequence(self, seq_ids: T.Sequence[str], kind: str) -> np.ndarray:
-        frames = []
+    def _load_sequence(self, seq_ids: T.Sequence[str], kind: str) -> torch.Tensor:
         tfm = self.transforms.get(kind)
+        frames: list[torch.Tensor] = []
         for sid in seq_ids:
             p = self.seg_to_paths[sid].get(kind)
             if p is None:
                 continue
-            arr = _load_image_cv2(str(p))
-            if tfm is not None:
-                arr = tfm(arr)
-            # Convert to CHW float32 numpy in [0,1]
-            if hasattr(arr, "numpy") and isinstance(arr, torch.Tensor):
-                a = arr.detach().cpu().numpy()
-            elif isinstance(arr, np.ndarray):
-                # assume HWC uint8 -> convert to float32 CHW
-                if arr.ndim == 3 and arr.shape[2] in (1, 3):
-                    a = arr.transpose(2, 0, 1).astype(np.float32) / 255.0
-                else:
-                    a = arr.astype(np.float32)
-            else:
-                # PIL.Image
-                a = np.asarray(arr).transpose(2, 0, 1).astype(np.float32) / 255.0
-            frames.append(a)
+            arr = load_image_cv2(str(p))
+            t = tfm(arr) if tfm is not None else rgb_to_chw_tensor(arr, (arr.shape[1], arr.shape[0]))
+            if not isinstance(t, torch.Tensor):
+                t = torch.as_tensor(np.asarray(t))
+            frames.append(t.float())
         if not frames:
-            return np.zeros((0,))
-        x = np.stack(frames, axis=0)
-        return x
+            return torch.empty(0)
+        return torch.stack(frames, dim=0)
 
     def get_example(self, idx: int) -> Record:
         sid = self.segment_ids[idx]
@@ -509,14 +491,7 @@ class BihSequence(Dataset):
 
         # RGB sequence as a tensor (lazy-loaded to avoid IO when only labels are needed)
         if "rgb" in self.data_types:
-            # Use keyword-only parameter (after *) to ensure positional_param_count returns 0
-            # This prevents LazyItem from passing the record as an argument
-            def load_rgb(*, ctx_ids=context_ids):
-                seq = self._load_sequence(ctx_ids, "rgb")
-                if isinstance(seq, np.ndarray):
-                    seq = torch.from_numpy(seq).float()
-                return seq
-            items.append(("rgb_", load_rgb))  # "_" suffix for lazy evaluation
+            items.append(("rgb_", lambda: self._load_sequence(context_ids, "rgb")))
 
         # Labels are small, can be loaded directly – this will be `y`
         if sid in self.segment_id_to_labels:

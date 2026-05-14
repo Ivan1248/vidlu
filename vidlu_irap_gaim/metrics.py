@@ -265,10 +265,10 @@ def get_irap_metrics(
     Returns:
         Tuple of (MultiAttributeClassificationMetrics, MultiAttributeAccuracy) configured with attrs_idx.
     """
-    from .attrs import get_attrs_to_include, map_attr_names_to_indices
+    from .data.attrs import get_attrs_to_include, map_attr_names_to_indices
 
     if dataset is None:
-        from .datasets import make_bih_data
+        from .data import make_bih_data
 
         dataset = make_bih_data()["train"]
 
