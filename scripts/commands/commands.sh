@@ -114,4 +114,17 @@ CUDA_VISIBLE_DEVICES=0 python run.py train "train,test:Cityscapes(downsampling=2
 # IRAP
 # Jitter is configured in irap_gaim.irap_local_rec_trainer (dataset transforms remain deterministic).
 
-IRAP_HOME=~/projects/IRAP_HOME/ CUDA_VISIBLE_DEVICES=1 python -m pdb scripts/run.py train "irap_gaim.make_bih_data()" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" -e 2 -r restart
+IRAP_HOME=~/projects/irap_home CUDA_VISIBLE_DEVICES=1 python -m pdb scripts/run.py train "irap_gaim.make_bih_data()" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])" -e 2 -r restart
+
+# IRAP context comparison: [-4,-1,0] vs [-1,0] vs [0]
+# context_sequence=(0,-1,-4) is the default; (0,-1) drops -40min; (0,) is current frame only.
+# sequence_length must match len(context_sequence). Metrics use matching context for consistent class distribution.
+
+## 3-frame baseline [-4, -1, 0] (default context_sequence)
+CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_bih_data()" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])"
+
+## 2-frame [-1, 0]
+CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_bih_data(context_sequence=(0,-1))" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=2,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data(context_sequence=(0,-1))['train'])"
+
+## 1-frame [0]
+CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home python scripts/run.py train "irap_gaim.make_bih_data(context_sequence=(0,))" "standardize" "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=1,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" "irap_gaim.irap_local_rec_trainer" --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" --metrics "irap_gaim.get_irap_metrics(irap_gaim.make_bih_data(context_sequence=(0,))['train'])"

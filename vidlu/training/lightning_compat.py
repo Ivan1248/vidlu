@@ -5,6 +5,7 @@ import torch
 
 from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.collections import NameDict
+from vidlu.training.trainers import Trainer
 
 
 def to_lightning_trainer(trainer):
@@ -134,7 +135,6 @@ def from_lightning_trainer(lightning_module, *, epoch_count=1, batch_size=1, eva
             return torch.zeros((), device=out.device)
         return torch.zeros(())
 
-    from vidlu.training.trainers import Trainer
     return Trainer(
         model=lm,
         loss=_dummy_loss,

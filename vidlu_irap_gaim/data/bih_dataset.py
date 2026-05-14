@@ -157,6 +157,7 @@ def make_bih_data(
     ncontext_segment_id_subset: set[str] | None = None,
     use_ncontext_filter: bool = True,
     seg_to_res_path: str | Path | None = None,
+    allow_missing_attributes: bool = False,
 ):
     """Build BiH datasets with IRAP GAIM configuration.
 
@@ -215,12 +216,14 @@ def make_bih_data(
         std=tuple(float(x) for x in std),
         #label_map=label_map,
         ncontext_segment_id_subset=ncontext_segment_id_subset,
+        allow_missing_attributes=allow_missing_attributes,
     )
 
     return {
         split: BihSequence(
             ds_dir,
             split,
+            metadata_dir=md_dir,
             transforms=transforms.get(split) if isinstance(transforms, dict) else transforms,
             **ds_kwargs,
         )
@@ -293,19 +296,24 @@ class BihSequence(Dataset):
         root: T.Union[str, Path],
         subset: str = "train",
         *,
+        metadata_dir: T.Union[str, Path, None] = None,
         context_sequence: T.Sequence[int] = (0, -1, -4),
         data_types: T.Sequence[str] = ("rgb",),
         mean: T.Sequence[float] = (0.53354913, 0.52727484, 0.48752149),
         std: T.Sequence[float] = (0.20401913, 0.20417478, 0.25402164),
         transforms: T.Mapping[str, T.Callable] | None = None,
         ncontext_segment_id_subset: set[str] | None = None,
+        allow_missing_attributes: bool = False,
     ) -> None:
         _check_subset(self.__class__, subset)
         # unused attributes
         self.transforms = transforms or {}
 
         self.root = Path(root)
-        self.metadata_dir = self.root.parent / (self.root.name + "_METADATA")
+        self.metadata_dir = (
+            Path(metadata_dir) if metadata_dir is not None
+            else self.root.parent / (self.root.name + "_METADATA")
+        )
         self.context_sequence = list(context_sequence)
         self.data_types = set(data_types)
 
@@ -342,7 +350,6 @@ class BihSequence(Dataset):
             for attr in ordered_attrs
         }
         # Store attribute information directly from metadata computation
-        attribute_names = list(ordered_attrs)
         class_counts = tuple(len(attr_to_value_to_irap_number[attr]) for attr in ordered_attrs)
 
         # Build labels for ALL segments in subset_ids (before context filtering)
@@ -352,6 +359,11 @@ class BihSequence(Dataset):
         # are discarded entirely.
         with open(self.metadata_dir / "segment_id_to_road_data.json", "r") as f:
             seg_to_road = json.load(f)
+        # When `allow_missing_attributes` is True, missing or unmappable codes become
+        # class index -1 (PyTorch's standard ignore_index for cross-entropy). This is
+        # needed for datasets where some attribute columns are universally empty
+        # (e.g. IRAP-Vietnam's flow attributes), so segments aren't all dropped.
+        MISSING = -1
         lm = {}
         for sid in tqdm(subset_ids, desc="Building label_map"):
             attrs_irap = seg_to_road.get(sid, {}).get("required_attributes", {})
@@ -360,14 +372,18 @@ class BihSequence(Dataset):
             for attr in ordered_attrs:
                 irap_code = attrs_irap.get(attr)
                 if irap_code is None:
+                    if allow_missing_attributes:
+                        labels.append(MISSING)
+                        continue
                     ok = False
                     break
-                # Canonical value from IRAP code
                 value = attr_irap_to_value[attr].get(irap_code, None)
                 if value is None:
+                    if allow_missing_attributes:
+                        labels.append(MISSING)
+                        continue
                     ok = False
                     break
-                # If mapping changes the value, drop the segment (matches original)
                 labels.append(attr_to_value_to_class_idx[attr][value])
             if ok:
                 lm[sid] = labels

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 import numpy as np
 
-from vidlu_irap_gaim.vlm.qwen3_vl import Qwen3VLPredictor
+from vidlu_irap_gaim.vlm.models.qwen3_vl import Qwen3VLPredictor
 from vidlu_irap_gaim.vlm.response_parser import AttributePrediction
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def test_qwen3_predictor_instantiation():
     assert predictor._model is None
     assert predictor._processor is None
 
-@patch("vidlu_irap_gaim.vlm.qwen3_vl.Qwen3VLPredictor._generate_single")
+@patch("vidlu_irap_gaim.vlm.models.qwen3_vl.Qwen3VLPredictor._generate_single")
 def test_qwen3_predictor_predict_basic(mock_generate, mock_transformers, sample_metadata):
     """Verify the predict method works with mocked generation."""
     mock_model, mock_processor = mock_transformers

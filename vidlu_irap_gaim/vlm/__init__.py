@@ -2,15 +2,15 @@
 VLM (Vision-Language Model) integration for zero-shot road attribute classification.
 """
 
-from .base import (
+from .models import (
     VLMPredictionResult,
     BaseVLMPredictor,
-    extract_center_frame,
+    Qwen3VLPredictor,
+    Qwen3VLvLLMPredictor,
+    Qwen36VLvLLMPredictor,
+    Gemma4VLPredictor,
+    Gemma4VLvLLMPredictor,
 )
-from .qwen3_vl import Qwen3VLPredictor
-from .qwen3_vl_vllm import Qwen3VLvLLMPredictor
-from .gemma4_vl import Gemma4VLPredictor
-from .gemma4_vl_vllm import Gemma4VLvLLMPredictor
 from .prompts import PromptBuilder, DetailLevel
 from .response_scheme import (
     ResponseScheme,
@@ -25,6 +25,8 @@ from .response_scheme import (
 from .response_parser import (
     AttributePrediction,
     parse_vlm_response,
+)
+from .predictions import (
     predictions_to_output_tuple,
     predictions_to_json_serializable,
 )
@@ -33,10 +35,10 @@ __all__ = [
     # Base
     "VLMPredictionResult",
     "BaseVLMPredictor",
-    "extract_center_frame",
     # Predictors
     "Qwen3VLPredictor",
     "Qwen3VLvLLMPredictor",
+    "Qwen36VLvLLMPredictor",
     "Gemma4VLPredictor",
     "Gemma4VLvLLMPredictor",
     # Prompts
@@ -51,9 +53,10 @@ __all__ = [
     "SparseIndexedResponseScheme",
     "registry",
     "make_response_scheme",
-    # Response parsing (low-level utilities)
+    # Response parsing
     "AttributePrediction",
     "parse_vlm_response",
+    # Predictions (tensor/output conversion)
     "predictions_to_output_tuple",
     "predictions_to_json_serializable",
 ]

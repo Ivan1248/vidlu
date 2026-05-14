@@ -45,7 +45,7 @@ class BenchmarkRun:
     # Configuration
     image_size: tuple[int, int]
     num_attributes: int
-    max_new_tokens: int
+    max_response_tokens: int
     batch_size: int
     sweep_type: str  # "visual", "text", or "output"
     run_index: int
@@ -112,7 +112,7 @@ class SweepConfig:
     name: str
     image_sizes: list[tuple[int, int]]
     num_attributes_list: list[int]
-    max_new_tokens_list: list[int]
+    max_response_tokens_list: list[int]
     num_runs: int
     batch_size: int = 1
 
@@ -125,21 +125,21 @@ def get_quick_preset() -> dict[str, SweepConfig]:
             # Wider range: 256 to 4096 visual tokens
             image_sizes=[(224, 224), (448, 448), (672, 672), (896, 896)],
             num_attributes_list=[10],  # Fixed
-            max_new_tokens_list=[256],  # Fixed
+            max_response_tokens_list=[256],  # Fixed
             num_runs=3,
         ),
         "text": SweepConfig(
             name="text",
             image_sizes=[(336, 336)],  # Fixed
             num_attributes_list=[3, 10, 20, 41],
-            max_new_tokens_list=[256],  # Fixed
+            max_response_tokens_list=[256],  # Fixed
             num_runs=3,
         ),
         "output": SweepConfig(
             name="output",
             image_sizes=[(336, 336)],  # Fixed
             num_attributes_list=[6],  # Fixed
-            max_new_tokens_list=[64, 128, 256, 512],
+            max_response_tokens_list=[64, 128, 256, 512],
             num_runs=3,
         ),
     }
@@ -156,21 +156,21 @@ def get_full_preset() -> dict[str, SweepConfig]:
                 (672, 672), (896, 896), (1024, 1024)
             ],
             num_attributes_list=[10],  # Fixed
-            max_new_tokens_list=[256],  # Fixed
+            max_response_tokens_list=[256],  # Fixed
             num_runs=5,
         ),
         "text": SweepConfig(
             name="text",
             image_sizes=[(336, 336)],  # Fixed
             num_attributes_list=[3, 6, 12, 24, 41],
-            max_new_tokens_list=[256],  # Fixed
+            max_response_tokens_list=[256],  # Fixed
             num_runs=5,
         ),
         "output": SweepConfig(
             name="output",
             image_sizes=[(336, 336)],  # Fixed
             num_attributes_list=[6],  # Fixed
-            max_new_tokens_list=[64, 128, 256, 512, 1024],
+            max_response_tokens_list=[64, 128, 256, 512, 1024],
             num_runs=5,
         ),
     }
@@ -258,7 +258,7 @@ class VLMBenchmark:
                 model_id=self.model_id,
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 max_model_len=self.max_model_len,
-                max_new_tokens=1024,  # Will be overridden per run
+                max_response_tokens=1024,  # Will be overridden per run
                 chunk_size=100,  # Large to avoid chunking in benchmarks
                 debug=self.debug,
             )
@@ -269,7 +269,7 @@ class VLMBenchmark:
                 device="cuda",
                 torch_dtype="bfloat16",
                 use_flash_attention=True,
-                max_new_tokens=1024,
+                max_response_tokens=1024,
                 chunk_size=100,
                 debug=self.debug,
             )
@@ -342,7 +342,7 @@ class VLMBenchmark:
         self,
         image: Image.Image,
         attrs_to_include: list[str],
-        max_new_tokens: int,
+        max_response_tokens: int,
     ) -> tuple[str, int, float, float, float]:
         """Run a single inference and measure timing.
         
@@ -356,11 +356,11 @@ class VLMBenchmark:
         scheme = StandardResponseScheme(self._attr_to_value_to_class_idx)
         prompt = scheme.build_prompt(attrs_to_include, detail_level=DEFAULT_DETAIL_LEVEL)
         
-        # Update max_new_tokens for this run
-        original_max_tokens = self._predictor.max_new_tokens
-        self._predictor.max_new_tokens = max_new_tokens
+        # Update max_response_tokens for this run
+        original_max_tokens = self._predictor.max_response_tokens
+        self._predictor.max_response_tokens = max_response_tokens
         if hasattr(self._predictor, '_sampling_params') and self._predictor._sampling_params is not None:
-            self._predictor._sampling_params.max_tokens = max_new_tokens
+            self._predictor._sampling_params.max_tokens = max_response_tokens
         
         # Prepare input for vLLM
         if self.backend == "vllm":
@@ -408,7 +408,7 @@ class VLMBenchmark:
             generation_ms = total_ms * 0.7
         
         # Restore original max_tokens
-        self._predictor.max_new_tokens = original_max_tokens
+        self._predictor.max_response_tokens = original_max_tokens
         
         return response, output_tokens, ttft_ms, generation_ms, total_ms
     
@@ -428,13 +428,13 @@ class VLMBenchmark:
         configs = []
         for image_size in config.image_sizes:
             for num_attrs in config.num_attributes_list:
-                for max_tokens in config.max_new_tokens_list:
+                for max_tokens in config.max_response_tokens_list:
                     configs.append((image_size, num_attrs, max_tokens))
         
         print(f"\n[Sweep: {sweep_type}] Running {len(configs)} configurations x {config.num_runs} runs")
         print(f"  Image sizes: {config.image_sizes}")
         print(f"  Attributes: {config.num_attributes_list}")
-        print(f"  Max tokens: {config.max_new_tokens_list}")
+        print(f"  Max tokens: {config.max_response_tokens_list}")
         
         # Warmup
         if warmup_runs > 0:
@@ -479,7 +479,7 @@ class VLMBenchmark:
                 result = BenchmarkRun(
                     image_size=image_size,
                     num_attributes=num_attrs,
-                    max_new_tokens=max_tokens,
+                    max_response_tokens=max_tokens,
                     batch_size=config.batch_size,
                     sweep_type=sweep_type,
                     run_index=run_idx,
@@ -502,7 +502,7 @@ class VLMBenchmark:
             config_runs = [r for r in results 
                           if r.image_size == image_size 
                           and r.num_attributes == num_attrs
-                          and r.max_new_tokens == max_tokens]
+                          and r.max_response_tokens == max_tokens]
             avg_ms = np.mean([r.total_ms for r in config_runs])
             avg_output = np.mean([r.output_tokens for r in config_runs])
             print(f"  Average: {avg_ms:.0f}ms, output={avg_output:.0f} tokens")
@@ -890,7 +890,7 @@ def generate_summary_report(
     config_stats = defaultdict(list)
     
     for r in runs:
-        key = (r.sweep_type, r.image_size, r.num_attributes, r.max_new_tokens)
+        key = (r.sweep_type, r.image_size, r.num_attributes, r.max_response_tokens)
         config_stats[key].append(r)
     
     for key in sorted(config_stats.keys()):

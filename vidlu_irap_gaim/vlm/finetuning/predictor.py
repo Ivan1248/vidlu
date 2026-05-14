@@ -10,9 +10,9 @@ from pathlib import Path
 import torch
 from PIL import Image
 
-from vidlu_irap_gaim.vlm.base import BaseVLMPredictor
+from vidlu_irap_gaim.vlm.models.base import BaseVLMPredictor
 from .model import Qwen3VLClassifier
-from vidlu_irap_gaim.vlm.qwen_utils import build_qwen_chat_messages
+from vidlu_irap_gaim.vlm.models.qwen_utils import build_qwen_chat_messages
 from vidlu_irap_gaim.tools.vlm_inference import run_evaluation
 
 
@@ -37,7 +37,7 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
 
     Args:
         model: Fine-tuned Qwen3VLClassifier instance.
-        max_new_tokens: Maximum tokens to generate.
+        max_response_tokens: Maximum tokens to generate.
         prompt_config_path: Optional path to prompt YAML config.
         chunk_size: Max attributes per VLM call.
         min_new_tokens: Minimum tokens to generate.
@@ -47,7 +47,7 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
     def __init__(
             self,
             model: "Qwen3VLClassifier",
-            max_new_tokens: int = 512,
+            max_response_tokens: int = 512,
             prompt_config_path: str | Path | None = None,
             chunk_size: int = 15,
             min_new_tokens: int = 0,
@@ -55,7 +55,7 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
     ):
         super().__init__(
             model_id=model.model_id,
-            max_new_tokens=max_new_tokens,
+            max_response_tokens=max_response_tokens,
             prompt_config_path=prompt_config_path,
             chunk_size=chunk_size,
             min_new_tokens=min_new_tokens,
@@ -69,7 +69,7 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
         self._model = self._ft_model._model
         self._processor = self._ft_model._processor
 
-    def _generate_single(self, pil_image: Image.Image, prompt: str) -> str:
+    def _generate_single(self, pil_image: Image.Image, prompt: str) -> tuple[str, str | None]:
         """Generate response for a single prompt+image.
 
         Uses the same flow as zero-shot inference to ensure consistency
@@ -80,7 +80,8 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
             prompt: Text prompt.
 
         Returns:
-            Generated response string.
+            Tuple of (response_text, thinking_text). thinking_text is always
+            None for fine-tuned models (thinking is not supported).
         """
         from qwen_vl_utils import process_vision_info
 
@@ -107,7 +108,7 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
 
         # Generate
         with torch.no_grad():
-            gen_kwargs = {"max_new_tokens": self.max_new_tokens}
+            gen_kwargs = {"max_response_tokens": self.max_response_tokens}
             if self.min_new_tokens > 0:
                 gen_kwargs["min_new_tokens"] = self.min_new_tokens
 
@@ -123,7 +124,7 @@ class FineTunedVLMPredictor(BaseVLMPredictor):
                 f"[DEBUG] Output tokens: {output_ids.shape[1]}, Response: {raw_response[:200]}..."
             )
 
-        return raw_response
+        return raw_response, None
 
 
 def run_full_eval(e, split_prefix: str = "test", **kwargs):

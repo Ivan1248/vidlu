@@ -18,9 +18,9 @@ from .base import (
     BaseVLMPredictor,
     VLMPredictionResult,
     _to_pil_image,
-    strip_thinking,
 )
-from .prompts import DEFAULT_DETAIL_LEVEL, DetailLevel
+from .thinking import strip_thinking
+from ..prompts import DEFAULT_DETAIL_LEVEL, DetailLevel
 
 
 class BaseVLLMPredictor(BaseVLMPredictor):
@@ -36,7 +36,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         gpu_memory_utilization: float = 0.80,
         tensor_parallel_size: int | None = None,
         max_model_len: int = 8192,
-        max_new_tokens: int = 512,
+        max_response_tokens: int = 512,
         prompt_config_path: str | Path | None = None,
         chunk_size: int = 15,
         min_new_tokens: int = 0,
@@ -47,7 +47,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
     ):
         super().__init__(
             model_id=model_id,
-            max_new_tokens=max_new_tokens,
+            max_response_tokens=max_response_tokens,
             prompt_config_path=prompt_config_path,
             chunk_size=chunk_size,
             min_new_tokens=min_new_tokens,
@@ -96,7 +96,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
 
         self._sampling_params = SamplingParams(
             temperature=self.temperature,
-            max_tokens=self.max_new_tokens,
+            max_tokens=self.max_response_tokens,
             min_tokens=self.min_new_tokens,
             top_k=-1,
             stop_token_ids=[],
@@ -117,7 +117,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         self,
         pil_image: Image.Image,
         prompt: str,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Generate response for a single prompt+image."""
         vllm_input = self._prepare_vllm_input(pil_image, prompt)
 
@@ -127,6 +127,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         outputs = self._llm.generate([vllm_input], self._sampling_params, use_tqdm=False)
         raw_response = outputs[0].outputs[0].text
 
+        thinking_text = None
         if self.enable_thinking:
             raw_response, thinking_text = strip_thinking(raw_response)
             if self.debug and thinking_text:
@@ -136,7 +137,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
             print(f"[DEBUG] Response chars: {len(raw_response)}")
             print(f"[DEBUG] Response preview: {raw_response[:200]}...")
 
-        return raw_response
+        return raw_response, thinking_text
 
     def predict_batch(
         self,
@@ -179,6 +180,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         all_predictions_per_image: list[dict] = [{} for _ in range(num_images)]
         all_prompts_per_image: list[list[str]] = [[] for _ in range(num_images)]
         all_responses_per_image: list[list[str]] = [[] for _ in range(num_images)]
+        all_thinking_texts_per_image: list[list[str | None]] = [[] for _ in range(num_images)]
 
         for chunk_idx, chunk_attrs in enumerate(chunks):
             if self.debug:
@@ -193,6 +195,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
             for img_idx, output in enumerate(outputs):
                 raw_response = output.outputs[0].text
 
+                thinking_text = None
                 if self.enable_thinking:
                     raw_response, thinking_text = strip_thinking(raw_response)
                     if self.debug and thinking_text:
@@ -200,6 +203,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
 
                 all_responses_per_image[img_idx].append(raw_response)
                 all_prompts_per_image[img_idx].append(prompt)
+                all_thinking_texts_per_image[img_idx].append(thinking_text)
 
                 chunk_predictions = response_scheme.parse_response(raw_response, chunk_attrs)
                 all_predictions_per_image[img_idx].update(chunk_predictions)
@@ -208,6 +212,8 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         for img_idx in range(num_images):
             responses = all_responses_per_image[img_idx]
             prompts = all_prompts_per_image[img_idx]
+            thinking_texts = all_thinking_texts_per_image[img_idx]
+            has_thinking = any(t is not None for t in thinking_texts)
 
             combined_response = "\n---CHUNK---\n".join(responses)
             combined_prompt = "\n---CHUNK---\n".join(prompts)
@@ -219,6 +225,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
                     prompt=combined_prompt,
                     chunk_responses=responses if len(chunks) > 1 else None,
                     chunk_prompts=prompts if len(chunks) > 1 else None,
+                    thinking_texts=thinking_texts if has_thinking else None,
                 )
             )
 

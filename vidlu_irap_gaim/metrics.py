@@ -19,6 +19,19 @@ class InternalMetricsProvider(Protocol):
     def get_internal_metrics(self) -> dict[int, dict[str, torch.Tensor]]: ...
 
 
+def _resolve_attr_index(key: object, attr_to_index: dict[object, int] | None) -> int:
+    """Resolves a global tensor index from an attribute key/name."""
+    if attr_to_index is not None:
+        if key in attr_to_index:
+            return attr_to_index[key]
+        else:
+            raise ValueError(f"Attribute key {key} not found in attr_to_index (available attributes: {list(attr_to_index.keys())})")
+    elif isinstance(key, int):
+        return key
+    else:
+        raise ValueError(f"Unsupported attribute key type: {type(key)}")
+
+
 class MultiAttributeClassificationMetrics(AccumulatingMetric):
     """
     Multi-attribute classification metrics.
@@ -117,14 +130,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
             return
         for key, m in self.attr_to_metrics.items():
             # Determine tensor index
-            if self.attr_to_index is not None:
-                if key not in self.attr_to_index:
-                    continue
-                idx = self.attr_to_index[key]
-            else:
-                # Fallback: assume key is the index
-                idx = key if isinstance(key, int) else -1
-
+            idx = _resolve_attr_index(key, self.attr_to_index)
             if idx >= 0 and idx < len(outs):
                 m.update(NameDict(target=true[:, idx], out=outs[idx]))
 
@@ -230,14 +236,7 @@ class MultiAttributeAccuracy(AccumulatingMetric):
         matched = 0
         for key in keys_to_update:
             # Determine tensor index
-            if self.attr_to_index is not None:
-                if key not in self.attr_to_index:
-                    continue
-                idx = self.attr_to_index[key]
-            else:
-                # Fallback: assume key is the index
-                idx = key if isinstance(key, int) else -1
-
+            idx = _resolve_attr_index(key, self.attr_to_index)
             if idx < 0 or idx >= len(outs):
                 continue
             pred = outs[idx].argmax(1)

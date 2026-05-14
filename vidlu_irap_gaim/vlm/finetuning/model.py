@@ -76,6 +76,9 @@ class Qwen3VLClassifier(nn.Module):
 
     def _load(self):
         """Load model, processor, and apply LoRA."""
+        from peft import LoraConfig, get_peft_model
+        from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
+
         if self._loaded:
             return
 
@@ -83,9 +86,6 @@ class Qwen3VLClassifier(nn.Module):
 
         if "HF_HUB_DISABLE_XET" not in os.environ:
             os.environ["HF_HUB_DISABLE_XET"] = "1"
-
-        from peft import LoraConfig, get_peft_model
-        from transformers import AutoModelForVision2Seq, AutoProcessor, BitsAndBytesConfig
 
         print(f"[Qwen3VLClassifier] Loading {self.model_id}...")
 

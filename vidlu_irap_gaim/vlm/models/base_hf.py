@@ -1,31 +1,40 @@
 """
-Gemma 4 predictor for zero-shot road attribute classification.
+Base class for HuggingFace transformers-backed VLM predictors.
+
+Extracts shared model loading (env vars, flash-attention fallback, lazy init)
+and generation logic (gen_kwargs, token slicing, thinking stripping) so that
+model-specific subclasses only need to implement ``_load_hf_model()`` and
+``_prepare_hf_inputs()``.
 """
 
 import os
+from abc import abstractmethod
 from pathlib import Path
 
 import torch
 from PIL import Image
 
-from vidlu_irap_gaim.vlm.base import BaseVLMPredictor, strip_thinking
-from vidlu_irap_gaim.vlm.gemma_utils import build_gemma_chat_messages
+from .base import BaseVLMPredictor
+from .thinking import strip_thinking
 
 
-class Gemma4VLPredictor(BaseVLMPredictor):
-    """Zero-shot road attribute classifier using Gemma 4.
+class BaseHFPredictor(BaseVLMPredictor):
+    """Abstract HF-transformers predictor with shared loading and generation.
 
-    The model is loaded lazily on first prediction to avoid VRAM allocation
-    during setup/import.
+    Subclasses must implement:
+    - ``_load_hf_model()`` to load the model and processor into
+      ``self._model`` and ``self._processor``.
+    - ``_prepare_hf_inputs()`` to tokenize a prompt+image pair into
+      a dict-like object suitable for ``model.generate(**inputs)``.
     """
 
     def __init__(
         self,
-        model_id: str = "google/gemma-4-27b-it",
+        model_id: str,
         device: str | torch.device = "cuda",
         torch_dtype: str = "bfloat16",
         use_flash_attention: bool = True,
-        max_new_tokens: int = 512,
+        max_response_tokens: int = 512,
         prompt_config_path: str | Path | None = None,
         chunk_size: int = 15,
         min_new_tokens: int = 0,
@@ -35,7 +44,7 @@ class Gemma4VLPredictor(BaseVLMPredictor):
     ):
         super().__init__(
             model_id=model_id,
-            max_new_tokens=max_new_tokens,
+            max_response_tokens=max_response_tokens,
             prompt_config_path=prompt_config_path,
             chunk_size=chunk_size,
             min_new_tokens=min_new_tokens,
@@ -62,22 +71,13 @@ class Gemma4VLPredictor(BaseVLMPredictor):
         if "TRANSFORMERS_NO_TF" not in os.environ:
             os.environ["TRANSFORMERS_NO_TF"] = "1"
 
-        print(f"[Gemma4VLPredictor] Loading model: {self.model_id}")
-
-        from transformers import AutoModelForMultimodalLM, AutoProcessor
+        class_name = type(self).__name__
+        print(f"[{class_name}] Loading model: {self.model_id}")
 
         try:
             attn_impl = "flash_attention_2" if self.use_flash_attention else "eager"
-
             device_map = {"": self.device} if isinstance(self.device, (str, torch.device)) else "auto"
-
-            self._model = AutoModelForMultimodalLM.from_pretrained(
-                self.model_id,
-                torch_dtype=self.torch_dtype,
-                device_map=device_map,
-                attn_implementation=attn_impl,
-            )
-            self._processor = AutoProcessor.from_pretrained(self.model_id)
+            self._load_hf_model(attn_impl, device_map)
         except Exception as e:
             self._model = None
             self._processor = None
@@ -89,31 +89,49 @@ class Gemma4VLPredictor(BaseVLMPredictor):
                 ) from e
             raise e
 
-        print("[Gemma4VLPredictor] Model loaded successfully")
+        print(f"[{class_name}] Model loaded successfully")
+
+    @abstractmethod
+    def _load_hf_model(self, attn_impl: str, device_map: dict | str) -> None:
+        """Load the HF model and processor into self._model and self._processor.
+
+        Called inside ``_load_model()`` after env-var setup. The caller handles
+        the flash-attention error fallback, so this method should just attempt
+        the load and let exceptions propagate.
+
+        Args:
+            attn_impl: Attention implementation string (e.g. "flash_attention_2").
+            device_map: Device map for ``from_pretrained``.
+        """
+
+    @abstractmethod
+    def _prepare_hf_inputs(
+        self,
+        pil_image: Image.Image,
+        prompt: str,
+    ) -> dict:
+        """Prepare tokenized inputs for the specific model family.
+
+        Returns:
+            A dict-like object (dict or BatchEncoding) that supports
+            ``.to(device)``, has an ``input_ids`` key, and can be unpacked
+            into ``model.generate(**inputs)``.
+        """
 
     def _generate_single(
         self,
         pil_image: Image.Image,
         prompt: str,
-    ) -> str:
+    ) -> tuple[str, str | None]:
         """Generate response for a single prompt+image."""
-        messages = build_gemma_chat_messages(pil_image, prompt)
-
-        inputs = self._processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-            add_generation_prompt=True,
-            images=[pil_image],
-            enable_thinking=self.enable_thinking,
-        ).to(self._model.device)
+        inputs = self._prepare_hf_inputs(pil_image, prompt)
+        inputs = inputs.to(self._model.device)
 
         if self.debug:
             print(f"[DEBUG] Input shape: {inputs['input_ids'].shape}, Prompt chars: {len(prompt)}")
 
         with torch.no_grad():
-            gen_kwargs = dict(max_new_tokens=self.max_new_tokens)
+            gen_kwargs = dict(max_response_tokens=self.max_response_tokens)
             if self.min_new_tokens > 0:
                 gen_kwargs["min_new_tokens"] = self.min_new_tokens
             if self.temperature > 0:
@@ -128,6 +146,7 @@ class Gemma4VLPredictor(BaseVLMPredictor):
             output_ids, skip_special_tokens=True
         )[0]
 
+        thinking_text = None
         if self.enable_thinking:
             raw_response, thinking_text = strip_thinking(raw_response)
             if self.debug and thinking_text:
@@ -136,4 +155,4 @@ class Gemma4VLPredictor(BaseVLMPredictor):
         if self.debug:
             print(f"[DEBUG] Output tokens: {output_ids.shape[1]}, Response: {raw_response[:200]}...")
 
-        return raw_response
+        return raw_response, thinking_text

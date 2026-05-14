@@ -17,10 +17,10 @@ import torch
 from transformers import AutoProcessor
 
 from vidlu.utils.collections import NameDict
-from vidlu_irap_gaim.vlm.base import _to_pil_image
+from vidlu_irap_gaim.vlm.image_utils import to_pil_image as _to_pil_image
 from vidlu_irap_gaim.vlm.response_scheme import ResponseScheme
-from vidlu_irap_gaim.vlm.response_parser import convert_attribute_predictions_to_standard_format
-from vidlu_irap_gaim.vlm.qwen_utils import build_qwen_chat_messages
+from vidlu_irap_gaim.vlm.predictions import convert_attribute_predictions_to_standard_format
+from vidlu_irap_gaim.vlm.models.qwen_utils import build_qwen_chat_messages
 
 
 
@@ -247,7 +247,7 @@ def _generate_and_parse_batch(
     targets: torch.Tensor,
     response_scheme: ResponseScheme,
     attrs_to_include: list[str],
-    max_new_tokens: int = 512,
+    max_response_tokens: int = 512,
     amp: bool = True,
 ) -> NameDict:
     """Generate responses for a batch and parse into metric-compatible predictions.
@@ -263,7 +263,7 @@ def _generate_and_parse_batch(
         targets: (B, A) target tensor with class indices per attribute.
         response_scheme: ResponseScheme instance used for parsing.
         attrs_to_include: Attribute names to classify.
-        max_new_tokens: Maximum tokens to generate per sample.
+        max_response_tokens: Maximum tokens to generate per sample.
         amp: Whether to use automatic mixed precision.
 
     Returns:
@@ -298,7 +298,7 @@ def _generate_and_parse_batch(
             with torch.no_grad(), amp_ctx:
                 generated_ids = model.generate(
                     **inputs,
-                    max_new_tokens=max_new_tokens,
+                    max_response_tokens=max_response_tokens,
                 )
 
             input_len = inputs.input_ids.shape[1]
@@ -463,11 +463,11 @@ class VLMEvalStep:
 
     Args:
         amp: Whether to use automatic mixed precision.
-        max_new_tokens: Maximum tokens to generate per sample.
+        max_response_tokens: Maximum tokens to generate per sample.
     """
 
     amp: bool = True
-    max_new_tokens: int = 512
+    max_response_tokens: int = 512
 
     def __post_init__(self):
         self._response_scheme: "ResponseScheme | None" = None
@@ -549,7 +549,7 @@ class VLMEvalStep:
             targets=batch["target"],
             response_scheme=self._response_scheme,
             attrs_to_include=self._attrs_to_include,
-            max_new_tokens=self.max_new_tokens,
+            max_response_tokens=self.max_response_tokens,
             amp=self.amp,
         )
 

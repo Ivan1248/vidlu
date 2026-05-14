@@ -668,46 +668,6 @@ class CacheIfFasterDataset(Dataset):
         return self.data[idx]
 
 
-# class InfoCacheDataset(Dataset):  # lazy
-#     def __init__(self, dataset, name_to_func, **kwargs):
-#         self.names_str = ', '.join(name_to_func.keys())
-#         self.initialized = multiprocessing.Value('i', 0)  # must be before super
-#         info = NameDict(dataset.info or kwargs.get('info', dict()))
-#         self._info = None
-#         super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
-#                          data_change=False, info_change=list(name_to_func), **kwargs)
-#         self.name_to_func = name_to_func
-#         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
-#         self._logger.addHandler(logging.NullHandler())
-#
-#     @property
-#     def info(self):
-#         if not self.initialized.value:
-#             self._update_info_cache()
-#         return self._info
-#
-#     @info.setter
-#     def info(self, value):
-#         """This is called by the base initializer and (unnecessarily) by pickle
-#         if the object is shared between processes."""
-#         self._info = value
-#
-#     def _compute(self):
-#         self._logger.info(f"{type(self).__name__}: computing/loading {self.names_str} for"
-#                           + f" {self.identifier}")
-#         info_cache = dict()
-#         for n, f in self.name_to_func.items():
-#             info_cache[n] = f(self.data)
-#         return info_cache
-#
-#     def _update_info_cache(self):
-#         with self.initialized.get_lock():
-#             if not self.initialized.value:  # lazy
-#                 if any(k not in self._info for k in self.name_to_func):
-#                     self._info.update(self._compute())
-#                 self.initialized.value = True
-
-
 class InfoCacheDataset(Dataset):  # lazy
     def __init__(self, dataset, name_to_func, **kwargs):
         self.names_str = ', '.join(name_to_func.keys())

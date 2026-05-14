@@ -6,6 +6,8 @@ happens in the training step where the processor is available.
 """
 from pathlib import Path
 
+import torch.nn.functional as F
+
 from vidlu.data import Dataset, Record
 
 from vidlu_irap_gaim.data.attrs import get_attrs_to_include
@@ -62,6 +64,7 @@ class VLMBihDataset(Dataset):
         response_scheme: ResponseScheme,
         attrs_to_include: list[str],
         detail_level: str = DEFAULT_DETAIL_LEVEL,
+        upsampling_factor: int = 1,
     ):
         from vidlu.data import Record
 
@@ -75,6 +78,7 @@ class VLMBihDataset(Dataset):
         self.response_scheme_name = get_response_scheme_name(response_scheme)
         self.attrs_to_include = attrs_to_include
         self.detail_level = detail_level
+        self.upsampling_factor = upsampling_factor
 
         # Pre-build prompt (same for all samples - saves computation)
         self._prompt = response_scheme.build_prompt(attrs_to_include, detail_level=detail_level)
@@ -89,6 +93,15 @@ class VLMBihDataset(Dataset):
             image = rgb[0]  # Center frame (index 0), shape (C, H, W)
         else:
             image = rgb  # Already single frame
+
+        if self.upsampling_factor != 1:
+            orig_dtype = image.dtype
+            image = F.interpolate(
+                image.unsqueeze(0).float(),
+                scale_factor=self.upsampling_factor,
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0).to(orig_dtype)
 
         # Get target tensor
         target = sample["target"]
@@ -120,6 +133,7 @@ def make_vlm_bih_data(
     val_quick_size: int | None = None,
     attr_to_default_class_idx: dict[str, int] | None = None,
     sparse_default_instruction: SparseDefaultInstruction = "per_attribute",
+    upsampling_factor: int = 1,
 ) -> dict[str, VLMBihDataset]:
     """Factory for VLM-formatted BIH datasets.
 
@@ -173,7 +187,8 @@ def make_vlm_bih_data(
     attrs_to_include = list(get_attrs_to_include())
 
     def _make_split(split_ds):
-        return VLMBihDataset(split_ds, response_scheme, attrs_to_include, detail_level)
+        return VLMBihDataset(split_ds, response_scheme, attrs_to_include, detail_level,
+                             upsampling_factor=upsampling_factor)
 
     result = {
         "train": _make_split(base_data["train"]),

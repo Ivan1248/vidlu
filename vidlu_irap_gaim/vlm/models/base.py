@@ -2,7 +2,6 @@
 Base class and utilities for zero-shot VLM road attribute predictors.
 """
 
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,34 +11,10 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .prompts import DEFAULT_DETAIL_LEVEL, DetailLevel
-from .response_scheme import ResponseScheme, make_response_scheme
-from .response_parser import AttributePrediction
-
-# Regex patterns for stripping thinking blocks from model responses.
-# Qwen3: <think>...</think>
-_QWEN_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
-# Gemma 4: <|channel>thought\n...\n<channel|>
-_GEMMA_THINK_RE = re.compile(r"<\|channel>thought\n.*?\n<channel\|>", re.DOTALL)
-
-
-def strip_thinking(raw_response: str) -> tuple[str, str | None]:
-    """Remove thinking/reasoning blocks from a VLM response.
-
-    Handles both Qwen3 (``<think>...</think>``) and Gemma 4
-    (``<|channel>thought\\n...\\n<channel|>``) formats.
-
-    Returns:
-        Tuple of (clean_response, thinking_text).  *thinking_text* is None
-        when no thinking block was found.
-    """
-    for pattern in (_QWEN_THINK_RE, _GEMMA_THINK_RE):
-        match = pattern.search(raw_response)
-        if match:
-            thinking_text = match.group(0)
-            clean = raw_response[:match.start()] + raw_response[match.end():]
-            return clean.strip(), thinking_text
-    return raw_response, None
+from ..image_utils import to_pil_image as _to_pil_image  # noqa: F401
+from ..prompts import DEFAULT_DETAIL_LEVEL, DetailLevel
+from ..response_scheme import ResponseScheme, make_response_scheme
+from ..response_parser import AttributePrediction
 
 
 @dataclass
@@ -52,59 +27,8 @@ class VLMPredictionResult:
     # For chunked predictions, store all chunks
     chunk_responses: list[str] | None = None
     chunk_prompts: list[str] | None = None
-
-
-def _to_pil_image(
-    image: Image.Image | np.ndarray | torch.Tensor,
-) -> Image.Image:
-    """Convert various image formats to PIL Image."""
-    if isinstance(image, Image.Image):
-        return image
-
-    if isinstance(image, torch.Tensor):
-        # Assume (C, H, W) or (H, W, C) format
-        if image.ndim == 3:
-            if image.shape[0] in (1, 3, 4):  # (C, H, W)
-                image = image.permute(1, 2, 0)
-            image = image.detach().cpu().numpy()
-        elif image.ndim == 2:
-            image = image.detach().cpu().numpy()
-        else:
-            raise ValueError(f"Unexpected tensor shape: {image.shape}")
-
-    if isinstance(image, np.ndarray):
-        # Handle float [0, 1] -> uint8 [0, 255]
-        if image.dtype in (np.float32, np.float64):
-            if image.max() <= 1.0:
-                image = (image * 255).astype(np.uint8)
-            else:
-                image = image.astype(np.uint8)
-        return Image.fromarray(image)
-
-    raise TypeError(f"Unsupported image type: {type(image)}")
-
-
-def extract_center_frame(
-    rgb_sequence: torch.Tensor,
-    frame_index: int = 0,
-) -> Image.Image:
-    """Extract a single frame from an RGB sequence tensor.
-
-    The dataset returns sequences shaped (S, C, H, W) where S is sequence length.
-    This function extracts frame at frame_index and converts to PIL Image.
-
-    Args:
-        rgb_sequence: Tensor shaped (S, C, H, W) with values in [0, 1].
-        frame_index: Which frame to extract (0 = current segment).
-
-    Returns:
-        PIL Image of the extracted frame.
-    """
-    if rgb_sequence.ndim != 4:
-        raise ValueError(f"Expected 4D tensor (S, C, H, W), got shape {rgb_sequence.shape}")
-
-    frame = rgb_sequence[frame_index]  # (C, H, W)
-    return _to_pil_image(frame)
+    # Thinking/reasoning text per chunk (None when thinking not enabled or absent)
+    thinking_texts: list[str | None] | None = None
 
 
 class BaseVLMPredictor(ABC):
@@ -116,7 +40,7 @@ class BaseVLMPredictor(ABC):
 
     Args:
         model_id: HuggingFace model ID.
-        max_new_tokens: Maximum tokens to generate per inference call.
+        max_response_tokens: Maximum tokens to generate per inference call.
         response_scheme: ResponseScheme that controls how prompts are built and
             responses parsed. When None, a StandardResponseScheme is created
             lazily from the attribute metadata passed to ``predict()``.
@@ -131,7 +55,7 @@ class BaseVLMPredictor(ABC):
     def __init__(
         self,
         model_id: str,
-        max_new_tokens: int = 512,
+        max_response_tokens: int = 512,
         response_scheme: ResponseScheme | None = None,
         prompt_config_path: str | Path | None = None,
         chunk_size: int = 10,
@@ -141,7 +65,7 @@ class BaseVLMPredictor(ABC):
         temperature: float = 0.0,
     ):
         self.model_id = model_id
-        self.max_new_tokens = max_new_tokens
+        self.max_response_tokens = max_response_tokens
         self.prompt_config_path = Path(prompt_config_path) if prompt_config_path else None
         self.chunk_size = chunk_size
         self.min_new_tokens = int(min_new_tokens)
@@ -161,8 +85,13 @@ class BaseVLMPredictor(ABC):
         self,
         pil_image: Image.Image,
         prompt: str,
-    ) -> str:
-        """Generate response for a single prompt+image."""
+    ) -> tuple[str, str | None]:
+        """Generate response for a single prompt+image.
+
+        Returns:
+            Tuple of (clean_response, thinking_text). thinking_text is None when
+            thinking is not enabled or no thinking block was found.
+        """
         pass
 
     def _get_response_scheme(
@@ -209,12 +138,13 @@ class BaseVLMPredictor(ABC):
 
         # If custom prompt provided, use it directly (no chunking, raw parse)
         if custom_prompt is not None:
-            raw_response = self._generate_single(pil_image, custom_prompt)
+            raw_response, thinking_text = self._generate_single(pil_image, custom_prompt)
             predictions = response_scheme.parse_response(raw_response, attrs_to_include)
             return VLMPredictionResult(
                 predictions=predictions,
                 raw_response=raw_response,
                 prompt=custom_prompt,
+                thinking_texts=[thinking_text] if thinking_text is not None else None,
             )
 
         # Split attributes into chunks to avoid context overflow
@@ -227,6 +157,7 @@ class BaseVLMPredictor(ABC):
         all_predictions: dict[str, AttributePrediction] = {}
         all_prompts: list[str] = []
         all_responses: list[str] = []
+        all_thinking_texts: list[str | None] = []
 
         for chunk_idx, chunk_attrs in enumerate(chunks):
             if self.debug:
@@ -235,14 +166,16 @@ class BaseVLMPredictor(ABC):
             prompt = response_scheme.build_prompt(chunk_attrs, detail_level=detail_level)
             all_prompts.append(prompt)
 
-            raw_response = self._generate_single(pil_image, prompt)
+            raw_response, thinking_text = self._generate_single(pil_image, prompt)
             all_responses.append(raw_response)
+            all_thinking_texts.append(thinking_text)
 
             chunk_predictions = response_scheme.parse_response(raw_response, chunk_attrs)
             all_predictions.update(chunk_predictions)
 
         combined_response = "\n---CHUNK---\n".join(all_responses)
         combined_prompt = "\n---CHUNK---\n".join(all_prompts)
+        has_thinking = any(t is not None for t in all_thinking_texts)
 
         return VLMPredictionResult(
             predictions=all_predictions,
@@ -250,6 +183,7 @@ class BaseVLMPredictor(ABC):
             prompt=combined_prompt,
             chunk_responses=all_responses if len(chunks) > 1 else None,
             chunk_prompts=all_prompts if len(chunks) > 1 else None,
+            thinking_texts=all_thinking_texts if has_thinking else None,
         )
 
     def predict_batch(

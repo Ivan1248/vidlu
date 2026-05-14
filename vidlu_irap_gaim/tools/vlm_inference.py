@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
 
@@ -137,7 +138,7 @@ def _create_predictor(
     prompt_config: str | None,
     chunk_size: int,
     min_new_tokens: int,
-    max_new_tokens: int,
+    max_response_tokens: int,
     debug: bool,
     backend: str = "auto",
     gpu_memory_utilization: float = 0.80,
@@ -150,7 +151,7 @@ def _create_predictor(
     """Create a VLM predictor instance.
 
     Handles auto-detection of thinking models from ``model_id`` and
-    adjustment of ``max_new_tokens`` when thinking is enabled.
+    adjustment of ``max_response_tokens`` when thinking is enabled.
 
     Args:
         model_id: HuggingFace model ID.
@@ -160,7 +161,7 @@ def _create_predictor(
         prompt_config: Path to YAML prompt config.
         chunk_size: Max attributes per VLM call.
         min_new_tokens: Minimum tokens to generate.
-        max_new_tokens: Maximum tokens to generate (answer tokens).
+        max_response_tokens: Maximum tokens to generate (answer tokens).
         debug: Enable debug output.
         backend: Backend to use ("auto", "hf", "vllm").
             - "auto": Use vLLM for FP8 models, HF otherwise
@@ -171,7 +172,7 @@ def _create_predictor(
         enable_thinking: Enable thinking/reasoning mode.  Auto-enabled when
             the model ID contains "thinking" (case-insensitive).
         thinking_budget: Extra tokens reserved for thinking on top of
-            ``max_new_tokens``.
+            ``max_response_tokens``.
 
     Returns:
         A predictor instance with a `predict()` method.
@@ -183,11 +184,11 @@ def _create_predictor(
             "Pass enable_thinking=True (or --enable-thinking on the CLI) to use this model."
         )
 
-    # Add thinking budget to max_new_tokens
+    # Add thinking budget to max_response_tokens
     if enable_thinking:
-        max_new_tokens += thinking_budget
-        print(f"[INFO] Thinking enabled: effective max_new_tokens = {max_new_tokens}"
-              f" ({max_new_tokens - thinking_budget} answer + {thinking_budget} thinking)")
+        max_response_tokens += thinking_budget
+        print(f"[INFO] Thinking enabled: effective max_response_tokens = {max_response_tokens}"
+              f" ({max_response_tokens - thinking_budget} answer + {thinking_budget} thinking)")
 
     # Determine model family
     is_fp8_model = "FP8" in model_id or "fp8" in model_id
@@ -216,7 +217,7 @@ def _create_predictor(
                 gpu_memory_utilization=gpu_memory_utilization,
                 tensor_parallel_size=tensor_parallel_size,
                 max_model_len=max_model_len,
-                max_new_tokens=max_new_tokens,
+                max_response_tokens=max_response_tokens,
                 prompt_config_path=prompt_config,
                 chunk_size=chunk_size,
                 min_new_tokens=min_new_tokens,
@@ -231,7 +232,7 @@ def _create_predictor(
                 gpu_memory_utilization=gpu_memory_utilization,
                 tensor_parallel_size=tensor_parallel_size,
                 max_model_len=max_model_len,
-                max_new_tokens=max_new_tokens,
+                max_response_tokens=max_response_tokens,
                 prompt_config_path=prompt_config,
                 chunk_size=chunk_size,
                 min_new_tokens=min_new_tokens,
@@ -257,7 +258,7 @@ def _create_predictor(
                 prompt_config_path=prompt_config,
                 chunk_size=chunk_size,
                 min_new_tokens=min_new_tokens,
-                max_new_tokens=max_new_tokens,
+                max_response_tokens=max_response_tokens,
                 debug=debug,
                 enable_thinking=enable_thinking,
                 temperature=temperature,
@@ -272,7 +273,7 @@ def _create_predictor(
                 prompt_config_path=prompt_config,
                 chunk_size=chunk_size,
                 min_new_tokens=min_new_tokens,
-                max_new_tokens=max_new_tokens,
+                max_response_tokens=max_response_tokens,
                 debug=debug,
                 enable_thinking=enable_thinking,
                 temperature=temperature,
@@ -307,7 +308,7 @@ def run_evaluation(
     allow_invalid_predictions: bool = False,
     chunk_size: int = 10,
     min_new_tokens: int = 0,
-    max_new_tokens: int = 512,
+    max_response_tokens: int = 512,
     debug: bool = False,
     interactive: bool = True,
     print_prompt: bool = True,
@@ -320,6 +321,7 @@ def run_evaluation(
     enable_thinking: bool = False,
     thinking_budget: int = DEFAULT_THINKING_BUDGET,
     temperature: float = 0.0,
+    upsampling_factor: int = 1,
 ) -> EvaluationResult:
     """Run VLM evaluation on a dataset.
 
@@ -344,7 +346,7 @@ def run_evaluation(
         allow_invalid_predictions: Map invalid predictions to class 0 (biases metrics).
         chunk_size: Max attributes per VLM call. Ignored if predictor provided.
         min_new_tokens: Minimum tokens to generate per VLM call. Ignored if predictor provided.
-        max_new_tokens: Maximum tokens to generate per VLM call. Ignored if predictor provided.
+        max_response_tokens: Maximum tokens to generate per VLM call. Ignored if predictor provided.
         debug: Print detailed prompt/response debugging information.
         interactive: Enable interactive control (type "skip" to stop early). Default True.
         print_prompt: Print the first prompt sent to the VLM.
@@ -362,7 +364,6 @@ def run_evaluation(
         EvaluationResult with summary statistics.
     """
     from vidlu_irap_gaim.vlm import (
-        extract_center_frame,
         predictions_to_output_tuple,
         predictions_to_json_serializable,
     )
@@ -427,7 +428,7 @@ def run_evaluation(
             prompt_config=prompt_config,
             chunk_size=chunk_size,
             min_new_tokens=min_new_tokens,
-            max_new_tokens=max_new_tokens,
+            max_response_tokens=max_response_tokens,
             debug=debug,
             backend=backend,
             gpu_memory_utilization=gpu_memory_utilization,
@@ -452,11 +453,20 @@ def run_evaluation(
     def extract_image_from_sample(sample):
         rgb = sample["rgb"] if hasattr(sample, "keys") else sample[0]
         if rgb.ndim == 4:  # (S, C, H, W) sequence
-            return extract_center_frame(rgb, frame_index=0)
+            frame = rgb[0]  # (C, H, W)
         else:  # (C, H, W) single image
-            return Image.fromarray(
-                (rgb.permute(1, 2, 0).numpy() * 255).astype("uint8")
-            )
+            frame = rgb
+        if upsampling_factor != 1:
+            orig_dtype = frame.dtype
+            frame = F.interpolate(
+                frame.unsqueeze(0).float(),
+                scale_factor=upsampling_factor,
+                mode="bilinear",
+                align_corners=False,
+            ).squeeze(0).to(orig_dtype)
+        return Image.fromarray(
+            (frame.permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype("uint8")
+        )
 
     # Helper to get segment ID from sample
     def get_segment_id(sample, idx):
@@ -807,7 +817,7 @@ def main():
         help="Minimum tokens to generate per VLM call. If >0, may force extra junk after JSON (default: 0)",
     )
     parser.add_argument(
-        "--max-new-tokens",
+        "--max-response-tokens",
         type=int,
         default=512,
         help="Maximum tokens to generate per VLM call (default: 512)",
@@ -825,7 +835,7 @@ def main():
             "Enable thinking/reasoning mode. The model generates a chain-of-thought "
             "reasoning block before the final answer.  Supported by Gemma 4 (all variants) "
             "and Qwen3-VL (Instruct and Thinking variants). Adds --thinking-budget extra "
-            "tokens on top of --max-new-tokens. Auto-enabled when the model ID contains "
+            "tokens on top of --max-response-tokens. Auto-enabled when the model ID contains "
             "'thinking' (case-insensitive)."
         ),
     )
@@ -834,9 +844,15 @@ def main():
         type=int,
         default=DEFAULT_THINKING_BUDGET,
         help=(
-            f"Extra tokens reserved for thinking on top of --max-new-tokens "
+            f"Extra tokens reserved for thinking on top of --max-response-tokens "
             f"(default: {DEFAULT_THINKING_BUDGET})"
         ),
+    )
+    parser.add_argument(
+        "--upsampling-factor",
+        type=int,
+        default=1,
+        help="Upsample images by this integer factor before VLM inference (default: 1)",
     )
 
     args = parser.parse_args()
@@ -867,7 +883,7 @@ def main():
         allow_invalid_predictions=args.allow_invalid_predictions,
         chunk_size=args.chunk_size,
         min_new_tokens=args.min_new_tokens,
-        max_new_tokens=args.max_new_tokens,
+        max_response_tokens=args.max_response_tokens,
         debug=args.debug,
         print_prompt=args.print_prompt,
         backend=args.backend,
@@ -878,6 +894,7 @@ def main():
         enable_thinking=args.enable_thinking,
         thinking_budget=args.thinking_budget,
         temperature=args.temperature,
+        upsampling_factor=args.upsampling_factor,
     )
 
     status = "INTERRUPTED" if result.was_interrupted else "complete"
@@ -911,7 +928,7 @@ def run(
     allow_invalid_predictions: bool = False,
     chunk_size: int = 10,
     min_new_tokens: int = 0,
-    max_new_tokens: int = 512,
+    max_response_tokens: int = 512,
     debug: bool = False,
     interactive: bool = True,
     print_prompt: bool = True,
@@ -924,6 +941,7 @@ def run(
     enable_thinking: bool = False,
     thinking_budget: int = DEFAULT_THINKING_BUDGET,
     temperature: float = 0.0,
+    upsampling_factor: int = 1,
 ):
     """Run VLM evaluation using a Vidlu TrainingExperiment's datasets.
 
@@ -947,7 +965,7 @@ def run(
         allow_invalid_predictions: Map invalid predictions to class 0.
         chunk_size: Max attributes per VLM call.
         min_new_tokens: Minimum tokens to generate per VLM call.
-        max_new_tokens: Maximum tokens to generate per VLM call.
+        max_response_tokens: Maximum tokens to generate per VLM call.
         debug: Print detailed prompt/response debugging information.
         interactive: Enable interactive control (type "skip" to stop early).
         print_prompt: Print the first prompt sent to the VLM.
@@ -956,7 +974,7 @@ def run(
         tensor_parallel_size: Number of GPUs for vLLM tensor parallelism.
         batch_size: Number of images to process per batch (default 1, auto-set to 8 for vLLM).
         enable_thinking: Enable thinking/reasoning mode.
-        thinking_budget: Extra tokens reserved for thinking on top of max_new_tokens.
+        thinking_budget: Extra tokens reserved for thinking on top of max_response_tokens.
         temperature: Sampling temperature (0.0 = greedy).
 
     Returns:
@@ -998,7 +1016,7 @@ def run(
         prompt_config=prompt_config,
         chunk_size=chunk_size,
         min_new_tokens=min_new_tokens,
-        max_new_tokens=max_new_tokens,
+        max_response_tokens=max_response_tokens,
         debug=debug,
         backend=backend,
         gpu_memory_utilization=gpu_memory_utilization,
@@ -1033,6 +1051,7 @@ def run(
             interactive=interactive,
             print_prompt=print_prompt,
             batch_size=effective_batch_size,
+            upsampling_factor=upsampling_factor,
         )
         results[name] = result
 
