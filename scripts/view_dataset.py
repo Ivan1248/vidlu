@@ -1,4 +1,5 @@
 import argparse
+import typing as T
 
 # noinspection PyUnresolvedReferences
 import _context
@@ -52,11 +53,15 @@ if args.permute:
     ds = ds.permute()
 
 
+def get_element(x, idx):
+    return tuple(x.values())[idx] if isinstance(x, T.Mapping) else x[idx]
+
+
 def transform(r):
-    x = image.torch_to_numpy(r[0].permute(1, 2, 0))
+    x = image.torch_to_numpy(get_element(r, 0).permute(1, 2, 0))
     if len(r) == 1:
         return x, 0
-    return x, r[1].numpy()
+    return x, get_element(r, 1).numpy()
 
 
 ds = ds.map(transform)

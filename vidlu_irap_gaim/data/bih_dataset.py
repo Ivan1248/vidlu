@@ -3,12 +3,13 @@ import os
 import pickle
 from pathlib import Path
 import typing as T
+from types import SimpleNamespace
 
 import numpy as np
 import torch
 from tqdm import tqdm
 
-from vidlu.data import Dataset, Record
+from vidlu.data import Dataset
 from vidlu.data.datasets.datasets import _check_subset
 
 from .constants import (
@@ -449,10 +450,10 @@ class BihSequence(Dataset):
             )
         super().__init__(
             subset=subset,
-            info=Record(
+            info=dict(
                 problem="multi_attribute_classification",
                 class_counts=class_counts,
-                pixel_stats=Record(mean=np.array(mean), std=np.array(std)),
+                pixel_stats=SimpleNamespace(mean=np.array(mean), std=np.array(std)),
                 attr_to_value_to_class_idx=attr_to_value_to_class_idx,
             ),
         )
@@ -476,7 +477,7 @@ class BihSequence(Dataset):
             return torch.empty(0)
         return torch.stack(frames, dim=0)
 
-    def get_example(self, idx: int) -> Record:
+    def get_example(self, idx: int) -> dict[str, T.Any]:
         sid = self.segment_ids[idx]
 
         # Prepare context ids from integer arithmetic (matches original).
@@ -499,4 +500,4 @@ class BihSequence(Dataset):
 
         # Keep segment_id for bookkeeping/metrics
         items.append(("segment_id", sid))
-        return Record(dict(items))
+        return dict(items)

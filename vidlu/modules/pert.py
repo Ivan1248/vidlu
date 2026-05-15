@@ -99,7 +99,7 @@ class PertModel(E.Module):
             setattr(self, k, BatchParameter(v, requires_grad=True))
 
     def __call__(self, inputs, **kwargs):
-        if isinstance(inputs, (dict, Record)):
+        if hasattr(type(inputs), 'items'):
             inputs_tuple = [(getattr(dt, vut.to_pascal_case(dom), lambda x: x))(v)
                             for dom, v in inputs.items()]
         else:

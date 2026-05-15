@@ -307,13 +307,8 @@ class Dataset(abc.Sequence, StandardDownloadableDatasetMixin):
         """
         return self.map(FieldsMap(field_to_func), func_name=func_name, **kwargs)
 
-    def enumerate(self, as_field: T.Union[bool, str] = False):
-        enumerate_ds = EnumerateDataset(self)
-        if as_field:
-            field_name = 'i' if as_field is True else as_field
-            return enumerate_ds.map_unpack(lambda i, r: Record(r, **{field_name: i}))
-        else:
-            return enumerate_ds
+    def enumerate(self):
+        return EnumerateDataset(self)
 
     def permute(self, seed=53, **kwargs):
         """Creates a permutation of the dataset."""
@@ -429,7 +424,9 @@ class MapDataset(Dataset):
 
     def get_example(self, idx):
         r = self.data[idx]
-        return self.func(*r) if self.unpack else self.func(r)
+        if self.unpack:
+            return self.func(*r) if isinstance(r, T.Sequence) else self.func(**r)
+        return self.func(r)
 
 
 class EnumerateDataset(Dataset):
