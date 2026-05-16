@@ -14,7 +14,7 @@ import numpy as np
 
 from vidlu.modules.losses import kl_div_ll
 
-from vidlu_irap_gaim.data.bih_dataset import make_bih_data
+from vidlu_irap_gaim.data.irap_dataset import make_bih_data
 
 
 def multi_attribute_kl_div_ll(
@@ -227,7 +227,7 @@ class PseudoLabeledDataset:
     """Wraps a dataset and replaces its `target` field with stored pseudo-labels.
 
     Args:
-        dataset: Underlying unlabeled dataset (BihSequence or similar).
+        dataset: Underlying unlabeled dataset (IRAPDataset or similar).
         pseudo_labels: Path to .npz file (with 'labels' array of shape (N, A),
                        int16, -1 for masked) or a (N, A) numpy array directly.
 
@@ -249,7 +249,6 @@ class PseudoLabeledDataset:
         return len(self._dataset)
 
     def __getitem__(self, idx):
-        from vidlu.data import Record
         record = self._dataset[idx]
         pseudo_target = torch.from_numpy(self._labels[idx].astype(np.int64))
-        return Record(record, target=pseudo_target)
+        return type(record)(record, target=pseudo_target)

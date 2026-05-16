@@ -6,7 +6,7 @@ Used by baseline evaluation scripts and for empirical analysis of most common va
 
 from collections import Counter
 from dataclasses import dataclass
-from vidlu.data import Dataset
+from vidlu_irap_gaim.data.dataset import Dataset
 
 import torch
 

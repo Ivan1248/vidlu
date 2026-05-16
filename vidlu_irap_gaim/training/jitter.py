@@ -16,7 +16,7 @@ def make_sequence_color_jitter(
     preset: dict = None,
 ):
     """
-    Color jitter for sequence tensors stored in records.
+    Color jitter for images in examples from datasets.
 
     Expects rgb frames in [0, 1] (normalization handled by input adapter).
     Applies ColorJitter frame-by-frame.
@@ -42,16 +42,16 @@ def make_sequence_color_jitter(
 
     color_jitter = T_trans.ColorJitter(**params)
 
-    def _apply(record):
-        if "rgb" not in record.keys():
-            return record
+    def _apply(item):
+        if "rgb" not in item.keys():
+            return item
 
-        rgb = record["rgb"]
+        rgb = item["rgb"]
         if rgb.ndim not in (4, 5):
-            return record
+            return item
 
         if rgb.shape[0] == 0:
-            return record
+            return item
 
         if rgb.ndim == 4:
             jittered_frames = [color_jitter(frame) for frame in rgb]
@@ -64,6 +64,6 @@ def make_sequence_color_jitter(
                 jittered_batches.append(torch.stack(jittered_frames, dim=0))
             jittered = torch.stack(jittered_batches, dim=0)
 
-        return type(record)(record, rgb=jittered)
+        return type(item)(item, rgb=jittered)
 
     return _apply

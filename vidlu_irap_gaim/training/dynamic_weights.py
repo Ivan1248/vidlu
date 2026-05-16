@@ -7,7 +7,7 @@ from sklearn.metrics import recall_score
 from tqdm import tqdm
 
 from vidlu.training.extensions import TrainerExtension
-from vidlu.data.dataset import Dataset
+from vidlu_irap_gaim.data.dataset import Dataset
 from vidlu_irap_gaim.metrics import InternalMetricsProvider
 
 
@@ -52,13 +52,13 @@ def compute_attr_key_to_class_occurrence_counts(
         raise AttributeError(
             f"Dataset (or its underlying dataset) must have 'segment_id_to_labels' attribute. "
             f"Got dataset type: {type(underlying_ds).__name__}. "
-            f"This function requires a BihSequence dataset (or compatible dataset with segment_id_to_labels)."
+            f"This function requires a IRAPDataset dataset (or compatible dataset with segment_id_to_labels)."
         )
     if not hasattr(underlying_ds, "segment_ids"):
         raise AttributeError(
             f"Dataset (or its underlying dataset) must have 'segment_ids' attribute. "
             f"Got dataset type: {type(underlying_ds).__name__}. "
-            f"This function requires a BihSequence dataset (or compatible dataset with segment_ids)."
+            f"This function requires a IRAPDataset dataset (or compatible dataset with segment_ids)."
         )
 
     segment_ids = underlying_ds.segment_ids
@@ -119,6 +119,8 @@ def add_attr_idx_to_class_occurrence_counts_to_info_lazily(
                 "Ensure the dataset was created with proper info attributes."
             )
         return compute_attr_idx_to_class_occurrence_counts(dataset, dataset.info.class_counts)
+
+    breakpoint() # don't forget that caching is happening
 
     return ds.info_cache_hdd(
         {"attr_idx_to_class_occurrence_counts": _compute},

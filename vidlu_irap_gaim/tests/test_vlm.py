@@ -711,12 +711,11 @@ class TestVLMDatasetSchemeInfo:
     def test_dataset_info_propagates_base_info_fields(self):
         """Augmented info must still contain original base info fields."""
         from unittest.mock import MagicMock
-        from vidlu.data import Record
         from vidlu_irap_gaim.vlm.finetuning.dataset import VLMBihDataset
         from vidlu_irap_gaim.vlm.response_scheme import StandardResponseScheme
 
         scheme = StandardResponseScheme(SAMPLE_ATTR_METADATA)
-        base_info = Record(problem="multi_attribute_classification", some_field="hello")
+        base_info = dict(problem="multi_attribute_classification", some_field="hello")
 
         mock_ds = MagicMock()
         mock_ds.info = base_info
@@ -732,7 +731,6 @@ class TestVLMDatasetSchemeInfo:
     def test_extract_response_scheme_from_data_succeeds(self):
         """_extract_response_scheme_from_data retrieves scheme from dataset info."""
         from unittest.mock import MagicMock
-        from vidlu.data import Record
         from vidlu_irap_gaim.vlm.finetuning.steps import _extract_response_scheme_from_data
         from vidlu_irap_gaim.vlm.response_scheme import SparseIndexedResponseScheme
 
@@ -741,7 +739,7 @@ class TestVLMDatasetSchemeInfo:
             SAMPLE_ATTR_METADATA, attr_to_default_class_idx
         )
         mock_ds = MagicMock()
-        mock_ds.info = Record(vlm_response_scheme=scheme)
+        mock_ds.info = dict(vlm_response_scheme=scheme)
 
         extracted = _extract_response_scheme_from_data({"train": mock_ds, "val": mock_ds})
         assert extracted is scheme

@@ -1,10 +1,11 @@
+from types import SimpleNamespace
 import typing as T
 from pathlib import Path
 
 import numpy as np
 import torch
 
-from vidlu.data import Dataset, Record
+from vidlu_irap_gaim.data.dataset import Dataset
 
 from .constants import RGB_MEAN, RGB_STD, INPUT_DIM_RGB
 from .image_utils import load_image_cv2, rgb_to_chw_tensor
@@ -14,7 +15,7 @@ class InferenceImageDataset(Dataset):
     """
     Dataset for running inference on arbitrary images with temporal context.
 
-    Unlike BihSequence, this dataset:
+    Unlike IRAPDataset, this dataset:
     - Does NOT require labels (for pure inference without ground truth)
     - Uses alphabetical order of images to determine temporal context
     - Borrows attribute metadata from a reference dataset or explicit config
@@ -24,7 +25,7 @@ class InferenceImageDataset(Dataset):
         Images without valid context (near the start) are excluded.
 
     Example usage:
-        # From folder with context matching BihSequence
+        # From folder with context matching IRAPDataset
         ds = InferenceImageDataset.from_folder(
             "/path/to/images",
             reference_dataset=bih_test,
@@ -72,10 +73,10 @@ class InferenceImageDataset(Dataset):
 
         super().__init__(
             subset="inference",
-            info=Record(
+            info=dict(
                 problem="multi_attribute_classification",
                 class_counts=class_counts,
-                pixel_stats=Record(mean=np.array(mean), std=np.array(std)),
+                pixel_stats=SimpleNamespace(mean=np.array(mean), std=np.array(std)),
                 attr_to_value_to_class_idx=attr_to_value_to_class_idx,
             ),
         )
@@ -88,19 +89,18 @@ class InferenceImageDataset(Dataset):
     def __len__(self) -> int:
         return len(self.valid_indices)
 
-    def get_example(self, idx: int) -> Record:
+    def get_example(self, idx: int) -> dict:
         img_idx = self.valid_indices[idx]
         path = self.all_image_paths[img_idx]
 
-        def load_rgb() -> torch.Tensor:
-            frames = [
-                rgb_to_chw_tensor(load_image_cv2(str(self.all_image_paths[img_idx + offset])),
-                                  self.input_size)
-                for offset in self.context_sequence
-            ]
-            return torch.stack(frames, dim=0)
+        frames = [
+            rgb_to_chw_tensor(load_image_cv2(str(self.all_image_paths[img_idx + offset])),
+                              self.input_size)
+            for offset in self.context_sequence
+        ]
+        rgb = torch.stack(frames, dim=0)
 
-        return Record(rgb_=load_rgb, segment_id=path.stem)
+        return dict(rgb=rgb, segment_id=path.stem)
 
     @classmethod
     def from_folder(
@@ -122,7 +122,7 @@ class InferenceImageDataset(Dataset):
 
         Args:
             folder: Path to folder containing images.
-            reference_dataset: A BihSequence to copy metadata from (alternative to explicit args).
+            reference_dataset: A IRAPDataset to copy metadata from (alternative to explicit args).
             attr_to_value_to_class_idx: Explicit attribute metadata (if no reference_dataset).
             class_counts: Explicit class counts (if no reference_dataset).
             context_sequence: Offsets for context frames, e.g., (0, -1, -4).

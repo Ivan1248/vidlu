@@ -81,13 +81,16 @@ class AttributeMetadataDecoder:
     """
     attr_to_value_to_class_idx: dict[str, dict[str, int]]
     attr_to_class_idx_to_value: dict[str, dict[int, str]] = field(init=False)
+    ignore_class_idx: int | None = -1
 
     def __post_init__(self):
         self.attr_to_class_idx_to_value = {attr: {i: v for v, i in self.attr_to_value_to_class_idx[attr].items()}
                                            for attr in self.attr_to_value_to_class_idx.keys()}
 
     def value_str(self, *, attr: str, class_idx: int) -> str:
-        return self.attr_to_class_idx_to_value.get(attr, {}).get(class_idx, "(?)")
+        if self.ignore_class_idx is not None and class_idx == self.ignore_class_idx:
+            return "(unlabeled)"
+        return self.attr_to_class_idx_to_value.get(attr, {}).get(class_idx, "(unknown label)")
 
     def to_text(self, *, attr: str, class_idx: int) -> str:
         return f"{attr}: {self.value_str(attr=attr, class_idx=class_idx)} ({class_idx})"

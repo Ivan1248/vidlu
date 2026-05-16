@@ -1,6 +1,6 @@
 """IRAP-Vietnam dataset factory.
 
-Thin wrapper around :func:`vidlu_irap_gaim.data.bih_dataset.make_bih_data`
+Thin wrapper around :func:`vidlu_irap_gaim.data.irap_dataset.make_bih_data`
 that defaults to the Vietnam paths and disables the BiH N-context pickle-based
 filter (Vietnam metadata does not ship those pickles by default — see
 ``.devdocs/irap_vietnam_data_preparation.md``, simplification 1).
@@ -16,10 +16,8 @@ When ``dataset_dir`` is not given, ``IRAP_Vietnam`` is searched (in order) under
 When ``metadata_dir`` is not given, it defaults to ``<dataset_dir>`` (metadata
 files live directly in the dataset root).
 
-The underlying dataset class :class:`BihSequence` is reused unchanged: the
-Vietnam metadata directory mirrors the BiH layout, and segment ids are
-consecutive integers within each section so the integer-arithmetic context
-resolution works as in BiH.
+The underlying dataset class :class:`IRAPDataset` is reused unchanged: the
+Vietnam metadata directory mirrors the BiH layout.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ import typing as T
 
 from vidlu.utils.path import find_in_ancestors
 
-from .bih_dataset import make_bih_data
+from .irap_dataset import make_bih_data
 
 
 DATASET_NAME = "IRAP_Vietnam"
@@ -80,8 +78,10 @@ def make_vietnam_data(
     docstring; ``metadata_dir`` defaults to ``<dataset_dir>``. All other
     keyword arguments are forwarded to :func:`make_bih_data`.
     """
-    assert 'metadata_dir' not in kwargs, "metadata_dir is fixed to dataset_dir in make_vietnam_data"
-
+    if 'metadata_dir' in kwargs:
+        if kwargs.pop('metadata_dir') != dataset_dir:
+            raise ValueError("metadata_dir should not be passed explicitly or should be the same as dataset_dir")
+              
     dataset_dir = Path(dataset_dir) if dataset_dir is not None else _resolve_default_dataset_dir()
     metadata_dir = dataset_dir
 

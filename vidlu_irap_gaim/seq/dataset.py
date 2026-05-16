@@ -5,7 +5,7 @@ import json
 import numpy as np
 import torch
 
-from vidlu.data import Dataset, Record
+from vidlu_irap_gaim.data import Dataset
 
 
 def _load_json(p: str | Path):
@@ -99,7 +99,7 @@ class SeqEnhDataset(Dataset):
     Modular Sequential Enhancement Dataset.
     Configured with a dictionary of DataSources.
 
-    Returns a record with:
+    Returns a dict with:
       - data: dict[str, Tensor] (keys matching data_sources)
       - target: Tensor (scalar label for the central segment)
       - segment_id: str
@@ -119,7 +119,7 @@ class SeqEnhDataset(Dataset):
         target_label_map: dict[str, list[int]],
         target_attribute_index: int,
     ) -> None:
-        super().__init__(subset=subset, info=Record(problem="classification", class_count=0))
+        super().__init__(subset=subset, info=dict(problem="classification", class_count=0))
         self.data_sources = data_sources
         self.segment_ids = segment_id_list
         # Optimization: convert lists to tuples if static
@@ -132,7 +132,7 @@ class SeqEnhDataset(Dataset):
     def __len__(self) -> int:
         return len(self.segment_ids)
 
-    def get_example(self, idx: int) -> Record:
+    def get_example(self, idx: int) -> dict:
         sid = self.segment_ids[idx]
         road_id, pos = self.seq_index[sid]
         seq = self.road_to_seq[road_id]
@@ -145,8 +145,8 @@ class SeqEnhDataset(Dataset):
             input_data[name] = source.get_sequence(ids)
 
         y = int(self.target_label_map[sid][self.target_attribute_index])
-
-        return Record(data=input_data, target=torch.tensor(y, dtype=torch.int64), segment_id=sid)
+        
+        return dict(data=input_data, target=torch.tensor(y, dtype=torch.int64), segment_id=sid)
 
 
 def make_seq_enh_data(

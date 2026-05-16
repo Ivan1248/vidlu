@@ -1,5 +1,6 @@
-from .bih_dataset import (
-    BihSequence,
+from vidlu_irap_gaim.data.dataset import Dataset
+from .irap_dataset import (
+    IRAPDataset,
     make_bih_data,
     resolve_irap_paths,
     load_ncontext_segment_ids,

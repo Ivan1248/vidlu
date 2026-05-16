@@ -77,7 +77,7 @@ vidlu_irap_gaim/
 ├── losses.py                    # MultiAttributeCrossEntropyLoss
 ├── metrics.py                   # Per-attribute accuracy, precision, recall, F1, IoU
 ├── data/                        # Dataset and attribute management
-│   ├── bih_dataset.py           # BihSequence dataset, make_bih_data factory
+│   ├── irap_dataset.py           # IRAPDataset dataset, make_bih_data factory
 │   ├── inference_dataset.py     # InferenceImageDataset for unlabeled data
 │   ├── attrs.py                 # Canonical 41-attribute subset definitions
 │   ├── attribute_frequencies.py # Class distribution analysis
@@ -426,7 +426,7 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 |--------|-------------|
 | `make_bih_data(use_ncontext_filter=True, ...)` | Load BiH dataset with train/val/test splits |
 | `make_semisup_bih_data(labeled_ratio=..., ...)` | Semi-supervised split (labeled + unlabeled) |
-| `BihSequence(...)` | Dataset class (`info.class_counts`, `info.pixel_stats`, `info.attribute_names`) |
+| `IRAPDataset(...)` | Dataset class (`info.class_counts`, `info.pixel_stats`, `info.attribute_names`) |
 | `InferenceImageDataset.from_folder(...)` | Inference on unlabeled image folders |
 | `get_class_counts(...)` | Class count tuple for model construction |
 | `make_seq_enh_data(feat_dir, attribute)` | Sequential enhancement dataset from `.npy` features |

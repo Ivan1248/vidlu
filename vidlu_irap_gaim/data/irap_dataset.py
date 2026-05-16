@@ -9,17 +9,22 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from vidlu.data import Dataset
-from vidlu.data.datasets.datasets import _check_subset
-
-from .constants import (
+from vidlu_irap_gaim.data.dataset import Dataset
+from vidlu_irap_gaim.data.constants import (
     RGB_MEAN,
     RGB_STD,
     INPUT_DIM_RGB,
     IGNORE_LABEL_INDEX,
     MetaFiles,
 )
-from .image_utils import load_image_cv2, rgb_to_chw_tensor
+from vidlu_irap_gaim.data.image_utils import load_image_cv2, rgb_to_chw_tensor
+
+def _check_subset(cls, subset):
+    if subset not in cls.subsets:
+        raise ValueError(
+            f'Invalid subset "{subset}" for {cls.__name__}. '
+            f'Available: {", ".join(cls.subsets)}.'
+        )
 
 
 def resolve_irap_paths(
@@ -208,7 +213,7 @@ def make_bih_data(
         if "depth" in data_types:
             from torchvision.transforms import transforms as T_trans
             per_kind["depth"] = T_trans.Compose([T_trans.ToPILImage(), T_trans.ToTensor()])
-        transforms = {split: per_kind for split in BihSequence.subsets}
+        transforms = {split: per_kind for split in IRAPDataset.subsets}
 
     ds_kwargs = dict(
         context_sequence=tuple(context_sequence),
@@ -221,14 +226,14 @@ def make_bih_data(
     )
 
     return {
-        split: BihSequence(
+        split: IRAPDataset(
             ds_dir,
             split,
             metadata_dir=md_dir,
             transforms=transforms.get(split) if isinstance(transforms, dict) else transforms,
             **ds_kwargs,
         )
-        for split in BihSequence.subsets
+        for split in IRAPDataset.subsets
     }
 
 
@@ -266,9 +271,9 @@ def load_attribute_metadata(
     return ordered_attrs, attribute_value_to_irap_number
 
 
-class BihSequence(Dataset):
+class IRAPDataset(Dataset):
     """
-    Minimal reimplementation of IRAP GAIM sequence dataset for ViDLU.
+    IRAP road sequence dataset.
 
     Expects a config dict with keys:
       - dataset_path (root for data files)
@@ -278,7 +283,7 @@ class BihSequence(Dataset):
       - context_sequence: list[int], e.g. [0, -1, -4]
       - data_types: ["rgb", "depth"] subset supported; default ["rgb"]
 
-    For each segment index, returns a Record with keys:
+    For each segment index, returns a dict with keys:
       - rgb: Tensor sequence of shape (S, C, H, W)
       - depth: optional tensor sequence (S, 1, H, W)
       - target: LongTensor with shape (A,) if labels provided via label_map
@@ -400,31 +405,23 @@ class BihSequence(Dataset):
             for i, sid in enumerate(seg_seq):
                 self.seq_index[sid] = (road_id, i)
 
-        # Build contexts using integer offsets like the original implementation
-        # The original uses integer arithmetic on segment IDs for context windows.
-        # Context validity is computed over segments that *have data paths*.
-        # So we build `all_segment_ids_int` from the filtered `splits` dict.
-        all_splits_all_ids = []
-        for split_name, segment_ids in tqdm(splits.items(), desc="Building all_segment_ids_int"):
-            all_splits_all_ids.extend(segment_ids)
-        all_segment_ids_int = set(map(int, all_splits_all_ids))
-
-        # Filter to segments that have valid context when using integer offsets
-        # The original requires segments to be in road sequences (seq_index) for context validation
-        # This matches SeqEnhDatasetFromFeats which checks `if sid not in seq_index: continue`
+        # Use road-based sequence indexing to resolve context IDs, enforcing road boundaries.
+        # Integer arithmetic on segment IDs is wrong when roads have adjacent IDs (e.g. Vietnam).
+        # A context frame is valid iff its image exists on disk — not iff it appears in
+        # some split — so check against seg_to_paths rather than the split union.
         self.segment_id_to_context_ids = {}
         valid_segment_ids = []
         for sid in subset_ids:
-            # Check if segment is in road sequences (matches original behavior)
             if sid not in self.seq_index:
                 continue
-
-            sid_int = int(sid)
-            context_ids_int = [sid_int + offset for offset in self.context_sequence]
-            context_ids_str = tuple(map(str, context_ids_int))
-            # Check that all context IDs exist in splits (original only checks existence, not labels)
-            if all(cont_id in all_segment_ids_int for cont_id in context_ids_int):
-                self.segment_id_to_context_ids[sid] = context_ids_str
+            road_id, pos = self.seq_index[sid]
+            seq = self.road_to_seq[road_id]
+            indices = [pos + offset for offset in self.context_sequence]
+            if min(indices) < 0 or max(indices) >= len(seq):
+                continue
+            context_ids = tuple(seq[i] for i in indices)
+            if all(cid in self.seg_to_paths for cid in context_ids):
+                self.segment_id_to_context_ids[sid] = context_ids
                 valid_segment_ids.append(sid)
 
         # Apply ncontext_segment_id_subset filter if provided (matches original behavior)
@@ -477,7 +474,7 @@ class BihSequence(Dataset):
             return torch.empty(0)
         return torch.stack(frames, dim=0)
 
-    def get_example(self, idx: int) -> dict[str, T.Any]:
+    def get_example(self, idx: int) -> dict:
         sid = self.segment_ids[idx]
 
         # Prepare context ids from integer arithmetic (matches original).
@@ -488,16 +485,11 @@ class BihSequence(Dataset):
             )
         context_ids = list(self.segment_id_to_context_ids[sid])
 
-        items = []
-
-        # RGB sequence as a tensor (lazy-loaded to avoid IO when only labels are needed)
+        item = dict()
         if "rgb" in self.data_types:
-            items.append(("rgb_", lambda: self._load_sequence(context_ids, "rgb")))
-
-        # Labels are small, can be loaded directly – this will be `y`
+            item["rgb"] = self._load_sequence(context_ids, "rgb")
         if sid in self.segment_id_to_labels:
-            items.append(("target", torch.LongTensor(self.segment_id_to_labels[sid])))
-
-        # Keep segment_id for bookkeeping/metrics
-        items.append(("segment_id", sid))
-        return dict(items)
+            item["target"] = torch.LongTensor(self.segment_id_to_labels[sid])
+        item["segment_id"] = sid
+        item["sequence_id"] = self.seq_index[sid][0]
+        return item

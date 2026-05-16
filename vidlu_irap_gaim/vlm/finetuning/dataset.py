@@ -1,14 +1,14 @@
 """
-VLM dataset wrapper for BihSequence.
+VLM dataset wrapper for IRAPDataset.
 
-The dataset returns plain Record objects with standard types. Tokenization
+The dataset returns plain dicts with standard types. Tokenization
 happens in the training step where the processor is available.
 """
 from pathlib import Path
 
 import torch.nn.functional as F
 
-from vidlu.data import Dataset, Record
+from vidlu_irap_gaim.data import Dataset
 
 from vidlu_irap_gaim.data.attrs import get_attrs_to_include
 from vidlu_irap_gaim.data.attribute_frequencies import (
@@ -30,9 +30,9 @@ DEFAULT_RESPONSE_SCHEME_NAME = "standard"
 
 
 class VLMBihDataset(Dataset):
-    """Wraps BihSequence to produce VLM-ready samples for Vidlu.
+    """Wraps IRAPDataset to produce VLM-ready samples for Vidlu.
 
-    Returns plain Record objects with standard types:
+    Returns plain dicts with standard types:
     - image: (C, H, W) tensor
     - target: (A,) tensor of attribute indices
     - prompt: str (pre-built prompt, same for all samples)
@@ -51,7 +51,7 @@ class VLMBihDataset(Dataset):
     so that eval steps can derive the correct parser without configuration.
 
     Args:
-        base_dataset: BihSequence dataset to wrap.
+        base_dataset: IRAPDataset dataset to wrap.
         response_scheme: ResponseScheme instance that owns prompt building,
             ground-truth formatting, and response parsing.
         attrs_to_include: List of attribute names to include.
@@ -66,11 +66,9 @@ class VLMBihDataset(Dataset):
         detail_level: str = DEFAULT_DETAIL_LEVEL,
         upsampling_factor: int = 1,
     ):
-        from vidlu.data import Record
-
         base_info = getattr(base_dataset, "info", None)
-        info = Record(base_info if base_info is not None else {},
-                      vlm_response_scheme=response_scheme)
+        info = dict(base_info if base_info is not None else {},
+                    vlm_response_scheme=response_scheme)
 
         super().__init__(name="vlm_bih", data=base_dataset, info=info)
         self.base_dataset = base_dataset
@@ -83,7 +81,7 @@ class VLMBihDataset(Dataset):
         # Pre-build prompt (same for all samples - saves computation)
         self._prompt = response_scheme.build_prompt(attrs_to_include, detail_level=detail_level)
 
-    def get_example(self, idx: int) -> Record:
+    def get_example(self, idx: int) -> dict:
         sample = self.base_dataset[idx]
 
         # Extract center frame from sequence
@@ -103,22 +101,17 @@ class VLMBihDataset(Dataset):
                 align_corners=False,
             ).squeeze(0).to(orig_dtype)
 
-        # Get target tensor
         target = sample["target"]
-
-        # Build response from ground-truth target using the format's convention
         response = self.response_scheme.format_ground_truth(target, self.attrs_to_include)
-
-        # Get segment ID for tracking
         segment_id = sample["segment_id"]
 
-        return Record(
-            image=image,  # (C, H, W) tensor
-            target=target,  # (A,) tensor
-            prompt=self._prompt,  # str
-            response=response,  # str
-            segment_id=segment_id,  # str
-        )
+        return {
+            "image": image,  # (C, H, W) tensor
+            "target": target,  # (A,) tensor
+            "prompt": self._prompt,  # str
+            "response": response,  # str
+            "segment_id": segment_id,  # str
+        }
 
     @property
     def identifier(self) -> str:
@@ -137,8 +130,8 @@ def make_vlm_bih_data(
 ) -> dict[str, VLMBihDataset]:
     """Factory for VLM-formatted BIH datasets.
 
-    Creates train/val/test datasets that produce Record items for VLM
-    fine-tuning. Tokenization happens in the training step.
+    Creates train/val/test datasets that produce examples for VLM fine-tuning. 
+    Tokenization happens in the training step.
 
     The chosen response scheme governs both the training response format and the
     eval-step response parser. The eval step derives the correct scheme

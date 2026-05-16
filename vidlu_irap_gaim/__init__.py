@@ -1,6 +1,6 @@
 # Data
 from .data import (
-    BihSequence,
+    IRAPDataset,
     make_bih_data,
     get_class_counts,
     load_ncontext_segment_ids,

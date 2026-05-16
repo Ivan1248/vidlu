@@ -9,7 +9,7 @@ from vidlu_irap_gaim.training.semisup import (
     make_pseudo_labeled_bih_data,
     PseudoLabeledDataset,
 )
-from vidlu.data import Dataset
+from vidlu_irap_gaim.data import Dataset
 
 
 class MockDataset(Dataset):
@@ -122,9 +122,9 @@ def test_make_pseudo_labeled_bih_data():
         assert len(data["train"]) == 10
         assert len(data["train_u"]) == 90
         assert isinstance(data["train_u"], PseudoLabeledDataset)
-        # Verify __getitem__ works end-to-end (Record wrapping)
+        # Verify __getitem__ works end-to-end (pseudo-target merged into item dict)
         item = data["train_u"][0]
-        assert hasattr(item, "target")
-        assert item.target.shape == (2,)
+        assert "target" in item
+        assert item["target"].shape == (2,)
     finally:
         os.unlink(npz_path)
