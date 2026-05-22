@@ -191,7 +191,6 @@ venv.bak/
 
 # other
 other/notebooks/data/
-vidlu/libs/
 libs/
 semseg_cascade/
 *.ini
@@ -201,3 +200,5 @@ semseg_cascade/
 /vidlu/modules/other/morsic_loss/
 /vidlu/transforms/jitter/jitter_mo.py
 /vidlu/models/mo_models.py
+/test_vidlu_irap_gaim/
+/.devdocs

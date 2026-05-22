@@ -21,7 +21,7 @@ def add_class_segment_boxes(ds):
     ds = ds.info_cache_hdd(dict(seg_class_info=class_incidence.seg_class_info), CACHE_DIR,
                            recompute=False, simplify_dataset=lambda ds: ds[:4])
     return ds.enumerate().map_unpack(
-        lambda i, r: Record(r,
+        lambda i, r: type(r)(r,
                             class_seg_boxes=ds.info.seg_class_info['class_segment_boxes'][i]))
 
 

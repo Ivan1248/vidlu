@@ -47,12 +47,13 @@ class TestRecord:
             Record(a=1, b=2).join(Record(a_=lambda: 3, c=4))
         r4 = Record(a=1, b=2).join(Record(a_=lambda: 3, c=4), overwrite=True)
         assert str(r4) == "Record(a=<unevaluated>, b=2, c=4)"
-        r4.evaluate()
+        r4['a']  # forces evaluation of a
         assert str(r4) == "Record(a=3, b=2, c=4)"
 
     def test_record_reflexive(self):
         r5 = Record(a=2, b_=lambda: 3, c_=lambda r: r.a * r.b, d_=lambda r: r.c - r.b)
-        r5.evaluate()
+        for _ in r5.values():  # forces evaluation of all fields
+            pass
         assert str(r5) == "Record(a=2, b=3, c=6, d=3)"
 
     def test_record_contains_raises(self):

@@ -89,8 +89,9 @@ def _unify_sup_batch(batch):
             return Record(zip(batch[0].keys(), values))
         except AttributeError as e:
             return values
-    else:
-        return batch
+    if isinstance(batch, T.Mapping) and not isinstance(batch, Record):
+        return tuple(batch.values())
+    return batch
 
 
 def do_optimization_step(optimizers, loss, scaler=vtu.DummyGradScaler):

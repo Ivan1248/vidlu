@@ -3,7 +3,6 @@ from abc import ABC
 from collections import abc
 from functools import reduce
 import typing as T
-import multiprocessing
 
 import vidlu.utils.func as vuf
 
@@ -70,7 +69,8 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
         if any(isinstance(k, int) for k in self.dict_.keys()):
             raise ValueError("Record keys must be non-ints.")
         if int(os.environ.get("VIDLU_EAGER_RECORD", "0")) == 1:
-            self.evaluate()
+            for _ in self.values():  # forces evaluation of all fields
+                pass
 
     def __getitem__(self, key):
         _check_key(self, key, KeyError)
@@ -113,10 +113,6 @@ class RecordBase(abc.Collection, ABC):  # Sized, Iterable len, iter
 
     def __repr__(self):
         return self._to_string(repr)
-
-    def evaluate(self):
-        for k in self.keys():
-            _ = self[k]
 
     def is_evaluated(self, key):
         return not isinstance(self.dict_[key], LazyItem)
