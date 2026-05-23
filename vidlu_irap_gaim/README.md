@@ -358,7 +358,7 @@ python scripts/run.py test \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
-  -m "irap_gaim.tools.inference:run,e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test,context_sequence=(0,-1,-4))"
+  -m "irap_gaim.tools.inference:run,e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test,context_offsets=(0,-1,-4))"
 ```
 
 `InferenceImageDataset.from_folder` detects unlabeled images and skips loss/metrics computation. Use `reference_dataset` to copy attribute metadata and pixel normalization stats.
@@ -371,7 +371,7 @@ Generate per-segment PNGs with predicted attributes, colored probability bars, a
 python vidlu_irap_gaim/tools/inference_visualization.py \
   --mode local \
   --split val \
-  --context_sequence "0,-1,-4" \
+  --context_offsets "0,-1,-4" \
   --input_adapter standardize \
   --checkpoint_dir "/path/to/checkpoint" \
   --output_dir visualization_output \

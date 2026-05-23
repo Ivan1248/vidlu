@@ -258,7 +258,7 @@ def trainable_parameters_optimizer(optimizer_f):
         if not trainable:
             raise RuntimeError(
                 "No trainable parameters found. "
-                "Ensure Qwen3VLClassifier.initialize() was called before Trainer creation."
+                "Ensure the VLM classifier's initialize() was called before Trainer creation."
             )
         return optimizer_f(trainable, *args, **kwargs)
     return wrapper
@@ -276,6 +276,72 @@ vlm_finetune_trainer = TrainerConfig(
     batch_size=2,
     eval_batch_size=6,
     eval_count=3,  # Evaluate every epoch
+    extension_fs=[
+        MultiAttributeScorePrinter,
+    ],
+)
+
+
+# Gemma-4-tuned VLM trainer.  Hyperparameter sources:
+#
+#   [unsloth-g4]   Unsloth, "Gemma 4 Fine-tuning Guide" (LoRA recipe)
+#                  https://unsloth.ai/docs/models/gemma-4/train
+#   [hf-vertex]    HF / Google Cloud, "Fine-tune Gemma 4 with TRL on Vertex AI"
+#                  (full-FT TRL/SFTTrainer recipe for `gemma-4-E2B-it`)
+#                  https://huggingface.co/docs/google-cloud/examples/vertex-ai-notebooks-fine-tune-gemma-4
+#   [hf-carla]     huggingface/huggingface-gemma-recipes, `scripts/carla_vlm_gemma.py`
+#                  (LoRA-on-multimodal Gemma 4 reference, default r=128 alpha=256)
+#                  https://github.com/huggingface/huggingface-gemma-recipes/blob/main/scripts/carla_vlm_gemma.py
+#   [unsloth-4907] unslothai/unsloth#4907 — Gemma 4 26B-A4B MoE LoRA "abnormally
+#                  low trainable param count" bug (motivates including expert
+#                  layers in LoRA targets).
+#                  https://github.com/unslothai/unsloth/issues/4907
+#   [empirical]    Measured on this repo's 4× A6000 BIH dataset run.
+#
+# Per-hyperparameter justification:
+#
+#   - ``lr=1e-4``: Unsloth's LoRA-on-Gemma-4 recipe uses 2e-4 [unsloth-g4];
+#     HF-vertex and HF-CARLA use 5e-6 because they're full FT, not LoRA
+#     [hf-vertex, hf-carla].  1e-4 is the conservative LoRA midpoint; LoRA
+#     adapters tolerate (and need) a higher LR than full FT because their
+#     parameter count is tiny relative to the base.
+#   - ``weight_decay=1e-3``: Unsloth's recipe value for Gemma 4 [unsloth-g4].
+#     [hf-vertex] does not set weight_decay (HF SFTConfig default ≈ 0).
+#     The prior 1e-1 used by `vlm_finetune_trainer` is too aggressive for
+#     LoRA — heavy WD pushes adapters back toward zero.
+#   - ``fused=True``: PyTorch ≥2.0 AdamW fused kernel.  General best practice
+#     on Ampere; harmless on stacks without fused support
+#     (https://docs.pytorch.org/docs/stable/generated/torch.optim.AdamW.html).
+#   - ``epoch_count=3``: matches [hf-vertex] (`num_train_epochs=3`).
+#   - ``batch_size=2``: [empirical].  [hf-vertex] uses 4 per device on H100
+#     80 GB; on 4× A6000 with bf16-naive-MP we have less per-shard headroom.
+#     With ``gradient_accumulation_steps=4`` (in ``_get_vlm_train_step``,
+#     matching [hf-carla]) the effective batch size is 8.
+#   - ``eval_batch_size=1``: [empirical] — with bf16 base sharded across
+#     the 4× A6000s via ``device_map="auto"`` (naive MP), the teacher-forced
+#     eval forward at B=6 OOMs.  Generative metric eval is per-sample inside
+#     ``_generate_and_parse_batch`` regardless of this value, so B=1 carries
+#     no metric-quality cost.
+#   - ``eval_count=3``: evaluate every epoch (vidlu convention, same as the
+#     other trainers in this file).
+#
+# See also .devdocs/gemma4_26b_a4b_finetuning_resources.md for the full
+# hardware/resource budget and the comparison table behind these picks.
+gemma4_vlm_finetune_trainer = TrainerConfig(
+    train_step=_get_vlm_train_step(),
+    eval_step=_get_vlm_eval_step(),
+    loss=lambda out, target, reduction="mean": torch.tensor(0.0),
+    optimizer_f=trainable_parameters_optimizer(
+        partial(torch.optim.AdamW, lr=1e-4, weight_decay=1e-3, fused=True)
+    ),
+    epoch_count=3,
+    batch_size=2,
+    eval_batch_size=1,
+    # In-training eval = teacher-forced loss only (set VLM_SKIP_GENERATIVE_EVAL=1).
+    # Generative metric scoring is deferred to scripts/eval_generative_gemma.py
+    # so that the slow per-sample autoregressive decode does not dominate
+    # training wall-clock.  See plan §"Phase 1 — Cheap wins".
+    eval_count=1,
     extension_fs=[
         MultiAttributeScorePrinter,
     ],

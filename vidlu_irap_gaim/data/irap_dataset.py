@@ -9,21 +9,41 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from vidlu_irap_gaim.data.dataset import Dataset
-from vidlu_irap_gaim.data.constants import (
-    RGB_MEAN,
-    RGB_STD,
-    INPUT_DIM_RGB,
-    IGNORE_LABEL_INDEX,
-    MetaFiles,
-)
-from vidlu_irap_gaim.data.image_utils import load_image_cv2, rgb_to_chw_tensor
+from .dataset import Dataset
+from .image_utils import load_image_cv2, rgb_to_chw_tensor
+
+RGB_MEAN: tuple[float, float, float] = (0.53354913, 0.52727484, 0.48752149)
+RGB_STD: tuple[float, float, float] = (0.20401913, 0.20417478, 0.25402164)
+INPUT_DIM: tuple[int, int, int] = (384, 288, 3)
+
+IGNORE_LABEL_INDEX: int = -1
+
+
+class MetaFiles:
+    """File names (relative to a dataset's metadata directory)."""
+
+    ATTRIBUTE_METADATA = "attribute_metadata.json"
+    SPLITS = "splits.json"
+    SEGMENT_ID_TO_DATA_PATHS = "segment_id_to_data_paths_rel.json"
+    SEGMENT_ID_TO_ROAD_DATA = "segment_id_to_road_data.json"
+    ROAD_ID_TO_SEGMENT_ID_SEQUENCE = "road_id_to_segment_id_sequence.json"
 
 def _check_subset(cls, subset):
     if subset not in cls.subsets:
         raise ValueError(
             f'Invalid subset "{subset}" for {cls.__name__}. '
             f'Available: {", ".join(cls.subsets)}.'
+        )
+
+
+def resolve_datasets_root() -> Path:
+    if v := os.environ.get("IRAP_HOME"):
+        return Path(v)
+    elif v := os.environ.get("DATASETS_PATH"):
+        return Path(v)
+    else:
+        raise RuntimeError(
+            "Cannot resolve datasets root directory. Please set the IRAP_HOME or DATASETS_PATH environment variable."
         )
 
 
@@ -34,28 +54,14 @@ def resolve_irap_paths(
 ) -> tuple[Path, Path]:
     """Resolve IRAP dataset and metadata directories.
 
-    Args:
-        dataset_dir: Optional explicit dataset directory (overrides irap_home-derived path).
-        metadata_dir: Optional explicit metadata directory (overrides irap_home-derived path).
-
     Returns:
         Tuple of (dataset_dir, metadata_dir) as Path objects.
-
-    Raises:
-        RuntimeError: If irap_home cannot be resolved.
     """
-    if dataset_dir is None or metadata_dir is None:
-        env_home = os.environ.get("IRAP_HOME", None)
-        if env_home is None:
-            raise RuntimeError(
-                "Cannot resolve IRAP paths: pass both dataset_dir and metadata_dir, "
-                "or set IRAP_HOME env var."
-            )
-        irap_home = Path(env_home)
-        if dataset_dir is None:
-            dataset_dir = irap_home / "IRAP_BIH"
-        if metadata_dir is None:
-            metadata_dir = irap_home / "IRAP_BIH_METADATA"
+    irap_home = resolve_datasets_root()
+    if dataset_dir is None:
+        dataset_dir = irap_home / "IRAP_BIH"
+    if metadata_dir is None:
+        metadata_dir = irap_home / "IRAP_BIH_METADATA"
     return Path(dataset_dir), Path(metadata_dir)
 
 
@@ -162,11 +168,10 @@ def make_bih_data(
     *,
     dataset_dir: str | Path | None = None,
     metadata_dir: str | Path | None = None,
-    context_sequence: T.Sequence[int] = (0, -1, -4),
-    data_types: T.Sequence[str] = ("rgb",),
+    context_offsets: T.Sequence[int] = (0, -1, -4),
     mean: T.Sequence[float] = RGB_MEAN,
     std: T.Sequence[float] = RGB_STD,
-    input_dim_rgb: T.Sequence[int] = INPUT_DIM_RGB,
+    input_dim_rgb: T.Sequence[int] = INPUT_DIM,
     transforms: T.Mapping[str, T.Callable] | None = None,
     #label_map: T.Mapping[str, T.Sequence[int]] | None = None,
     ncontext_segment_id_subset: set[str] | None = None,
@@ -179,8 +184,7 @@ def make_bih_data(
     Args:
         dataset_dir: Optional override for IRAP_BIH directory.
         metadata_dir: Optional override for IRAP_BIH_METADATA directory.
-        context_sequence: Offsets for context frames, e.g., (0, -1, -4).
-        data_types: Which data types to load, e.g., ("rgb",).
+        context_offsets: Offsets for context frames, e.g., (0, -1, -4).
         mean: RGB channel means for normalization.
         std: RGB channel stds for normalization.
         input_dim_rgb: Target image dimensions (W, H, C).
@@ -194,30 +198,26 @@ def make_bih_data(
             ({train,val,test}.pickle). If None and use_ncontext_filter=True, uses
             metadata_dir/seg_to_res. Only used if use_ncontext_filter=True.
     """
-    # Resolve paths once at the top level (both derived from irap_home)
-    ds_dir, md_dir = resolve_irap_paths(dataset_dir=dataset_dir, metadata_dir=metadata_dir)
+    dataset_dir, metadata_dir = resolve_irap_paths(
+        dataset_dir=dataset_dir, metadata_dir=metadata_dir
+    )
 
     # Load segment ID filter from precomputed results if requested
     if use_ncontext_filter and ncontext_segment_id_subset is None:
         if seg_to_res_path is None:
-            seg_to_res_path = md_dir / "seg_to_res"
-        road_seq_path = md_dir / MetaFiles.ROAD_ID_TO_SEGMENT_ID_SEQUENCE
+            seg_to_res_path = metadata_dir / "seg_to_res"
+        road_seq_path = metadata_dir / MetaFiles.ROAD_ID_TO_SEGMENT_ID_SEQUENCE
         ncontext_segment_id_subset = load_ncontext_segment_ids(seg_to_res_path, road_seq_path)
 
     if transforms is None:
         target_wh = (int(input_dim_rgb[0]), int(input_dim_rgb[1]))
         per_kind: dict[str, T.Callable] = {}
-        if "rgb" in data_types:
-            # Photometric jittering is handled in TrainerConfig; keep loading deterministic here.
-            per_kind["rgb"] = lambda img, _twh=target_wh: rgb_to_chw_tensor(img, _twh)
-        if "depth" in data_types:
-            from torchvision.transforms import transforms as T_trans
-            per_kind["depth"] = T_trans.Compose([T_trans.ToPILImage(), T_trans.ToTensor()])
+        # Photometric jittering is handled in TrainerConfig; keep loading deterministic here.
+        per_kind["rgb"] = lambda img, _twh=target_wh: rgb_to_chw_tensor(img, _twh)
         transforms = {split: per_kind for split in IRAPDataset.subsets}
 
     ds_kwargs = dict(
-        context_sequence=tuple(context_sequence),
-        data_types=tuple(str(x) for x in data_types),
+        context_offsets=tuple(context_offsets),
         mean=tuple(float(x) for x in mean),
         std=tuple(float(x) for x in std),
         #label_map=label_map,
@@ -227,9 +227,9 @@ def make_bih_data(
 
     return {
         split: IRAPDataset(
-            ds_dir,
+            dataset_dir,
             split,
-            metadata_dir=md_dir,
+            metadata_dir=metadata_dir,
             transforms=transforms.get(split) if isinstance(transforms, dict) else transforms,
             **ds_kwargs,
         )
@@ -237,16 +237,62 @@ def make_bih_data(
     }
 
 
-def get_class_counts(metadata_dir: str | Path | None = None) -> tuple[int, ...]:
+def make_vietnam_data(
+    *,
+    dataset_dir: str | Path | None = None,
+    context_offsets: T.Sequence[int] = (0, -1, -4),
+    use_ncontext_filter: bool = False,
+    allow_missing_attributes: bool = True,
+    **kwargs,
+):
+    """Build IRAP-Vietnam {train, val, test} datasets.
+
+    Differs from :func:`make_bih_data` only in defaults:
+
+    - ``use_ncontext_filter=False``: the Vietnam release does not include the
+      precomputed N-context pickles.
+    - ``allow_missing_attributes=True``: five flow attributes (motorcycle /
+      bicycle / pedestrian) are empty in every coding table — without this
+      flag every segment would be dropped. Missing/unmappable codes are
+      mapped to PyTorch's standard ``ignore_index = -1``.
+
+    Default-path resolution for ``dataset_dir`` is documented in the module
+    docstring; ``metadata_dir`` defaults to ``<dataset_dir>``. All other
+    keyword arguments are forwarded to :func:`make_bih_data`.
+    """
+    if "metadata_dir" in kwargs:
+        if kwargs.pop("metadata_dir") != dataset_dir:
+            raise ValueError(
+                "metadata_dir should not be passed explicitly or should be the same as dataset_dir"
+            )
+
+    if dataset_dir is None:
+        dataset_dir = resolve_datasets_root() / "IRAP_Vietnam"
+
+    return make_bih_data(
+        dataset_dir=dataset_dir,
+        metadata_dir=dataset_dir,
+        context_offsets=context_offsets,
+        use_ncontext_filter=use_ncontext_filter,
+        allow_missing_attributes=allow_missing_attributes,
+        **kwargs,
+    )
+
+
+def get_class_counts(metadata_dir: str | Path) -> tuple[int, ...]:
     """Number of classes per attribute, read directly from metadata.
 
     Lightweight: only loads ``attribute_metadata.json``. Useful in model
     factory expressions where constructing a dataset just to read
     ``info.class_counts`` would be wasteful.
     """
-    _, metadata_dir = resolve_irap_paths(metadata_dir=metadata_dir)
     ordered_attrs, attribute_value_to_irap = load_attribute_metadata(metadata_dir=metadata_dir)
     return tuple(len(attribute_value_to_irap[attr]) for attr in ordered_attrs)
+
+
+def get_bih_class_counts(metadata_dir: str | Path | None = None) -> tuple[int, ...]:
+    _, metadata_dir = resolve_irap_paths(metadata_dir=metadata_dir)
+    return get_class_counts(metadata_dir)
 
 
 def load_attribute_metadata(
@@ -280,8 +326,7 @@ class IRAPDataset(Dataset):
       - segment_id_to_data_paths_path (json mapping seg_id -> {rgb, depth})
       - splits_path (json with {train,val,test}: list[str])
       - road_id_to_segment_id_sequence_path (for context; optional)
-      - context_sequence: list[int], e.g. [0, -1, -4]
-      - data_types: ["rgb", "depth"] subset supported; default ["rgb"]
+      - context_offsets: list[int], e.g. [0, -1, -4]
 
     For each segment index, returns a dict with keys:
       - rgb: Tensor sequence of shape (S, C, H, W)
@@ -298,10 +343,9 @@ class IRAPDataset(Dataset):
         subset: str = "train",
         *,
         metadata_dir: T.Union[str, Path, None] = None,
-        context_sequence: T.Sequence[int] = (0, -1, -4),
-        data_types: T.Sequence[str] = ("rgb",),
-        mean: T.Sequence[float] = (0.53354913, 0.52727484, 0.48752149),
-        std: T.Sequence[float] = (0.20401913, 0.20417478, 0.25402164),
+        context_offsets: T.Sequence[int] = (0, -1, -4),
+        mean: T.Sequence[float] = RGB_MEAN,
+        std: T.Sequence[float] = RGB_STD,
         transforms: T.Mapping[str, T.Callable] | None = None,
         ncontext_segment_id_subset: set[str] | None = None,
         allow_missing_attributes: bool = False,
@@ -315,8 +359,7 @@ class IRAPDataset(Dataset):
             Path(metadata_dir) if metadata_dir is not None
             else self.root.parent / (self.root.name + "_METADATA")
         )
-        self.context_sequence = list(context_sequence)
-        self.data_types = set(data_types)
+        self.context_offsets = list(context_offsets)
 
         with open(self.metadata_dir / MetaFiles.SPLITS, "r") as f:
             all_splits = json.load(f)
@@ -416,7 +459,7 @@ class IRAPDataset(Dataset):
                 continue
             road_id, pos = self.seq_index[sid]
             seq = self.road_to_seq[road_id]
-            indices = [pos + offset for offset in self.context_sequence]
+            indices = [pos + offset for offset in self.context_offsets]
             if min(indices) < 0 or max(indices) >= len(seq):
                 continue
             context_ids = tuple(seq[i] for i in indices)
@@ -486,8 +529,7 @@ class IRAPDataset(Dataset):
         context_ids = list(self.segment_id_to_context_ids[sid])
 
         item = dict()
-        if "rgb" in self.data_types:
-            item["rgb"] = self._load_sequence(context_ids, "rgb")
+        item["rgb"] = self._load_sequence(context_ids, "rgb")
         if sid in self.segment_id_to_labels:
             item["target"] = torch.LongTensor(self.segment_id_to_labels[sid])
         item["segment_id"] = sid

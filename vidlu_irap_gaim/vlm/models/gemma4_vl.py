@@ -30,6 +30,9 @@ class Gemma4VLPredictor(BaseHFPredictor):
         self._processor = AutoProcessor.from_pretrained(self.model_id)
 
     def _prepare_hf_inputs(self, pil_image: Image.Image, prompt: str) -> dict:
+        # Image is embedded in messages by build_gemma_chat_messages;
+        # do NOT pass images= (transformers >= 5.5 extracts from messages
+        # and a second images kwarg raises "got multiple values").
         messages = build_gemma_chat_messages(pil_image, prompt)
         return self._processor.apply_chat_template(
             messages,
@@ -37,6 +40,5 @@ class Gemma4VLPredictor(BaseHFPredictor):
             return_dict=True,
             return_tensors="pt",
             add_generation_prompt=True,
-            images=[pil_image],
             enable_thinking=self.enable_thinking,
         )

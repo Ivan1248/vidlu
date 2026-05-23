@@ -11,6 +11,7 @@ from .configs import (
     irap_pseudo_label_trainer_nofreeze,
     irap_pseudo_label_offline_trainer,
     vlm_finetune_trainer,
+    gemma4_vlm_finetune_trainer,
     trainable_parameters_optimizer,
 )
 from .steps import (

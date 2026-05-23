@@ -13,7 +13,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from vidlu_irap_gaim.data import make_bih_data, make_vietnam_data
-from vidlu_irap_gaim.data.constants import IGNORE_LABEL_INDEX
+from vidlu_irap_gaim.data.irap_dataset import IGNORE_LABEL_INDEX
 from vidlu_irap_gaim.training import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
 from vidlu_irap_gaim.tools.vis_utils import (
     AttributeMetadataDecoder,
@@ -111,12 +111,12 @@ class ViewerConfig:
     ds_dir: Path
     md_dir: Path
     split: str
-    context_sequence: tuple[int, ...]
+    context_offsets: tuple[int, ...]
 
     @property
     def load_key(self) -> tuple:
         """Hashable key for dataset loading (excludes display-only settings like jitter)."""
-        return (self.dataset_name, str(self.ds_dir), str(self.md_dir), self.split, self.context_sequence)
+        return (self.dataset_name, str(self.ds_dir), str(self.md_dir), self.split, self.context_offsets)
 
 
 # Dataset detection and loading ################################################
@@ -150,18 +150,18 @@ def load_example(_ds, idx: int, cache_key: tuple) -> dict:
 
 
 @st.cache_resource(hash_funcs={Path: str})
-def load_dataset(dataset_name: str, dataset_dir: Path, metadata_dir: Path, split: str, context_sequence: tuple):
+def load_dataset(dataset_name: str, dataset_dir: Path, metadata_dir: Path, split: str, context_offsets: tuple):
     if dataset_name == "IRAP_Vietnam":
         splits = make_vietnam_data(
             dataset_dir=dataset_dir,
             metadata_dir=metadata_dir,
-            context_sequence=context_sequence,
+            context_offsets=context_offsets,
         )
     else:
         splits = make_bih_data(
             dataset_dir=dataset_dir,
             metadata_dir=metadata_dir,
-            context_sequence=context_sequence,
+            context_offsets=context_offsets,
         )
     return splits[split]
 
@@ -201,12 +201,12 @@ def _filters_key(filters: dict[str, set[str]]) -> frozenset:
 
 
 def get_context_rgb_relpaths(ds, center_sid: str) -> list[tuple[int, str | None]]:
-    """List of (offset, relpath-or-None) in context_sequence order."""
+    """List of (offset, relpath-or-None) in context_offsets order."""
     ctx_ids = ds.segment_id_to_context_ids.get(center_sid)
     if ctx_ids is None:
         return []
     out = []
-    for offset, sid in zip(ds.context_sequence, ctx_ids):
+    for offset, sid in zip(ds.context_offsets, ctx_ids):
         p = ds.seg_to_paths.get(sid, {}).get("rgb")
         out.append((offset, p.relative_to(ds.root).as_posix() if p is not None else None))
     return out
@@ -293,7 +293,7 @@ def _render_sidebar_config() -> ViewerConfig | None:
 
     seq_input = st.sidebar.text_input("Context offsets (e.g., 0, -1, -4)", value="0, -1, -4")
     try:
-        context_sequence = tuple(int(x.strip()) for x in seq_input.split(","))
+        context_offsets = tuple(int(x.strip()) for x in seq_input.split(","))
     except ValueError:
         st.error("Invalid context offsets format. Use comma-separated integers.")
         return None
@@ -303,7 +303,7 @@ def _render_sidebar_config() -> ViewerConfig | None:
         ds_dir=ds_dir,
         md_dir=md_dir,
         split=split,
-        context_sequence=context_sequence,
+        context_offsets=context_offsets,
     )
 
 
@@ -341,7 +341,7 @@ def _ensure_dataset_loaded(config: ViewerConfig):
         ds_dir=Path(a_ds_dir),
         md_dir=Path(a_md_dir),
         split=a_split,
-        context_sequence=a_ctx_seq,
+        context_offsets=a_ctx_seq,
     )
 
     if stale:
@@ -353,7 +353,7 @@ def _ensure_dataset_loaded(config: ViewerConfig):
             active_config.ds_dir,
             active_config.md_dir,
             active_config.split,
-            active_config.context_sequence,
+            active_config.context_offsets,
         )
 
     if not ds or len(ds) == 0:
@@ -449,7 +449,7 @@ def _render_filters_and_navigation(
 # Main content columns #########################################################
 
 
-def _render_image_column(data: dict, ds, context_sequence: tuple[int, ...], jitter_selection: str) -> None:
+def _render_image_column(data: dict, ds, context_offsets: tuple[int, ...], jitter_selection: str) -> None:
     """Render the image column: composite view strip with optional jitter preview."""
     rgb = data.get("rgb")
     if rgb is None:
@@ -467,7 +467,7 @@ def _render_image_column(data: dict, ds, context_sequence: tuple[int, ...], jitt
 
     caption = f"Segment: {data.get('segment_id', 'Unknown')}{jitter_caption_suffix}"
     if len(imgs_np) > 1:
-        caption += f" | Context offsets: {', '.join(map(str, context_sequence))}"
+        caption += f" | Context offsets: {', '.join(map(str, context_offsets))}"
 
     st.image(final_img, caption=caption, width="stretch")
 
@@ -537,8 +537,6 @@ def main():
         return
     cursor, ds_idx, filtered = nav
 
-    st.sidebar.divider()
-
     # Load example (cached — see load_example).
     try:
         data = load_example(ds, ds_idx, cache_key=active_config.load_key)
@@ -547,7 +545,6 @@ def main():
         return
 
     # Jitter selection at the bottom of the sidebar
-    st.sidebar.divider()
     jitter_selection = st.sidebar.selectbox(
         "ColorJitter",
         _JITTER_OPTIONS,
@@ -560,7 +557,7 @@ def main():
     col_imgs, col_attrs = st.columns([1, 1])
 
     with col_imgs:
-        _render_image_column(data, ds, active_config.context_sequence, jitter_selection)
+        _render_image_column(data, ds, active_config.context_offsets, jitter_selection)
 
     with col_attrs:
         _render_attribute_column(data, ds, decoder, ordered_attrs, attr_values)

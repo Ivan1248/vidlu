@@ -71,13 +71,14 @@ class EvaluationResult:
 def _load_dataset(
     split: str,
     image_folder: str | None,
+    dataset_name: str = "bih",
 ) -> tuple[Any, dict[str, dict[str, int]], list[str]]:
     """Load dataset for evaluation.
 
     Returns:
         Tuple of (dataset, attr_to_value_to_class_idx, attrs_order)
     """
-    from vidlu_irap_gaim.data import make_bih_data, InferenceImageDataset
+    from vidlu_irap_gaim.data import make_bih_data, make_vietnam_data, InferenceImageDataset
     from vidlu_irap_gaim.data.attrs import get_attrs_to_include
 
     if image_folder is not None:
@@ -91,7 +92,7 @@ def _load_dataset(
         attr_to_value_to_class_idx = ref_ds.info.attr_to_value_to_class_idx
     else:
         # Standard split
-        data = make_bih_data()
+        data = make_vietnam_data() if dataset_name == "vietnam" else make_bih_data()
         dataset = data[split]
         attr_to_value_to_class_idx = dataset.info.attr_to_value_to_class_idx
 
@@ -292,6 +293,7 @@ def run_evaluation(
     dataset: Any = None,
     predictor: Any = None,
     # Standard parameters (used when dataset is not provided)
+    dataset_name: str = "bih",
     split: str = "test",
     image_folder: str | None = None,
     output_dir: str | Path = "vlm_results",
@@ -378,7 +380,7 @@ def run_evaluation(
     if dataset is None:
         print(f"Loading dataset (split={split}, image_folder={image_folder})...")
         dataset, attr_to_value_to_class_idx, attrs_order, attrs_to_include = _load_dataset(
-            split, image_folder
+            split, image_folder, dataset_name
         )
         print(f"Dataset loaded: {len(dataset)} samples")
     else:
@@ -624,6 +626,7 @@ def run_evaluation(
         "num_samples_completed": num_samples_completed,
         "num_valid_predictions": num_valid,
         "was_interrupted": was_interrupted,
+        "dataset": dataset_name,
         "split": split,
         "image_folder": str(image_folder) if image_folder else None,
         "model_id": model_id,
@@ -669,6 +672,13 @@ def main():
         "--image-folder",
         type=str,
         help="Custom folder of images to evaluate (overrides --split)",
+    )
+
+    parser.add_argument(
+        "--dataset",
+        choices=["bih", "vietnam"],
+        default="bih",
+        help="Dataset to evaluate (default: bih)",
     )
 
     # Output
@@ -868,6 +878,7 @@ def main():
             print(f"[INFO] Auto-set batch_size={effective_batch_size} for vLLM efficiency")
 
     result = run_evaluation(
+        dataset_name=args.dataset,
         split=args.split,
         image_folder=args.image_folder,
         output_dir=args.output_dir,

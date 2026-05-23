@@ -19,7 +19,7 @@ import torch
 from torch.utils.data.dataset import ConcatDataset
 from tqdm import tqdm
 
-from vidlu.data.record import DictRecord, LazyItem
+from .lazy_dict import LazyDict, Lazy
 
 
 # Helpers ######################################################################
@@ -94,7 +94,7 @@ class Dataset(abc.Sequence):
         if subset is not None:
             self.name += f'-{subset}'
             self.subset = subset
-        self.info = DictRecord(info or getattr(self, 'info', None) or getattr(data, 'info', dict()))
+        self.info = LazyDict(info or getattr(self, 'info', None) or getattr(data, 'info', dict()))
         self.data = data
         self.change_info = make_change_info(self, name=self.name,
                                             data_change=subset if data_change is None else data_change,
@@ -362,8 +362,8 @@ class InfoCacheDataset(Dataset):  # lazy
         self.names_str = ', '.join(name_to_func.keys())
         self.initialized = {k: multiprocessing.Value('i', 0)
                             for k in name_to_func}  # must be before super
-        info = DictRecord(dataset.info or kwargs.get('info', dict()),
-                          **{k: LazyItem(f) for k, f in name_to_func.items()})  # lazyness support
+        info = LazyDict(dataset.info or kwargs.get('info', dict()),
+                        **{k: Lazy(f) for k, f in name_to_func.items()})  # laziness support
 
         super().__init__(name=f"info_cache({self.names_str})", data=dataset, info=info,
                          data_change=False, info_change=list(name_to_func), **kwargs)

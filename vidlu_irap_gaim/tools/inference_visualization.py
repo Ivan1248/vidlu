@@ -71,7 +71,7 @@ def run_local(args) -> None:
     datasets = make_bih_data(
         dataset_dir=ds_dir,
         metadata_dir=md_dir,
-        context_sequence=args.context_sequence,
+        context_offsets=args.context_offsets,
         data_types=("rgb",),
         attribute_value_mapping_path=args.attribute_value_mapping_path,
         use_ncontext_filter=not args.no_ncontext_filter,
@@ -88,12 +88,12 @@ def run_local(args) -> None:
     attribute_names = list(ds.info.attribute_names)
     attribute_to_idx = {a: i for i, a in enumerate(attribute_names)}
 
-    # Model: match training defaults (sequence_length = len(context_sequence))
+    # Model: match training defaults (sequence_length = len(context_offsets))
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ImageSequenceClassifier(
         class_counts=tuple(ds.info.class_counts),
         attention=args.attention,
-        sequence_length=len(args.context_sequence),
+        sequence_length=len(args.context_offsets),
         encoder_f=lambda: ResNetEncoder(pretrained=args.pretrained_backbone),
     ).to(device)
 
@@ -201,7 +201,7 @@ def run_sequential_legacy(args) -> None:
     """
     Sequential mode (legacy checkpoints):
     - Uses legacy per-attribute LSTM smoothing checkpoints (best_model_MF1.pt).
-    - Uses exported per-segment feature vectors from `--feat_dir` and a long `--context_sequence`.
+    - Uses exported per-segment feature vectors from `--feat_dir` and a long `--context_offsets`.
     - Still visualizes RGB frames from BiH.
     """
     if args.seq_config_path is None:
@@ -223,7 +223,7 @@ def run_sequential_legacy(args) -> None:
     datasets = make_bih_data(
         dataset_dir=ds_dir,
         metadata_dir=md_dir,
-        context_sequence=args.context_sequence,
+        context_offsets=args.context_offsets,
         data_types=("rgb",),
         attribute_value_mapping_path=args.attribute_value_mapping_path,
         use_ncontext_filter=not args.no_ncontext_filter,
@@ -232,15 +232,15 @@ def run_sequential_legacy(args) -> None:
     ds = datasets[args.split]
 
     # Validate legacy context length assumptions: expects full window 2*max_N+1 and 0 offset at index max_N
-    if len(args.context_sequence) != 2 * max_N + 1:
+    if len(args.context_offsets) != 2 * max_N + 1:
         raise ValueError(
-            f"Legacy sequential models expect context_sequence length 2*max_N+1.\n"
-            f"Got len(context_sequence)={len(args.context_sequence)} but max_N={max_N} -> expected {2 * max_N + 1}."
+            f"Legacy sequential models expect context_offsets length 2*max_N+1.\n"
+            f"Got len(context_offsets)={len(args.context_offsets)} but max_N={max_N} -> expected {2 * max_N + 1}."
         )
-    if args.context_sequence[max_N] != 0:
+    if args.context_offsets[max_N] != 0:
         raise ValueError(
-            "Legacy sequential models expect the center element (index max_N) of context_sequence to be 0.\n"
-            f"Got context_sequence[{max_N}]={args.context_sequence[max_N]}."
+            "Legacy sequential models expect the center element (index max_N) of context_offsets to be 0.\n"
+            f"Got context_offsets[{max_N}]={args.context_offsets[max_N]}."
         )
 
     decoders = AttributeMetadataDecoder.load(
@@ -352,7 +352,7 @@ def parse_args(argv: Sequence[str] | None = None):
     p.add_argument("--no_ncontext_filter", action="store_true", help="Disable N-context filtering")
     p.add_argument("--split", choices=("train", "val", "test"), default="val")
     p.add_argument(
-        "--context_sequence",
+        "--context_offsets",
         type=_parse_int_list_csv,
         default=(0, -1, -4),
         help="CSV list of integer offsets, e.g. '0,-1,-4'",

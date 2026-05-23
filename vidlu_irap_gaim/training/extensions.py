@@ -245,7 +245,7 @@ class VisualizationExtension(TrainerExtension):
                         )
 
                 # BIH mean and std
-                from vidlu_irap_gaim.data.constants import RGB_MEAN, RGB_STD
+                from vidlu_irap_gaim.data.irap_dataset import RGB_MEAN, RGB_STD
 
                 mean = torch.tensor(RGB_MEAN).view(3, 1, 1)
                 std = torch.tensor(RGB_STD).view(3, 1, 1)

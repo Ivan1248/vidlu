@@ -11,5 +11,4 @@ streamlit
 # VLM inference (for zero-shot evaluation)
 transformers>=4.40.0
 qwen-vl-utils>=0.0.8
-accelerate>=0.30.0
 pyyaml>=6.0

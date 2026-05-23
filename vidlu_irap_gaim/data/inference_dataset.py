@@ -5,9 +5,9 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from vidlu_irap_gaim.data.dataset import Dataset
+from .dataset import Dataset
 
-from .constants import RGB_MEAN, RGB_STD, INPUT_DIM_RGB
+from .irap_dataset import RGB_MEAN, RGB_STD, INPUT_DIM
 from .image_utils import load_image_cv2, rgb_to_chw_tensor
 
 
@@ -21,7 +21,7 @@ class InferenceImageDataset(Dataset):
     - Borrows attribute metadata from a reference dataset or explicit config
 
     Context sequence example:
-        context_sequence=(0, -1, -4) means for image at index i, load images at i, i-1, i-4.
+        context_offsets=(0, -1, -4) means for image at index i, load images at i, i-1, i-4.
         Images without valid context (near the start) are excluded.
 
     Example usage:
@@ -29,7 +29,7 @@ class InferenceImageDataset(Dataset):
         ds = InferenceImageDataset.from_folder(
             "/path/to/images",
             reference_dataset=bih_test,
-            context_sequence=(0, -1, -4),
+            context_offsets=(0, -1, -4),
         )
     """
 
@@ -39,28 +39,28 @@ class InferenceImageDataset(Dataset):
         *,
         attr_to_value_to_class_idx: dict[str, dict[str, int]],
         class_counts: tuple[int, ...],
-        context_sequence: T.Sequence[int] = (0, -1, -4),
+        context_offsets: T.Sequence[int] = (0, -1, -4),
         mean: T.Sequence[float] = RGB_MEAN,
         std: T.Sequence[float] = RGB_STD,
-        input_size: tuple[int, int] = (INPUT_DIM_RGB[0], INPUT_DIM_RGB[1]),  # (W, H)
+        input_size: tuple[int, int] = (INPUT_DIM[0], INPUT_DIM[1]),  # (W, H)
     ):
         """
         Args:
             image_paths: Ordered sequence of image paths (alphabetical order assumed).
             attr_to_value_to_class_idx: Attribute metadata for decoding predictions.
             class_counts: Number of classes per attribute.
-            context_sequence: Offsets for context frames, e.g., (0, -1, -4).
+            context_offsets: Offsets for context frames, e.g., (0, -1, -4).
                 The frames are ordered by offset (so (0, -1, -4) gives [img_0, img_-1, img_-4]).
             mean, std: Normalization stats (used by input adapter, stored in info).
             input_size: Target image size (W, H).
         """
         all_image_paths = [Path(p) for p in image_paths]
-        self.context_sequence = tuple(context_sequence)
+        self.context_offsets = tuple(context_offsets)
         self.input_size = input_size
 
         # Determine which images have valid context (all context indices in bounds)
-        min_offset = min(self.context_sequence)
-        max_offset = max(self.context_sequence)
+        min_offset = min(self.context_offsets)
+        max_offset = max(self.context_offsets)
         num_images = len(all_image_paths)
 
         # Valid indices: those where idx + min_offset >= 0 and idx + max_offset < num_images
@@ -83,7 +83,7 @@ class InferenceImageDataset(Dataset):
 
         print(
             f"[InferenceImageDataset] {len(all_image_paths)} images, "
-            f"{len(self.valid_indices)} with valid context (sequence={self.context_sequence})"
+            f"{len(self.valid_indices)} with valid context (sequence={self.context_offsets})"
         )
 
     def __len__(self) -> int:
@@ -96,7 +96,7 @@ class InferenceImageDataset(Dataset):
         frames = [
             rgb_to_chw_tensor(load_image_cv2(str(self.all_image_paths[img_idx + offset])),
                               self.input_size)
-            for offset in self.context_sequence
+            for offset in self.context_offsets
         ]
         rgb = torch.stack(frames, dim=0)
 
@@ -110,7 +110,7 @@ class InferenceImageDataset(Dataset):
         reference_dataset=None,
         attr_to_value_to_class_idx: dict | None = None,
         class_counts: tuple[int, ...] | None = None,
-        context_sequence: T.Sequence[int] = (0, -1, -4),
+        context_offsets: T.Sequence[int] = (0, -1, -4),
         extensions: tuple[str, ...] = (".jpg", ".jpeg", ".png", ".bmp", ".webp"),
         **kwargs,
     ) -> "InferenceImageDataset":
@@ -125,7 +125,7 @@ class InferenceImageDataset(Dataset):
             reference_dataset: A IRAPDataset to copy metadata from (alternative to explicit args).
             attr_to_value_to_class_idx: Explicit attribute metadata (if no reference_dataset).
             class_counts: Explicit class counts (if no reference_dataset).
-            context_sequence: Offsets for context frames, e.g., (0, -1, -4).
+            context_offsets: Offsets for context frames, e.g., (0, -1, -4).
             extensions: Image file extensions to include.
             **kwargs: Additional arguments passed to __init__.
         """
@@ -154,6 +154,6 @@ class InferenceImageDataset(Dataset):
             image_paths,
             attr_to_value_to_class_idx=attr_to_value_to_class_idx,
             class_counts=class_counts,
-            context_sequence=context_sequence,
+            context_offsets=context_offsets,
             **kwargs,
         )

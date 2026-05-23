@@ -192,5 +192,12 @@ Be precise and only use the exact values provided."""
         if default_value is not None:
             lines.append(f"   Default: {default_value}")
 
+        # Add tips for attr_desc_vals
+        if detail_level == "attr_desc_vals":
+            tips = self.attr_tips.get(attr_name)
+            if tips:
+                for tip in tips:
+                    lines.append(f"   Tip: {tip}")
+
         lines.append("")  # Blank line separator
         return "\n".join(lines)

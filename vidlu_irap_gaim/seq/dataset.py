@@ -115,7 +115,7 @@ class SeqEnhDataset(Dataset):
         segment_id_list: list[str],
         seq_index: dict[str, tuple[str, int]],
         road_to_seq: dict[str, list[str]],
-        context_sequence: Sequence[int],
+        context_offsets: Sequence[int],
         target_label_map: dict[str, list[int]],
         target_attribute_index: int,
     ) -> None:
@@ -125,7 +125,7 @@ class SeqEnhDataset(Dataset):
         # Optimization: convert lists to tuples if static
         self.seq_index = seq_index
         self.road_to_seq = road_to_seq
-        self.context_sequence = list(context_sequence)
+        self.context_offsets = list(context_offsets)
         self.target_label_map = target_label_map
         self.target_attribute_index = target_attribute_index
 
@@ -138,7 +138,7 @@ class SeqEnhDataset(Dataset):
         seq = self.road_to_seq[road_id]
 
         # Calculate context IDs
-        ids = [seq[pos + off] for off in self.context_sequence]
+        ids = [seq[pos + off] for off in self.context_offsets]
 
         input_data = {}
         for name, source in self.data_sources.items():
@@ -153,7 +153,7 @@ def make_seq_enh_data(
     *,
     feat_dir: str | Path,
     attribute: int | str,
-    context_sequence: Sequence[int] = (0, -1, -4),
+    context_offsets: Sequence[int] = (0, -1, -4),
     metadata_dir: str | Path | None = None,
     irap_home: str | Path | None = None,
     attribute_value_mapping_path: str | Path | None = None,
@@ -218,7 +218,7 @@ def make_seq_enh_data(
                 continue
             road_id, idx = seq_index[sid]
             seq = road_to_seq[road_id]
-            indices = [idx + off for off in context_sequence]
+            indices = [idx + off for off in context_offsets]
             if min(indices) < 0 or max(indices) >= len(seq):
                 continue
 
@@ -245,7 +245,7 @@ def make_seq_enh_data(
             segment_id_list=valid_ids,
             seq_index=seq_index,
             road_to_seq=road_to_seq,
-            context_sequence=context_sequence,
+            context_offsets=context_offsets,
             target_label_map=seg_to_labels,
             target_attribute_index=attribute_index,
         )
