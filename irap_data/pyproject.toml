@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "irap-data"
+version = "0.1.0"
+description = "IRAP road-attribute dataset loaders and an interactive dataset viewer."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "torch",
+    "tqdm",
+    "pillow",
+    "opencv-python",
+]
+
+[project.optional-dependencies]
+viewer = ["streamlit"]
+
+[tool.setuptools.packages.find]
+include = ["irap_data*"]
