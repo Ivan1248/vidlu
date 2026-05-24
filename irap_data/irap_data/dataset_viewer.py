@@ -19,6 +19,7 @@ import streamlit as st
 
 from . import make_bih_data, make_vietnam_data
 from .irap_dataset import IGNORE_LABEL_INDEX
+from .jitter import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
 from .vis_utils import (
     AttributeMetadataDecoder,
     create_composite_view_strip,
@@ -451,29 +452,6 @@ def _render_filters_and_navigation(
 # Main content columns #########################################################
 
 
-def _apply_jitter_or_warn(rgb, jitter_selection: str):
-    """Apply optional ColorJitter from `vidlu_irap_gaim.training.jitter` if installed.
-
-    The jitter implementation lives in the training package (not redistributed
-    here), so the viewer treats it as a soft optional dependency.
-    """
-    try:
-        from vidlu_irap_gaim.training.jitter import (
-            make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG,
-        )
-    except ImportError:
-        st.warning(
-            "ColorJitter preview requires `vidlu_irap_gaim.training.jitter`, "
-            "which is not installed. Set ColorJitter to None to silence this."
-        )
-        return rgb, ""
-
-    preset = JITTER_STANDARD if jitter_selection == "Standard" else JITTER_STRONG
-    jitter_fn = make_sequence_color_jitter(preset=preset)
-    rgb = jitter_fn(dict(rgb=rgb))["rgb"]
-    return rgb, f" [{jitter_selection.lower().split()[0]} jitter]"
-
-
 def _render_image_column(data: dict, ds, context_offsets: tuple[int, ...], jitter_selection: str) -> None:
     """Render the image column: composite view strip with optional jitter preview."""
     rgb = data.get("rgb")
@@ -482,7 +460,9 @@ def _render_image_column(data: dict, ds, context_offsets: tuple[int, ...], jitte
 
     jitter_caption_suffix = ""
     if jitter_selection != "None":
-        rgb, jitter_caption_suffix = _apply_jitter_or_warn(rgb, jitter_selection)
+        preset = JITTER_STANDARD if jitter_selection == "Standard" else JITTER_STRONG
+        rgb = make_sequence_color_jitter(preset=preset)(dict(rgb=rgb))["rgb"]
+        jitter_caption_suffix = f" [{jitter_selection.lower().split()[0]} jitter]"
 
     imgs_np = tensor_image_to_uint8_np(rgb)
     final_img = create_composite_view_strip(imgs_np)

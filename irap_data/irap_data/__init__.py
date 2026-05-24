@@ -16,3 +16,4 @@ from .attribute_frequencies import (
     compute_attribute_frequency_stats,
     frequency_stats_to_attr_to_default_class_idx,
 )
+from .jitter import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
