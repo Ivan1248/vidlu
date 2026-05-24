@@ -1,6 +1,6 @@
 # vidlu_irap_gaim
 
-ViDLU extension for the IRAP GAIM local attribute recognition workflow on road segments (BiH dataset). Provides a complete pipeline for multi-attribute road segment classification — from supervised and semi-supervised training to VLM-based zero-shot inference — using temporal image sequences.
+ViDLU extension for iRAP attribute recognition on road segments. The code is based on https://github.com/mkacan/irap_gaim [1].
 
 The extension is discovered by ViDLU via the `vidlu_` extension naming convention:
 - Python package name: `vidlu_irap_gaim`
@@ -37,7 +37,7 @@ matplotlib, scikit-learn, streamlit
 For VLM inference (optional):
 
 ```
-transformers>=4.40.0, qwen-vl-utils>=0.0.8, accelerate>=0.30.0, pyyaml>=6.0
+transformers>=4.40.0, qwen-vl-utils>=0.0.8, pyyaml>=6.0
 ```
 
 ## Data layout
@@ -210,6 +210,15 @@ This is configured automatically in the standard trainers. It requires `MultiAtt
 
 This extension supports FixMatch-style pseudo-label self-training for leveraging unlabeled data. A frozen pre-trained teacher generates hard argmax pseudo-labels with per-attribute confidence thresholding and temperature scaling.
 
+### Source of the unlabeled set
+
+`make_semisup_bih_data` chooses the unlabeled pool in this order (default `prefer_real_unlabeled=True`):
+
+1. **Real `unlabeled_train` split** from `splits.json` when present (e.g. IRAP-Vietnam after running the prep pipeline). The full labeled `train` split is kept; `labeled_ratio` is ignored.
+2. **Synthetic split** of the labeled `train` set by `labeled_ratio` / `labeled_size` – the historical IRAP-BiH behaviour, still used when no `unlabeled_train` key exists.
+
+Pass `prefer_real_unlabeled=False` to force the synthetic path even on metadata that has a real unlabeled split.
+
 ### On-the-fly pseudo-labeling (teacher runs each batch)
 
 ```bash
@@ -256,8 +265,8 @@ python scripts/run.py train \
 | `temperature` | Effect |
 |---------------|--------|
 | `1.0` | Standard softmax (no scaling) |
-| `< 1.0` (e.g. `0.8`) | Sharpened confidence — more selective, fewer pseudo-labels |
-| `> 1.0` (e.g. `1.2`) | Softened confidence — less selective, more pseudo-labels |
+| `< 1.0` (e.g. `0.8`) | Sharpened confidence – more selective, fewer pseudo-labels |
+| `> 1.0` (e.g. `1.2`) | Softened confidence – less selective, more pseudo-labels |
 
 ## Multi-scale inference
 
@@ -310,10 +319,10 @@ Prompts can be configured via `attribute_prompts.yaml` without code changes.
 
 Response parsing supports multiple formats via `ResponseScheme` subclasses:
 
-- `StandardResponseScheme` — plain text attribute-value pairs
-- `JsonResponseScheme` — structured JSON output
-- `IndexedResponseScheme` — numbered attribute-value pairs
-- `SparseStandardResponseScheme` / `SparseIndexedResponseScheme` — only non-default values
+- `StandardResponseScheme` – plain text attribute-value pairs
+- `JsonResponseScheme` – structured JSON output
+- `IndexedResponseScheme` – numbered attribute-value pairs
+- `SparseStandardResponseScheme` / `SparseIndexedResponseScheme` – only non-default values
 
 ### Fine-tuning with LoRA
 
@@ -330,8 +339,8 @@ Key design: adapter-only state dict (~100MB vs ~16GB full model), eager loading 
 
 ### VLM tools
 
-- **`tools/vlm_inference.py`** — full VLM inference pipeline on BiH data
-- **`tools/vlm_benchmark.py`** — benchmarking script (prefix caching, throughput)
+- **`tools/vlm_inference.py`** – full VLM inference pipeline on BiH data
+- **`tools/vlm_benchmark.py`** – benchmarking script (prefix caching, throughput)
 
 ## Inference & visualization
 
@@ -383,7 +392,7 @@ For legacy sequential enhancement models, use `--mode sequential_legacy` with `-
 ### Dataset viewer (Streamlit)
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME streamlit run vidlu_irap_gaim/tools/dataset_viewer.py
+IRAP_HOME=/path/to/IRAP_HOME streamlit run irap_data/irap_data/dataset_viewer.py
 ```
 
 ## Feature export & sequential enhancement
@@ -505,3 +514,8 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 
 - **VLM response parsing failures**:
   Try a different `ResponseScheme` (e.g., `JsonResponseScheme` for more structured output) or increase the `detail_level` to give the model more context about valid values.
+
+
+## References
+
+[1] M. Kačan, M. Ševrović and S. Šegvić, "Dynamic Loss Balancing and Sequential Enhancement for Road-Safety Assessment and Traffic Scene Classification," in IEEE Transactions on Intelligent Transportation Systems, vol. 25, no. 11, pp. 15628-15640, Nov. 2024, doi: 10.1109/TITS.2024.3456214.
