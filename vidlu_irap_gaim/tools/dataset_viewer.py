@@ -14,7 +14,6 @@ if str(project_root) not in sys.path:
 
 from vidlu_irap_gaim.data import make_bih_data, make_vietnam_data
 from vidlu_irap_gaim.data.irap_dataset import IGNORE_LABEL_INDEX
-from vidlu_irap_gaim.training import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
 from vidlu_irap_gaim.tools.vis_utils import (
     AttributeMetadataDecoder,
     create_composite_view_strip,
@@ -457,6 +456,9 @@ def _render_image_column(data: dict, ds, context_offsets: tuple[int, ...], jitte
 
     jitter_caption_suffix = ""
     if jitter_selection != "None":
+        from vidlu_irap_gaim.training.jitter import (
+            make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG,
+        )
         preset = JITTER_STANDARD if jitter_selection == "Standard" else JITTER_STRONG
         jitter_fn = make_sequence_color_jitter(preset=preset)
         rgb = jitter_fn(dict(rgb=rgb))["rgb"]
