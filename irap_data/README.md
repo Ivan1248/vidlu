@@ -1,6 +1,6 @@
 # irap_data
 
-Standalone Python package for loading the IRAP road-attribute datasets (IRAP-BiH, IRAP-Vietnam) and an interactive Streamlit-based viewer.
+Standalone Python package for loading the iRAP road-attribute datasets (iRAP-BiH, iRAP-Vietnam) and an interactive Streamlit-based viewer.
 
 ## Installation
 
@@ -15,10 +15,10 @@ pip install -e ./irap_data[viewer]    # adds streamlit for the dataset viewer
 
 ## Data layout
 
-Set `IRAP_HOME` (or `DATASETS_PATH`) to a parent directory containing:
+Set `iRAP_HOME` (or `DATASETS_PATH`) to a parent directory containing:
 
-- IRAP-BiH: `IRAP_BIH/` (images) and `IRAP_BIH_METADATA/` (metadata JSONs as a sibling)
-- IRAP-Vietnam: `IRAP_Vietnam/` (images and metadata together)
+- iRAP-BiH: `iRAP_BIH/` (images) and `iRAP_BIH_METADATA/` (metadata JSONs as a sibling)
+- iRAP-Vietnam: `iRAP_Vietnam/` (images and metadata together)
 
 Required metadata files (in the metadata dir):
 
@@ -30,7 +30,7 @@ Required metadata files (in the metadata dir):
 
 ### Context-window filtering
 
-Every loader drops segments whose context window (per `context_offsets`) would step off the end of its road in `road_id_to_segment_id_sequence.json`, or whose context frames have no image on disk. This is the only context filter `make_vietnam_data()` applies.
+Every loader drops segments whose context window (per `context_offsets`) would step off the end of its sequence in `road_id_to_segment_id_sequence.json`, or whose context frames have no image on disk. This is the only context filter `make_vietnam_data()` applies.
 
 `make_bih_data()` additionally restricts segments to the precomputed BiH subsets in `seg_to_res/{train,val,test}.pickle`. These pickles are built for a fixed maximum context window of `N = 10` (i.e. only segments with 10 valid neighbors on each side are kept). This means that the labeled-set size stays constant as lon as `max(abs(context_offsets)) ≤ 10`. Pass `use_ncontext_filter=False` to skip the pre-computed filter from the `.pickle` files. The iRAP-Vietnam dataset doesn't provide such apre-computed filter.
 
@@ -48,7 +48,7 @@ When these keys are present, `make_vietnam_data` returns them alongside the labe
 ```python
 from irap_data import make_bih_data, make_vietnam_data
 
-# IRAP-BiH (uses $IRAP_HOME by default)
+# iRAP-BiH (uses $iRAP_HOME by default)
 splits = make_bih_data(context_offsets=(0, -1, -4))
 train = splits["train"]
 print(len(train), train.info.class_counts)
@@ -58,8 +58,8 @@ example = train[0]
 #           "target": (A,) LongTensor, -1 = unlabeled,
 #           "segment_id": str, "sequence_id": str}
 
-# IRAP-Vietnam (loose labels – missing attributes become -1)
-vn = make_vietnam_data(dataset_dir="/data/IRAP_Vietnam")
+# iRAP-Vietnam (loose labels – missing attributes become -1)
+vn = make_vietnam_data(dataset_dir="/data/iRAP_Vietnam")
 ```
 
 Inference on a folder of images (no labels required):
@@ -77,7 +77,7 @@ ds = InferenceImageDataset.from_folder(
 ## Dataset viewer
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME streamlit run irap_data/irap_data/dataset_viewer.py
+iRAP_HOME=/path/to/iRAP_HOME streamlit run irap_data/irap_data/dataset_viewer.py
 ```
 
 Or, once `irap_data` is installed:
@@ -86,7 +86,7 @@ Or, once `irap_data` is installed:
 python -m streamlit run -m irap_data.dataset_viewer
 ```
 
-The viewer auto-detects which datasets exist under `$IRAP_HOME`, exposes per-attribute filtering, navigates by index or random sample, and previews the surrounding road sequence for each segment.
+The viewer auto-detects which datasets exist under `$iRAP_HOME`, exposes per-attribute filtering, navigates by index or random sample, and previews the surrounding road sequence for each segment.
 
 ## Package contents
 
@@ -110,3 +110,7 @@ irap_data/
 - All public constants for normalization (`RGB_MEAN`, `RGB_STD`, `INPUT_DIM`) and the ignore sentinel (`IGNORE_LABEL_INDEX = -1`) live in `irap_data.irap_dataset`.
 - `Dataset.info` is a `LazyDict` with attribute access – both `info["class_counts"]` and `info.class_counts` work. Entries wrapped in `Lazy(...)` are computed on first access.
 - Targets use `-1` as the ignore index (matches `torch.nn.CrossEntropyLoss(ignore_index=-1)`).
+
+## Relation to the original irap_gaim code
+
+See [docs/differences-to-the-original-dataset-code.md](docs/differences-to-the-original-dataset-code.md) for a detailed comparison of `IRAPDataset` / `make_bih_data` against the original `irap_gaim` dataset classes.

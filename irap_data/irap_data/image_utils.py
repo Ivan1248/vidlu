@@ -18,8 +18,9 @@ def rgb_to_chw_tensor(
 ) -> torch.Tensor:
     """HWC uint8 RGB -> CHW float32 tensor in [0, 1].
 
-    Resize-to-cover (preserving aspect ratio) then center-crop to target_wh.
-    If the source already matches target_wh, both steps are no-ops.
+    Resize-to-cover (Lanczos) then center-crop to target_wh. The resize
+    fires only when some source dimension is below the target; when the
+    source matches target_wh exactly, both steps leave pixels unchanged.
     """
     from PIL import Image
 
