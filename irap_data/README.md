@@ -28,7 +28,20 @@ Required metadata files (in the metadata dir):
 - `attribute_metadata.json`
 - `road_id_to_segment_id_sequence.json`
 
-`make_bih_data()` additionally uses `seg_to_res/{train,val,test}.pickle` for N-context filtering by default — pass `use_ncontext_filter=False` to skip it. `make_vietnam_data()` disables that filter by default.
+### Context-window filtering
+
+Every loader drops segments whose context window (per `context_offsets`) would step off the end of its road in `road_id_to_segment_id_sequence.json`, or whose context frames have no image on disk. This is the only context filter `make_vietnam_data()` applies.
+
+`make_bih_data()` additionally restricts segments to the precomputed BiH subsets in `seg_to_res/{train,val,test}.pickle`. These pickles are built for a fixed maximum context window of `N = 10` (i.e. only segments with 10 valid neighbors on each side are kept). This means that the labeled-set size stays constant as lon as `max(abs(context_offsets)) ≤ 10`. Pass `use_ncontext_filter=False` to skip the pre-computed filter from the `.pickle` files. The iRAP-Vietnam dataset doesn't provide such apre-computed filter.
+
+### Unlabeled splits
+
+`splits.json` may contain extra keys:
+
+- `unlabeled_train`, `unlabeled_val`, `unlabeled_test` – unlabeled segments assigned to a split by geography (unlabeled segments from the same sequences or geographic areas as the labeled subsets).
+- `unlabeled_unlocated` – unlabeled segments from folders with unknown geographic relationship to other splits.
+
+When these keys are present, `make_vietnam_data` returns them alongside the labeled splits in the same dict. Unlabeled subsets are loaded with `allow_missing_attributes=True` automatically, so every sample's `target` is an all-`IGNORE_LABEL_INDEX (-1)` tensor compatible with `torch.nn.CrossEntropyLoss(ignore_index=-1)`. The per-segment context-window check (see *Context-window filtering* above) still applies. The BiH `seg_to_res/*.pickle` allow-list is bypassed for unlabeled subsets because it only enumerates labeled segments.
 
 ## Quickstart
 
@@ -45,7 +58,7 @@ example = train[0]
 #           "target": (A,) LongTensor, -1 = unlabeled,
 #           "segment_id": str, "sequence_id": str}
 
-# IRAP-Vietnam (loose labels — missing attributes become -1)
+# IRAP-Vietnam (loose labels – missing attributes become -1)
 vn = make_vietnam_data(dataset_dir="/data/IRAP_Vietnam")
 ```
 
@@ -95,5 +108,5 @@ irap_data/
 ## Conventions
 
 - All public constants for normalization (`RGB_MEAN`, `RGB_STD`, `INPUT_DIM`) and the ignore sentinel (`IGNORE_LABEL_INDEX = -1`) live in `irap_data.irap_dataset`.
-- `Dataset.info` is a `LazyDict` with attribute access — both `info["class_counts"]` and `info.class_counts` work; entries wrapped in `Lazy(...)` are computed on first access.
+- `Dataset.info` is a `LazyDict` with attribute access – both `info["class_counts"]` and `info.class_counts` work. Entries wrapped in `Lazy(...)` are computed on first access.
 - Targets use `-1` as the ignore index (matches `torch.nn.CrossEntropyLoss(ignore_index=-1)`).

@@ -28,14 +28,6 @@ class MetaFiles:
     SEGMENT_ID_TO_ROAD_DATA = "segment_id_to_road_data.json"
     ROAD_ID_TO_SEGMENT_ID_SEQUENCE = "road_id_to_segment_id_sequence.json"
 
-def _check_subset(cls, subset):
-    if subset not in cls.subsets:
-        raise ValueError(
-            f'Invalid subset "{subset}" for {cls.__name__}. '
-            f'Available: {", ".join(cls.subsets)}.'
-        )
-
-
 def resolve_datasets_root() -> Path:
     if v := os.environ.get("IRAP_HOME"):
         return Path(v)
@@ -202,7 +194,16 @@ def make_bih_data(
         dataset_dir=dataset_dir, metadata_dir=metadata_dir
     )
 
-    # Load segment ID filter from precomputed results if requested
+    # Discover the split names actually present in the metadata. Unlabeled
+    # subsets (`unlabeled_train`, `unlabeled_val`, ...) appear only when the
+    # prep pipeline wrote them; iterating the file rather than a hardcoded
+    # tuple makes those splits available transparently.
+    with open(metadata_dir / MetaFiles.SPLITS, "r") as f:
+        split_names = list(json.load(f).keys())
+
+    # Load segment ID filter from precomputed results if requested.
+    # The pickle files only cover labeled segments, so this filter is applied
+    # to labeled subsets only; unlabeled subsets skip it.
     if use_ncontext_filter and ncontext_segment_id_subset is None:
         if seg_to_res_path is None:
             seg_to_res_path = metadata_dir / "seg_to_res"
@@ -214,27 +215,26 @@ def make_bih_data(
         per_kind: dict[str, T.Callable] = {}
         # Photometric jittering is handled in TrainerConfig; keep loading deterministic here.
         per_kind["rgb"] = lambda img, _twh=target_wh: rgb_to_chw_tensor(img, _twh)
-        transforms = {split: per_kind for split in IRAPDataset.subsets}
+        transforms = {split: per_kind for split in split_names}
 
-    ds_kwargs = dict(
-        context_offsets=tuple(context_offsets),
-        mean=tuple(float(x) for x in mean),
-        std=tuple(float(x) for x in std),
-        #label_map=label_map,
-        ncontext_segment_id_subset=ncontext_segment_id_subset,
-        allow_missing_attributes=allow_missing_attributes,
-    )
-
-    return {
-        split: IRAPDataset(
+    out = {}
+    for split in split_names:
+        is_unlabeled = split.startswith("unlabeled")
+        out[split] = IRAPDataset(
             dataset_dir,
             split,
             metadata_dir=metadata_dir,
             transforms=transforms.get(split) if isinstance(transforms, dict) else transforms,
-            **ds_kwargs,
+            context_offsets=tuple(context_offsets),
+            mean=tuple(float(x) for x in mean),
+            std=tuple(float(x) for x in std),
+            # Pickle-driven N-context filtering doesn't cover unlabeled segments.
+            ncontext_segment_id_subset=None if is_unlabeled else ncontext_segment_id_subset,
+            # Unlabeled segments have no row in segment_id_to_road_data.json;
+            # without this they'd all be dropped.
+            allow_missing_attributes=True if is_unlabeled else allow_missing_attributes,
         )
-        for split in IRAPDataset.subsets
-    }
+    return out
 
 
 def make_vietnam_data(
@@ -245,7 +245,14 @@ def make_vietnam_data(
     allow_missing_attributes: bool = True,
     **kwargs,
 ):
-    """Build IRAP-Vietnam {train, val, test} datasets.
+    """Build IRAP-Vietnam datasets.
+
+    Returns a dict with one entry per key in ``splits.json``. Labeled splits
+    are always ``train`` / ``val`` / ``test``. When the prep pipeline wrote
+    unlabeled images, the dict additionally contains ``unlabeled_train``,
+    ``unlabeled_val``, ``unlabeled_test``, and optionally ``unlabeled_unlocated``
+    (segments from image folders with no labeled siblings). Unlabeled splits
+    yield samples whose ``target`` is the all-``IGNORE_LABEL_INDEX`` tensor.
 
     Differs from :func:`make_bih_data` only in defaults:
 
@@ -335,6 +342,9 @@ class IRAPDataset(Dataset):
       - segment_id: str
     """
 
+    # Canonical labeled subsets. The constructor accepts any key present in
+    # `splits.json` (including `unlabeled_*` ones produced by the Vietnam prep
+    # pipeline), but this tuple names the splits expected to carry labels.
     subsets = ("train", "val", "test")
 
     def __init__(
@@ -350,7 +360,6 @@ class IRAPDataset(Dataset):
         ncontext_segment_id_subset: set[str] | None = None,
         allow_missing_attributes: bool = False,
     ) -> None:
-        _check_subset(self.__class__, subset)
         # unused attributes
         self.transforms = transforms or {}
 
@@ -363,6 +372,19 @@ class IRAPDataset(Dataset):
 
         with open(self.metadata_dir / MetaFiles.SPLITS, "r") as f:
             all_splits = json.load(f)
+
+        if subset not in all_splits:
+            raise ValueError(
+                f'Invalid subset "{subset}" for {type(self).__name__}. '
+                f'Available in splits.json: {", ".join(sorted(all_splits))}.'
+            )
+
+        # Unlabeled splits have no entry in segment_id_to_road_data.json; force
+        # allow_missing_attributes so segments are kept with all-IGNORE targets
+        # instead of being dropped.
+        if subset.startswith("unlabeled"):
+            allow_missing_attributes = True
+
         with open(self.metadata_dir / MetaFiles.SEGMENT_ID_TO_DATA_PATHS, "r") as f:
             seg_to_paths_rel = json.load(f)
         self.seg_to_paths = {
