@@ -163,6 +163,56 @@ def get_default_transforms(cache_dir):
         cache=partial(vdu.cache_lazily, cache_dir=cache_dir))
 
 
+def _provides_pixel_stats(ds) -> bool:
+    """Whether the dataset already carries `pixel_stats` in its `info`.
+
+    Checks `info.keys()` rather than `'pixel_stats' in info`: vidlu's `Record`
+    deliberately makes `in` raise, and `.keys()` also avoids materializing a
+    `LazyDict`'s lazy values.
+    """
+    info = getattr(ds, 'info', None)
+    return info is not None and hasattr(info, 'keys') and 'pixel_stats' in info.keys()
+
+
+def get_default_data_prep(datasets: T.Mapping, cache_dir):
+    """Default preparation: lazily add pixel statistics to training splits.
+
+    Pixel statistics are read only by the `standardize` input adapter, and only
+    from the training split, so they are added solely to splits whose name starts
+    with "train". Splits whose dataset already provides `info.pixel_stats` (e.g.
+    IRAP datasets, whose examples aren't single HWC images and which set their own
+    stats) are left alone — recomputing would be wrong and wasteful.
+
+    Example HDD caching is **opt-in**: it is not applied here. Use `standard_prep`
+    (`prep=standard_prep`) for the previous default of caching every split, or the
+    `cache` helper to cache individual datasets. The whole-mapping signature lets
+    `prep` overrides implement cross-split logic; the default does none.
+    """
+    if cache_dir is None:
+        return dict(datasets)
+    result = {}
+    for name, ds in datasets.items():
+        if name.startswith('train') and not _provides_pixel_stats(ds):
+            ds = vdu.add_pixel_stats_to_info_lazily(ds, cache_dir)
+        result[name] = ds
+    return result
+
+
+def get_standard_data_prep(datasets: T.Mapping, cache_dir):
+    """Previous default preparation: `get_default_data_prep` plus HDD caching.
+
+    Adds pixel statistics (via `get_default_data_prep`) and then caches every
+    split that supports example caching (`cache_hdd`). Datasets without it (e.g.
+    IRAP datasets, which only implement info caching) are left uncached rather
+    than erroring. Opt in per run with `prep=standard_prep`.
+    """
+    datasets = get_default_data_prep(datasets, cache_dir)
+    if cache_dir is None:
+        return datasets
+    return {name: (vdu.cache_lazily(ds, cache_dir) if hasattr(ds, 'cache_hdd') else ds)
+            for name, ds in datasets.items()}
+
+
 def get_data(data_str: str, datasets_dir, cache_dir=None, namespace=None) \
         -> T.Sequence[tuple[tuple[str], Dataset]]:
     from vidlu import data
@@ -170,7 +220,9 @@ def get_data(data_str: str, datasets_dir, cache_dir=None, namespace=None) \
     factories = data.DatasetFactory(datasets_dir).as_namespace()
     dt = NameDict(get_default_transforms(cache_dir))
     glob = {**namespace, **factories.__dict__, **dt, 'extend': lambda ds: dt.cache(
-        dt.add_seg_class_info(ds))}
+        dt.add_seg_class_info(ds)),
+            'default_prep': lambda datasets: get_default_data_prep(datasets, cache_dir),
+            'standard_prep': lambda datasets: get_standard_data_prep(datasets, cache_dir)}
 
     try:
         return factory_eval(data_str, glob)
@@ -193,7 +245,11 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, namesp
     assert factory_version > 1
     datasets = get_data(data_str, datasets_dir, cache_dir, namespace=namespace)
 
-    if not isinstance(datasets, T.Mapping):
+    prep = partial(get_default_data_prep, cache_dir=cache_dir)
+    if isinstance(datasets, T.Mapping):
+        datasets = dict(datasets)
+        prep = datasets.pop('prep', prep)  # optional override, not a split
+    else:
         names = [f'train{i}' for i in range(len(datasets) - 1)] if len(datasets) > 2 else [
             'train']
         names.extend([f'test{i}' for i in range(len(datasets[0]) - 1)] if isinstance(
@@ -202,6 +258,7 @@ def get_prepared_data_for_trainer(data_str: str, datasets_dir, cache_dir, namesp
             datasets[-1], tuple) else [datasets[-1]])
         datasets = dict(zip(names, datasets))
 
+    datasets = prep(datasets)
     datasets = {k: prepare_func(ds) for k, ds in datasets.items()}
     print("Datasets:\n" + "  \n ".join(f"{name}: {getattr(ds, 'identifier', ds)}), size={len(ds)}"
                                        for name, ds in datasets.items()))
