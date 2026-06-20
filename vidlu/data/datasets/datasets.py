@@ -223,12 +223,43 @@ class DummyClassification(Dataset):
         self._shape = shape
         self._colors = [row for row in np.eye(3, 3) * 255]
         self._len = size
+        self.key = key
         super().__init__(name=f"DummyClassification({shape})", subset=f"{size}",
                          info=dict(class_count=len(self._colors), problem="classification"))
 
     def get_example(self, idx):
         color_idx = idx % len(self._colors)
         return _make_record(**{self.key: np.ones(self._shape) * self._colors[color_idx]},
+                            class_label=color_idx)
+
+    def __len__(self):
+        return self._len
+
+
+class ColoredBlobs(Dataset):
+    """Like `DummyClassification`, but each example is a blurred random blob mask colored by class,
+    so the class is recoverable from the image (a slightly less trivial smoke-test dataset)."""
+    subsets = []
+
+    def __init__(self, shape=(28, 28, 3), size=256, seed=53, key="image"):
+        self._shape = shape
+        self._colors = [row for row in np.eye(3, 3) * 255]
+        self._len = size
+        self._sigma = 1.5 * shape[0] / 32
+        self._seeds = np.random.RandomState(seed=seed).randint(2 ** 31, size=(size,))
+        self.key = key
+        super().__init__(name=f"ColoredBlobs({shape})", subset=f"{seed}-{size}",
+                         info=dict(class_count=len(self._colors), problem="classification"))
+
+    def get_example(self, idx):
+        from skimage.filters import gaussian
+
+        color_idx = idx % len(self._colors)
+        rand = np.random.RandomState(self._seeds[idx])
+        mask = gaussian(np.float32(rand.binomial(n=1, p=0.7, size=self._shape[:2])),
+                        sigma=self._sigma)
+        mask[mask < 0.75] = 0
+        return _make_record(**{self.key: mask[..., None] * self._colors[color_idx]},
                             class_label=color_idx)
 
     def __len__(self):
