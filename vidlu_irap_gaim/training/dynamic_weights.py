@@ -7,7 +7,7 @@ from sklearn.metrics import recall_score
 from tqdm import tqdm
 
 from vidlu.training.extensions import TrainerExtension
-from vidlu_irap_gaim.data.dataset import Dataset
+from irap_data.dataset import Dataset
 from vidlu_irap_gaim.metrics import InternalMetricsProvider
 
 
@@ -280,7 +280,7 @@ class DynamicBalancedRecallWeights(TrainerExtension):
 
         # Construct Key -> Index mapping
         if self.attrs_to_include is not None:
-            from vidlu_irap_gaim.data.attrs import map_attr_names_to_indices
+            from irap_data.attrs import map_attr_names_to_indices
 
             attrs_idx_list = map_attr_names_to_indices(
                 self.attrs_to_include, train_ds.info.attr_to_value_to_class_idx.keys()

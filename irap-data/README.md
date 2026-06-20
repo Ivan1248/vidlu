@@ -16,10 +16,10 @@ Runtime dependencies: `opencv-python` (image loading and viewer resize) and `tor
 
 ## Data layout
 
-Set `iRAP_HOME` (or `DATASETS_PATH`) to a parent directory containing:
+Set `IRAP_HOME` (or `DATASETS_PATH`) to a parent directory containing:
 
-- iRAP-BiH: `iRAP_BIH/` (images) and `iRAP_BIH_METADATA/` (metadata JSONs as a sibling)
-- iRAP-Vietnam: `iRAP_Vietnam/` (images and metadata together)
+- iRAP-BiH: `IRAP_BIH/` (images) and `IRAP_BIH_METADATA/` (metadata JSONs as a sibling)
+- iRAP-Vietnam: `IRAP_Vietnam/` (images and metadata together)
 
 Required metadata files (in the metadata dir):
 
@@ -49,7 +49,7 @@ When present, `make_vietnam_data` includes these splits in the returned dict. Un
 ```python
 from irap_data import make_bih_data, make_vietnam_data
 
-# iRAP-BiH (uses $iRAP_HOME by default)
+# iRAP-BiH (uses $IRAP_HOME by default)
 splits = make_bih_data(context_offsets=(0, -1, -4))
 train = splits["train"]
 print(len(train), train.info.class_counts)
@@ -60,7 +60,7 @@ example = train[0]
 #           "segment_id": str, "sequence_id": str}
 
 # iRAP-Vietnam (loose labels – missing attributes become -1)
-vn = make_vietnam_data(dataset_dir="/data/iRAP_Vietnam")
+vn = make_vietnam_data(dataset_dir="/data/IRAP_Vietnam")
 ```
 
 Inference on a folder of images (no labels required):
@@ -78,7 +78,7 @@ ds = InferenceImageDataset.from_folder(
 ## Dataset viewer
 
 ```bash
-iRAP_HOME=/path/to/iRAP_HOME streamlit run irap_data/irap_data/dataset_viewer.py
+IRAP_HOME=/path/to/IRAP_HOME streamlit run irap_data/irap_data/dataset_viewer.py
 ```
 
 Or, once `irap_data` is installed:
@@ -87,7 +87,7 @@ Or, once `irap_data` is installed:
 python -m streamlit run -m irap_data.dataset_viewer
 ```
 
-The viewer auto-detects which datasets exist under `$iRAP_HOME`, exposes per-attribute filtering, navigates by index or random sample, and previews the surrounding road sequence for each segment.
+The viewer auto-detects which datasets exist under `$IRAP_HOME`, exposes per-attribute filtering, navigates by index or random sample, and previews the surrounding road sequence for each segment.
 
 ## Package contents
 
@@ -99,7 +99,7 @@ irap_data/
 ├── inference_dataset.py       # InferenceImageDataset (label-free folder loader)
 ├── attrs.py                   # ATTRS_TO_INCLUDE + name-to-index helpers
 ├── attribute_frequencies.py   # AttributeFrequencyStats, compute_attribute_frequency_stats
-├── image_utils.py             # load_image_cv2, rgb_to_chw_tensor
+├── image_utils.py             # load_image_cv2, center_crop, resize_to_cover, hwc_to_chw_float_tensor
 ├── lazy_dict.py               # LazyDict, Lazy
 ├── vis_utils.py               # AttributeMetadataDecoder + color/composite helpers
 ├── jitter.py                  # make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG

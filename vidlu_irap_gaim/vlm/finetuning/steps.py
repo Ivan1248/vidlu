@@ -176,7 +176,7 @@ class VLMEvalStep:
 
     def _ensure_attrs_to_include(self):
         if self._attrs_to_include is None:
-            from vidlu_irap_gaim.data.attrs import get_attrs_to_include
+            from irap_data.attrs import get_attrs_to_include
             self._attrs_to_include = list(get_attrs_to_include())
 
     def __call__(self, trainer, batch) -> NameDict:

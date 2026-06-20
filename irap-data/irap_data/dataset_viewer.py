@@ -1,12 +1,16 @@
 """Streamlit-based IRAP dataset viewer.
 
-Run with::
+Requires the package to be installed (``pip install -e .[viewer]`` from the
+``irap-data`` directory).
+
+Run with (Streamlit >= 1.41)::
 
     streamlit run -m irap_data.dataset_viewer
 
-or::
+or, on any Streamlit version (the file uses absolute imports, so it works as a
+plain script as long as ``irap_data`` is importable)::
 
-    python -m streamlit run <path-to>/irap_data/dataset_viewer.py
+    streamlit run <path-to>/irap_data/dataset_viewer.py
 """
 
 import dataclasses as dc
@@ -17,10 +21,10 @@ import typing as T
 
 import streamlit as st
 
-from . import make_bih_data, make_vietnam_data
-from .irap_dataset import IGNORE_LABEL_INDEX
-from .jitter import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
-from .vis_utils import (
+from irap_data import make_bih_data, make_vietnam_data
+from irap_data.irap_dataset import IGNORE_LABEL_INDEX
+from irap_data.jitter import make_sequence_color_jitter, JITTER_STANDARD, JITTER_STRONG
+from irap_data.vis_utils import (
     AttributeMetadataDecoder,
     create_composite_view_strip,
     get_index_color,

@@ -283,7 +283,7 @@ class VLMBenchmark:
         if self._attr_to_value_to_class_idx is not None:
             return
             
-        from vidlu_irap_gaim.data import make_bih_data
+        from irap_data import make_bih_data
         
         print("[Benchmark] Loading attribute metadata...")
         data = make_bih_data()

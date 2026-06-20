@@ -50,16 +50,16 @@ The two coincide on iRAP-BiH iff (a) segment IDs are integer-contiguous within e
 
 ### 2. Image resize / crop
 
-| | Original ([`dataset_wrapper.py:141-144`](https://github.com/mkacan/irap_gaim/blob/main/dataset_wrapper.py#L141-L144)) | New (`image_utils.py:rgb_to_chw_tensor`) |
+| | Original ([`dataset_wrapper.py:141-144`](https://github.com/mkacan/irap_gaim/blob/main/dataset_wrapper.py#L141-L144)) | New (`image_utils.py`) |
 |---|---|---|
-| Resize | none | resize-to-cover (Lanczos, preserves aspect ratio) when source < target |
-| Crop | `CenterCrop((H, W))` only when `input_dim['rgb'] != [384, 284, 3]` | always center-crop to `target_wh` |
+| Resize | none | none (`IRAPDataset` default); `resize_to_cover` only in `InferenceImageDataset` |
+| Crop | `CenterCrop((H, W))` only when `input_dim['rgb'] != [384, 284, 3]` | `center_crop` always (raises if source is smaller than target) |
 
 The `[384, 284, 3]` literal looks like a typo for `288`: `input_dim.rgb` is `[384, 288, 3]`, so the `!=` branch fires and the original does crop.
 
-The new code's resize is guarded by `if (new_w, new_h) != (w, h):` and fires only when some source dimension is strictly below the corresponding target. Sources at or above `target_wh` in both dimensions take the crop-only path, matching the original. At exactly `384 × 288` the crop is full-bounds, so pixels pass through unchanged (the only remaining difference is that the original emits a standardized tensor rather than a `[0, 1]` `float32` — see §3).
+The new code applies `center_crop` without any prior resize, matching the original. For iRAP-BiH, source images are at exactly `384 × 288`, so the crop is full-bounds and pixels pass through unchanged (the only remaining difference is that the original emits a standardized tensor rather than a `[0, 1]` `float32` — see §3).
 
-The two paths therefore diverge only on under-target sources. Resize-to-cover is retained for iRAP-Vietnam, whose frame sizes have not been confirmed.
+`resize_to_cover` (Lanczos) is available as a separate function and is used by `InferenceImageDataset`, which loads from arbitrary-size inputs.
 
 ### 3. Augmentation and normalization moved out of the dataset
 
@@ -77,7 +77,6 @@ Under the standard iRAP-BiH config, `IRAPDataset` matches the original in **segm
 Bit-identical sample tensors additionally require:
 
 1. iRAP-BiH segment IDs are integer-contiguous within each road and non-adjacent across roads, so integer arithmetic and road-sequence indexing agree.
-2. Source images are already at `384 × 288`, so the resize is a no-op.
-3. The caller applies `ColorJitter(0.6, 0.3, 0.2, 0.02)` to the train split and standardizes with `info.pixel_stats`.
+2. The caller applies `ColorJitter(0.6, 0.3, 0.2, 0.02)` to the train split and standardizes with `info.pixel_stats`.
 
 (1) and (2) are properties of the on-disk release. (3) is outside `irap_data`'s scope.

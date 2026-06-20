@@ -2,7 +2,7 @@
 Inference + visualization utility for IRAP BiH sequences.
 
 This is a vidlu-native port of `libs/irap_gaim-main-m/inference_visualization.py`:
-- Uses `vidlu_irap_gaim.datasets.make_bih_data` (instead of DatasetWrapper/ImageSequenceDataset).
+- Uses `irap_data.make_bih_data` (instead of DatasetWrapper/ImageSequenceDataset).
 - Uses `vidlu_irap_gaim.models.classification.ImageSequenceClassifier` for "local" mode.
 - Loads checkpoints from Vidlu's `CheckpointManager` format (supports `model_state.pth`).
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 import numpy as np
-from vidlu_irap_gaim import RGB_MEAN, RGB_STD
+from irap_data.irap_dataset import RGB_MEAN, RGB_STD
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -29,9 +29,9 @@ _project_root = _current_file.parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from vidlu_irap_gaim.data.attrs import get_attrs_to_include  # noqa: E402
+from irap_data.attrs import get_attrs_to_include  # noqa: E402
 from vidlu_irap_gaim.compat.legacy_seq_enh_model import LegacyGeneralLSTMModel  # noqa: E402
-from vidlu_irap_gaim.data import make_bih_data, resolve_irap_paths  # noqa: E402
+from irap_data import make_bih_data, resolve_irap_paths  # noqa: E402
 from vidlu_irap_gaim.models.classification import ImageSequenceClassifier  # noqa: E402
 from vidlu_irap_gaim.models.encoders.resnet import ResNetEncoder  # noqa: E402
 from vidlu_irap_gaim.tools.vis_utils import AttributeMetadataDecoder, save_inference_visualization  # noqa: E402

@@ -24,7 +24,7 @@ def _make_dynamic_balanced_recall_weights(dirs):
     """
     # Handle case where dirs.cache might be a list (use first element)
     cache_dir = dirs.cache[0] if isinstance(dirs.cache, (list, tuple)) else dirs.cache
-    from vidlu_irap_gaim.data.attrs import get_attrs_to_include
+    from irap_data.attrs import get_attrs_to_include
 
     attrs_to_include = get_attrs_to_include()
     return DynamicBalancedRecallWeights(cache_dir=cache_dir, attrs_to_include=attrs_to_include)

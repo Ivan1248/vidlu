@@ -1,15 +1,10 @@
-# Data
-from .data import (
-    IRAPDataset,
+# Data factories (re-exported so they resolve in factory expressions,
+# e.g. "irap_gaim.get_irap_metrics(irap_gaim.make_vietnam_data()['train'])")
+from irap_data import (
+    make_irap_data,
     make_bih_data,
     make_vietnam_data,
-    get_bih_class_counts,
-    load_ncontext_segment_ids,
-    resolve_irap_paths,
-    InferenceImageDataset,
-    get_attrs_to_include,
-    map_attr_names_to_indices,
-    ATTRS_TO_INCLUDE,
+    make_irap_data_by_name,
 )
 
 # Models

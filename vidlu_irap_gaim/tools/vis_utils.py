@@ -1,16 +1,14 @@
 """
 Visualization utilities shared by `vidlu_irap_gaim` tools.
 
-This module exists to avoid duplication between:
-- `vidlu_irap_gaim/tools/dataset_viewer.py` (interactive browsing)
-- `vidlu_irap_gaim/tools/inference_visualization.py` (offline inference + PNG writing)
-
-It is deliberately dependency-light:
-- Core functions use numpy/torch/PIL.
-- OpenCV is imported only inside the functions that need resizing.
+The dataset-agnostic primitives (color palette, `AttributeMetadataDecoder`,
+`tensor_image_to_uint8_np`, `create_composite_view_strip`) live in
+``irap_data.vis_utils`` and are re-exported here for backward compatibility.
+This module adds PIL-based panels and inference-time helpers used by
+`inference.py` and `inference_visualization.py`.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
@@ -18,160 +16,18 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-
-# --- Color palette for class indices ---
-
-# Palette with ~25 distinct colors for good contrast on dark/light backgrounds.
-# Index 0 is gray (often represents 'None' or 'Unknown').
-_CLASS_COLOR_PALETTE = (
-    "#808080",  # 0: Gray (None/Unknown)
-    "#E6194B",  # 1: Red
-    "#3CB44B",  # 2: Green
-    "#FFE119",  # 3: Yellow
-    "#4363D8",  # 4: Blue
-    "#F58231",  # 5: Orange
-    "#911EB4",  # 6: Purple
-    "#42D4F4",  # 7: Cyan
-    "#F032E6",  # 8: Magenta
-    "#BFEF45",  # 9: Lime
-    "#FABED4",  # 10: Pink
-    "#469990",  # 11: Teal
-    "#DCBEFF",  # 12: Lavender
-    "#9A6324",  # 13: Brown
-    "#FFFAC8",  # 14: Beige
-    "#800000",  # 15: Maroon
-    "#AAFFC3",  # 16: Mint
-    "#808000",  # 17: Olive
-    "#FFD8B1",  # 18: Apricot
-    "#000075",  # 19: Navy
-    "#A9A9A9",  # 20: Dark Gray
-    "#E6BEFF",  # 21: Light Purple
-    "#AA6E28",  # 22: Tan
-    "#00FA9A",  # 23: Spring Green
-    "#FF6347",  # 24: Tomato
+from irap_data.vis_utils import (
+    AttributeMetadataDecoder,
+    create_composite_view_strip,
+    get_index_color,
+    tensor_image_to_uint8_np,
 )
-
-
-def get_index_color(idx: int) -> str:
-    """
-    Returns a hex color code for a class index.
-
-    Index 0 returns gray (often 'None'). Other indices cycle through the palette.
-    """
-    if idx < 0:
-        return _CLASS_COLOR_PALETTE[0]
-    if idx < len(_CLASS_COLOR_PALETTE):
-        return _CLASS_COLOR_PALETTE[idx]
-    # Wrap around for indices beyond palette size (skip index 0 for non-zero classes)
-    return _CLASS_COLOR_PALETTE[1 + (idx - 1) % (len(_CLASS_COLOR_PALETTE) - 1)]
 
 
 def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     """Convert hex color string to RGB tuple."""
     h = hex_color.lstrip("#")
     return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
-
-
-@dataclass
-class AttributeMetadataDecoder:
-    """
-    Decodes per-attribute class indices into human-readable strings using IRAP metadata.
-
-    Supports optional attribute value mapping (same JSON format used by `make_bih_data`).
-    """
-    attr_to_value_to_class_idx: dict[str, dict[str, int]]
-    attr_to_class_idx_to_value: dict[str, dict[int, str]] = field(init=False)
-    ignore_class_idx: int | None = -1
-
-    def __post_init__(self):
-        self.attr_to_class_idx_to_value = {attr: {i: v for v, i in self.attr_to_value_to_class_idx[attr].items()}
-                                           for attr in self.attr_to_value_to_class_idx.keys()}
-
-    def value_str(self, *, attr: str, class_idx: int) -> str:
-        if self.ignore_class_idx is not None and class_idx == self.ignore_class_idx:
-            return "(unlabeled)"
-        return self.attr_to_class_idx_to_value.get(attr, {}).get(class_idx, "(unknown label)")
-
-    def to_text(self, *, attr: str, class_idx: int) -> str:
-        return f"{attr}: {self.value_str(attr=attr, class_idx=class_idx)} ({class_idx})"
-
-    def decode_label_tensor(self, labels: torch.Tensor) -> dict[str, tuple[str, int]]:
-        """Decode a multi-attribute target tensor shaped (A,)."""
-        res: dict[str, tuple[str, int]] = {}
-        if labels is None:
-            return res
-        if labels.ndim != 1:
-            return res
-        if len(labels) != len(self.attr_to_class_idx_to_value):
-            return res
-        for i, attr in enumerate(self.attr_to_class_idx_to_value.keys()):
-            class_idx = int(labels[i])
-            res[attr] = (f"{self.value_str(attr=attr, class_idx=class_idx)} ({class_idx})", class_idx)
-        return res
-
-
-def tensor_image_to_uint8_np(tensor: torch.Tensor) -> np.ndarray:
-    """
-    Converts a (C, H, W) or (S, C, H, W) float tensor to (H, W, C) or (S, H, W, C) uint8 numpy array.
-    Clips to [0, 1] and scales to [0, 255].
-    """
-    t = tensor.detach().cpu()
-
-    if t.ndim == 4:
-        # (S, C, H, W) -> (S, H, W, C)
-        t = t.permute(0, 2, 3, 1)
-    elif t.ndim == 3:
-        # (C, H, W) -> (H, W, C)
-        t = t.permute(1, 2, 0)
-
-    t_np = t.numpy()
-    t_np = np.clip(t_np, 0, 1)
-    return (t_np * 255).astype(np.uint8)
-
-
-def create_composite_view_strip(images: np.ndarray) -> np.ndarray | None:
-    """
-    Creates a composite image with the first image as 'main' and the rest as 'context' below it.
-    Resizes the context strip to match the width of the main image.
-
-    Input:
-      - images: (S, H, W, C) uint8
-    """
-    if len(images) == 0:
-        return None
-
-    main_img = images[0]
-    if len(images) == 1:
-        return main_img
-
-    # Lazy import: only dataset_viewer needs this.
-    try:
-        import cv2  # type: ignore
-    except Exception as e:
-        raise RuntimeError("OpenCV (cv2) is required for create_composite_view_strip.") from e
-
-    context_imgs = images[1:]
-
-    # 1. Concatenate context images horizontally
-    ctx_strip = np.concatenate(context_imgs, axis=1)
-
-    # 2. Resize context strip to match main image width
-    h_main, w_main = main_img.shape[:2]
-    h_ctx, w_ctx = ctx_strip.shape[:2]
-
-    if w_ctx > 0:
-        scale = w_main / w_ctx
-        new_w = w_main
-        new_h = int(h_ctx * scale)
-
-        # Use INTER_AREA for shrinking, INTER_LINEAR for enlarging
-        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-        ctx_resized = cv2.resize(ctx_strip, (new_w, new_h), interpolation=interp)
-    else:
-        ctx_resized = ctx_strip
-
-    # 3. Concatenate vertically
-    return np.concatenate([main_img, ctx_resized], axis=0)
 
 
 def rgb_seq_to_pil_images(rgb_seq: torch.Tensor) -> list[Image.Image]:

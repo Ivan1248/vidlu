@@ -5,7 +5,7 @@ import json
 import numpy as np
 import torch
 
-from vidlu_irap_gaim.data import Dataset
+from irap_data import Dataset
 
 
 def _load_json(p: str | Path):

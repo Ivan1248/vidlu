@@ -1,6 +1,6 @@
-# IRAP GAIM Training Setup & Hyperparameters
+# iRAP GAIM Training Setup & Hyperparameters
 
-This document details the exact hyperparameters and definitions used in the IRAP GAIM training pipeline, comparing the original implementation (`train_local_rec.py`) with the Vidlu adaptations (`hybrid_training_v3.py` and `scripts/run.py`).
+This document details the exact hyperparameters and definitions used in the iRAP GAIM training pipeline, comparing the original implementation (`train_local_rec.py`) with the Vidlu adaptations (`hybrid_training_v3.py` and `scripts/run.py`).
 
 ## 1. Optimizer configuration (Adam)
 
