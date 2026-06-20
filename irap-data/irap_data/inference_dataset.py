@@ -8,7 +8,7 @@ import torch
 from .dataset import Dataset
 
 from .irap_dataset import RGB_MEAN, RGB_STD, INPUT_DIM
-from .image_utils import load_image_cv2, rgb_to_chw_tensor
+from .image_utils import load_image_cv2, center_crop, resize_to_cover, hwc_to_chw_float_tensor
 
 
 class InferenceImageDataset(Dataset):
@@ -94,8 +94,13 @@ class InferenceImageDataset(Dataset):
         path = self.all_image_paths[img_idx]
 
         frames = [
-            rgb_to_chw_tensor(load_image_cv2(str(self.all_image_paths[img_idx + offset])),
-                              self.input_size)
+            hwc_to_chw_float_tensor(
+                center_crop(
+                    resize_to_cover(load_image_cv2(str(self.all_image_paths[img_idx + offset])),
+                                    self.input_size),
+                    self.input_size,
+                )
+            )
             for offset in self.context_offsets
         ]
         rgb = torch.stack(frames, dim=0)

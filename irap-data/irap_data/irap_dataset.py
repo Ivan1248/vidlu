@@ -10,7 +10,7 @@ import torch
 from tqdm import tqdm
 
 from .dataset import Dataset
-from .image_utils import load_image_cv2, rgb_to_chw_tensor
+from .image_utils import load_image_cv2, center_crop, hwc_to_chw_float_tensor
 
 RGB_MEAN: tuple[float, float, float] = (0.53354913, 0.52727484, 0.48752149)
 RGB_STD: tuple[float, float, float] = (0.20401913, 0.20417478, 0.25402164)
@@ -214,7 +214,7 @@ def make_bih_data(
         target_wh = (int(input_dim_rgb[0]), int(input_dim_rgb[1]))
         per_kind: dict[str, T.Callable] = {}
         # Photometric jittering is handled in TrainerConfig; keep loading deterministic here.
-        per_kind["rgb"] = lambda img, _twh=target_wh: rgb_to_chw_tensor(img, _twh)
+        per_kind["rgb"] = lambda img, _twh=target_wh: hwc_to_chw_float_tensor(center_crop(img, _twh))
         transforms = {split: per_kind for split in split_names}
 
     out = {}
@@ -531,7 +531,7 @@ class IRAPDataset(Dataset):
             if p is None:
                 continue
             arr = load_image_cv2(str(p))
-            t = tfm(arr) if tfm is not None else rgb_to_chw_tensor(arr, (arr.shape[1], arr.shape[0]))
+            t = tfm(arr) if tfm is not None else hwc_to_chw_float_tensor(arr)
             if not isinstance(t, torch.Tensor):
                 t = torch.as_tensor(np.asarray(t))
             frames.append(t.float())
