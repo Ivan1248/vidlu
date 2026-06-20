@@ -156,43 +156,46 @@ def load_ncontext_segment_ids(
     return filtered_segment_ids
 
 
-def make_bih_data(
+def make_irap_data(
     *,
-    dataset_dir: str | Path | None = None,
-    metadata_dir: str | Path | None = None,
+    dataset_dir: str | Path,
+    metadata_dir: str | Path,
     context_offsets: T.Sequence[int] = (0, -1, -4),
     mean: T.Sequence[float] = RGB_MEAN,
     std: T.Sequence[float] = RGB_STD,
     input_dim_rgb: T.Sequence[int] = INPUT_DIM,
     transforms: T.Mapping[str, T.Callable] | None = None,
-    #label_map: T.Mapping[str, T.Sequence[int]] | None = None,
     ncontext_segment_id_subset: set[str] | None = None,
-    use_ncontext_filter: bool = True,
+    use_ncontext_filter: bool = False,
     seg_to_res_path: str | Path | None = None,
     allow_missing_attributes: bool = False,
 ):
-    """Build BiH datasets with IRAP GAIM configuration.
+    """Build IRAP datasets from an explicit dataset + metadata directory.
+
+    Generic loader shared by the per-release presets :func:`make_bih_data` and
+    :func:`make_vietnam_data`. Splits are discovered from ``splits.json``, so any
+    IRAP release loads by pointing ``dataset_dir`` / ``metadata_dir`` at it (with
+    matching flags); nothing here is BiH-specific.
 
     Args:
-        dataset_dir: Optional override for IRAP_BIH directory.
-        metadata_dir: Optional override for IRAP_BIH_METADATA directory.
+        dataset_dir: Directory holding the image/data files.
+        metadata_dir: Directory holding the metadata JSONs (``splits.json``, ...).
         context_offsets: Offsets for context frames, e.g., (0, -1, -4).
         mean: RGB channel means for normalization.
         std: RGB channel stds for normalization.
         input_dim_rgb: Target image dimensions (W, H, C).
         transforms: Custom transforms dict.
-        label_map: Custom label mapping.
         ncontext_segment_id_subset: Explicit set of segment IDs to include.
-        use_ncontext_filter: If True (default), apply N-context filtering using pickle
+        use_ncontext_filter: If True, apply N-context filtering using pickle
             files at seg_to_res_path (or metadata_dir/seg_to_res if seg_to_res_path is None).
             Set to False to skip N-context filtering entirely.
         seg_to_res_path: Path to directory containing precomputed result pickle files
             ({train,val,test}.pickle). If None and use_ncontext_filter=True, uses
             metadata_dir/seg_to_res. Only used if use_ncontext_filter=True.
+        allow_missing_attributes: If True, map missing/unmappable attribute codes to
+            ``IGNORE_LABEL_INDEX`` instead of dropping the segment.
     """
-    dataset_dir, metadata_dir = resolve_irap_paths(
-        dataset_dir=dataset_dir, metadata_dir=metadata_dir
-    )
+    dataset_dir, metadata_dir = Path(dataset_dir), Path(metadata_dir)
 
     # Discover the split names actually present in the metadata. Unlabeled
     # subsets (`unlabeled_train`, `unlabeled_val`, ...) appear only when the
@@ -237,15 +240,39 @@ def make_bih_data(
     return out
 
 
+def make_bih_data(
+    *,
+    dataset_dir: str | Path | None = None,
+    metadata_dir: str | Path | None = None,
+    use_ncontext_filter: bool = True,
+    **kwargs,
+):
+    """Build IRAP-BiH datasets (preset over :func:`make_irap_data`).
+
+    Defaults ``dataset_dir`` / ``metadata_dir`` to ``<root>/IRAP_BIH`` /
+    ``<root>/IRAP_BIH_METADATA`` and ``use_ncontext_filter=True`` (BiH ships the
+    precomputed N-context pickles). All other keyword arguments are forwarded to
+    :func:`make_irap_data`.
+    """
+    dataset_dir, metadata_dir = resolve_irap_paths(
+        dataset_dir=dataset_dir, metadata_dir=metadata_dir
+    )
+    return make_irap_data(
+        dataset_dir=dataset_dir,
+        metadata_dir=metadata_dir,
+        use_ncontext_filter=use_ncontext_filter,
+        **kwargs,
+    )
+
+
 def make_vietnam_data(
     *,
     dataset_dir: str | Path | None = None,
-    context_offsets: T.Sequence[int] = (0, -1, -4),
     use_ncontext_filter: bool = False,
     allow_missing_attributes: bool = True,
     **kwargs,
 ):
-    """Build IRAP-Vietnam datasets.
+    """Build IRAP-Vietnam datasets (preset over :func:`make_irap_data`).
 
     Returns a dict with one entry per key in ``splits.json``. Labeled splits
     are always ``train`` / ``val`` / ``test``. When the prep pipeline wrote
@@ -256,6 +283,8 @@ def make_vietnam_data(
 
     Differs from :func:`make_bih_data` only in defaults:
 
+    - ``dataset_dir`` defaults to ``<root>/IRAP_Vietnam`` and ``metadata_dir`` to
+      ``<dataset_dir>`` (Vietnam colocates data and metadata).
     - ``use_ncontext_filter=False``: the Vietnam release does not include the
       precomputed N-context pickles.
     - ``allow_missing_attributes=True``: five flow attributes (motorcycle /
@@ -263,9 +292,7 @@ def make_vietnam_data(
       flag every segment would be dropped. Missing/unmappable codes are
       mapped to PyTorch's standard ``ignore_index = -1``.
 
-    Default-path resolution for ``dataset_dir`` is documented in the module
-    docstring; ``metadata_dir`` defaults to ``<dataset_dir>``. All other
-    keyword arguments are forwarded to :func:`make_bih_data`.
+    All other keyword arguments are forwarded to :func:`make_irap_data`.
     """
     if "metadata_dir" in kwargs:
         if kwargs.pop("metadata_dir") != dataset_dir:
@@ -276,14 +303,42 @@ def make_vietnam_data(
     if dataset_dir is None:
         dataset_dir = resolve_datasets_root() / "IRAP_Vietnam"
 
-    return make_bih_data(
+    data = make_irap_data(
         dataset_dir=dataset_dir,
         metadata_dir=dataset_dir,
-        context_offsets=context_offsets,
         use_ncontext_filter=use_ncontext_filter,
         allow_missing_attributes=allow_missing_attributes,
         **kwargs,
     )
+
+    if 'test' in data and len(data['test']) == 0:
+        print("Warning: The 'test' split of the iRAP Vietnam dataset is empty and will be removed from the returned dataset dict.")
+        del data['test']
+
+    return data
+
+
+# Registry of IRAP release presets. Single source of truth for the dataset-name
+# strings used by CLI tools (vlm_inference, prepare_agent_tasks, ...).
+IRAP_DATASET_FACTORIES = {
+    "bih": make_bih_data,
+    "vietnam": make_vietnam_data,
+}
+
+
+def make_irap_data_by_name(name: str, **kwargs):
+    """Build an IRAP dataset dict by release name (``"bih"`` / ``"vietnam"``).
+
+    Thin dispatch over :data:`IRAP_DATASET_FACTORIES`; forwards ``kwargs`` to the
+    selected preset. Raises ``ValueError`` for an unknown name.
+    """
+    try:
+        factory = IRAP_DATASET_FACTORIES[name]
+    except KeyError:
+        raise ValueError(
+            f"Unknown IRAP dataset {name!r}. Choose from {sorted(IRAP_DATASET_FACTORIES)}."
+        ) from None
+    return factory(**kwargs)
 
 
 def get_class_counts(metadata_dir: str | Path) -> tuple[int, ...]:

@@ -78,8 +78,8 @@ def _load_dataset(
     Returns:
         Tuple of (dataset, attr_to_value_to_class_idx, attrs_order)
     """
-    from vidlu_irap_gaim.data import make_bih_data, make_vietnam_data, InferenceImageDataset
-    from vidlu_irap_gaim.data.attrs import get_attrs_to_include
+    from irap_data import make_bih_data, make_irap_data_by_name, InferenceImageDataset
+    from irap_data.attrs import get_attrs_to_include
 
     if image_folder is not None:
         # Custom folder - need reference dataset for metadata
@@ -92,7 +92,7 @@ def _load_dataset(
         attr_to_value_to_class_idx = ref_ds.info.attr_to_value_to_class_idx
     else:
         # Standard split
-        data = make_vietnam_data() if dataset_name == "vietnam" else make_bih_data()
+        data = make_irap_data_by_name(dataset_name)
         dataset = data[split]
         attr_to_value_to_class_idx = dataset.info.attr_to_value_to_class_idx
 
@@ -371,7 +371,7 @@ def run_evaluation(
     )
     from vidlu.utils.collections import NameDict
     from vidlu.utils.misc import try_input
-    from vidlu_irap_gaim.data.attrs import get_attrs_to_include
+    from irap_data.attrs import get_attrs_to_include
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
