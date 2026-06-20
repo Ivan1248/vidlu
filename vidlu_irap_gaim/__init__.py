@@ -19,7 +19,11 @@ from .models.pretraining import vistas_params_spec
 
 # Losses & Metrics
 from .losses import multi_attribute_cross_entropy, MultiAttributeCrossEntropyLoss
-from .metrics import MultiAttributeClassificationMetrics, MultiAttributeAccuracy, get_irap_metrics
+from .metrics import (
+    MultiAttributeClassificationMetrics,
+    MultiAttributeAccuracy,
+    get_irap_metrics,
+)
 
 # Training
 from .training import (
@@ -54,7 +58,8 @@ from .vlm.finetuning import (
     Qwen3VLClassifier,
     Gemma4VLClassifier,
     make_vlm_bih_data,
-    VLMBihDataset,
+    make_vlm_vietnam_data,
+    VLMIrapDataset,
     VLMTrainStep,
     VLMEvalStep,
     FineTunedVLMPredictor,

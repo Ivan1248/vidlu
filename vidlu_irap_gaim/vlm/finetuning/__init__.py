@@ -44,15 +44,16 @@ Gemma 4 26B-A4B (bf16 + naive MP on 4× A6000, see
 """
 
 from .model import Qwen3VLClassifier, Gemma4VLClassifier
-from .dataset import VLMBihDataset, make_vlm_bih_data
+from .dataset import VLMIrapDataset, make_vlm_bih_data, make_vlm_vietnam_data
 from .steps import VLMTrainStep, VLMEvalStep
 from .predictor import FineTunedVLMPredictor
 
 __all__ = [
     "Qwen3VLClassifier",
     "Gemma4VLClassifier",
-    "VLMBihDataset",
+    "VLMIrapDataset",
     "make_vlm_bih_data",
+    "make_vlm_vietnam_data",
     "VLMTrainStep",
     "VLMEvalStep",
     "FineTunedVLMPredictor",

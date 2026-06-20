@@ -234,15 +234,21 @@ class MultiAttributeAccuracy(AccumulatingMetric):
 
         keys_to_update = self.attrs
         matched = 0
+        total = 0
         for key in keys_to_update:
             # Determine tensor index
             idx = _resolve_attr_index(key, self.attr_to_index)
             if idx < 0 or idx >= len(outs):
                 continue
+            t = true[:, idx]
+            # Skip ignore_index (-1) targets, e.g. IRAP-Vietnam's unlabeled
+            # attributes, so accuracy isn't deflated by positions with no label.
+            valid = t != -1
             pred = outs[idx].argmax(1)
-            matched += torch.sum(pred == true[:, idx])
+            matched += torch.sum((pred == t) & valid)
+            total += int(valid.sum())
         self.correct += matched.item() if isinstance(matched, torch.Tensor) else matched
-        self.total += true.shape[0] * len(keys_to_update)
+        self.total += total
 
     @torch.no_grad()
     def compute(self):
@@ -265,10 +271,14 @@ def get_irap_metrics(
     Returns:
         Tuple of (MultiAttributeClassificationMetrics, MultiAttributeAccuracy) configured with attrs_idx.
     """
-    from .data.attrs import get_attrs_to_include, map_attr_names_to_indices
+    from irap_data.attrs import (
+        get_attrs_to_include,
+        map_attr_names_to_indices,
+        filter_attrs_with_values,
+    )
 
     if dataset is None:
-        from .data import make_bih_data
+        from irap_data import make_bih_data
 
         dataset = make_bih_data()["train"]
 
@@ -278,7 +288,13 @@ def get_irap_metrics(
         class_counts = dataset.info.class_counts
 
     if attrs_to_include is None:
-        attrs_to_include = get_attrs_to_include()
+        # Derive the subset from the dataset's own metadata (single source of truth
+        # shared with the VLM data factories). Drops attributes with no value
+        # vocabulary, e.g. IRAP-Vietnam's empty flow attributes; for IRAP-BH this
+        # returns the full canonical subset unchanged.
+        attrs_to_include = filter_attrs_with_values(
+            get_attrs_to_include(), dataset.info.attr_to_value_to_class_idx
+        )
 
     attrs_idx_list = map_attr_names_to_indices(attrs_to_include, dataset.info.attr_to_value_to_class_idx.keys())
 

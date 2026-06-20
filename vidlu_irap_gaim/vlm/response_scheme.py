@@ -17,6 +17,8 @@ from typing import Callable, Literal, Sequence
 
 import torch
 
+from irap_data import IGNORE_LABEL_INDEX
+
 from vidlu.utils.collections import Registry
 
 from .response_parser import (
@@ -155,14 +157,22 @@ def target_to_class_indices(
     attrs_to_include: Sequence[str],
     attr_to_value_to_class_idx: dict[str, dict[str, int]],
 ) -> dict[str, int]:
-    """Return {attr_name: class_idx} for the requested attrs."""
+    """Return {attr_name: class_idx} for the requested attrs.
+
+    Attributes whose target is ``IGNORE_LABEL_INDEX`` (unlabeled, e.g. IRAP-Vietnam's
+    empty flow attributes) are omitted so they are not formatted or supervised.
+    """
     attr_order = list(attr_to_value_to_class_idx.keys())
     attr_global_idx = {attr: i for i, attr in enumerate(attr_order)}
-    return {
-        attr: int(target[attr_global_idx[attr]].item())
-        for attr in attrs_to_include
-        if attr in attr_global_idx
-    }
+    result = {}
+    for attr in attrs_to_include:
+        if attr not in attr_global_idx:
+            continue
+        class_idx = int(target[attr_global_idx[attr]].item())
+        if class_idx == IGNORE_LABEL_INDEX:
+            continue
+        result[attr] = class_idx
+    return result
 
 
 def target_to_value_map(
@@ -171,7 +181,11 @@ def target_to_value_map(
     attr_to_value_to_class_idx: dict[str, dict[str, int]],
     idx_to_value: dict[str, dict[int, str]],
 ) -> dict[str, str]:
-    """Return {attr_name: value_string} for the requested attrs."""
+    """Return {attr_name: value_string} for the requested attrs.
+
+    Attributes whose target is ``IGNORE_LABEL_INDEX`` (unlabeled, e.g. IRAP-Vietnam's
+    empty flow attributes) are omitted so they are not formatted or supervised.
+    """
     attr_order = list(attr_to_value_to_class_idx.keys())
     attr_global_idx = {attr: i for i, attr in enumerate(attr_order)}
 
@@ -181,6 +195,8 @@ def target_to_value_map(
         if glob_idx is None:
             raise ValueError(f"Attribute {attr_name} not found in global attribute order")
         class_idx = int(target[glob_idx].item())
+        if class_idx == IGNORE_LABEL_INDEX:
+            continue
         iv = idx_to_value.get(attr_name)
         if iv is None:
             raise ValueError(f"Attribute {attr_name} not found in attr_to_value_to_class_idx")

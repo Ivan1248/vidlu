@@ -8,14 +8,14 @@ from pathlib import Path
 
 import torch.nn.functional as F
 
-from vidlu_irap_gaim.data import Dataset
+from irap_data import Dataset
 
-from vidlu_irap_gaim.data.attrs import get_attrs_to_include
-from vidlu_irap_gaim.data.attribute_frequencies import (
+from irap_data.attrs import get_attrs_to_include, filter_attrs_with_values
+from irap_data.attribute_frequencies import (
     compute_attribute_frequency_stats,
     frequency_stats_to_attr_to_default_class_idx,
 )
-from vidlu_irap_gaim.data import make_bih_data
+from irap_data import make_bih_data, make_vietnam_data
 from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
 from vidlu_irap_gaim.vlm.response_scheme import (
     ResponseScheme,
@@ -29,7 +29,7 @@ from vidlu_irap_gaim.vlm.response_scheme import (
 DEFAULT_RESPONSE_SCHEME_NAME = "standard"
 
 
-class VLMBihDataset(Dataset):
+class VLMIrapDataset(Dataset):
     """Wraps IRAPDataset to produce VLM-ready samples for Vidlu.
 
     Returns plain dicts with standard types:
@@ -70,7 +70,7 @@ class VLMBihDataset(Dataset):
         info = dict(base_info if base_info is not None else {},
                     vlm_response_scheme=response_scheme)
 
-        super().__init__(name="vlm_bih", data=base_dataset, info=info)
+        super().__init__(name="vlm_irap", data=base_dataset, info=info)
         self.base_dataset = base_dataset
         self.response_scheme = response_scheme
         self.response_scheme_name = get_response_scheme_name(response_scheme)
@@ -127,7 +127,7 @@ def make_vlm_bih_data(
     attr_to_default_class_idx: dict[str, int] | None = None,
     sparse_default_instruction: SparseDefaultInstruction = "per_attribute",
     upsampling_factor: int = 1,
-) -> dict[str, VLMBihDataset]:
+) -> dict[str, VLMIrapDataset]:
     """Factory for VLM-formatted BIH datasets.
 
     Creates train/val/test datasets that produce examples for VLM fine-tuning. 
@@ -151,7 +151,7 @@ def make_vlm_bih_data(
             (generic instruction for values starting with No/None/Not).
 
     Returns:
-        Dictionary with "train", "val", "test" VLMBihDataset instances.
+        Dictionary with "train", "val", "test" VLMIrapDataset instances.
         Optionally includes "val_quick" when val_quick_size is set.
 
     Usage in run.py::
@@ -160,7 +160,65 @@ def make_vlm_bih_data(
         "irap_gaim.make_vlm_bih_data(detail_level='attr_vals', val_quick_size=100)"
     """.format(schemes=", ".join(f'"{k}"' for k in sorted(registry)))
     base_data = make_bih_data()
+    return _make_vlm_data(
+        base_data,
+        response_scheme=response_scheme,
+        detail_level=detail_level,
+        val_quick_size=val_quick_size,
+        attr_to_default_class_idx=attr_to_default_class_idx,
+        sparse_default_instruction=sparse_default_instruction,
+        upsampling_factor=upsampling_factor,
+    )
+
+
+def make_vlm_vietnam_data(
+    response_scheme: str | ResponseScheme = DEFAULT_RESPONSE_SCHEME_NAME,
+    detail_level: str = DEFAULT_DETAIL_LEVEL,
+    val_quick_size: int | None = None,
+    attr_to_default_class_idx: dict[str, int] | None = None,
+    sparse_default_instruction: SparseDefaultInstruction = "per_attribute",
+    upsampling_factor: int = 1,
+) -> dict[str, VLMIrapDataset]:
+    """Factory for VLM-formatted IRAP-Vietnam datasets.
+
+    Twin of :func:`make_vlm_bih_data` that builds from :func:`make_vietnam_data`.
+    Attributes that are empty in every Vietnam coding table (the flow attributes)
+    have no value vocabulary and are dropped from ``attrs_to_include``, so prompts
+    and ground-truth responses only cover labeled attributes. See
+    :func:`make_vlm_bih_data` for the shared arguments.
+    """
+    base_data = make_vietnam_data()
+    return _make_vlm_data(
+        base_data,
+        response_scheme=response_scheme,
+        detail_level=detail_level,
+        val_quick_size=val_quick_size,
+        attr_to_default_class_idx=attr_to_default_class_idx,
+        sparse_default_instruction=sparse_default_instruction,
+        upsampling_factor=upsampling_factor,
+    )
+
+
+def _make_vlm_data(
+    base_data: dict,
+    *,
+    response_scheme: str | ResponseScheme,
+    detail_level: str,
+    val_quick_size: int | None,
+    attr_to_default_class_idx: dict[str, int] | None,
+    sparse_default_instruction: SparseDefaultInstruction,
+    upsampling_factor: int,
+) -> dict[str, VLMIrapDataset]:
+    """Shared core: wrap the train/val/test splits of ``base_data`` as VLM datasets.
+
+    The attribute subset is derived from the dataset's own metadata via
+    :func:`filter_attrs_with_values`, the single source of truth shared with
+    ``get_irap_metrics`` so the two never disagree.
+    """
     attr_to_value_to_class_idx = base_data["train"].info.attr_to_value_to_class_idx
+    attrs_to_include = list(
+        filter_attrs_with_values(get_attrs_to_include(), attr_to_value_to_class_idx)
+    )
     prompt_config = Path(__file__).parent.parent / "attribute_prompts.yaml"
 
     if isinstance(response_scheme, str):
@@ -177,17 +235,12 @@ def make_vlm_bih_data(
             attr_to_default_class_idx=attr_to_default_class_idx,
             sparse_default_instruction=sparse_default_instruction,
         )
-    attrs_to_include = list(get_attrs_to_include())
 
     def _make_split(split_ds):
-        return VLMBihDataset(split_ds, response_scheme, attrs_to_include, detail_level,
+        return VLMIrapDataset(split_ds, response_scheme, attrs_to_include, detail_level,
                              upsampling_factor=upsampling_factor)
 
-    result = {
-        "train": _make_split(base_data["train"]),
-        "val": _make_split(base_data["val"]),
-        "test": _make_split(base_data["test"]),
-    }
+    result = {k: _make_split(ds) for k, ds in base_data.items()}
     if val_quick_size is not None and val_quick_size > 0:
         result["val_quick"] = result["val"][:val_quick_size]
     return result
