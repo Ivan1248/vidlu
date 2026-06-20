@@ -272,10 +272,10 @@ vlm_finetune_trainer = TrainerConfig(
     # Loss is computed inside the train_step, not by Trainer
     loss=lambda out, target, reduction="mean": torch.tensor(0.0),
     optimizer_f=trainable_parameters_optimizer(partial(torch.optim.AdamW, lr=1e-5, weight_decay=0.1)),
-    epoch_count=3,
+    epoch_count=10,
+    eval_count=10,  # Evaluate every epoch
     batch_size=2,
     eval_batch_size=6,
-    eval_count=3,  # Evaluate every epoch
     extension_fs=[
         MultiAttributeScorePrinter,
     ],
@@ -334,14 +334,14 @@ gemma4_vlm_finetune_trainer = TrainerConfig(
     optimizer_f=trainable_parameters_optimizer(
         partial(torch.optim.AdamW, lr=1e-4, weight_decay=1e-3, fused=True)
     ),
-    epoch_count=3,
+    epoch_count=10,
     batch_size=2,
     eval_batch_size=1,
     # In-training eval = teacher-forced loss only (set VLM_SKIP_GENERATIVE_EVAL=1).
     # Generative metric scoring is deferred to scripts/eval_generative_gemma.py
     # so that the slow per-sample autoregressive decode does not dominate
     # training wall-clock.  See plan §"Phase 1 — Cheap wins".
-    eval_count=1,
+    eval_count=10,
     extension_fs=[
         MultiAttributeScorePrinter,
     ],
