@@ -171,7 +171,7 @@ class _BaseVLMClassifier(nn.Module):
     ) -> tuple[list[str], list[str]]:
         """Render full and (broadcast) prompt-only chat texts for the batch.
 
-        VLMBihDataset uses an identical prompt for every sample, so the
+        VLMIrapDataset uses an identical prompt for every sample, so the
         prompt-only template text is computed once and broadcast across the
         batch (measurably faster than per-sample apply). Under
         ``VLM_VERIFY_PROMPT_ONLY=1`` the broadcast assumption is checked.

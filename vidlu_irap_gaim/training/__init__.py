@@ -36,8 +36,8 @@ from .jitter import (
 from .helpers import make_irap_trainer_with_attrs
 from .semisup import (
     multi_attribute_kl_div_ll,
-    make_semisup_bih_data,
-    make_pseudo_labeled_bih_data,
+    make_semisup_data,
+    make_pseudo_labeled_data,
     get_hard_pseudo_labels,
     update_adaptive_thresholds,
     PseudoLabeledDataset,

@@ -686,12 +686,12 @@ class TestSparseIndexedResponseScheme:
 
 
 class TestVLMDatasetSchemeInfo:
-    """Tests that VLMBihDataset stores scheme metadata accessible to eval steps."""
+    """Tests that VLMIrapDataset stores scheme metadata accessible to eval steps."""
 
     def test_dataset_info_contains_response_scheme(self):
-        """VLMBihDataset must expose vlm_response_scheme on info."""
+        """VLMIrapDataset must expose vlm_response_scheme on info."""
         from unittest.mock import MagicMock
-        from vidlu_irap_gaim.vlm.finetuning.dataset import VLMBihDataset
+        from vidlu_irap_gaim.vlm.finetuning.dataset import VLMIrapDataset
         from vidlu_irap_gaim.vlm.response_scheme import StandardResponseScheme
 
         scheme = StandardResponseScheme(SAMPLE_ATTR_METADATA)
@@ -702,7 +702,7 @@ class TestVLMDatasetSchemeInfo:
         mock_ds.__len__ = MagicMock(return_value=5)
 
         attrs = list(SAMPLE_ATTR_METADATA.keys())
-        dataset = VLMBihDataset(mock_ds, scheme, attrs)
+        dataset = VLMIrapDataset(mock_ds, scheme, attrs)
 
         assert hasattr(dataset.info, "vlm_response_scheme")
         assert dataset.info.vlm_response_scheme is scheme
@@ -711,7 +711,7 @@ class TestVLMDatasetSchemeInfo:
     def test_dataset_info_propagates_base_info_fields(self):
         """Augmented info must still contain original base info fields."""
         from unittest.mock import MagicMock
-        from vidlu_irap_gaim.vlm.finetuning.dataset import VLMBihDataset
+        from vidlu_irap_gaim.vlm.finetuning.dataset import VLMIrapDataset
         from vidlu_irap_gaim.vlm.response_scheme import StandardResponseScheme
 
         scheme = StandardResponseScheme(SAMPLE_ATTR_METADATA)
@@ -722,7 +722,7 @@ class TestVLMDatasetSchemeInfo:
         mock_ds.__len__ = MagicMock(return_value=5)
 
         attrs = list(SAMPLE_ATTR_METADATA.keys())
-        dataset = VLMBihDataset(mock_ds, scheme, attrs)
+        dataset = VLMIrapDataset(mock_ds, scheme, attrs)
 
         assert dataset.info.problem == "multi_attribute_classification"
         assert dataset.info.some_field == "hello"

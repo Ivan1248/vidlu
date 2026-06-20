@@ -113,7 +113,7 @@ vidlu_irap_gaim/
 │   ├── attribute_prompts.yaml   # YAML prompt configuration
 │   └── finetuning/              # LoRA fine-tuning pipeline
 │       ├── model.py             # Qwen3VLClassifier (LoRA wrapper)
-│       ├── dataset.py           # VLMBihDataset, make_vlm_bih_data
+│       ├── dataset.py           # VLMIrapDataset, make_vlm_bih_data
 │       ├── predictor.py         # FineTunedVLMPredictor
 │       └── steps.py             # VLMTrainStep, VLMEvalStep
 ├── tools/                       # Utility scripts and visualization
@@ -212,10 +212,10 @@ This extension supports FixMatch-style pseudo-label self-training for leveraging
 
 ### Source of the unlabeled set
 
-`make_semisup_bih_data` chooses the unlabeled pool in this order (default `prefer_real_unlabeled=True`):
+`make_semisup_data` chooses the unlabeled pool in this order (default `prefer_real_unlabeled=True`):
 
-1. **Real `unlabeled_train` split** from `splits.json` when present (e.g. IRAP-Vietnam after running the prep pipeline). The full labeled `train` split is kept; `labeled_ratio` is ignored.
-2. **Synthetic split** of the labeled `train` set by `labeled_ratio` / `labeled_size` – the historical IRAP-BiH behaviour, still used when no `unlabeled_train` key exists.
+1. **Real `unlabeled_train` split** from `splits.json` when present (e.g. iRAP-Vietnam after running the prep pipeline). The full labeled `train` split is kept; `labeled_ratio` is ignored.
+2. **Synthetic split** of the labeled `train` set by `labeled_ratio` / `labeled_size` – the historical iRAP-BiH behaviour, still used when no `unlabeled_train` key exists.
 
 Pass `prefer_real_unlabeled=False` to force the synthetic path even on metadata that has a real unlabeled split.
 
@@ -223,7 +223,7 @@ Pass `prefer_real_unlabeled=False` to force the synthetic path even on metadata 
 
 ```bash
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=0.1)" \
   "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/checkpoint.pth',conf_thresh=0.8,temperature=1.0)" \
@@ -246,7 +246,7 @@ save_pseudo_labels(result, 'pseudo_labels_fixed.npz')
 ```bash
 # Train on labeled + offline pseudo-labels
 python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)" "standardize" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=0.1)" "standardize" \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_pseudo_label_offline_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
@@ -433,8 +433,11 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 
 | Symbol | Description |
 |--------|-------------|
-| `make_bih_data(use_ncontext_filter=True, ...)` | Load BiH dataset with train/val/test splits |
-| `make_semisup_bih_data(labeled_ratio=..., ...)` | Semi-supervised split (labeled + unlabeled) |
+| `make_irap_data(dataset_dir=, metadata_dir=, ...)` | Generic IRAP loader for any release |
+| `make_bih_data(use_ncontext_filter=True, ...)` | Load IRAP-BiH (preset over `make_irap_data`) |
+| `make_vietnam_data(...)` | Load IRAP-Vietnam (preset over `make_irap_data`) |
+| `make_irap_data_by_name("bih"\|"vietnam", ...)` | Build a release by name (registry dispatch) |
+| `make_semisup_data(base_data, labeled_ratio=..., ...)` | Semi-supervised split over a base dataset dict |
 | `IRAPDataset(...)` | Dataset class (`info.class_counts`, `info.pixel_stats`, `info.attribute_names`) |
 | `InferenceImageDataset.from_folder(...)` | Inference on unlabeled image folders |
 | `get_class_counts(...)` | Class count tuple for model construction |
@@ -478,7 +481,7 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 
 | Symbol | Description |
 |--------|-------------|
-| `make_semisup_bih_data(labeled_ratio, ...)` | Create labeled/unlabeled splits |
+| `make_semisup_data(base_data, labeled_ratio, ...)` | Create labeled/unlabeled splits over a base dataset dict |
 | `multi_attribute_kl_div_ll()` | KL divergence across attribute tuples |
 
 ### VLM

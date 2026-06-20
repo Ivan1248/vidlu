@@ -35,7 +35,7 @@ CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home python scripts/run.py trai
 ```bash
 # 1/128 (1636 labeled)
 CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=1/128,use_all_as_unlabeled=True,shuffle=False)" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/128,use_all_as_unlabeled=True,shuffle=False)" \
   "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_semisup_trainer_ph20_nofreeze,epoch_count=1280,eval_count=10" \
@@ -44,7 +44,7 @@ CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home python scripts/run.py trai
 
 # 1/64 (3273 labeled)
 CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=1/64,use_all_as_unlabeled=True,shuffle=False)" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/64,use_all_as_unlabeled=True,shuffle=False)" \
   "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_semisup_trainer_ph20_nofreeze,epoch_count=640,eval_count=10" \
@@ -53,7 +53,7 @@ CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home python scripts/run.py trai
 
 # 1/16 (13091 labeled)
 CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=1/16,use_all_as_unlabeled=True,shuffle=False)" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/16,use_all_as_unlabeled=True,shuffle=False)" \
   "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_semisup_trainer_ph20_nofreeze,epoch_count=160,eval_count=10" \
@@ -62,7 +62,7 @@ CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home python scripts/run.py trai
 
 # 1/1 (209459 labeled)
 CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home python scripts/run.py train \
-  "irap_gaim.make_semisup_bih_data(labeled_ratio=1/1,use_all_as_unlabeled=True,shuffle=False)" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/1,use_all_as_unlabeled=True,shuffle=False)" \
   "standardize" \
   "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_semisup_trainer_ph20_nofreeze,epoch_count=10,eval_count=10" \
@@ -81,8 +81,8 @@ frozen teacher checkpoint.
 # 1/128 (1636 labeled)
 CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/projects/irap_home \
 python scripts/run_pseudolabel_pipeline.py \
-  --data-supervised "irap_gaim.make_semisup_bih_data(labeled_ratio=1/128,shuffle=False)" \
-  --data-semisup "irap_gaim.make_semisup_bih_data(labeled_ratio=1/128,use_all_as_unlabeled=True,shuffle=False)" \
+  --data-supervised "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/128,shuffle=False)" \
+  --data-semisup "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/128,use_all_as_unlabeled=True,shuffle=False)" \
   --trainer-supervised "irap_gaim.irap_local_rec_trainer_nofreeze,epoch_count=1280,eval_count=10" \
   --trainer-pseudolabel "irap_gaim.irap_pseudo_label_trainer_nofreeze,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='{teacher_path}',conf_thresh={conf_thresh},temperature={temperature}),epoch_count=1280,eval_count=10" \
   --metrics "irap_gaim.get_irap_metrics()" \
@@ -91,8 +91,8 @@ python scripts/run_pseudolabel_pipeline.py \
 # 1/64 (3273 labeled)
 CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home \
 python scripts/run_pseudolabel_pipeline.py \
-  --data-supervised "irap_gaim.make_semisup_bih_data(labeled_ratio=1/64,shuffle=False)" \
-  --data-semisup "irap_gaim.make_semisup_bih_data(labeled_ratio=1/64,use_all_as_unlabeled=True,shuffle=False)" \
+  --data-supervised "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/64,shuffle=False)" \
+  --data-semisup "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/64,use_all_as_unlabeled=True,shuffle=False)" \
   --trainer-supervised "irap_gaim.irap_local_rec_trainer_nofreeze,epoch_count=640,eval_count=10" \
   --trainer-pseudolabel "irap_gaim.irap_pseudo_label_trainer_nofreeze,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='{teacher_path}',conf_thresh={conf_thresh},temperature={temperature}),epoch_count=640,eval_count=10" \
   --metrics "irap_gaim.get_irap_metrics()" \
@@ -101,8 +101,8 @@ python scripts/run_pseudolabel_pipeline.py \
 # 1/16 (13091 labeled)
 CUDA_VISIBLE_DEVICES=4 IRAP_HOME=~/projects/irap_home \
 python scripts/run_pseudolabel_pipeline.py \
-  --data-supervised "irap_gaim.make_semisup_bih_data(labeled_ratio=1/16,shuffle=False)" \
-  --data-semisup "irap_gaim.make_semisup_bih_data(labeled_ratio=1/16,use_all_as_unlabeled=True,shuffle=False)" \
+  --data-supervised "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/16,shuffle=False)" \
+  --data-semisup "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=1/16,use_all_as_unlabeled=True,shuffle=False)" \
   --trainer-supervised "irap_gaim.irap_local_rec_trainer_nofreeze,epoch_count=160,eval_count=10" \
   --trainer-pseudolabel "irap_gaim.irap_pseudo_label_trainer_nofreeze,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='{teacher_path}',conf_thresh={conf_thresh},temperature={temperature}),epoch_count=160,eval_count=10" \
   --metrics "irap_gaim.get_irap_metrics()" \

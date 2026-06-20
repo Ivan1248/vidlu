@@ -14,8 +14,8 @@ Usage examples:
 
   # Offline mode with custom labeled ratio in data string:
   python run_pseudolabel_pipeline.py \\
-    --data-semisup "irap_gaim.make_semisup_bih_data(labeled_ratio=0.05)" \\
-    --data-offline "irap_gaim.make_pseudo_labeled_bih_data(labeled_ratio=0.05,pseudo_labels_path='{pseudo_labels_path}')" \\
+    --data-semisup "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(),labeled_ratio=0.05)" \\
+    --data-offline "irap_gaim.make_pseudo_labeled_data(irap_gaim.make_bih_data(),labeled_ratio=0.05,pseudo_labels_path='{pseudo_labels_path}')" \\
     --mode offline
 
   # Generalising to another dataset (provide all four run.py args):
@@ -262,10 +262,10 @@ def main():
     g.add_argument("--data-supervised", default="irap_gaim.make_bih_data()",
                    help="Data factory for the supervised phase")
     g.add_argument("--data-semisup",
-                   default="irap_gaim.make_semisup_bih_data(labeled_ratio=0.1)",
+                   default="irap_gaim.make_semisup_data(irap_gaim.make_bih_data(),labeled_ratio=0.1)",
                    help="Data factory for generate and on-the-fly train-pseudolabel phases")
     g.add_argument("--data-offline",
-                   default="irap_gaim.make_pseudo_labeled_bih_data(labeled_ratio=0.1,pseudo_labels_path='{pseudo_labels_path}')",
+                   default="irap_gaim.make_pseudo_labeled_data(irap_gaim.make_bih_data(),labeled_ratio=0.1,pseudo_labels_path='{pseudo_labels_path}')",
                    help="Data factory for offline train-pseudolabel phase; {pseudo_labels_path} is filled by the script")
     g.add_argument("--input-adapter", default="standardize",
                    help="Input adapter string (run.py 2nd positional arg)")

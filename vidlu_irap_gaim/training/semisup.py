@@ -1,7 +1,7 @@
 """Semi-supervised training support for vidlu_irap_gaim.
 
-This module provides components to enable semi-supervised learning with the
-BIH dataset, leveraging vidlu's existing SemisupConsStep infrastructure.
+This module provides components to enable semi-supervised learning with IRAP
+datasets, leveraging vidlu's existing SemisupConsStep infrastructure.
 """
 
 import typing as T
@@ -13,8 +13,6 @@ import torch
 import numpy as np
 
 from vidlu.modules.losses import kl_div_ll
-
-from vidlu_irap_gaim.data.irap_dataset import make_bih_data
 
 
 def multi_attribute_kl_div_ll(
@@ -48,46 +46,60 @@ def multi_attribute_kl_div_ll(
         return stacked.mean()
 
 
-def make_semisup_bih_data(
+def make_semisup_data(
+    base_data: dict,
+    *,
     labeled_ratio: float | None = None,
     labeled_size: int | None = None,
     use_all_as_unlabeled: bool = False,
     seed: int = 42,
     shuffle: bool = True,
-    *,
-    metadata_dir: T.Union[str, Path] | None = None,
-    **kwargs,
+    prefer_real_unlabeled: bool = True,
 ) -> dict:
-    """Create semi-supervised BiH datasets with labeled/unlabeled train split.
+    """Create semi-supervised datasets with a labeled/unlabeled train split.
 
-    Uses a synthetic split: a portion of labeled training data is treated as
-    "labeled" while the rest is treated as "unlabeled" (labels ignored).
+    Operates on an already-built IRAP dataset dict, so it works for any release
+    (IRAP-BiH, IRAP-Vietnam, ...) — the caller picks the dataset by which factory
+    builds ``base_data``.
+
+    Two sources for the unlabeled set, in order of preference when
+    ``prefer_real_unlabeled=True`` (default):
+
+    1. **Real unlabeled split** from ``splits.json`` (key ``unlabeled_train``).
+       Used when ``base_data`` contains it (e.g. IRAP-Vietnam after running the
+       prep pipeline). The labeled ``train`` split is kept whole;
+       ``labeled_ratio`` / ``labeled_size`` are ignored.
+    2. **Synthetic split** of the labeled ``train`` set, sized by
+       ``labeled_ratio`` or ``labeled_size``. Used when no real unlabeled
+       split is present (IRAP-BiH today) or when ``prefer_real_unlabeled=False``.
 
     Args:
+        base_data: Dataset dict from a make_*_data factory (e.g.
+            ``make_bih_data()`` / ``make_vietnam_data()``), providing
+            ``train`` / ``val`` / ``test`` (and optionally ``unlabeled_train``).
         labeled_ratio: Fraction of training data to use as labeled (0.0-1.0).
-        use_all_as_unlabeled: If True, use the full training set as unlabeled
-            in addition to the labeled split (same dataset for both roles).
+            Required for the synthetic-split path; ignored when a real
+            unlabeled split is used.
+        labeled_size: Number of labeled samples (alternative to labeled_ratio).
+        use_all_as_unlabeled: Synthetic-split path only. If True, use the full
+            training set as unlabeled in addition to the labeled split.
         seed: Random seed for reproducible shuffling (only used if shuffle=True).
         shuffle: If True (default), shuffle training data before splitting.
-            If False, take the first labeled_ratio fraction without shuffling.
-        metadata_dir: Optional override for IRAP_BIH_METADATA directory.
-        **bih_kwargs: Additional arguments passed to make_bih_data() (e.g. irap_home).
+        prefer_real_unlabeled: If True (default), use ``unlabeled_train`` from
+            ``base_data`` when present. Set False to force the synthetic split
+            even when a real unlabeled split exists.
 
     Returns:
-        Dict with keys:
-        - 'train': labeled dataset
-        - 'train_u': unlabeled dataset
-        - 'val': validation dataset
-        - 'test': test dataset
-
-    Example:
-        >>> data = make_semisup_bih_data(labeled_ratio=0.1)
-        >>> train_labeled = data['train']
-        >>> train_unlabeled = data['train_u']
+        Dict with keys ``'train'``, ``'train_u'``, ``'val'``, ``'test'``.
     """
-    ds = make_bih_data(metadata_dir=metadata_dir, **kwargs)
-    train_ds = ds["train"]
+    ds = base_data
 
+    if prefer_real_unlabeled and "unlabeled_train" in ds:
+        print(f"Using real unlabeled_train split with {len(ds['unlabeled_train'])} segments.")
+        return {"train": ds["train"], "train_u": ds["unlabeled_train"],
+                "val": ds["val"], "test": ds["test"]}
+
+    train_ds = ds["train"]
 
     if labeled_ratio is None and labeled_size is None:
         raise ValueError("Either labeled_ratio or labeled_size must be provided.")
@@ -108,36 +120,36 @@ def make_semisup_bih_data(
     return {"train": train_l, "train_u": train_u, "val": ds["val"], "test": ds["test"]}
 
 
-def make_pseudo_labeled_bih_data(
+def make_pseudo_labeled_data(
+    base_data: dict,
+    *,
+    pseudo_labels_path: T.Union[str, Path, None] = None,
     labeled_ratio: float | None = None,
     labeled_size: int | None = None,
-    pseudo_labels_path: T.Union[str, Path, None] = None,
-    *,
     seed: int = 42,
     shuffle: bool = True,
-    **kwargs,
 ) -> dict:
-    """Create semi-supervised BiH datasets with offline pseudo-labels on the unlabeled split.
+    """Create semi-supervised IRAP datasets with offline pseudo-labels on the unlabeled split.
 
     Args:
+        base_data: Dataset dict from a make_*_data factory (see make_semisup_data).
+        pseudo_labels_path: Path to .npz file produced by generate_pseudo_labels.
         labeled_ratio: Fraction of training data to use as labeled (0.0-1.0).
         labeled_size: Number of labeled samples (alternative to labeled_ratio).
-        pseudo_labels_path: Path to .npz file produced by generate_pseudo_labels.
         seed: Random seed for the labeled/unlabeled split.
         shuffle: Whether to shuffle before splitting.
-        **kwargs: Passed to make_semisup_bih_data (e.g. metadata_dir).
 
     Returns:
         Dict with keys 'train', 'train_u' (pseudo-labeled), 'val', 'test'.
     """
     if pseudo_labels_path is None:
         raise ValueError("pseudo_labels_path must be provided")
-    base = make_semisup_bih_data(
+    base = make_semisup_data(
+        base_data,
         labeled_ratio=labeled_ratio,
         labeled_size=labeled_size,
         seed=seed,
         shuffle=shuffle,
-        **kwargs,
     )
     base["train_u"] = PseudoLabeledDataset(base["train_u"], pseudo_labels_path)
     return base
