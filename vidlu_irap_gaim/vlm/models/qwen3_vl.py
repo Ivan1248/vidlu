@@ -19,9 +19,9 @@ class Qwen3VLPredictor(BaseHFPredictor):
         super().__init__(model_id=model_id, **kwargs)
 
     def _load_hf_model(self, attn_impl: str, device_map: dict | str) -> None:
-        from transformers import AutoModelForVision2Seq, AutoProcessor
+        from transformers import AutoModelForImageTextToText, AutoProcessor
 
-        self._model = AutoModelForVision2Seq.from_pretrained(
+        self._model = AutoModelForImageTextToText.from_pretrained(
             self.model_id,
             torch_dtype=self.torch_dtype,
             device_map=device_map,

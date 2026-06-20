@@ -15,7 +15,7 @@ from vidlu_irap_gaim.vlm.response_parser import AttributePrediction
 
 @pytest.fixture
 def mock_transformers():
-    with patch("transformers.AutoModelForVision2Seq.from_pretrained") as mock_model_load, \
+    with patch("transformers.AutoModelForImageTextToText.from_pretrained") as mock_model_load, \
          patch("transformers.AutoProcessor.from_pretrained") as mock_processor_load:
         
         mock_model = MagicMock()

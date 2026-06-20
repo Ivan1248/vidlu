@@ -438,8 +438,8 @@ class Qwen3VLClassifier(_BaseVLMClassifier):
     _DEFAULT_LORA_TARGET_MODULES = ("q_proj", "k_proj", "v_proj", "o_proj")
 
     def _build_hf_model(self, load_kwargs: dict) -> nn.Module:
-        from transformers import AutoModelForVision2Seq
-        return AutoModelForVision2Seq.from_pretrained(self.model_id, **load_kwargs)
+        from transformers import AutoModelForImageTextToText
+        return AutoModelForImageTextToText.from_pretrained(self.model_id, **load_kwargs)
 
     def build_messages(self, pil_image, prompt: str, response: str | None = None) -> list[dict]:
         from vidlu_irap_gaim.vlm.models.qwen_utils import build_qwen_chat_messages
