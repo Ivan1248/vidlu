@@ -319,7 +319,7 @@ def make_vietnam_data(
 
 
 # Registry of IRAP release presets. Single source of truth for the dataset-name
-# strings used by CLI tools (vlm_inference, prepare_agent_tasks, ...).
+# strings used by CLI tools (vlm_inference, agent_classify, ...).
 IRAP_DATASET_FACTORIES = {
     "bih": make_bih_data,
     "vietnam": make_vietnam_data,
