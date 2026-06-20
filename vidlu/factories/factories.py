@@ -66,58 +66,44 @@ def _print_args_messages(kind, type_, factory, argtree, verbosity=1):
 
 # Namespace with aliases ###########################################################################
 
+# Standard short symbols available in all factory expressions (data, model, trainer,
+# metrics). This is the single source for these aliases; it is `exec`-ed into the
+# factory namespace before the user's `--pre`, so `--pre` extends/overrides it.
+STANDARD_PRE = """
+from functools import partial
+import math, os
+import numpy as np
+import torch
+from vidlu.utils.func import (ArgTree as t, FuncTree as ft, ObjectUpdatree as ot,
+    StrictObjectUpdatree as sot, IndexableUpdatree as it, StrictIndexableUpdatree as sit)
+from vidlu.data import Record, class_mapping
+from vidlu.data.utils.dataset_ops import (rotating_labels, chunk, chunks, folds,
+    remap_classes, add_class_mapping)
+from vidlu.data.datasets import taxonomies
+# Readable module handles (full words; no cryptic aliases)
+import vidlu.data as data
+import vidlu.models as models
+import vidlu.models.initialization as initialization
+import vidlu.modules as modules
+import vidlu.modules.components as components
+from vidlu.modules import losses
+import vidlu.optim as optim
+import vidlu.optim.lr_schedulers as schedulers
+import vidlu.configs as configs
+import vidlu.configs.training  # reachable as configs.training
+import vidlu.training as training
+import vidlu.training.steps as steps
+from vidlu.training.robustness import attacks
+import vidlu.transforms as transforms
+from vidlu.transforms import jitter
+"""
+
+
 def make_namespace(imports_expr: str, pre_expr: str):
     factory_namespace = parse_aliased_imports_expression(imports_expr)
     factory_namespace.update(extensions)
-    factory_exec(pre_expr, factory_namespace)
-
-    def get_data_namespace():
-        import vidlu.transforms as vt
-        import vidlu.transforms.image as vti
-        import torchvision.transforms.functional as tvt
-        import vidlu.modules.functional as vmf
-        from vidlu.data.datasets import taxonomies
-
-        def module_to_dict(module):
-            return {k: v for k, v in vars(module).items() if not k.startswith("_")}
-
-        namespace = {**module_to_dict(tvt), **module_to_dict(vmf), **module_to_dict(vt),
-                     **module_to_dict(vdu.dataset_ops)}
-        namespace.update(vt=vt, vti=vti, taxonomies=taxonomies, Record=Record)
-        return namespace
-
-    # from torch import nn
-    # import vidlu.modules as vm
-    # import vidlu.modules.components as vmc
-    # import vidlu.modules.other as vmo
-    # import torchvision.models as tvmodels
-    # from fractions import Fraction as Frac
-    #
-    # namespace = dict(nn=nn, vm=vm, vmc=vmc, vmo=vmo, models=models, tvmodels=tvmodels,
-    #                  Reserved=Reserved, Frac=Frac, **_func_short, **extensions)
-
-    def short_symbols_for_get_trainer():
-        import math
-        import numpy as np
-        import os
-        from torch import optim
-        import vidlu.optim.lr_schedulers as lr
-        import vidlu.optim as opt
-        from vidlu.modules import losses
-        import vidlu.data as vd
-        import vidlu.configs.training as ct
-        import vidlu.configs.robustness as cr
-        import vidlu.training.robustness as ta
-        import vidlu.training.steps as ts
-        from vidlu.training.robustness import attacks
-        from vidlu.transforms import jitter
-        import vidlu.modules.utils as mu
-        import vidlu.utils.func as uf
-        from vidlu.utils.func import partial
-        from vidlu.data import class_mapping
-        tc = ct  # backward compatibility
-        return {**locals(), **_func_short, **extensions}
-
+    factory_exec(STANDARD_PRE, factory_namespace)  # standard short symbols
+    factory_exec(pre_expr, factory_namespace)  # user `--pre` extends/overrides them
     return factory_namespace
 
 
@@ -409,7 +395,11 @@ def get_trainer(trainer_str: str, *, model, data=None, deterministic=False, dist
                 namespace=dict(), verbosity=1) -> Trainer:
     import vidlu.configs.training as ct
 
-    ah = factory_eval(f"uf.ArgHolder({trainer_str})", {**_func_short, **namespace, **dict(uf=uf)})
+    # Trainer configs (`resnet_cifar`, `adversarial`, `madry_Cifar10_attack`, ...) are
+    # injected as bare names from `vidlu.configs.training`, like model/dataset names in
+    # `get_model`/`get_data`. `namespace` and `_func_short` override them; `uf` is last.
+    glob = {**vars(ct), **namespace, **_func_short, 'uf': uf}
+    ah = factory_eval(f"uf.ArgHolder({trainer_str})", glob)
     config = ct.TrainerConfig(*ah.args)
     updatree = uf.ObjectUpdatree(**ah.kwargs)
     config = updatree.apply(config)
