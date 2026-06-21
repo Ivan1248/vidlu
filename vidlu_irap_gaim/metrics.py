@@ -44,6 +44,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
         - A: Accuracy (scalar)
         - mP, mR, mF1, mIoU: Macro-averaged Precision/Recall/F1/IoU (scalars)
         - P, R, F1, IoU: Per-class metrics (arrays)
+        - n: number of non-ignore instances
 
     Return format:
         The returned dictionary uses the exact metric names from `self.metrics`.
@@ -63,7 +64,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
     """
 
     # Base metrics supported by ClassificationMetrics
-    BASE_METRICS = {"A", "mP", "mR", "mF1", "mIoU", "P", "R", "F1", "IoU"}
+    BASE_METRICS = {"A", "mP", "mR", "mF1", "mIoU", "P", "R", "F1", "IoU", "n"}
 
     def __init__(
         self,
@@ -174,16 +175,16 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
 
         results = {}
         for metric_key in self.metrics if metrics is None else metrics:
-            clean = metric_key.lstrip("_")
+            clean_key = metric_key.lstrip("_")
             metric_type = None  # 'per_attr' or 'average'
             base_metric = None
 
-            if clean in self.BASE_METRICS:
+            if clean_key in self.BASE_METRICS:
                 metric_type = "per_attr"
-                base_metric = clean
-            elif clean.startswith("a") and clean[1:] in self.BASE_METRICS:
+                base_metric = clean_key
+            elif clean_key.startswith("a") and clean_key[1:] in self.BASE_METRICS:
                 metric_type = "average"
-                base_metric = clean[1:]
+                base_metric = clean_key[1:]
 
             if metric_type == "per_attr":
                 # Per-attribute metric: output dict mapping attr index to value
@@ -313,7 +314,7 @@ def get_irap_metrics(
     ma_metrics = ("amF1", "amP", "amR")
     # Enable per-attribute metrics by default for better visibility
     # Use "_" prefix to hide from standard logger but keep available for printer
-    ma_metrics = (*ma_metrics, "_mF1", "_A")
+    ma_metrics = (*ma_metrics, "_mF1", "_A", "_n")
 
     return (
         # only_present=True is for excluding non-present classes like in Kačan et al. (2025)

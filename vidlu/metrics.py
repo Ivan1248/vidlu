@@ -203,6 +203,7 @@ def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), e
     metrics.update({'m' + k: masked_mean(v, mask) for k, v in metrics.items()})
     metrics['A'] = tp.sum(dim=is_batch) / pos.sum(dim=is_batch)
     metrics['num_correct'] = tp.sum(dim=is_batch)
+    metrics['n'] = pos.sum(dim=is_batch)  # number of (non-ignore) examples
     if isinstance(returns, str):
         return metrics[returns]
     return {k: metrics[k] for k in returns}
@@ -234,6 +235,7 @@ class ClassificationMetrics(AccumulatingMetric):
     - 'R': per-class recall (TP / (TP + FN))
     - 'F1': per-class F1 score
     - 'IoU': per-class IoU
+    - 'n': number of (non-ignore) examples accumulated in the confusion matrix
     - 'cm': confusion matrix
     
     **Important**: By default, macro-averaged metrics (mP, mR, mF1, mIoU) are 

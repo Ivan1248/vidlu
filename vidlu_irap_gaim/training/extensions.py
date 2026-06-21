@@ -133,17 +133,9 @@ class MultiAttributeScorePrinter(TrainerExtension):
             print("\nPer-Attribute Metrics:")
 
             # Format as Table
-            # 1. Collect all attribute keys union
-            all_attrs = set()
-            for m_dict in per_attr_metrics.values():
-                all_attrs.update(m_dict.keys())
-
-            # Sort attributes
-            try:
-                # Try sorting by string representation for consistency
-                sorted_attrs = sorted(all_attrs, key=lambda x: str(x))
-            except Exception:
-                sorted_attrs = list(all_attrs)
+            attrs = list(dict.fromkeys(
+                attr for m_dict in per_attr_metrics.values() for attr in m_dict
+            ))
 
             # Columns: Attribute, Metric1, Metric2...
             # Metric headers: Display name (lstrip _)
@@ -158,6 +150,8 @@ class MultiAttributeScorePrinter(TrainerExtension):
                 if m_name not in per_attr_metrics or attr not in per_attr_metrics[m_name]:
                     return "-"
                 val = per_attr_metrics[m_name][attr]
+                if isinstance(val, (int, np.integer)):
+                    return str(int(val))
                 try:
                     fval = float(val)
                     return f"{fval:.4f}"
@@ -166,7 +160,7 @@ class MultiAttributeScorePrinter(TrainerExtension):
 
             # Pre-calculate rows to determine widths
             rows = []
-            for attr in sorted_attrs:
+            for attr in attrs:
                 row = [str(attr)]
                 col_widths[0] = max(col_widths[0], len(str(attr)))
 
