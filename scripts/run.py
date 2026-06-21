@@ -123,12 +123,13 @@ def train(args):
 
         exp = make_experiment(args, dirs=dirs)
 
-        exp.logger.log("Resume command:\n\x1b[0;30;42m"
-                       + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
-                       + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} '
-                         f'--metrics "{args.metrics}"'
-                       + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
-        exp.logger.log(f"RNG seed: {args.seed}")
+        is_resuming = args.resume not in (None, "restart")
+        (print if is_resuming else exp.logger.log)("Resume command:\n\x1b[0;30;42m"
+            + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
+            + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} '
+                f'--metrics "{args.metrics}"'
+            + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
+        (print if is_resuming else exp.logger.log)(f"RNG seed: {args.seed}")
 
         with get_profiler() if args.profile else ctx.suppress() as prof:
             if not args.no_init_eval:
