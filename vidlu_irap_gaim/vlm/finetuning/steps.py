@@ -33,6 +33,25 @@ def _extract_response_scheme_from_data(data: dict) -> ResponseScheme:
     )
 
 
+def _extract_attrs_to_include_from_data(data: dict) -> list[str]:
+    """Find the attribute subset used to build prompts (set by the VLM data factories).
+
+    The eval step must parse and score exactly the attributes the model was
+    prompted for, so it reads the subset from the dataset rather than re-deriving
+    it — keeping prompt-building, parsing, and metrics on one source of truth
+    (e.g. IRAP-Vietnam's never-labeled attributes are dropped consistently).
+    """
+    for dataset in data.values():
+        info = getattr(dataset, "info", None)
+        attrs = getattr(info, "vlm_attrs_to_include", None)
+        if attrs:
+            return list(attrs)
+    raise RuntimeError(
+        f"VLMEvalStep could not find vlm_attrs_to_include in any dataset split "
+        f"{list(data.keys())}. Ensure the dataset was created with make_vlm_bih_data()."
+    )
+
+
 def _generate_and_parse_batch(
     model,
     images: torch.Tensor,
@@ -174,14 +193,13 @@ class VLMEvalStep:
         if self._response_scheme is None:
             self._response_scheme = _extract_response_scheme_from_data(trainer.data)
 
-    def _ensure_attrs_to_include(self):
+    def _ensure_attrs_to_include(self, trainer):
         if self._attrs_to_include is None:
-            from irap_data.attrs import get_attrs_to_include
-            self._attrs_to_include = list(get_attrs_to_include())
+            self._attrs_to_include = _extract_attrs_to_include_from_data(trainer.data)
 
     def __call__(self, trainer, batch) -> NameDict:
         self._ensure_response_scheme(trainer)
-        self._ensure_attrs_to_include()
+        self._ensure_attrs_to_include(trainer)
 
         model = trainer.model
         model.eval()

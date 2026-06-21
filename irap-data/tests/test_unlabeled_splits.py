@@ -14,6 +14,7 @@ import torch
 import cv2
 
 from irap_data import make_bih_data
+from irap_data.attrs import filter_labeled_attrs
 from irap_data.irap_dataset import IGNORE_LABEL_INDEX, IRAPDataset, MetaFiles
 
 
@@ -140,3 +141,60 @@ def test_unknown_subset_raises_with_available_keys(fake_dataset):
 def test_empty_unlabeled_split_is_loadable(fake_dataset):
     splits = _build_splits(fake_dataset)
     assert len(splits["unlabeled_unlocated"]) == 0
+
+
+def test_attr_to_num_labeled_counts_labeled_samples(fake_dataset):
+    splits = _build_splits(fake_dataset)
+    # train = L0,L1, both attributes coded for both -> 2 labeled samples each.
+    assert splits["train"].info.attr_to_num_labeled == {"A": 2, "B": 2}
+    # Unlabeled splits carry all-ignore targets -> zero labeled samples.
+    assert splits["unlabeled_train"].info.attr_to_num_labeled == {"A": 0, "B": 0}
+    # With every attribute labeled, filtering is a no-op (the IRAP-BH case).
+    assert filter_labeled_attrs(ATTRS, splits["train"].info.attr_to_num_labeled) == ("A", "B")
+
+
+@pytest.fixture
+def fake_dataset_uncoded_attr(tmp_path: Path):
+    """Like ``fake_dataset`` but attribute ``B`` is never coded for any segment.
+
+    Mirrors IRAP-Vietnam's BH-only attributes: ``B`` keeps a value vocabulary in
+    ``attribute_metadata.json`` (so it survives the old vocabulary filter) yet has
+    no labeled sample, so it would otherwise produce NaN metrics.
+    """
+    data_dir = tmp_path / "DATA"
+    meta_dir = tmp_path / "DATA_METADATA"
+    labeled = [f"L{i}" for i in range(4)]
+    for sid in labeled:
+        _write_dummy_image(data_dir / "images" / f"{sid}.png")
+    _write_json(meta_dir / MetaFiles.ATTRIBUTE_METADATA, {
+        "attribute_to_idx": {a: i for i, a in enumerate(ATTRS)},
+        "attribute_value_to_irap_number": {
+            a: {f"val_{c}": c for c in IRAP_CODES[a]} for a in ATTRS
+        },
+    })
+    _write_json(meta_dir / MetaFiles.SEGMENT_ID_TO_DATA_PATHS, {
+        sid: {"rgb": f"images/{sid}.png"} for sid in labeled
+    })
+    # Only attribute "A" is coded; "B" is absent -> mapped to the ignore index.
+    _write_json(meta_dir / MetaFiles.SEGMENT_ID_TO_ROAD_DATA, {
+        sid: {"required_attributes": {"A": IRAP_CODES["A"][0]}} for sid in labeled
+    })
+    _write_json(meta_dir / MetaFiles.ROAD_ID_TO_SEGMENT_ID_SEQUENCE, {"road0": labeled})
+    _write_json(meta_dir / MetaFiles.SPLITS, {
+        "train": ["L0", "L1"], "val": ["L2"], "test": ["L3"],
+    })
+    return data_dir, meta_dir
+
+
+def test_filter_labeled_attrs_drops_uncoded_attribute(fake_dataset_uncoded_attr):
+    data_dir, meta_dir = fake_dataset_uncoded_attr
+    train = make_bih_data(
+        dataset_dir=data_dir, metadata_dir=meta_dir,
+        context_offsets=(0,), use_ncontext_filter=False,
+        input_dim_rgb=(16, 12, 3), allow_missing_attributes=True,
+    )["train"]
+    # "B" has a value vocabulary but no labeled sample.
+    assert train.info.attr_to_value_to_class_idx.get("B")  # vocabulary present
+    assert train.info.attr_to_num_labeled == {"A": 2, "B": 0}
+    # The label-based filter drops "B" (the old vocabulary filter would keep it).
+    assert filter_labeled_attrs(ATTRS, train.info.attr_to_num_labeled) == ("A",)

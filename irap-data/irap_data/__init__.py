@@ -15,10 +15,10 @@ from .irap_dataset import (
 )
 from .inference_dataset import InferenceImageDataset
 from .attrs import (
-    ATTRS_TO_INCLUDE,
+    IRAP_BH_ATTRS_TO_INCLUDE,
     get_attrs_to_include,
     map_attr_names_to_indices,
-    filter_attrs_with_values,
+    filter_labeled_attrs,
 )
 from .attribute_frequencies import (
     AttributeFrequencyStats,

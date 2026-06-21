@@ -97,7 +97,7 @@ irap_data/
 ├── dataset.py                 # Dataset base class + transformations (map/filter/zip/...)
 ├── irap_dataset.py            # IRAPDataset, make_bih_data, make_vietnam_data, IGNORE_LABEL_INDEX
 ├── inference_dataset.py       # InferenceImageDataset (label-free folder loader)
-├── attrs.py                   # ATTRS_TO_INCLUDE + name-to-index helpers
+├── attrs.py                   # IRAP_BH_ATTRS_TO_INCLUDE + name-to-index helpers
 ├── attribute_frequencies.py   # AttributeFrequencyStats, compute_attribute_frequency_stats
 ├── image_utils.py             # load_image_cv2, center_crop, resize_to_cover, hwc_to_chw_float_tensor
 ├── lazy_dict.py               # LazyDict, Lazy

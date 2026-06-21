@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from irap_data import Dataset
 
-from irap_data.attrs import get_attrs_to_include, filter_attrs_with_values
+from irap_data.attrs import get_attrs_to_include, filter_labeled_attrs
 from irap_data.attribute_frequencies import (
     compute_attribute_frequency_stats,
     frequency_stats_to_attr_to_default_class_idx,
@@ -68,7 +68,8 @@ class VLMIrapDataset(Dataset):
     ):
         base_info = getattr(base_dataset, "info", None)
         info = dict(base_info if base_info is not None else {},
-                    vlm_response_scheme=response_scheme)
+                    vlm_response_scheme=response_scheme,
+                    vlm_attrs_to_include=list(attrs_to_include))
 
         super().__init__(name="vlm_irap", data=base_dataset, info=info)
         self.base_dataset = base_dataset
@@ -182,10 +183,11 @@ def make_vlm_vietnam_data(
     """Factory for VLM-formatted IRAP-Vietnam datasets.
 
     Twin of :func:`make_vlm_bih_data` that builds from :func:`make_vietnam_data`.
-    Attributes that are empty in every Vietnam coding table (the flow attributes)
-    have no value vocabulary and are dropped from ``attrs_to_include``, so prompts
-    and ground-truth responses only cover labeled attributes. See
-    :func:`make_vlm_bih_data` for the shared arguments.
+    Attributes with no labeled sample in Vietnam (its BH-only attributes, e.g. the
+    flow attributes, Roadworks, Upgrade cost) are dropped from ``attrs_to_include``
+    via :func:`filter_labeled_attrs`, so prompts and ground-truth responses only
+    cover scoreable attributes. See :func:`make_vlm_bih_data` for the shared
+    arguments.
     """
     base_data = make_vietnam_data()
     return _make_vlm_data(
@@ -212,12 +214,14 @@ def _make_vlm_data(
     """Shared core: wrap the train/val/test splits of ``base_data`` as VLM datasets.
 
     The attribute subset is derived from the dataset's own metadata via
-    :func:`filter_attrs_with_values`, the single source of truth shared with
-    ``get_irap_metrics`` so the two never disagree.
+    :func:`filter_labeled_attrs`, the single source of truth shared with
+    ``get_irap_metrics`` so the two never disagree. It drops attributes with no
+    labeled sample in the dataset (e.g. IRAP-Vietnam's BH-only attributes), so the
+    model is never prompted for attributes that can't be scored.
     """
     attr_to_value_to_class_idx = base_data["train"].info.attr_to_value_to_class_idx
     attrs_to_include = list(
-        filter_attrs_with_values(get_attrs_to_include(), attr_to_value_to_class_idx)
+        filter_labeled_attrs(get_attrs_to_include(), base_data["train"].info.attr_to_num_labeled)
     )
     prompt_config = Path(__file__).parent.parent / "attribute_prompts.yaml"
 

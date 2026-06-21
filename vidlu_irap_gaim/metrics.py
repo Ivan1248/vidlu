@@ -274,7 +274,7 @@ def get_irap_metrics(
     from irap_data.attrs import (
         get_attrs_to_include,
         map_attr_names_to_indices,
-        filter_attrs_with_values,
+        filter_labeled_attrs,
     )
 
     if dataset is None:
@@ -289,11 +289,11 @@ def get_irap_metrics(
 
     if attrs_to_include is None:
         # Derive the subset from the dataset's own metadata (single source of truth
-        # shared with the VLM data factories). Drops attributes with no value
-        # vocabulary, e.g. IRAP-Vietnam's empty flow attributes; for IRAP-BH this
-        # returns the full canonical subset unchanged.
-        attrs_to_include = filter_attrs_with_values(
-            get_attrs_to_include(), dataset.info.attr_to_value_to_class_idx
+        # shared with the VLM data factories). Drops attributes with no labeled
+        # sample in the dataset (e.g. IRAP-Vietnam's BH-only attributes), which
+        # would otherwise yield NaN metrics from an empty confusion matrix.
+        attrs_to_include = filter_labeled_attrs(
+            get_attrs_to_include(), dataset.info.attr_to_num_labeled
         )
 
     attrs_idx_list = map_attr_names_to_indices(attrs_to_include, dataset.info.attr_to_value_to_class_idx.keys())

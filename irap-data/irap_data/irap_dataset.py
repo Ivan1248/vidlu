@@ -565,6 +565,19 @@ class IRAPDataset(Dataset):
                 f"This should not happen - filtering by labels occurs before context filtering. "
                 f"First few missing: {missing_labels[:5]}"
             )
+        # Number of labeled (non-ignore) samples per attribute over the yielded
+        # segments. An attribute can carry a value vocabulary from the shared
+        # canonical iRAP coding table yet be coded for zero segments in this
+        # dataset (e.g. IRAP-Vietnam's BH-only attributes, dropped at parse time
+        # via incompatible_attributes.json). Such attributes accumulate an empty
+        # confusion matrix and would yield NaN metrics, so consumers use this to
+        # restrict the evaluated/prompted attribute subset to scoreable ones.
+        label_matrix = np.array(
+            [self.segment_id_to_labels[sid] for sid in self.segment_ids], dtype=np.int64
+        ).reshape(-1, len(ordered_attrs))
+        num_labeled = (label_matrix != IGNORE_LABEL_INDEX).sum(axis=0)
+        attr_to_num_labeled = {a: int(n) for a, n in zip(ordered_attrs, num_labeled)}
+
         super().__init__(
             subset=subset,
             info=dict(
@@ -572,6 +585,7 @@ class IRAPDataset(Dataset):
                 class_counts=class_counts,
                 pixel_stats=SimpleNamespace(mean=np.array(mean), std=np.array(std)),
                 attr_to_value_to_class_idx=attr_to_value_to_class_idx,
+                attr_to_num_labeled=attr_to_num_labeled,
             ),
         )
 
