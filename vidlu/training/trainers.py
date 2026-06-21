@@ -20,6 +20,7 @@ from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
 from vidlu.utils.misc import Event, Stopwatch, broadcast
+from vidlu.utils.rng import get_rng_state, set_rng_state, to_cpu
 import vidlu.configs.training as vct
 from vidlu.training.extensions import TrainerExtension
 
@@ -292,9 +293,9 @@ class Evaluator:
         If distributed training is required, the samplers in the data loader are modified and batch
         size is divided by the number of processes.
         """
-        dl_kwargs = dict(kwargs)
-        if self.deterministic:
-            dl_kwargs.update(deterministic_data_loader_args(self.distributed))
+        # Caller-provided args take precedence over deterministic defaults
+        dl_kwargs = ({**deterministic_data_loader_args(self.distributed), **kwargs}
+                     if self.deterministic else dict(kwargs))
         worker_batch_size = (divide_batch_size_over_processes(batch_size) if self.distributed else
                              batch_size)
         data_loader = self.data_loader_f(*datasets, batch_size=worker_batch_size, **dl_kwargs)
@@ -320,6 +321,26 @@ def divide_batch_size_over_processes(batch_size: T.Union[int, T.Sequence[int]]):
 
 # Trainer ##########################################################################################
 
+class _RngCheckpoint:
+    """state_dict/load_state_dict adapter for reproducible-resume RNG state.
+
+    Captures the process-global RNGs together with the trainer's dedicated
+    training-loader generator, so a resumed run continues the random stream
+    (data shuffling, augmentation, dropout) instead of restarting it.
+    """
+
+    def __init__(self, train_rng: torch.Generator):
+        self.train_rng = train_rng
+
+    def state_dict(self):
+        return dict(global_=get_rng_state(), train_rng=self.train_rng.get_state())
+
+    def load_state_dict(self, state):
+        state = to_cpu(state)
+        set_rng_state(state["global_"])
+        self.train_rng.set_state(state["train_rng"])
+
+
 # TODO: support for distributed training for metrics and iteration step procedures
 @dataclass
 class Trainer(Evaluator):
@@ -328,7 +349,8 @@ class Trainer(Evaluator):
     Additional state should be stored in in the `trainer.training.state`
     dictionary or in a training extension from `trainer.extensions`.
     """
-    state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler', 'train_step', 'eval_step')
+    state_dict_attrs = ('model', 'training', 'optimizer', 'lr_scheduler', 'train_step', 'eval_step',
+                        'rng')
 
     eval_batch_size: T.Union[int, T.Sequence[int]] = None
     # Mapping from split names (e.g., "train", "val", "test") to datasets used by this trainer.
@@ -365,6 +387,10 @@ class Trainer(Evaluator):
             lr_scheduler_f = partial(lr_scheduler_f, epoch_count=self.epoch_count)
         self.lr_scheduler = lr_scheduler_f(optimizer=self.optimizer)
 
+        self.train_rng = torch.Generator()
+        self.train_rng.manual_seed(torch.randint(2 ** 63 - 1, ()).item())
+        self.rng = _RngCheckpoint(self.train_rng)
+
         self.training = EpochLoop(lambda e, b: self._run_step(self.train_step, b))
         self.training.epoch_completed.add_handler(lambda e: self.lr_scheduler.step())
         self.training.epoch_started.add_handler(lambda e: self._reset_metrics())
@@ -400,7 +426,7 @@ class Trainer(Evaluator):
         else:
             datasets_jitt = datasets
         return self.get_data_loader(*datasets_jitt, drop_last=True, batch_size=self.batch_size,
-                                    **kwargs)
+                                    generator=self.train_rng, **kwargs)
 
     def train(self, *datasets, restart=False):
         data_loader = self.get_training_data_loader(*datasets)
@@ -425,6 +451,9 @@ class Trainer(Evaluator):
     def load_state_dict(self, state_dict):
         for k in self.state_dict_attrs:
             if hasattr(attr := getattr(self, k), "state_dict"):
+                if k not in state_dict:  # TODO: remove check
+                    warn(f"'{k}' missing from the checkpoint state.")
+                    continue
                 attr.load_state_dict(state_dict[k])
         for e in self.extensions:
             try:
