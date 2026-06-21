@@ -26,7 +26,16 @@ from vidlu.utils.misc import try_input, Stopwatch, query_user
 DEFAULT_INTERACT_SHORTCUTS: T.Mapping[str, str] = {"i": "embed()", "skip": "loop.terminate()"}
 
 
-# TODO: logger instead of verbosity
+class MetricTracker(T.Protocol):
+    """Optional sink for scalar metrics (e.g. a TensorBoard/W&B backend).
+
+    A no-op seam: `report_metrics` calls this when a tracker is supplied, so a
+    backend can be plugged in later without touching call sites. None is the
+    default everywhere, which disables tracking.
+    """
+
+    def log_scalars(self, metrics: T.Mapping[str, T.Any], step: int,
+                    split: str | None = None) -> None: ...
 
 @dataclass
 class TrainingExperimentFactoryArgs:
@@ -76,7 +85,8 @@ def to_dhm_str(time):
 def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: int, epoch_count: int,
                    split_name=None, line_width=120,
                    special_format: T.Mapping[str, T.Callable[[str, T.Any], str]] = None,
-                   prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None, 
+                   prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None,
+                   tracker: "MetricTracker | None" = None,
                    filter=lambda k, v: not k.startswith("_")):
     def fmt(v, scalar_prec=scalar_prec):
         with np.printoptions(precision=array_prec, threshold=4 if is_training else None,
@@ -116,6 +126,9 @@ def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: in
         metrics_to_report = {k: v for k, v in metrics.items() if filter(k, v)}
         logger.log(f"{prefix}: {make_eval_str(metrics_to_report)}")
         # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
+        if tracker is not None:
+            tracker.log_scalars(metrics_to_report, step=state.iteration,
+                                split="train" if is_training else split_name)
 
 
 class TrainingCallback:
@@ -151,8 +164,9 @@ class TrainingCallback:
 
 class ProgressMonitor(TrainingCallback):
     def __init__(self, logger: Logger, eval_count, epoch_count, min_train_report_count=800,
-                 line_width=120, special_format=None):
-        self.logger = logger.sublogger(print_fn=tqdm.write)
+                 line_width=120, special_format=None, tracker: "MetricTracker | None" = None):
+        self.logger = logger
+        self.tracker = tracker
         self.eval_count = eval_count
         self.epoch_count = epoch_count
         self.min_train_report_count = min_train_report_count
@@ -214,7 +228,7 @@ class ProgressMonitor(TrainingCallback):
             report_metrics(state, is_training=True, metrics=metrics,
                            epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
                            line_width=self.line_width, special_format=self.special_format,
-                           logger=self.logger)
+                           logger=self.logger, tracker=self.tracker)
 
     def on_evaluation_started(self, state: IterState):
         """Create progress bar for evaluation (manual updates, no data loader mutation)."""
@@ -238,7 +252,8 @@ class ProgressMonitor(TrainingCallback):
         report_metrics(state, is_training=False, metrics=metrics,
                        epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
                        split_name=split_name, line_width=self.line_width,
-                       special_format=self.special_format, logger=self.logger)
+                       special_format=self.special_format, logger=self.logger,
+                       tracker=self.tracker)
 
     def __repr__(self):
         return f"ProgressMonitor(eval_count={self.eval_count}, epoch_count={self.epoch_count}, min_train_report_count={self.min_train_report_count}, line_width={self.line_width}, special_format={self.special_format})"
@@ -274,7 +289,7 @@ class ValidationCheckpointHandler(TrainingCallback):
                     self.cpman.save(self.trainer.state_dict(),
                                     summary=dict(logger=self.logger.state_dict(),
                                                  perf=es_val.metrics[main_metric_name],
-                                                 log="\n".join(self.logger.lines),
+                                                 log=self.logger.as_text(),
                                                  epoch=state.epoch))
                     checkpoint_saved = True
 
@@ -292,11 +307,12 @@ class QuickValidationHandler(TrainingCallback):
 
     def __init__(self, data, quick_eval_count: int = 5, logger: Logger = None,
                  line_width: int = 120, special_format: T.Mapping[str, T.Callable] = None,
-                 epoch_count: int = 1):
+                 epoch_count: int = 1, tracker: "MetricTracker | None" = None):
         self.val_quick_ds = data.get("val_quick")
         self.quick_eval_count = quick_eval_count
         self.report_iters = None
-        self.logger = logger.sublogger(print_fn=tqdm.write) if logger is not None else logger
+        self.logger = logger
+        self.tracker = tracker
         self.line_width = line_width
         self.special_format = special_format or {}
         self.epoch_count = epoch_count
@@ -315,7 +331,7 @@ class QuickValidationHandler(TrainingCallback):
             state, is_training=False, metrics=metrics,
             epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
             split_name="val_quick", line_width=self.line_width,
-            special_format=self.special_format, logger=self.logger)
+            special_format=self.special_format, logger=self.logger, tracker=self.tracker)
 
     def __repr__(self):
         return f"QuickValidationHandler(quick_eval_count={self.quick_eval_count})"
@@ -390,7 +406,8 @@ def define_training_loop_actions(
                                                'freq_max': lambda k, v: f'freq_max={k, v:.1f}'},
         line_width: int = 120,
         checkpoint_split_prefix: str | None = None,
-        quick_eval_count: int = 8000) -> T.Sequence[TrainingCallback]:
+        quick_eval_count: int = 8000,
+        tracker: "MetricTracker | None" = None) -> T.Sequence[TrainingCallback]:
     """
     Args:
         checkpoint_split_prefix: Prefix for split to use for checkpointing (default: None).
@@ -412,7 +429,7 @@ def define_training_loop_actions(
     callbacks = [ProgressMonitor(
         logger=logger, eval_count=eval_count, epoch_count=trainer.epoch_count,
         min_train_report_count=min_train_report_count, line_width=line_width,
-        special_format=special_format),
+        special_format=special_format, tracker=tracker),
         ValidationCheckpointHandler(
             data=data, cpman=cpman, main_metrics=main_metrics, eval_count=eval_count,
             epoch_count=trainer.epoch_count, logger=logger,
@@ -421,7 +438,7 @@ def define_training_loop_actions(
         callbacks.append(QuickValidationHandler(
             data=data, quick_eval_count=quick_eval_count, logger=logger,
             line_width=line_width, special_format=special_format,
-            epoch_count=trainer.epoch_count))
+            epoch_count=trainer.epoch_count, tracker=tracker))
     callbacks.append(InteractiveController(data=data, cpman=cpman, logger=logger,
                                            main_metrics=main_metrics,
                                            interact_shortcuts=interact_shortcuts,
@@ -566,7 +583,7 @@ class TrainingExperiment:
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
         _check_dirs(dirs)
-        logger = Logger()
+        logger = Logger(emit=tqdm.write)
         a = training_args
 
         experiment = Namespace()
@@ -610,8 +627,7 @@ class TrainingExperiment:
             if resuming_required:
                 state, summary, _ = (cpman.load_best if a.resume == "best" else cpman.load_last)(
                     map_location=device)
-                # TODO: remove backward compatibility
-                logger.load_state_dict(summary.get('logger', summary))
+                logger.load_state_dict(summary['logger'])
                 logger.print_all()
 
         experiment.attachments = eval(training_args.attach, dict(), factory_namespace)

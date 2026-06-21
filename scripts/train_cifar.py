@@ -13,6 +13,7 @@ from vidlu import factories, models, modules
 from vidlu.experiments import TrainingExperiment, define_training_loop_actions
 import vidlu.data as vd
 from vidlu.utils.misc import indent_print
+from tqdm import tqdm
 from vidlu.utils.logger import Logger
 from vidlu.utils import debug
 import vidlu.utils.func as vuf
@@ -51,7 +52,7 @@ def get_experiment(resume=True, restart=False):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     with indent_print('Initializing checkpoint manager and logger...'):
-        logger = Logger()
+        logger = Logger(emit=tqdm.write)
         cpman = CheckpointManager(dirs.saved_states, experiment_name="resnet_cifar_example",
                                   separately_saved_state_parts=("model",), n_best_kept=1,
                                   start_mode='restart' if restart else 'resume' if resume else 'new',
@@ -84,7 +85,7 @@ def get_experiment(resume=True, restart=False):
 
     if resume:
         state, summary, _ = cpman.load_last(map_location=device)
-        logger.load_state_dict(summary.get('logger', summary))
+        logger.load_state_dict(summary['logger'])
         logger.print_all()
         trainer.load_state_dict(state)
 

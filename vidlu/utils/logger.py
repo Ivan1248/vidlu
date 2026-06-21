@@ -1,37 +1,44 @@
 from datetime import datetime
 
 
+def _format(record: tuple[str, str]) -> str:
+    timestamp, text = record
+    return f"[{timestamp}] {text}"
+
+
 class Logger:
-    # TODO: replace with something better
-    def __init__(self, lines=None, line_verbosities=None, printing_threshold=0, print_fn=print):
-        if lines is not None and line_verbosities is None:
-            line_verbosities = [1] * len(lines)
-        self.lines = lines or []
-        self.line_verbosities = line_verbosities or []
-        self.printing_threshold = printing_threshold
-        self.print_fn = print_fn
+    """Append-only, serializable transcript of an experiment's console output.
 
-    def sublogger(self, printing_threshold=None, print_fn=None):
-        return Logger(lines=self.lines, line_verbosities=self.line_verbosities,
-                      printing_threshold=(self.printing_threshold if printing_threshold is None
-                                          else printing_threshold),
-                      print_fn=print_fn if print_fn is not None else self.print_fn)
+    A single instance is shared by reference across all training callbacks. It is
+    the single source of truth for the human-readable run transcript: every
+    message is recorded so it can be (a) printed live and (b) replayed to stdout
+    when a run is resumed from a checkpoint.
 
-    def log(self, text: str, verbosity=1, print_fn=None):
-        time_str = datetime.now().strftime('%H:%M:%S')
-        text = f"[{time_str}] {text}"
-        self.lines.append(text)
-        self.line_verbosities.append(verbosity)
-        if self.printing_threshold <= verbosity:
-            (print_fn or self.print_fn)(text)
+    Display is delegated to ``emit`` (default ``print``). Callers that show
+    ``tqdm`` progress bars should pass ``emit=tqdm.write`` so messages don't
+    corrupt active bars. The serialized state is just the records — plain data,
+    no functions — so checkpoints stay portable.
+    """
 
-    def print_all(self):
-        for line, v in zip(self.lines, self.line_verbosities):
-            if self.printing_threshold <= v:
-                print(line)
+    def __init__(self, emit=print):
+        self.records: list[tuple[str, str]] = []  # (timestamp, text)
+        self.emit = emit
 
-    def state_dict(self):
-        return self.__dict__
+    def log(self, text: str) -> None:
+        record = (datetime.now().strftime('%H:%M:%S'), text)
+        self.records.append(record)
+        self.emit(_format(record))
 
-    def load_state_dict(self, state):
-        self.__dict__.update(state)
+    def print_all(self) -> None:
+        for record in self.records:
+            self.emit(_format(record))
+
+    def as_text(self) -> str:
+        """Human-readable transcript (used for the per-checkpoint ``log.txt``)."""
+        return "\n".join(_format(r) for r in self.records)
+
+    def state_dict(self) -> dict:
+        return {"records": list(self.records)}
+
+    def load_state_dict(self, state) -> None:
+        self.records = list(state["records"])
