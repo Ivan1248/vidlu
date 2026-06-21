@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vidlu-data"
+version = "0.1.0"
+description = "General-purpose dataset primitives: Record, Dataset, collation, and DataLoader."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "torch",
+    "torchvision",
+    "tqdm",
+    "typeguard",
+    "blosc",
+    "pillow",
+]
+
+[tool.setuptools.packages.find]
+include = ["vidlu_data*"]
