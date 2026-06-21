@@ -297,7 +297,7 @@ class Evaluator:
             dl_kwargs.update(deterministic_data_loader_args(self.distributed))
         worker_batch_size = (divide_batch_size_over_processes(batch_size) if self.distributed else
                              batch_size)
-        data_loader = self.data_loader_f(*datasets, batch_size=worker_batch_size, **kwargs)
+        data_loader = self.data_loader_f(*datasets, batch_size=worker_batch_size, **dl_kwargs)
         if self.distributed:
             data_loader = vdu.make_data_loader_distributed(data_loader)
         return data_loader
