@@ -324,10 +324,14 @@ _func_short = dict(partial=partial, t=uf.ArgTree, ft=uf.FuncTree, ot=uf.ObjectUp
 
 
 def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_input=None,
-              prep_dataset=None, device=None, namespace=dict(), verbosity=1) -> torch.nn.Module:
+              data=None, device=None, namespace=dict(), verbosity=1) -> torch.nn.Module:
+    # `data` is the mapping of dataset splits (a `NameDict`). The first split is used as the
+    # reference dataset for problem inference, `init_input`, and pixel statistics, while the
+    # whole `data` is exposed to the model-definition expression (e.g. `data.train.info....`).
+    prep_dataset = None if data is None else next(iter(data.values()))
     if prep_dataset is None:
         if problem is None or init_input is None:
-            raise ValueError("`problem` and `init_input` are required if `prep_dataset` is `None`.")
+            raise ValueError("`problem` and `init_input` are required if `data` is `None`.")
     else:
         problem = problem or defaults.get_problem(prep_dataset)
 
@@ -346,13 +350,14 @@ def get_model(model_str: str, *, input_adapter_str='id', problem=None, init_inpu
         if hasattr(models, model_name):
             model_f = getattr(models, model_name)
         else:
-            model_f = factory_eval(model_name, {**namespace, **models.__dict__})
+            model_f = factory_eval(model_name, {**namespace, **models.__dict__, 'data': data})
         model_class = model_f
 
         argtree = defaults.get_model_argtree_for_problem(model_f, problem)
         if len(argtree_arg) != 0:
             # Ensure short factory symbols like t/ft are available when evaluating ArgTrees
-            argtree.update(factory_eval(f"t({argtree_arg[0]})", {**_func_short, **namespace}))
+            argtree.update(factory_eval(f"t({argtree_arg[0]})",
+                                        {**_func_short, **namespace, 'data': data}))
         model_f = argtree.apply(model_f)
         input_adapter = get_input_adapter(
             input_adapter_str, data_stats=prep_dataset.info[
@@ -485,11 +490,12 @@ get_trainer.help = \
      + ' Example: "ResNetCifarTrainer"')
 
 
-def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
+def get_metrics(metrics_str: str, trainer, *, problem=None, data=None, namespace=dict()):
     # TODO: require something like metrics-str == "default()" for default metrics
+    dataset = None if data is None else next(iter(data.values()))
     if problem is None:
         if dataset is None:
-            raise ValueError("get_metrics: either the dataset argument"
+            raise ValueError("get_metrics: either the data argument"
                              + " or the problem argument need to be given.")
         problem = defaults.get_problem(dataset, trainer)
 
@@ -499,7 +505,9 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, dataset=None):
         from .problem import get_universal_metrics
         default_metrics, main_metrics = get_universal_metrics(), ()
 
-    additional_metrics = factory_eval(f'[{metrics_str}]', {**metrics.__dict__, **_func_short, **extensions})
+    additional_metrics = factory_eval(
+        f'[{metrics_str}]',
+        {**metrics.__dict__, **_func_short, **extensions, **namespace, 'data': data})
     if isinstance(additional_metrics[0], T.Sequence):
         additional_metrics = list(additional_metrics[0])
     

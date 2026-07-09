@@ -60,6 +60,7 @@ RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir psutil qwen-vl-uti
 RUN pip install --no-cache-dir --ignore-installed PyJWT
 RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir vllm --extra-index-url https://download.pytorch.org/whl/cu128
 RUN MAX_JOBS=8 DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir flash-attn
+RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir flash-linear-attention[cuda]
 # Install transformers after vllm so it gets the latest version (vllm would otherwise pin it)
 RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir transformers rich
 RUN python - <<'PY'

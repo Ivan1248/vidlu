@@ -115,7 +115,7 @@ def train(args):
 
         if args.resume == "restart" \
                 and not query_user("Are you sure you want to restart the experiment?",
-                                   default='y', timeout=15):
+                                   default='y'):
             exit()
 
         if args.remote and args.resume not in [None, "restart"]:

@@ -37,6 +37,7 @@ class MetricTracker(T.Protocol):
     def log_scalars(self, metrics: T.Mapping[str, T.Any], step: int,
                     split: str | None = None) -> None: ...
 
+
 @dataclass
 class TrainingExperimentFactoryArgs:
     data: str
@@ -82,12 +83,13 @@ def to_dhm_str(time):
 #     return epochs[argmax]
 
 
-def report_metrics(state: IterState, is_training: bool, metrics: dict, epoch: int, epoch_count: int,
-                   split_name=None, line_width=120,
-                   special_format: T.Mapping[str, T.Callable[[str, T.Any], str]] = None,
-                   prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None,
-                   tracker: "MetricTracker | None" = None,
-                   filter=lambda k, v: not k.startswith("_")):
+def report_metrics(
+        state: IterState, is_training: bool, metrics: dict, epoch: int, epoch_count: int,
+        split_name=None, line_width=120,
+        special_format: T.Mapping[str, T.Callable[[str, T.Any], str]] = None,
+        prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None,
+        tracker: "MetricTracker | None" = None,
+        filter=lambda k, v: not k.startswith("_")):
     def fmt(v, scalar_prec=scalar_prec):
         with np.printoptions(precision=array_prec, threshold=4 if is_training else None,
                              linewidth=line_width, floatmode='maxprec_equal', suppress=True):
@@ -232,7 +234,8 @@ class ProgressMonitor(TrainingCallback):
 
     def on_evaluation_started(self, state: IterState):
         """Create progress bar for evaluation (manual updates, no data loader mutation)."""
-        self.eval_pbar = tqdm(total=state.batch_count, desc="Evaluation", leave=True, dynamic_ncols=True)
+        self.eval_pbar = tqdm(total=state.batch_count, desc="Evaluation", leave=True,
+                              dynamic_ncols=True)
 
     def on_evaluation_completed(self, state: IterState):
         if hasattr(self, 'eval_pbar'):
@@ -546,11 +549,11 @@ def make_model_distributed(model):
 
 
 def init_model(model_str: str, input_adapter_str: str, verbosity, device, distributed: bool,
-               prep_dataset, namespace: dict):
+               data, namespace: dict):
     print(model_str)
     with Stopwatch() as sw:
         model = factories.get_model(model_str, input_adapter_str=input_adapter_str,
-                                    prep_dataset=prep_dataset, device=device, namespace=namespace,
+                                    data=data, device=device, namespace=namespace,
                                     verbosity=verbosity)
         if distributed:
             model = make_model_distributed(model)
@@ -558,14 +561,15 @@ def init_model(model_str: str, input_adapter_str: str, verbosity, device, distri
     return model
 
 
-def get_trainer_and_metrics(trainer_str, metrics_str, deterministic, distributed, first_ds, model,
+def get_trainer_and_metrics(trainer_str, metrics_str, deterministic, distributed, model,
                             verbosity, namespace: dict, *, data=None):
     print(trainer_str)
     trainer = factories.get_trainer(trainer_str, model=model, data=data, verbosity=verbosity,
                                     deterministic=deterministic, distributed=distributed,
                                     namespace=namespace)
     # TODO: distributed metrics
-    metrics, main_metrics = factories.get_metrics(metrics_str, trainer, dataset=first_ds)
+    metrics, main_metrics = factories.get_metrics(metrics_str, trainer, data=data,
+                                                  namespace=namespace)
     for m in metrics:
         trainer.metrics.append(m)
     return trainer, (metrics, main_metrics)
@@ -604,16 +608,15 @@ class TrainingExperiment:
                         a.data, dirs.datasets, dirs.cache, namespace=factory_namespace,
                         factory_version=a.factory_version)
                 print(f"Data initialized in {sw.time:.2f} s.")
-            first_ds = next(iter(data.values()))
 
             with indent_print('\nInitializing model...'):
                 experiment.model = model = init_model(
-                    a.model, a.input_adapter, a.verbosity, device, distributed, first_ds,
+                    a.model, a.input_adapter, a.verbosity, device, distributed, data,
                     namespace=factory_namespace)
 
             with indent_print('\nInitializing trainer and evaluation...'):
                 trainer, (metrics, main_metrics) = get_trainer_and_metrics(
-                    a.trainer, a.metrics, a.deterministic, distributed, first_ds, model,
+                    a.trainer, a.metrics, a.deterministic, distributed, model,
                     a.verbosity, namespace=factory_namespace, data=experiment.data)
                 # Trainer already receives data via factory; avoid post-construction mutation.
                 experiment.trainer = trainer

@@ -19,7 +19,7 @@ trainer_str = ('tc.resnet_cifar,tc.adversarial,'
                + 'attack_f=partial(tc.madry_cifar10_attack,step_count=7,stop_on_success=True),'
                + 'eval_attack_f=t(step_count=10,stop_on_success=True)')
 data = vf.get_prepared_data_for_trainer(data_str, datasets_dir=dirs.datasets, cache_dir=dirs.cache)
-model = vf.get_model('ResNetV2,backbone_f=t(depth=18,small_input=True)', prep_dataset=data.train,
+model = vf.get_model('ResNetV2,backbone_f=t(depth=18,small_input=True)', data=data,
                      device=device)
 trainer = vf.get_trainer(trainer_str, model=model)
 state = torch.load(Path('/home/igrubisic/data/states') / data_str / model_str / trainer_str

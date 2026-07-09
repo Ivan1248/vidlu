@@ -77,7 +77,7 @@ def get_experiment(resume=True, restart=False):
     with indent_print('Initializing trainer and evaluation...'):
         trainer = Trainer(**trainer_config,
                           loss=modules.losses.nll_loss_l, model=model)
-        metrics, main_metrics = factories.get_metrics("", trainer, dataset=first_ds)
+        metrics, main_metrics = factories.get_metrics("", trainer, data=data)
         for m in metrics:
             trainer.metrics.append(m)
 

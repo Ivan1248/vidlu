@@ -10,7 +10,7 @@ from vidlu.factories import get_model, get_prepared_data_for_trainer
 
 data = get_prepared_data_for_trainer("cifar10{train,val}", dirs.datasets, dirs.cache).test
 model = get_model("ResNetV2,backbone_f=t(depth=10, small_input=True)", input_adapter_str="id",
-                  prep_dataset=data, device=torch.device("cpu"), verbosity=2)
+                  data={'test': data}, device=torch.device("cpu"), verbosity=2)
 
 x, y = data[0]
 x = x.view(1, *x.shape).detach().clone().requires_grad_()
