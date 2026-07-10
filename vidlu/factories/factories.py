@@ -500,15 +500,23 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, data=None, namespace
         problem = defaults.get_problem(dataset, trainer)
 
     default_metrics, main_metrics = problem.get_metrics()
-    if metrics_str.endswith('!'):
+    if metrics_str.endswith('!'):  # "...!" replaces the problem defaults with universal metrics
         metrics_str = metrics_str[:-1]
         from .problem import get_universal_metrics
         default_metrics, main_metrics = get_universal_metrics(), ()
 
-    additional_metrics = factory_eval(
-        f'[{metrics_str}]',
-        {**metrics.__dict__, **_func_short, **extensions, **namespace, 'data': data})
-    if isinstance(additional_metrics[0], T.Sequence):
-        additional_metrics = list(additional_metrics[0])
-    
-    return default_metrics + additional_metrics, main_metrics
+    def as_list(x):  # a single metric, a list/tuple of metrics, or []
+        return list(x) if isinstance(x, T.Sequence) and not isinstance(x, str) else [x]
+
+    ns = {**metrics.__dict__, **_func_short, **extensions, **namespace, 'data': data}
+    user_metrics = factory_eval(metrics_str, ns) if metrics_str.strip() else []
+
+    # A mapping selects metrics per evaluation split (on top of the defaults); anything
+    # else is a single list applied to every split and to the training-progress display.
+    if isinstance(user_metrics, T.Mapping):
+        metrics_ = {name: list(default_metrics) + as_list(ms)
+                    for name, ms in user_metrics.items()}
+    else:
+        metrics_ = list(default_metrics) + as_list(user_metrics)
+
+    return metrics_, main_metrics

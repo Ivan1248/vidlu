@@ -251,7 +251,7 @@ class ProgressMonitor(TrainingCallback):
     def on_evaluation_epoch_completed(self, state: IterState):
         self.eval_time = self.sw_eval.time
         split_name = getattr(state, 'split_name', None)
-        metrics = self.trainer.get_metric_values(reset=True)
+        metrics = self.trainer.get_metric_values(split_name, reset=True)
         report_metrics(state, is_training=False, metrics=metrics,
                        epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
                        split_name=split_name, line_width=self.line_width,
@@ -278,7 +278,7 @@ class ValidationCheckpointHandler(TrainingCallback):
             return
 
         checkpoint_saved = False
-        for name, ds in sorted(self.data.items()):
+        for name, ds in self.data.items():
             if name.startswith("val"):
                 # Run evaluation on the validation set
                 es_val = self.trainer.eval(ds, split_name=name)
@@ -329,7 +329,7 @@ class QuickValidationHandler(TrainingCallback):
         if state.abs_iteration not in self.report_iters:
             return
         self.trainer.eval(self.val_quick_ds, split_name="val_quick")
-        metrics = self.trainer.get_metric_values(reset=True)
+        metrics = self.trainer.get_metric_values("val_quick", reset=True)
         report_metrics(
             state, is_training=False, metrics=metrics,
             epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
@@ -568,10 +568,9 @@ def get_trainer_and_metrics(trainer_str, metrics_str, deterministic, distributed
                                     deterministic=deterministic, distributed=distributed,
                                     namespace=namespace)
     # TODO: distributed metrics
-    metrics, main_metrics = factories.get_metrics(metrics_str, trainer, data=data,
-                                                  namespace=namespace)
-    for m in metrics:
-        trainer.metrics.append(m)
+    metrics, main_metrics = factories.get_metrics(
+        metrics_str, trainer, data=data, namespace=namespace)
+    trainer.metrics = metrics
     return trainer, (metrics, main_metrics)
 
 

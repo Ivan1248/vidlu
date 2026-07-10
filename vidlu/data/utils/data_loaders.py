@@ -7,6 +7,8 @@ import torch.utils.data as tud
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler, Dataset, Sampler
 
 from vidlu.data import DataLoader, ZipDataLoader, CombinedDataLoader
+from vidlu.data.data_loader import worker_init_fn
+from vidlu.data.collation import default_collate
 from vidlu.data.record import Record
 import vidlu.data.utils.samplers as samplers
 import vidlu.utils.distributed as vud
@@ -40,12 +42,27 @@ def make_data_loaders(data_loader_f, datasets, kwargs):
     return data_loaders
 
 
-def combined_data_loader(*datasets, data_loader_f, collate_fn=None, primary_index='shortest',
-                         **kwargs):
-    data_loaders = make_data_loaders(data_loader_f, datasets, kwargs)
-    if not all(dl.collate_fn for dl in data_loaders):
-        raise ValueError("data_loader_f should have collate_fn=None.")
-    return CombinedDataLoader(*data_loaders, collate_fn=collate_fn, primary_index=primary_index)
+def combined_data_loader(*datasets, data_loader_f=None, collate_fn=None,
+                         primary_index='shortest', **kwargs):
+    """Merges a fixed number of examples from each dataset into single batches.
+
+    Per-dataset `batch_size` (e.g. `[8, 4]`) sets constant per-source proportions.
+    Inner loaders must yield uncollated example lists, so they are built with
+    `collate_fn=list` regardless of `data_loader_f` (whose collation is
+    irrelevant here); the outer `collate_fn` (default `default_collate`) builds
+    the merged batch. `drop_last` must be True so every batch keeps the exact
+    per-source counts.
+    """
+    if not kwargs.get('drop_last', False):
+        raise ValueError("combined_data_loader requires drop_last=True to keep "
+                         "per-source batch proportions constant.")
+    # setdefault, not a partial binding, so a caller-provided (e.g. deterministic)
+    # worker_init_fn is not clobbered nor duplicated.
+    kwargs.setdefault('worker_init_fn', worker_init_fn)
+    inner_f = partial(tud.DataLoader, collate_fn=list)
+    data_loaders = make_data_loaders(inner_f, datasets, kwargs)
+    return CombinedDataLoader(*data_loaders, collate_fn=collate_fn or default_collate,
+                              primary_index=primary_index)
 
 
 def zip_data_loader(*datasets: T.Sequence,

@@ -363,9 +363,10 @@ class DynamicBalancedRecallWeights(TrainerExtension):
             self.loss_adapter.set_class_weights(self.attr_key_to_class_weights)
 
     def _get_metric(self):
-        """Lazily find the InternalMetricsProvider metric from trainer.metrics."""
+        """Lazily find the InternalMetricsProvider metric among the trainer's metrics."""
         if self._metric is None:
-            self._metric = next((m for m in self._trainer.metrics if isinstance(m, InternalMetricsProvider)), None)
+            self._metric = next((m for m in self._trainer.get_metrics()
+                                 if isinstance(m, InternalMetricsProvider)), None)
             if self._metric is None:
                 raise RuntimeError(
                     "DynamicBalancedRecallWeights: No InternalMetricsProvider metric found in trainer.metrics. "

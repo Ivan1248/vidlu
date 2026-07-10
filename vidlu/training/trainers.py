@@ -230,7 +230,11 @@ class Evaluator:
         shuffle=True)
     deterministic: bool = False
     batch_size: T.Union[int, T.Sequence[int]] = 1
-    metrics: list = dc.field(default_factory=list)
+    # A single metrics list applies to every split and to the training-progress
+    # display. A mapping {split_name: metrics} instead selects metrics per evaluation
+    # split (`split_name` passed to `eval`); a split not in the mapping — training,
+    # `val_quick`, any unlisted split — falls back to the first entry.
+    metrics: T.Union[list, T.Mapping[str, list]] = dc.field(default_factory=list)
     eval_step: T.Callable = Required
     eval_sync: bool = bool(
         int(os.environ.get("VIDLU_SYNCHRONIZE_STEP", 1))) and torch.cuda.is_available()
@@ -241,34 +245,44 @@ class Evaluator:
                                      non_blocking=False)
 
         def put_metrics_into_state():
-            self.evaluation.state.metrics = self.get_metric_values()
+            split_name = getattr(self.evaluation.state, 'split_name', None)
+            self.evaluation.state.metrics = self.get_metric_values(split_name)
 
         def evaluation(engine, batch):
             return self._run_step(self.eval_step, batch, synchronize=self.eval_sync)
 
         self.evaluation = EpochLoop(evaluation)
-        self.evaluation.started.add_handler(lambda _: self._reset_metrics())
+        self.evaluation.started.add_handler(
+            lambda s: self._reset_metrics(getattr(s, 'split_name', None)))
         self.evaluation.epoch_completed.add_handler(lambda _: put_metrics_into_state())
         self.evaluation.iter_completed.add_handler(self._update_metrics)
 
+    def get_metrics(self, split_name=None):
+        """The metric objects active for `split_name`: `self.metrics` if it is a list,
+        else the mapping's entry for that split, or its first entry as a fallback."""
+        m = self.metrics
+        if not isinstance(m, T.Mapping):
+            return m
+        return m[split_name] if split_name in m else next(iter(m.values()))
+
     @torch.no_grad()
-    def _reset_metrics(self):
-        for m in self.metrics:
+    def _reset_metrics(self, split_name=None):
+        for m in self.get_metrics(split_name):
             m.reset()
 
     @torch.no_grad()
     def _update_metrics(self, state):
-        for m in self.metrics:
+        for m in self.get_metrics(getattr(state, 'split_name', None)):
             m.update(state.result)
 
     @torch.no_grad()
-    def get_metric_values(self, *, reset=False):
+    def get_metric_values(self, split_name=None, *, reset=False):
         metric_evals = dict()
-        for m in self.metrics:
+        for m in self.get_metrics(split_name):
             value = m.compute()
             metric_evals.update(value if isinstance(value, dict) else {m.name: value.compute()})
         if reset:
-            self._reset_metrics()
+            self._reset_metrics(split_name)
         return metric_evals
 
     def _run_step(self, step, batch, synchronize=False):
@@ -303,10 +317,10 @@ class Evaluator:
             data_loader = vdu.make_data_loader_distributed(data_loader)
         return data_loader
 
-    def eval(self, *datasets, batch_size=None, **kwargs):
+    def eval(self, *datasets, batch_size=None, split_name=None, **kwargs):
         data_loader = self.get_data_loader(
             *datasets, drop_last=False, batch_size=batch_size or self.batch_size, shuffle=False)
-        return self.evaluation.run(data_loader, **kwargs)
+        return self.evaluation.run(data_loader, split_name=split_name, **kwargs)
 
 
 def divide_batch_size_over_processes(batch_size: T.Union[int, T.Sequence[int]]):

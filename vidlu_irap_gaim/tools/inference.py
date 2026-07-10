@@ -389,7 +389,7 @@ def run(
     prev_metrics = None
     if not has_target:
         prev_eval_step = trainer.eval_step
-        prev_metrics = list(getattr(trainer, "metrics", []))
+        prev_metrics = getattr(trainer, "metrics", [])
         # Metrics typically require targets; disable them for unlabeled inference.
         trainer.metrics = []
 

@@ -105,7 +105,7 @@ def approximate_pop_stats(exp, stats_dataset):
 def eval_on_test_sets(exp, prefix="test"):
     for name, ds in exp.data.items():
         if name.startswith(prefix):
-            print(f"Evaluating on {name} {getattr(ds, 'identifier', '')}...")
+            print(f"Evaluating on {name} {getattr(ds, 'identifier', '')} ({len(ds)} examples)...")
             exp.trainer.eval(ds, split_name=name)
 
 def train(args):

@@ -83,14 +83,21 @@ class ZipDataLoader(MultiDataLoaderBase):
 
 
 class CombinedDataLoader(MultiDataLoaderBase):
-    """A data loader that produces batches from multiple datasets"""
+    """A data loader that merges one batch from each inner loader into a single batch.
 
-    def __init__(self, data_loaders, collate_fn=None, primary_index='shortest'):
-        if any(dl.collate_fn is not None for dl in data_loaders):
-            raise TypeError('All data loaders should have collate_fn=None.')
+    Each inner loader must yield an uncollated list of examples
+    (`collate_fn=list`), so that per-loader batch sizes fix a constant per-source
+    count in every merged batch (e.g. `batch_size=[8, 4]` -> 12 examples, always
+    8 from the first dataset and 4 from the second). `collate_fn` combines the
+    concatenated examples into one batch.
+    """
+
+    def __init__(self, *data_loaders, collate_fn=default_collate, primary_index='shortest'):
+        if any(dl.collate_fn is not list for dl in data_loaders):
+            raise TypeError('All inner data loaders should have collate_fn=list.')
         self.collate_fn = collate_fn
         super().__init__(*data_loaders, primary_index=primary_index)
 
     def __iter__(self):
         for elements in super().__iter__():
-            yield self.collate_fn(sum(elements), [])
+            yield self.collate_fn(sum(elements, []))

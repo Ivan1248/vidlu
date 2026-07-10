@@ -78,8 +78,7 @@ def get_experiment(resume=True, restart=False):
         trainer = Trainer(**trainer_config,
                           loss=modules.losses.nll_loss_l, model=model)
         metrics, main_metrics = factories.get_metrics("", trainer, data=data)
-        for m in metrics:
-            trainer.metrics.append(m)
+        trainer.metrics = metrics
 
     define_training_loop_actions(trainer, cpman, data, logger, main_metrics=main_metrics)
 
