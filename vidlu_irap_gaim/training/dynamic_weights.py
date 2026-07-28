@@ -11,14 +11,6 @@ from irap_data.dataset import Dataset
 from vidlu_irap_gaim.metrics import InternalMetricsProvider
 
 
-def _get_underlying_dataset(dataset):
-    """Get the underlying dataset if wrapped (e.g., by MapDataset)."""
-    # MapDataset and other wrappers store the original dataset in .data
-    while hasattr(dataset, "data") and hasattr(dataset.data, "__getitem__"):
-        dataset = dataset.data
-    return dataset
-
-
 def compute_attr_idx_to_class_occurrence_counts(dataset, class_counts: tuple[int, ...]) -> dict[int, torch.Tensor]:
     """Compatibility wrapper for legacy index-based calls."""
     attr_to_class_count = {i: c for i, c in enumerate(class_counts)}
@@ -35,7 +27,7 @@ def compute_attr_key_to_class_occurrence_counts(
     Uses dict with Generic Keys (Names or Indices) to match metrics configuration.
 
     Args:
-        dataset: Dataset with segment_id_to_labels and segment_ids attributes.
+        dataset: Dataset whose `info` has `segment_id_to_labels` and `segment_ids`.
         attr_to_class_count: Dict mapping key -> number of classes.
         attr_to_index: Dict mapping key -> global attribute index. If None, assumes keys are indices.
 
@@ -44,25 +36,14 @@ def compute_attr_key_to_class_occurrence_counts(
     """
     counts = {key: torch.zeros(nc, dtype=torch.long) for key, nc in attr_to_class_count.items()}
 
-    # Check underlying dataset if wrapped (e.g., by MapDataset from prepare_dataset)
-    underlying_ds = _get_underlying_dataset(dataset)
+    for required_attr in ("segment_id_to_labels", "segment_ids"):
+        if not hasattr(dataset.info, required_attr):
+            raise AttributeError(
+                f"dataset.info must have the '{required_attr}' attribute, which an IRAPDataset"
+                f" provides. Got a dataset of type {type(dataset).__name__}.")
 
-    # Require segment_id_to_labels (matches original implementation - no fallback)
-    if not hasattr(underlying_ds, "segment_id_to_labels"):
-        raise AttributeError(
-            f"Dataset (or its underlying dataset) must have 'segment_id_to_labels' attribute. "
-            f"Got dataset type: {type(underlying_ds).__name__}. "
-            f"This function requires a IRAPDataset dataset (or compatible dataset with segment_id_to_labels)."
-        )
-    if not hasattr(underlying_ds, "segment_ids"):
-        raise AttributeError(
-            f"Dataset (or its underlying dataset) must have 'segment_ids' attribute. "
-            f"Got dataset type: {type(underlying_ds).__name__}. "
-            f"This function requires a IRAPDataset dataset (or compatible dataset with segment_ids)."
-        )
-
-    segment_ids = underlying_ds.segment_ids
-    segment_id_to_labels = underlying_ds.segment_id_to_labels
+    segment_ids = dataset.info.segment_ids
+    segment_id_to_labels = dataset.info.segment_id_to_labels
 
     # Check for data consistency: all segment_ids should have labels
     missing_labels = [sid for sid in segment_ids if sid not in segment_id_to_labels]

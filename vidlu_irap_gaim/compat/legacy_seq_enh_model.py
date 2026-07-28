@@ -2,7 +2,7 @@
 Legacy sequential enhancement models.
 
 This module is intentionally compatible with checkpoints produced by the original
-`libs/irap_gaim-main(-m)` codebase.
+`libs/irap_gaim-main` codebase.
 
 Only the minimal subset needed for inference is included here.
 
@@ -16,7 +16,7 @@ from torch import nn
 
 
 class LegacyGeneralLSTMModel(nn.Module):
-    """Compatibility port of `libs/irap_gaim-main-m/seq_enh_model.py:GeneralLSTMModel`.
+    """Compatibility port of `libs/irap_gaim-main/seq_enh_model.py:GeneralLSTMModel`.
 
     Notes:
     - Expects inputs shaped as (B, 2*max_N+1, D_in) for each input type.

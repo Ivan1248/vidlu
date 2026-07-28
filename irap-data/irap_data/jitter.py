@@ -1,8 +1,10 @@
 """Color jitter for sequence-of-frames examples.
 
 Expects ``rgb`` tensors in [0, 1] (normalization is handled by the input
-adapter). Applies ``torchvision.transforms.ColorJitter`` frame-by-frame so
-that all frames in a single example share the same random parameters.
+adapter). Applies ``torchvision.transforms.ColorJitter`` frame-by-frame, with
+independently sampled parameters per frame: ``ColorJitter`` draws fresh factors
+on each call. This matches the original ``irap_gaim`` pipeline, which likewise
+transforms each frame separately in ``ImageSequenceDataset._load_image_sequence``.
 """
 
 import torch

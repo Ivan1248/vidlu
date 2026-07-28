@@ -1,7 +1,7 @@
 """
 Inference + visualization utility for IRAP BiH sequences.
 
-This is a vidlu-native port of `libs/irap_gaim-main-m/inference_visualization.py`:
+This is a vidlu-native port of `libs/irap_gaim-main/inference_visualization.py`:
 - Uses `irap_data.make_bih_data` (instead of DatasetWrapper/ImageSequenceDataset).
 - Uses `vidlu_irap_gaim.models.classification.ImageSequenceClassifier` for "local" mode.
 - Loads checkpoints from Vidlu's `CheckpointManager` format (supports `model_state.pth`).

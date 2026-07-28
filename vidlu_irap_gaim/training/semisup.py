@@ -13,6 +13,7 @@ import torch
 import numpy as np
 
 from vidlu.modules.losses import kl_div_ll
+from irap_data.lazy_dict import LazyDict
 
 
 def multi_attribute_kl_div_ll(
@@ -96,8 +97,8 @@ def make_semisup_data(
 
     if prefer_real_unlabeled and "unlabeled_train" in ds:
         print(f"Using real unlabeled_train split with {len(ds['unlabeled_train'])} segments.")
-        return {"train": ds["train"], "train_u": ds["unlabeled_train"],
-                "val": ds["val"], "test": ds["test"]}
+        return LazyDict(train=ds["train"], train_u=ds["unlabeled_train"],
+                        val=ds["val"], test=ds["test"])
 
     train_ds = ds["train"]
 
@@ -117,7 +118,7 @@ def make_semisup_data(
         train_u = ds["train"]
     else:
         train_l, train_u = train_ds.split(ratio=labeled_ratio)
-    return {"train": train_l, "train_u": train_u, "val": ds["val"], "test": ds["test"]}
+    return LazyDict(train=train_l, train_u=train_u, val=ds["val"], test=ds["test"])
 
 
 def make_pseudo_labeled_data(

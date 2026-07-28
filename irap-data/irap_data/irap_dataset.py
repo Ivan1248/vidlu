@@ -10,6 +10,7 @@ import torch
 from tqdm import tqdm
 
 from .dataset import Dataset
+from .lazy_dict import LazyDict
 from .image_utils import load_image_cv2, center_crop, hwc_to_chw_float_tensor
 
 RGB_MEAN: tuple[float, float, float] = (0.53354913, 0.52727484, 0.48752149)
@@ -237,7 +238,7 @@ def make_irap_data(
             # without this they'd all be dropped.
             allow_missing_attributes=True if is_unlabeled else allow_missing_attributes,
         )
-    return out
+    return LazyDict(out)  # Not (yet) lazy actually. Used only for attribute access syntax.
 
 
 def make_bih_data(
@@ -586,6 +587,8 @@ class IRAPDataset(Dataset):
                 pixel_stats=SimpleNamespace(mean=np.array(mean), std=np.array(std)),
                 attr_to_value_to_class_idx=attr_to_value_to_class_idx,
                 attr_to_num_labeled=attr_to_num_labeled,
+                segment_id_to_labels=self.segment_id_to_labels,
+                segment_ids=self.segment_ids,
             ),
         )
 

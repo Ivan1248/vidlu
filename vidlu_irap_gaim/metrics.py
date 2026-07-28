@@ -72,7 +72,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
         attrs_to_include: Sequence[object] = None,
         attr_to_index: dict[object, int] | None = None,
         metrics: Sequence[str] = ("amF1", "amP", "amR"),
-        only_present_classes: bool = False,
+        ignore_missing_classes: bool = False,
     ):
         """
         Args:
@@ -115,7 +115,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
                     get_target=lambda r: r["target"],
                     get_hard_prediction=lambda r: r["out"].argmax(1),
                     metrics=tuple(base_metrics),
-                    only_present_classes=only_present_classes,
+                    ignore_missing_classes=ignore_missing_classes,
                 )
         self.reset()
 
@@ -317,13 +317,13 @@ def get_irap_metrics(
     ma_metrics = (*ma_metrics, "_mF1", "_A", "_n")
 
     return (
-        # only_present=True is for excluding non-present classes like in Kačan et al. (2025)
+        # ignore_missing_classes=True is for excluding non-present classes like in Kačan et al. (2025)
         MultiAttributeClassificationMetrics(
             metrics=ma_metrics,
             attr_to_class_count=attr_to_class_count,
             attrs_to_include=attrs_to_include,
             attr_to_index=attr_to_index,
-            only_present_classes=True,
+            ignore_missing_classes=True,
         ),
         MultiAttributeAccuracy(attrs_to_include=attrs_to_include, attr_to_index=attr_to_index),
     )
