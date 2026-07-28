@@ -3,15 +3,27 @@ from functools import partial, wraps
 import torch
 
 from vidlu.configs.training import TrainerConfig
+from vidlu.optim.lr_schedulers import CosineLR
 from vidlu.training.steps import SupervisedStep, SemisupConsStep
 from vidlu.training.extensions import SemisupVAT
 from vidlu.configs.robustness import ph20_attack, ph3_attack
 
 from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
 from .dynamic_weights import DynamicBalancedRecallWeights
-from .extensions import FreezeThenFinetune, MultiAttributeScorePrinter, VisualizationExtension
+from .extensions import (
+    FreezeThenFinetune,
+    MultiAttributeScorePrinter,
+    VisualizationExtension,
+)
 from .jitter import make_sequence_color_jitter, JITTER_STRONG
-from .steps import MultiScaleSupervisedStep, MultiAttributePseudoLabelStep, ColorJitterAttack
+from .steps import (
+    MultiScaleSupervisedStep,
+    MultiAttributePseudoLabelStep,
+    ColorJitterAttack,
+)
+
+# `__all__` is computed at the bottom of this module, after all configs are defined, so
+# that adding or removing one needs no bookkeeping here.
 
 
 def _make_dynamic_balanced_recall_weights(dirs):
@@ -27,13 +39,16 @@ def _make_dynamic_balanced_recall_weights(dirs):
     from irap_data.attrs import get_attrs_to_include
 
     attrs_to_include = get_attrs_to_include()
-    return DynamicBalancedRecallWeights(cache_dir=cache_dir, attrs_to_include=attrs_to_include)
+    return DynamicBalancedRecallWeights(
+        cache_dir=cache_dir, attrs_to_include=attrs_to_include
+    )
 
 
 # Basic classification trainer with supervised step
 # Loss is supplied externally as multi-attribute wrapper (see factory usage)
-# Default configuration matches train_local_rec_paper.sh: 2 frozen + 8 finetune = 10 total epochs
-epoch_count = 2 + 8  # 2 frozen + 8 finetune (matches paper script)
+# Default epoch counts match the original repo's train_local_rec_paper_ep10.sh variant
+# (2 frozen + 8 finetune = 10); the paper recipe (train_local_rec_paper.sh) is 2 + 13 = 15.
+epoch_count = 2 + 8
 irap_local_rec_trainer = TrainerConfig(
     eval_step=SupervisedStep(eval=True, amp=False),
     train_step=SupervisedStep(amp=True),
@@ -81,6 +96,7 @@ def _get_semisup_kl_div():
     global _semisup_kl_div
     if _semisup_kl_div is None:
         from vidlu_irap_gaim.training.semisup import multi_attribute_kl_div_ll
+
         _semisup_kl_div = multi_attribute_kl_div_ll
     return _semisup_kl_div
 
@@ -163,8 +179,8 @@ irap_semisup_trainer_ph3 = TrainerConfig(
 irap_pseudo_label_trainer = TrainerConfig(
     eval_step=SupervisedStep(eval=True, amp=True),
     train_step=MultiAttributePseudoLabelStep(
-        conf_thresh=0.0,    # override per experiment
-        temperature=1.0,    # override per experiment
+        conf_thresh=0.0,  # override per experiment
+        temperature=1.0,  # override per experiment
         alpha=1.0,
         amp=True,
     ),
@@ -184,37 +200,26 @@ irap_pseudo_label_trainer = TrainerConfig(
     ],
 )
 
-irap_local_rec_trainer_nofreeze = TrainerConfig(
-    **{k: v for k, v in irap_local_rec_trainer.items() if k != 'extension_fs'},
-    extension_fs=[
-        ext for ext in irap_local_rec_trainer['extension_fs']
-        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
-    ],
-)
 
-irap_semisup_trainer_ph3_nofreeze = TrainerConfig(
-    **{k: v for k, v in irap_semisup_trainer_ph3.items() if k != 'extension_fs'},
-    extension_fs=[
-        ext for ext in irap_semisup_trainer_ph3['extension_fs']
-        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
-    ],
-)
+def _make_nofreeze_trainer(config):
+    """Removes FreezeThenFinetune from a trainer config, replacing its per-phase
+    optimizers and MultiplicativeLR decay with the config-level optimizer and a
+    single cosine schedule over all epochs."""
+    return TrainerConfig(
+        config,
+        extension_fs=[
+            ext
+            for ext in config["extension_fs"]
+            if not (callable(ext) and getattr(ext, "func", None) is FreezeThenFinetune)
+        ],
+        lr_scheduler_f=partial(CosineLR, eta_min=1e-6),
+    )
 
-irap_semisup_trainer_ph20_nofreeze = TrainerConfig(
-    **{k: v for k, v in irap_semisup_trainer_ph20.items() if k != 'extension_fs'},
-    extension_fs=[
-        ext for ext in irap_semisup_trainer_ph20['extension_fs']
-        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
-    ],
-)
 
-irap_pseudo_label_trainer_nofreeze = TrainerConfig(
-    **{k: v for k, v in irap_pseudo_label_trainer.items() if k != 'extension_fs'},
-    extension_fs=[
-        ext for ext in irap_pseudo_label_trainer['extension_fs']
-        if not (callable(ext) and getattr(ext, 'func', None) is FreezeThenFinetune)
-    ],
-)
+irap_local_rec_trainer_nofreeze = _make_nofreeze_trainer(irap_local_rec_trainer)
+irap_semisup_trainer_ph3_nofreeze = _make_nofreeze_trainer(irap_semisup_trainer_ph3)
+irap_semisup_trainer_ph20_nofreeze = _make_nofreeze_trainer(irap_semisup_trainer_ph20)
+irap_pseudo_label_trainer_nofreeze = _make_nofreeze_trainer(irap_pseudo_label_trainer)
 
 
 irap_pseudo_label_offline_trainer = TrainerConfig(
@@ -240,14 +245,17 @@ irap_pseudo_label_offline_trainer = TrainerConfig(
 # VLM Fine-tuning Trainer
 # =============================================================================
 
+
 # Import VLM-specific steps (lazy import to avoid loading heavy dependencies)
 def _get_vlm_train_step():
     from vidlu_irap_gaim.vlm.finetuning.steps import VLMTrainStep
+
     return VLMTrainStep(amp=True, gradient_accumulation_steps=4)
 
 
 def _get_vlm_eval_step():
     from vidlu_irap_gaim.vlm.finetuning.steps import VLMEvalStep
+
     return VLMEvalStep(amp=True)
 
 
@@ -261,6 +269,7 @@ def trainable_parameters_optimizer(optimizer_f):
                 "Ensure the VLM classifier's initialize() was called before Trainer creation."
             )
         return optimizer_f(trainable, *args, **kwargs)
+
     return wrapper
 
 
@@ -271,7 +280,9 @@ vlm_finetune_trainer = TrainerConfig(
     eval_step=_get_vlm_eval_step(),
     # Loss is computed inside the train_step, not by Trainer
     loss=lambda out, target, reduction="mean": torch.tensor(0.0),
-    optimizer_f=trainable_parameters_optimizer(partial(torch.optim.AdamW, lr=1e-5, weight_decay=0.1)),
+    optimizer_f=trainable_parameters_optimizer(
+        partial(torch.optim.AdamW, lr=1e-5, weight_decay=0.1)
+    ),
     epoch_count=10,
     eval_count=10,  # Evaluate every epoch
     batch_size=2,
@@ -346,3 +357,6 @@ gemma4_vlm_finetune_trainer = TrainerConfig(
         MultiAttributeScorePrinter,
     ],
 )
+
+
+__all__ = [name for name, value in globals().items() if isinstance(value, TrainerConfig)]

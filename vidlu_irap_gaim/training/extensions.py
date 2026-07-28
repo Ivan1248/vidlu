@@ -1,5 +1,3 @@
-from functools import partial
-import typing as T
 import os
 
 import torch
@@ -12,7 +10,22 @@ from vidlu.training.extensions import TrainerExtension
 from vidlu.utils.collections import NameDict
 
 
+def phase_lr_decay_factor(total_decay: float, num_epochs: int) -> float:
+    """Per-epoch multiplicative LR factor that decays by `total_decay` over
+    `num_epochs` epochs."""
+    return total_decay ** (1 / num_epochs)
+
+
 class FreezeThenFinetune(TrainerExtension):
+    """Two-phase training: heads-only ("frozen") epochs followed by full-model finetuning,
+    each phase with a fresh Adam and an exponential LR decay.
+
+    What is fixed per phase is the *total* decay, not the per-epoch factor, so that changing
+    `epoch_count` does not change the LR the phase ends at. The defaults are the original
+    recipe's totals (2 epochs at 0.8/epoch, 13 at 0.88/epoch), so `epoch_count=15` reproduces
+    it exactly.
+    """
+
     def __init__(
         self,
         num_frozen_epochs: int = 2,
@@ -20,10 +33,10 @@ class FreezeThenFinetune(TrainerExtension):
         finetune_lr: float = 1e-5,
         frozen_weight_decay: float = 1e-3,
         finetune_weight_decay: float = 1e-3,
-        frozen_lr_scheduler_f: T.Callable = partial(MultiplicativeLR, lr_lambda=lambda epoch: 0.8),
-        finetune_lr_scheduler_f: T.Callable = partial(MultiplicativeLR, lr_lambda=lambda epoch: 0.88),
+        frozen_lr_total_decay: float = 0.8 ** 2,
+        finetune_lr_total_decay: float = 0.88 ** 13,
     ):
-        # Phase lengths (the trainer's epoch_count should normally match frozen+finetune)
+        # Phase lengths (the finetune phase spans the trainer's remaining epochs)
         self.num_frozen_epochs = num_frozen_epochs
 
         # Optimizer / scheduler hyperparameters per phase
@@ -31,19 +44,26 @@ class FreezeThenFinetune(TrainerExtension):
         self.finetune_lr = finetune_lr
         self.frozen_wd = frozen_weight_decay
         self.finetune_wd = finetune_weight_decay
-        self.frozen_lr_scheduler_f = frozen_lr_scheduler_f
-        self.finetune_lr_scheduler_f = finetune_lr_scheduler_f
+        self.frozen_lr_total_decay = frozen_lr_total_decay
+        self.finetune_lr_total_decay = finetune_lr_total_decay
 
     def initialize(self, trainer):
-        def reinit_optimizer_and_scheduler(lr, wd, lr_scheduler):
+        num_finetune_epochs = trainer.epoch_count - self.num_frozen_epochs
+        if num_finetune_epochs <= 0:
+            raise ValueError(
+                f"FreezeThenFinetune requires epoch_count > num_frozen_epochs, got"
+                f" epoch_count={trainer.epoch_count}, num_frozen_epochs={self.num_frozen_epochs}.")
+
+        def reinit_optimizer_and_scheduler(lr, wd, total_decay, num_phase_epochs):
             # preserve optimizer state? start fresh as in original code
             opt = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, trainer.model.parameters()),
                 lr=lr,
                 weight_decay=wd,
             )
+            factor = phase_lr_decay_factor(total_decay, num_phase_epochs)
             trainer.optimizer = opt
-            trainer.lr_scheduler = lr_scheduler(optimizer=opt)
+            trainer.lr_scheduler = MultiplicativeLR(opt, lr_lambda=lambda epoch: factor)
 
         def get_trainable_parameters():
             """Get trainable parameters following original logic: use model's method if available"""
@@ -73,12 +93,14 @@ class FreezeThenFinetune(TrainerExtension):
                 trainable_params = get_trainable_parameters()
                 for p in trainable_params:
                     p.requires_grad = True
-                reinit_optimizer_and_scheduler(self.frozen_lr, self.frozen_wd, self.frozen_lr_scheduler_f)
+                reinit_optimizer_and_scheduler(self.frozen_lr, self.frozen_wd,
+                                               self.frozen_lr_total_decay, self.num_frozen_epochs)
             else:  # finetune
                 # Enable all parameters in finetune phase
                 for p in trainer.model.parameters():
                     p.requires_grad = True
-                reinit_optimizer_and_scheduler(self.finetune_lr, self.finetune_wd, self.finetune_lr_scheduler_f)
+                reinit_optimizer_and_scheduler(self.finetune_lr, self.finetune_wd,
+                                               self.finetune_lr_total_decay, num_finetune_epochs)
 
         # Initialize in frozen phase at start
         set_phase("frozen")

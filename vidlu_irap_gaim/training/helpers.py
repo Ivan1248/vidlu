@@ -3,11 +3,10 @@ Helper functions for configuring IRAP GAIM experiments with attrs_to_include.
 """
 
 from functools import partial
-from typing import Sequence, Callable
+from typing import Sequence
 
 from vidlu.configs.training import TrainerConfig
 from vidlu.training.steps import SupervisedStep
-from torch.optim.lr_scheduler import MultiplicativeLR
 import torch
 
 from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
@@ -27,8 +26,8 @@ def make_irap_trainer_with_attrs(
     finetune_lr: float = 1e-5,
     frozen_weight_decay: float = 1e-3,
     finetune_weight_decay: float = 1e-3,
-    frozen_scheduler: float | Callable = 0.8,
-    finetune_scheduler: float | Callable = 0.88,
+    frozen_lr_decay: float = 0.8,
+    finetune_lr_decay: float = 0.88,
     jitter=make_sequence_color_jitter(),
 ) -> TrainerConfig:
     """
@@ -49,8 +48,8 @@ def make_irap_trainer_with_attrs(
         finetune_lr: Learning rate for finetune phase.
         frozen_weight_decay: Weight decay for frozen phase.
         finetune_weight_decay: Weight decay for finetune phase.
-        frozen_scheduler: Multiplicative LR decay factor for frozen phase.
-        finetune_scheduler: Multiplicative LR decay factor for finetune phase.
+        frozen_lr_decay: Per-epoch multiplicative LR decay factor for the frozen phase.
+        finetune_lr_decay: Per-epoch multiplicative LR decay factor for the finetune phase.
 
     Returns:
         A TrainerConfig configured for IRAP local recognition with attribute filtering.
@@ -62,15 +61,6 @@ def make_irap_trainer_with_attrs(
     """
     if attrs_to_include is None:
         attrs_to_include = get_attrs_to_include()
-
-    # Convert float scheduler factors to MultiplicativeLR callables
-    def _make_scheduler_f(factor):
-        if callable(factor):
-            return factor
-        return partial(MultiplicativeLR, lr_lambda=lambda epoch: factor)
-
-    frozen_lr_scheduler_f = _make_scheduler_f(frozen_scheduler)
-    finetune_lr_scheduler_f = _make_scheduler_f(finetune_scheduler)
 
     return TrainerConfig(
         eval_step=SupervisedStep(eval=True, amp=True),
@@ -89,8 +79,8 @@ def make_irap_trainer_with_attrs(
                 finetune_lr=finetune_lr,
                 frozen_weight_decay=frozen_weight_decay,
                 finetune_weight_decay=finetune_weight_decay,
-                frozen_lr_scheduler_f=frozen_lr_scheduler_f,
-                finetune_lr_scheduler_f=finetune_lr_scheduler_f,
+                frozen_lr_total_decay=frozen_lr_decay ** frozen_epochs,
+                finetune_lr_total_decay=finetune_lr_decay ** finetune_epochs,
             ),
             DynamicBalancedRecallWeights,  # attrs_idx set at runtime
         ],

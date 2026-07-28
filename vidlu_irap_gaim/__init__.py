@@ -26,22 +26,11 @@ from .metrics import (
 )
 
 # Training
+# Trainer configs come from .training.configs.__all__, so new ones need no change here.
+from .training.configs import *
 from .training import (
-    irap_local_rec_trainer,
-    irap_local_rec_trainer_nofreeze,
-    irap_local_rec_trainer_multiscale,
-    irap_semisup_trainer,
-    irap_semisup_trainer_ph3,
-    irap_semisup_trainer_ph3_nofreeze,
-    irap_semisup_trainer_ph20,
-    irap_semisup_trainer_ph20_nofreeze,
-    irap_pseudo_label_trainer,
-    irap_pseudo_label_trainer_nofreeze,
-    irap_pseudo_label_offline_trainer,
     FreezeThenFinetune,
     MultiScaleSupervisedStep,
-    vlm_finetune_trainer,
-    gemma4_vlm_finetune_trainer,
     MultiAttributePseudoLabelStep,
     DynamicBalancedRecallWeights,
     add_attr_idx_to_class_occurrence_counts_to_info_lazily,

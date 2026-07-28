@@ -17,15 +17,17 @@ def quarter_cos(progress):
 
 
 def main():
+    from vidlu_irap_gaim.training.extensions import phase_lr_decay_factor
+
     # Parameters
     frozen_epochs = 2
+    total_epochs = 10
+
     frozen_lr = 5e-5
-    frozen_lambda = 0.8
+    frozen_lambda = phase_lr_decay_factor(0.8 ** 2, frozen_epochs)
 
     finetune_lr = 1e-5
-    finetune_lambda = 0.88
-
-    total_epochs = 10
+    finetune_lambda = phase_lr_decay_factor(0.88 ** 13, total_epochs - frozen_epochs)
 
     print(f"{'Epoch':<5} | {'Phase':<10} | {'FTF LR':<15} | {'QCos LR':<15} | {'Mult LR':<15}")
     print("-" * 75)
