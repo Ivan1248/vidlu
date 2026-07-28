@@ -309,6 +309,17 @@ class _BaseVLMClassifier(nn.Module):
             )
 
         self._processor = AutoProcessor.from_pretrained(self.model_id, trust_remote_code=True)
+
+        # Silences a per-sample "Setting pad_token_id to eos_token_id" warning from
+        # generate(). eos is the value HF falls back to, so outputs are unaffected.
+        gen_cfg = getattr(self._model, "generation_config", None)
+        if gen_cfg is not None and getattr(gen_cfg, "pad_token_id", None) is None:
+            tokenizer = getattr(self._processor, "tokenizer", self._processor)
+            pad_id = getattr(tokenizer, "pad_token_id", None)
+            if pad_id is None:
+                pad_id = getattr(tokenizer, "eos_token_id", None)
+            gen_cfg.pad_token_id = pad_id
+
         self._loaded = True
 
         total_params = sum(p.numel() for p in self._model.parameters())

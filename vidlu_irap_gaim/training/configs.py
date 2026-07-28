@@ -298,7 +298,7 @@ vlm_finetune_trainer = TrainerConfig(
     epoch_count=10,
     eval_count=10,  # Evaluate every epoch
     batch_size=2,
-    eval_batch_size=6,
+    eval_batch_size=1,
     extension_fs=[
         MultiAttributeScorePrinter,
     ],
