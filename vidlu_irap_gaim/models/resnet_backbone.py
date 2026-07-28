@@ -9,8 +9,8 @@ import torch.nn.functional as F
 import warnings
 
 model_urls = {
-    'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
-    'resnet34': 'https://download.pytorch.org/models/resnet34-333f7ec4.pth',
+    'resnet18': 'https://download.pytorch.org/models/resnet18-f37072fd.pth',
+    'resnet34': 'https://download.pytorch.org/models/resnet34-b627a593.pth',
     "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
 }
 

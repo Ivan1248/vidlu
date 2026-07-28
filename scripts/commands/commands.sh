@@ -54,22 +54,22 @@ python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" id 
 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(mean=[.485,.456,.406],std=[.229,.224,.225])" "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes" --params swiftnet:swiftnet_ss_cs_best.pt
 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes" --params swiftnet:rn18_single_scale/model.pt  # 75.39
 ## SwiftNet pretrained on ImageNet
-python run.py train "(CamVid('train').join(CamVid('val')), CamVid('test'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_camvid" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
-python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+python run.py train "(CamVid('train').join(CamVid('val')), CamVid('test'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_camvid" --params "resnet[backbone]->backbone.backbone:resnet18"
+python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet18"
 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes" --params "resnet:backbone->backbone.backbone:resnet18"  # 75.39
 
 ### SwiftNet-RN50 (non)robust pretraining
-python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50)" "swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet50-19c8e357.pth"
+python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50)" "swiftnet_cityscapes" --params "resnet[backbone]->backbone.backbone:resnet50"
 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=50)" "swiftnet_cityscapes" --params "madrylab_resnet[backbone]->backbone.backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
 ### bs8 ep250
-CUDA_VISIBLE_DEVICES=0 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes,epoch_count=250,batch_size=8" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth"
+CUDA_VISIBLE_DEVICES=0 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" "standardize(cityscapes_mo)" "SwiftNet,backbone_f=t(depth=18)" "swiftnet_cityscapes,epoch_count=250,batch_size=8" --params "resnet[backbone]->backbone.backbone:resnet18"
 
 
 ## SegResNetV1 pretrained
 python run.py train "dict(train=Cityscapes('train'), val=Cityscapes('val'))" standardize "SegResNetV1,backbone_f=t(depth=50)" "ladder_densenet"
 
 ## SegResNetV1 pretrained
-python run.py train "(CamVid('train').join(CamVid('val')), CamVid('test'))" standardize "SegResNetV1,backbone_f=t(depth=50)" "swiftnet_camvid,epoch_count=400,optimizer_maker=FineTuningOptimizerMaker({'backbone': 0})" --params "resnet[backbone]->backbone:resnet50-19c8e357.pth"
+python run.py train "(CamVid('train').join(CamVid('val')), CamVid('test'))" standardize "SegResNetV1,backbone_f=t(depth=50)" "swiftnet_camvid,epoch_count=400,optimizer_maker=FineTuningOptimizerMaker({'backbone': 0})" --params "resnet[backbone]->backbone:resnet50"
 python run.py train "(CamVid('train').join(CamVid('val')), CamVid('test'))" standardize "SegResNetV1,backbone_f=t(depth=50)" "swiftnet_camvid,epoch_count=400,optimizer_maker=FineTuningOptimizerMaker({'backbone': 0})" --params "madrylab_resnet[backbone]->backbone.backbone:madrylab/cvrobust/resnet-50-imagenet.pt"
 
 
@@ -91,11 +91,11 @@ python show_summary.py ~/data/states/Cifar10\{trainval\,test\}/ResNetV2\,backbon
 
 
 # Semi-supervised VAT
-python run.py train "dict(train=CamVid('val'), train_u=CamVid('train'), test=CamVid('test'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_camvid,semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
+python run.py train "dict(train=CamVid('val'), train_u=CamVid('train'), test=CamVid('test'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_camvid,semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18" -r
 # Two equivalent forms for a single-computation labeled/unlabeled split (train_u = the unlabeled remainder after the labeled 4000):
 #   zip:    "dict(zip(('train', 'train_u'), rotating_labels(Cifar10('trainval')).split(index=4000)), test=Cifar10('test'))"
 #   lambda: "(lambda tv: dict(train=tv[:4000], train_u=tv[4000:], test=Cifar10('test')))(rotating_labels(Cifar10('trainval')))"
-python run.py train "dict(zip(('train', 'train_u'), rotating_labels(Cifar10('trainval')).split(index=4000)), test=Cifar10('test'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_camvid,semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18-5c106cde.pth" -r
+python run.py train "dict(zip(('train', 'train_u'), rotating_labels(Cifar10('trainval')).split(index=4000)), test=Cifar10('test'))" id "SwiftNet,backbone_f=t(depth=18)" "swiftnet_camvid,semisupervised_vat,epoch_count=20" --params "resnet[backbone]->backbone.backbone:resnet18" -r
 
 # rsync
 rsync -avzhe ssh --progress pretrained/ igrubisic@treebeard:/home/igrubisic/data/pretrained/

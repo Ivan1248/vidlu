@@ -1,0 +1,8 @@
+# A uv lock root. There is no [build-system], so this is a virtual project: setup.py
+# and requirements{,-optional}.txt remain the packaging metadata.
+[project]
+name = "vidlu"
+version = "0.2.0a"  # as in vidlu/version.py
+description = "ViDLU: Vision Deep Learning Utilities -- a PyTorch-based deep learning framework for research with emphasis on computer vision."
+requires-python = ">=3.10"
+dependencies = []

@@ -441,7 +441,7 @@ def get_translated_parameters(params_str, *, params_dir=None, state_dict=None):
                            + ' parameters file path at the end of `params_str`.')
     if p.name != '':
         path = mparams.get_path(p.name, params_dir)
-        state_dict = torch.load(path)
+        state_dict = torch.load(path, weights_only=True)
     state_dict = mparams.get_translated_parameters(p.translator, state_dict, subdict=p.src_dict)
     state_dict_fr = mparams.filter_by_and_remove_key_prefix(state_dict, p.src_module,
                                                             error_on_no_match=True)
