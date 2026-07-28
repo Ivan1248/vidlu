@@ -343,6 +343,12 @@ swiftnet_cityscapes = TrainerConfig(
                                            scale_dist="log-uniform"),
 )
 
+# IDD 20k has 6993 train images, ~2.35x Cityscapes, so epoch_count is reduced from 250 to keep
+# the number of gradient steps comparable (250 * 2975 / 6993 ~= 106), rounded up for the 26
+# imbalanced classes. eval_batch_size=1 because evaluation runs on full images, which come in
+# two resolutions (1280x720 and 1920x1080) and so cannot be batched together.
+swiftnet_idd = TrainerConfig(swiftnet_cityscapes, epoch_count=120, eval_batch_size=1)
+
 sn_cs_rand_scale_crop_ph3_jitter = jitter.Composition(
     jitter.SegRandScaleCropPadHFlip(shape=(768, 768), max_scale=2, overflow=0,
                                     scale_dist="log-uniform"),
@@ -377,9 +383,10 @@ swiftnet_cityscapes1 = TrainerConfig(
 # 4 times smaller L2 regularization coefficient for semi-supervised learning
 swiftnet_cityscapes_semi = TrainerConfig(
     swiftnet_cityscapes,
-    optimizer_f=OptimizerMaker(optim.Adam,
-                               [dict(params='backbone.backbone', lr=1e-4, weight_decay=2.5e-5 / 4)],
-                               lr=4e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
+    optimizer_f=OptimizerMaker(
+        optim.Adam,
+        [dict(params='backbone.backbone', lr=1e-4, weight_decay=2.5e-5 / 4)],
+        lr=4e-4, betas=(0.9, 0.99), weight_decay=2.5e-5),
 )
 
 swiftnet_convnext_cityscapes_mg = TrainerConfig(

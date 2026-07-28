@@ -26,6 +26,10 @@ from vidlu.transforms import numpy as numpy_transforms
 from vidlu.utils.misc import extract_zip, download_git_repo
 
 from ._cityscapes_labels import labels as cslabels
+from ._idd_labels import (id_to_level3 as _idd_id_to_level3,
+                          id_to_cs_train as _idd_id_to_cs_train,
+                          level3_class_names as _idd_level3_class_names,
+                          level3_class_colors as _idd_level3_class_colors)
 
 # Constants
 
@@ -987,6 +991,69 @@ class Cityscapes(Dataset):
         super().__init__(
             subset=subset if downsampling == 1 else f"{subset}.downsample({downsampling})",
             info=self.info)
+
+        _check_size(self.image_paths, size=self.subset_to_size[subset], name=self.name)
+
+    def get_example(self, idx):
+        return _make_sem_seg_record(self.image_dir / self.image_paths[idx],
+                                    self.label_dir / self.label_paths[idx],
+                                    name=str(self.image_paths[idx].with_suffix("")),
+                                    id_to_label=self.id_to_label, downsampling=self.downsampling,
+                                    downsample_labels=self.downsample_labels)
+
+    def __len__(self):
+        return len(self.image_paths)
+
+
+class IDD(Dataset):
+    """India Driving Dataset (IDD Segmentation, "IDD 20k Part I").
+
+    Expects the standard AutoNUE layout, with images in
+    ``leftImg8bit/<subset>/<seq>/<frame>_leftImg8bit.png`` and label-id images
+    (raw AutoNUE ``id``, 0..39) in ``gtFine/<subset>/<seq>/<frame>_gtFine_labelids.png``.
+
+    ``labels`` selects the training taxonomy:
+      - ``"default"``: native IDD level-3 (26 classes),
+      - ``"Cityscapes"``: remapped to the Cityscapes 19-class trainIds.
+    Both are obtained by remapping the raw ``id``; ``255`` (and any unmapped id)
+    becomes ``-1`` (ignore).
+    """
+    default_root = "IDD_Segmentation"
+    subsets = ("train", "val")  # gtFine labels are provided only for train/val
+    subset_to_size = dict(train=6993, val=981)
+
+    level3_info = Record(problem="semantic_segmentation", class_count=26,
+                         class_names=_idd_level3_class_names,
+                         class_colors=_idd_level3_class_colors)
+
+    def __init__(self, root, subset="train",
+                 labels: T.Literal["default", "Cityscapes"] = "default",
+                 downsampling=1, downsample_labels=True):
+        _check_subset(self.__class__, subset)
+        self.root = Path(root)
+        self.downsampling, self.downsample_labels = downsampling, downsample_labels
+
+        if labels == "Cityscapes":
+            self.id_to_label = _idd_id_to_cs_train
+            info = Cityscapes.info
+        elif labels == "default":
+            self.id_to_label = _idd_id_to_level3
+            info = self.level3_info
+        else:
+            raise ValueError(f'Invalid labels="{labels}". Expected "default" or "Cityscapes".')
+
+        img_suffix, lab_suffix = "_leftImg8bit.png", "_gtFine_labelids.png"
+        self.image_dir = self.root / "leftImg8bit" / subset
+        self.label_dir = self.root / "gtFine" / subset
+
+        self.image_paths = list(
+            sorted(x.relative_to(self.image_dir)
+                   for x in self.image_dir.glob(f"*/*{img_suffix}")))
+        self.label_paths = [str(x)[:-len(img_suffix)] + lab_suffix for x in self.image_paths]
+
+        labels_str = "" if labels == "default" else f"({labels=})"
+        subset_str = subset if downsampling == 1 else f"{subset}.downsample({downsampling})"
+        super().__init__(name=f"{type(self).__name__}{labels_str}", subset=subset_str, info=info)
 
         _check_size(self.image_paths, size=self.subset_to_size[subset], name=self.name)
 

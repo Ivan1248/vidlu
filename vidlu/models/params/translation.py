@@ -66,6 +66,22 @@ def translate_resnet(state_dict):
     return translate_dict_keys(state_dict, resnet_v1_dict.items())
 
 
+def translate_resnet_v1_to_torchvision(state_dict):
+    """Translates Vidlu ResNetV1Backbone parameters (under `backbone.backbone.*` in a full model
+    checkpoint, e.g. a trained SwiftNet) to torchvision ResNet names. Inverse of
+    `translate_resnet`'s backbone mapping; SPP/ladder/head have no torchvision counterpart."""
+    state_dict = filter_by_and_remove_key_prefix(state_dict, "backbone.backbone",
+                                                 error_on_no_match=True)
+    return translate_dict_keys(state_dict, {
+        r"root.{a:conv|norm}.orig{e}":
+            r"{a:norm->bn}1{e}",
+        r"bulk.unit{a:(\d+)}_{b:(\d+)}.fork.block.{c:conv|norm}{d:(\d+)}.orig{e}":
+            r"layer{`int(a)+1`}.{b}.{c:norm->bn}{`int(d)+1`}{e}",
+        r"bulk.unit{a:(\d+)}_{b:(\d+)}.fork.shortcut.{c:conv|norm}.orig{e}":
+            r"layer{`int(a)+1`}.{b}.downsample.{c:conv->0|norm->1}{e}",
+    }.items())
+
+
 resnet_v2_dict = {
     r"layer{a:([2-9]\d*)}.0.bn1{e}":  #
         r"backbone.bulk.unit{`int(a)-1`}_0.preact.norm0.orig{e}",

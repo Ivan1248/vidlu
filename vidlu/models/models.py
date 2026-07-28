@@ -13,7 +13,7 @@ import vidlu.modules as M
 import vidlu.modules as vm
 import vidlu.modules.components as vmc
 from vidlu.modules.other import mnistnet, convnext
-from vidlu.models.utils import ladder_input_names, set_all_inplace
+from vidlu.models.utils import ladder_input_names, set_all_inplace, pad_to_multiple
 from vidlu.utils.func import (Reserved, Empty, default_args)
 
 from . import initialization
@@ -230,9 +230,20 @@ class SegmentationModel(DiscriminativeModel):
         self.size_divisibility = size_divisibility
 
     def forward(self, x, shape=None):
-        inject_shape = lambda m, h: (h[0], x.shape[-2:] if shape is None else shape)
+        # Padding the input up to a multiple of `size_divisibility` and cropping the logits
+        # back keeps the feature pyramid aligned for inputs whose size is not a multiple of
+        # the backbone's total stride (e.g. IDD's 720/1080).
+        unpadded_shape = None
+        if shape is None and self.size_divisibility:
+            x, unpadded_shape = pad_to_multiple(x, self.size_divisibility)
+        out_shape = x.shape[-2:] if shape is None else shape
+        inject_shape = lambda m, h: (h[0], out_shape)
         with self.head.register_forward_pre_hook(inject_shape):
-            return super().forward(x)
+            y = super().forward(x)
+        if unpadded_shape is None:
+            return y
+        h, w = unpadded_shape
+        return y[..., :h, :w]
 
 
 class ResNetV1(ClassificationModel):
@@ -310,9 +321,10 @@ class SwiftNetBase(SegmentationModel):
                  lateral_suffix: T.Literal['sum', 'act', ''] = '',
                  stage_count=None,
                  ladder_f=swiftnet_ladder_f,
-                 mem_efficiency=1):
+                 mem_efficiency=1,
+                 size_divisibility: T.Optional[int] = 32):
         super().__init__(backbone_f=backbone_f, head_f=head_f, init=init,
-                         input_adapter=input_adapter)
+                         input_adapter=input_adapter, size_divisibility=size_divisibility)
         self.laterals = laterals
         self.lateral_suffix = lateral_suffix
         self.mem_efficiency = mem_efficiency

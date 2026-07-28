@@ -1,7 +1,24 @@
 import warnings
 
+import torch.nn.functional as F
+
 import vidlu.modules.components as vmc
 import vidlu.modules as vm
+
+
+def pad_to_multiple(x, divisor, value=0.0):
+    """Pads the last two (spatial) dimensions of `x` on the bottom/right up to a multiple
+    of `divisor` (the mmsegmentation `size_divisor` convention).
+
+    Returns `(x_padded, (h, w))`, where `(h, w)` is the original spatial size, so a model
+    output computed on `x_padded` can be cropped back with `output[..., :h, :w]`. When `x`
+    is already divisible, it is returned unchanged.
+    """
+    h, w = x.shape[-2:]
+    ph, pw = -(-h // divisor) * divisor, -(-w // divisor) * divisor
+    if (ph, pw) == (h, w):
+        return x, (h, w)
+    return F.pad(x, (0, pw - w, 0, ph - h), value=value), (h, w)
 
 
 def _last_by_prefix(names, name_to_prefix, parent_last):

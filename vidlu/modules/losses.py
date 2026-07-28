@@ -60,6 +60,9 @@ target behaviour.
 
 def nll_loss_l(logits, target, weight=None, ignore_index=-1,
                reduction: T.Literal["none", "mean", "sum"] = "none"):
+    if reduction == "mean" and not (target != ignore_index).any():
+        # F.cross_entropy would give 0/0 = nan for a batch with no non-ignored target.
+        return logits.sum() * 0.0
     return F.cross_entropy(logits, target, ignore_index=ignore_index, weight=weight,
                            reduction=reduction)
 

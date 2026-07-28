@@ -41,6 +41,10 @@ def remap_segmentation(lab: np.ndarray, id_to_label):
         u, inv = np.unique(lab, return_inverse=True)
         return np.array([id_to_label.get(k, k) for k in u], dtype=lab.dtype)[inv].reshape(lab.shape)
     else:  # faster for small numbers of distinct labels
+        # Reading from `lab` and writing to a copy makes this order-independent: a target
+        # value can equal a source id that has not been processed yet (e.g. IDD id 6 -> 11
+        # with id 11 -> -1), which would otherwise clobber already-remapped pixels.
+        out = lab.copy()
         for id_, lb in id_to_label.items():
-            lab[lab == id_] = lb
-        return lab
+            out[lab == id_] = lb
+        return out
