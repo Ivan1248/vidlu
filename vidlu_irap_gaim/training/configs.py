@@ -6,6 +6,7 @@ from vidlu.configs.training import TrainerConfig
 from vidlu.optim.lr_schedulers import CosineLR
 from vidlu.training.steps import SupervisedStep, SemisupConsStep
 from vidlu.training.extensions import SemisupVAT
+from vidlu.training.trainers import Trainer
 from vidlu.configs.robustness import ph20_attack, ph3_attack
 
 from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
@@ -22,8 +23,19 @@ from .steps import (
     ColorJitterAttack,
 )
 
-# `__all__` is computed at the bottom of this module, after all configs are defined, so
-# that adding or removing one needs no bookkeeping here.
+# `__all__` is computed at the bottom of this module (after all configs are
+# defined): it is every module-level `TrainerConfig` plus the data-loader factory,
+# so adding or removing a config needs no manual bookkeeping here.
+
+
+# Training data-loader factory for joint training on datasets passed as separate `train*`
+# splits: each batch gets a constant count from each (per-dataset `batch_size`, e.g. `[8, 4]`),
+# and `primary_index='longest'` makes an epoch cover the larger dataset once while the smaller
+# repeats in full shuffled passes. Only the mixing differs from `Trainer.data_loader_f`, so the
+# rest (`dl_f`, `num_workers`, `shuffle`) is inherited from it rather than repeated. Evaluation
+# is unaffected: a single split bypasses the multi-loader path.
+combined_train_loader_f = partial(Trainer.data_loader_f, multi_dl_f="combine",
+                                  primary_index="longest")
 
 
 def _make_dynamic_balanced_recall_weights(dirs):
@@ -359,4 +371,7 @@ gemma4_vlm_finetune_trainer = TrainerConfig(
 )
 
 
-__all__ = [name for name, value in globals().items() if isinstance(value, TrainerConfig)]
+# Public API: every TrainerConfig defined above, plus the data-loader factory.
+__all__ = ["combined_train_loader_f"] + [
+    name for name, value in globals().items() if isinstance(value, TrainerConfig)
+]

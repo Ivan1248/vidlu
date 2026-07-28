@@ -15,6 +15,7 @@ The extension is discovered by ViDLU via the `vidlu_` extension naming conventio
 - [Encoders](#encoders)
 - [Metrics & dynamic weighting](#metrics--dynamic-weighting)
 - [Semi-supervised learning with pseudo-labels](#semi-supervised-learning-with-pseudo-labels)
+- [Joint BiH + Vietnam training](#joint-bih--vietnam-training)
 - [Multi-scale inference](#multi-scale-inference)
 - [VLM integration (zero-shot & fine-tuning)](#vlm-integration-zero-shot--fine-tuning)
 - [Inference & visualization](#inference--visualization)
@@ -143,29 +144,46 @@ vidlu_irap_gaim/
 Deterministic loading + center crop in the dataset, photometric jitter in the trainer.
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
   "irap_gaim.make_bih_data()" \
   "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_local_rec_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics()" \
-  -e vistas_rn18_s3
+  --metrics "irap_gaim.get_irap_metrics(data.train)" \
+  -e 1
 ```
 
 **Where to put `vistas.pt`**: place it at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt` so `--params "...:irap_gaim/vistas.pt"` resolves correctly.
 
-### ResNet encoder (ImageNet-pretrained backbone only)
+**Epoch schedule (2 + 8 vs the original 2 + 13)**: `irap_local_rec_trainer` defaults to `epoch_count=10`
+(2 frozen + 8 finetune), matching the epoch counts of the original repo's
+`train_local_rec_paper_ep10.sh` variant (but not its per-epoch LR decay; see below). The
+original *paper* recipe (`train_local_rec.py` argparse defaults and `train_local_rec_paper.sh`) is
+2 frozen + **13** finetune = **15** epochs. To reproduce the 15-epoch recipe without any code change,
+override the trainer's `epoch_count` (and `eval_count`, so the per-epoch validation recall that
+`DynamicBalancedRecallWeights` consumes is still computed every epoch) in the trainer factory string:
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
   "irap_gaim.make_bih_data()" \
   "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=True)" \
-  "irap_gaim.irap_local_rec_trainer" \
-  --metrics "irap_gaim.get_irap_metrics()" \
-  -e imagenet_rn18_s3
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer,epoch_count=15,eval_count=15" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)"
 ```
+
+`FreezeThenFinetune` unfreezes at epoch 2 regardless of the total, so `epoch_count=15` yields the
+2-frozen + 13-finetune schedule. (Note: `scripts/run.py -e` is the experiment-name suffix, *not* an
+epoch count; the `-e 1` in the smoke-test command above only labels the run.)
+
+**LR decay adapts to the epoch count**: `FreezeThenFinetune` fixes each phase's *total* LR decay at
+the paper's values (0.8² frozen, 0.88¹³ finetune) and derives the per-epoch multiplicative factor as
+`total ** (1/phase_length)`. With `epoch_count=15` this is exactly the paper's 0.8/0.88 per epoch;
+the default `epoch_count=10` compresses the same total decay into 8 finetune epochs (≈0.812/epoch),
+so it ends at the paper's final LR rather than matching `train_local_rec_paper_ep10.sh`, which keeps
+0.88/epoch and therefore ends the shorter run at a higher LR.
 
 ### DINOv2 ViT encoder
 
@@ -173,10 +191,100 @@ IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
   "irap_gaim.make_bih_data()" \
   "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.dinov2_vit_encoder,variant='dinov2_vitb14',params_dir=dirs.pretrained)" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.dinov2_vit_encoder,variant='dinov2_vitb14',params_dir=dirs.pretrained)" \
   "irap_gaim.irap_local_rec_trainer" \
-  --metrics "irap_gaim.get_irap_metrics()"
+  --metrics "irap_gaim.get_irap_metrics(data.train)"
 ```
+
+### MAE ViT encoder (ImageNet-pretrained)
+
+Loads a Hugging Face `ViTMAEModel` (`facebook/vit-mae-base` by default) as a plain
+ViT feature extractor — MAE random masking is disabled (`mask_ratio=0`). It expects
+**ImageNet** normalization (the checkpoint's own preprocessor stats), so use
+`standardize(imagenet)` rather than the dataset-stats `standardize`:
+
+```bash
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "irap_gaim.make_bih_data()" \
+  "standardize(imagenet)" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.mae_vit_encoder,variant='facebook/vit-mae-base',params_dir=dirs.pretrained)" \
+  "irap_gaim.irap_local_rec_trainer_nofreeze" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)"
+```
+
+Use `variant='facebook/vit-mae-large'` / `'-huge'` (or any HF ViT-MAE repo id) for
+larger models. `irap_local_rec_trainer` (freeze-then-finetune) also works, since the
+encoder's `pooling_parameters()` is empty (frozen phase trains heads only).
+
+### Qwen3-VL image encoder (LoRA fine-tuning)
+
+Uses the **vision tower** of `Qwen/Qwen3-VL-8B-Instruct` as the backbone, fine-tuned
+with LoRA (the base tower stays frozen). This is distinct from `Qwen3VLClassifier`,
+which fine-tunes the whole generative VLM. The tower is run per frame, so the model's
+own image processor handles patchification and Qwen normalization — feed raw `[0,1]`
+inputs with the `id` adapter. Requires `peft` (and `bitsandbytes` for 4-bit):
+
+```bash
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "irap_gaim.make_bih_data()" \
+  "id" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.Qwen3VLVisionEncoder,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=16,load_in_4bit=True)" \
+  "irap_gaim.irap_local_rec_trainer_qwen" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)"
+```
+
+The `irap_local_rec_trainer_qwen` trainer restricts the optimizer to the trainable
+(heads + LoRA) parameters and skips `FreezeThenFinetune` (which would unfreeze the
+whole base tower). Only `attention=False` is supported for now.
+
+### Horizontal flips with flip-flag conditioning
+
+Horizontal flips are not label-preserving for iRAP attributes: 12 of the 41 attributes
+form driver-side/passenger-side pairs (pedestrian flow along the road, roadside severity
+distance/object, paved shoulder, land use, sidewalk), and a flipped image additionally
+depicts mirrored signage and markings. Instead of swapping the paired labels, the
+`irap_local_rec_trainer_hflip` trainer keeps targets fixed and passes a per-example
+binary flip flag to the model, which must be built with `flip_conditioning=True`
+(a zero-initialized embedding added to the sequence feature before the attribute heads).
+At inference the flag is always 0, so flipped samples act as a regularizer through the
+shared backbone features while the artificial mirrored-world distribution stays isolated
+in the `flip=1` mode. Flips are applied to the whole frame stack at once, keeping the
+temporal context consistent.
+
+```bash
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "irap_gaim.make_bih_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,flip_conditioning=True,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer_hflip" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)"
+```
+
+`flip_conditioning=False` (the default) leaves the model and existing checkpoints
+unchanged; the flip probability can be overridden via
+`"irap_gaim.irap_local_rec_trainer_hflip,train_step=irap_gaim.HFlipSupervisedStep(amp=True,p=0.5)"`.
+
+### iRAP-Vietnam
+
+iRAP-Vietnam shares the same 41-attribute schema (same `attribute_metadata.json`)
+as iRAP-BiH, but does not annotate 7 of the attributes (the flow attributes,
+Upgrade cost, Roadworks, Bicycle facility); those columns are the ignore label
+`-1` in every Vietnam target, so the loss skips them per example and the metrics
+report `n=0` for them.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "irap_gaim.make_vietnam_data()" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)"
+```
+
+Pass the loaded training split to `get_irap_metrics(data.train)`; the no-argument
+form silently reloads `make_bih_data()` to resolve the attribute set.
 
 ## Encoders
 
@@ -185,6 +293,8 @@ IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
 | ResNet-18 | `ResNetEncoder(pretrained=True)` | ImageNet (torchvision) | Good baseline |
 | ResNet-18 + Vistas | `ResNetEncoder(pretrained=False)` + `--params` | Vistas `.pt` file | Best for road scenes; load via `--params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt"` |
 | DINOv2 ViT-B/14 | `dinov2_vit_encoder(variant='dinov2_vitb14')` | Auto-downloaded | Self-supervised; no `--params` needed |
+| MAE ViT-B/16 | `mae_vit_encoder(variant='facebook/vit-mae-base')` | Auto-downloaded (HF) | Masking disabled; use `standardize(imagenet)` |
+| Qwen3-VL vision tower | `Qwen3VLVisionEncoder(model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=16)` | Auto-downloaded (HF) | LoRA fine-tuning; use `id` adapter + `irap_local_rec_trainer_qwen`; needs `peft` |
 
 ## Metrics & dynamic weighting
 
@@ -193,7 +303,7 @@ IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
 `irap_gaim.get_irap_metrics(...)` configures per-attribute accuracy, precision, recall, F1, and IoU over the canonical 41-attribute subset. It maps attribute names to indices using `dataset.info.attribute_names`.
 
 ```bash
---metrics "irap_gaim.get_irap_metrics()"
+--metrics "irap_gaim.get_irap_metrics(data.train)"
 ```
 
 ### Dynamic balanced recall weights
@@ -225,10 +335,10 @@ Pass `prefer_real_unlabeled=False` to force the synthetic path even on metadata 
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
   "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=0.1)" \
   "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/checkpoint.pth',conf_thresh=0.8,temperature=1.0)" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics()" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)" \
   -e 1
 ```
 
@@ -250,7 +360,7 @@ python scripts/run.py train \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_pseudo_label_offline_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics()" -e 1
+  --metrics "irap_gaim.get_irap_metrics(data.train)" -e 1
 ```
 
 ### Confidence thresholding
@@ -268,6 +378,111 @@ python scripts/run.py train \
 | `< 1.0` (e.g. `0.8`) | Sharpened confidence – more selective, fewer pseudo-labels |
 | `> 1.0` (e.g. `1.2`) | Softened confidence – less selective, more pseudo-labels |
 
+## Joint BiH + Vietnam training
+
+Because both releases share the same `attribute_metadata.json`, their per-attribute
+class indexing and `class_counts` are identical, and each emits length-41 targets
+with unlabeled attributes set to `-1`. So the two datasets are directly
+concatenable onto one 41-head model: the loss uses whichever attributes each
+example labels (Vietnam examples supervise the 34 shared attributes; BiH examples
+supervise all 41). No changes to the model or loss are needed — only how the data
+string composes the splits.
+
+The data string is evaluated as Python (a mapping-returning expression, or
+multiple statements assigning `data`). Bind each release once and reuse its splits.
+`Dataset.join(other, info=...)` concatenates and lets you choose which `info` the
+joined split carries. **Prefer Vietnam's `info`** for the joined training split: the
+34 shared attributes are what matter in these combined-dataset experiments, and using
+Vietnam `info` keeps its `class_counts`-derived weighting focused on them. The model
+still has 41 heads either way, since `class_counts` is the full schema in both infos.
+
+Evaluation metrics are chosen **per split** (see
+[Per-split evaluation metrics](#per-split-evaluation-metrics)): pass a
+`dict(split_name=..., ...)` to `--metrics` to score `val_vn` on the 34 shared
+attributes (NaN-free) and `val_bih` on all 41. The first `val*` split in the `data`
+dict drives checkpoint selection, so list the Vietnam split first.
+
+### Supervised, concatenated (proportions ∝ split sizes)
+
+```bash
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "b = irap_gaim.make_bih_data(); v = irap_gaim.make_vietnam_data(); data = dict(train=b.train.join(v.train, info=v.train.info), val_vn=v.val, val_bih=b.val)" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+```
+
+### Supervised, constant per-batch proportions
+
+Keep the two datasets as separate `train*` splits and use `combined_train_loader_f`,
+which draws a fixed count from each per batch (`batch_size=[bih, vietnam]`, matched
+to the split order in the dict). An epoch covers the larger dataset once while the
+smaller repeats in full shuffled passes, so no example is revisited before the rest
+of its dataset's pass.
+
+```bash
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "b = irap_gaim.make_bih_data(); v = irap_gaim.make_vietnam_data(); data = dict(train_bih=b.train, train_vn=v.train, val_vn=v.val, val_bih=b.val)" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train_vn.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_local_rec_trainer,data_loader_f=irap_gaim.combined_train_loader_f,batch_size=[8,4]" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+```
+
+### Semi-supervised (other release as the unlabeled pool)
+
+Put the second release under `train_u` and use a semi-supervised trainer
+(`irap_semisup_trainer`, `irap_pseudo_label_trainer`, ...); the consistency /
+pseudo-label step consumes `train_u` and ignores its labels.
+
+TODO: all available labels should be used, and additional unlabeled Vietnam splits should be used for the unlabeled data pool. The below command only uses the labeled Vietnam split as the unlabeled pool, which is not good.
+
+```bash
+IRAP_HOME=~/data/datasets/ python scripts/run.py train \
+  "b = irap_gaim.make_bih_data(); v = irap_gaim.make_vietnam_data(); data = dict(train=b.train, train_u=v.train, val_vn=v.val, val_bih=b.val)" \
+  "standardize" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.irap_semisup_trainer" \
+  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
+  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+```
+
+### Per-split evaluation metrics
+
+`get_irap_metrics(dataset)` scores exactly the attributes that have at least one
+labeled example in `dataset` — it computes
+`filter_labeled_attrs(get_attrs_to_include(), dataset.info.attr_to_num_labeled)`.
+Because both releases share the schema, `class_counts` and the attribute→index map
+are identical; the **only** thing the argument changes is this attribute set:
+
+- A **Vietnam** split (`data.val_vn`) → the **34** shared attributes. All 34 are
+  labeled in both releases, so the split is NaN-free and its aggregate
+  `amF1`/`amP`/`amR` (used for checkpoint selection) stays finite.
+- A **BiH** split (`data.val_bih`) → all **41** attributes. On a *Vietnam* split this
+  would reintroduce NaN (the 7 BiH-only attributes have no labeled Vietnam example),
+  but on `val_bih` itself every attribute is labeled, so all 41 are valid.
+
+To score each split with the attribute set that suits it, pass `--metrics` a
+**mapping** from split name to metrics instead of a single list:
+
+```bash
+--metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+```
+
+Each listed split is evaluated with its own metrics (`val_vn`: 34 attributes,
+`val_bih`: 41). A split not named in the mapping — and the training-progress display
+— falls back to the **first** entry's metrics (here `val_vn`), so list the split
+whose metrics should also apply to training first. The single-list form
+(`--metrics "irap_gaim.get_irap_metrics(data.val_vn)"`) still works and applies the
+same metrics to every split.
+
+**Checkpoint selection** uses the first `val*` split in the `data` dict (its
+`amF1`), unless overridden with `checkpoint_split_prefix`. List the Vietnam split
+first (`data = dict(..., val_vn=v.val, val_bih=b.val)`) to checkpoint on Vietnam.
+
 ## Multi-scale inference
 
 `MultiScaleSequenceInference` wraps an `ImageSequenceClassifier` and applies it at multiple scales (default: 1.0, 0.75, 1/0.75), averaging probabilities across scales for each attribute.
@@ -283,7 +498,7 @@ For training with multi-scale supervision, use the `irap_local_rec_trainer_multi
 
 ## VLM integration (zero-shot & fine-tuning)
 
-The `vlm/` subpackage integrates Vision-Language Models (Qwen3-VL) for zero-shot and fine-tuned road attribute classification.
+The `vlm/` subpackage integrates vision-language models (such as Qwen3-VL) for zero-shot and fine-tuned road attribute classification.
 
 ### Zero-shot inference
 
@@ -329,10 +544,7 @@ Response parsing supports multiple formats via `ResponseScheme` subclasses:
 `Qwen3VLClassifier` wraps Qwen3-VL with LoRA adapters for Vidlu training integration:
 
 ```bash
-python scripts/run.py train \
-  "irap_gaim.make_vlm_bih_data()" "id" \
-  "irap_gaim.Qwen3VLClassifier,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=64" \
-  "irap_gaim.vlm_finetune_trainer"
+python scripts/run.py train "irap_gaim.make_vlm_bih_data(detail_level='attr_desc_vals', response_scheme='standard')" "id" "irap_gaim.Qwen3VLClassifier,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=64" "irap_gaim.vlm_finetune_trainer"
 ```
 
 Key design: adapter-only state dict (~100MB vs ~16GB full model), eager loading for optimizer compatibility, 4-bit quantization support.
@@ -349,10 +561,10 @@ Key design: adapter-only state dict (~100MB vs ~16GB full model), eager loading 
 ```bash
 VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
   "irap_gaim.make_bih_data()" "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_local_rec_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics()" \
+  --metrics "irap_gaim.get_irap_metrics(data.train)" \
   -r best \
   -m "irap_gaim.tools.inference"
 ```
@@ -404,7 +616,7 @@ Export per-segment features (for sequential enhancement / smoothing):
 ```bash
 python scripts/run.py test \
   "irap_gaim.make_bih_data()" "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=irap_gaim.get_class_counts(),attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
+  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
   -m "irap_gaim:export_feats,split='val',feat_dir='FEATS/val'"
@@ -447,9 +659,11 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 
 | Symbol | Description |
 |--------|-------------|
-| `ImageSequenceClassifier(class_counts, sequence_length, attention, encoder_f)` | Temporal sequence classifier |
+| `ImageSequenceClassifier(class_counts, sequence_length, attention, encoder_f, flip_conditioning)` | Temporal sequence classifier; `flip_conditioning=True` adds a horizontal-flip-flag embedding |
 | `ResNetEncoder(pretrained=True\|False)` | ResNet-18/34/50 backbone |
 | `dinov2_vit_encoder(variant, params_dir)` | DINOv2 ViT encoder factory |
+| `mae_vit_encoder(variant, params_dir)` | MAE ViT encoder factory (masking disabled; ImageNet norm) |
+| `Qwen3VLVisionEncoder(model_id, lora_r, load_in_4bit, ...)` | Qwen3-VL vision tower backbone with LoRA |
 | `MultiScaleSequenceInference(base_model, scales)` | Multi-scale probability averaging wrapper |
 | `GeneralLSTMModel(n_classes, input_encoders)` | Per-attribute LSTM for temporal smoothing |
 | `Qwen3VLClassifier(model_id, lora_r, ...)` | Qwen3-VL with LoRA for fine-tuning |
@@ -459,10 +673,13 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 | Symbol | Description |
 |--------|-------------|
 | `irap_local_rec_trainer` | Supervised trainer (2 frozen + 8 finetune epochs, color jitter, dynamic weights) |
+| `irap_local_rec_trainer_hflip` | Supervised trainer with horizontal-flip augmentation and flip-flag conditioning (model needs `flip_conditioning=True`) |
 | `irap_local_rec_trainer_multiscale` | Supervised trainer with multi-scale augmentation |
+| `irap_local_rec_trainer_qwen` | Supervised trainer for the LoRA `Qwen3VLVisionEncoder` backbone (optimizes heads + LoRA only, no freeze phase) |
 | `irap_semisup_trainer` | Semi-supervised consistency regularization trainer |
 | `irap_pseudo_label_trainer` | On-the-fly pseudo-label trainer |
 | `irap_pseudo_label_offline_trainer` | Offline pseudo-label trainer |
+| `combined_train_loader_f` | Training `data_loader_f` mixing separate `train*` splits at constant per-batch proportions (per-dataset `batch_size`) |
 | `vlm_finetune_trainer` | VLM LoRA fine-tuning trainer |
 | `FreezeThenFinetune` | Extension managing backbone freezing schedule |
 | `MultiScaleSupervisedStep` | Multi-scale train step |
