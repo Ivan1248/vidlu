@@ -30,6 +30,7 @@ def distribute_argtree_to_funcs(base_funcs, argtree_args):  # not used
 class TrainerConfig(NameDict):
     def __init__(self, *args, **kwargs):
         ext_args = []  # extension factories are concatenated in order of appearance
+        any_positional_ext = False
         all_kwargs = {}  # other kwargs are updated with potential overriding
         for x in args:
             if isinstance(x, TrainerConfig):
@@ -39,9 +40,16 @@ class TrainerConfig(NameDict):
             elif (isinstance(t := x.func if isinstance(x, functools.partial) else x, type)
                   and issubclass(t, te.TrainerExtension)):
                 ext_args.append(x)
+                any_positional_ext = True
             else:
                 raise ValueError(f"Invalid argument type: {type(x).__name__}.")
-        ext = tuple(kwargs.pop('extension_fs', ())) + tuple(ext_args)
+        if 'extension_fs' in kwargs:  # overrides inherited extensions, like other kwargs
+            if any_positional_ext:
+                raise ValueError("The extension_fs argument cannot be combined with extension"
+                                 + " factories passed as positional arguments.")
+            ext = tuple(kwargs.pop('extension_fs'))
+        else:
+            ext = tuple(ext_args)
         all_kwargs.update(kwargs)
         # argtree_kwargs = {k: v for k, v in all_kwargs.items() if isinstance(v, ArgTree)}
         # normal_kwargs = {k: v for k, v in all_kwargs if k not in argtree_kwargs.items()}

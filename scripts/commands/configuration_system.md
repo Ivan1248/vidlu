@@ -164,17 +164,17 @@ When applied to a function, an `ArgTree` binds top-level keys as keyword argumen
 
 `TrainerConfig` is a dictionary-like class for composing training configurations. It supports:
 
-1. **Inheritance via positional arguments** – Passing other `TrainerConfig` instances merges their settings
-2. **Extension factories** – Special handling for trainer extensions (passed as positional arguments or in `extension_fs`)
-3. **Keyword overrides** – Later values override earlier ones
+1. **Inheritance via positional arguments** – Passing other `TrainerConfig` instances merges their settings; their extension factories are concatenated in order of appearance, together with extension factories passed as positional arguments
+2. **Keyword overrides** – Keyword arguments override inherited values; this includes `extension_fs`, which replaces all inherited extensions (combining it with positional extension factories is an error)
 
 **Definition:**
 
 ```python
 class TrainerConfig(NameDict):
     def __init__(self, *args, **kwargs):
-        # Extension factories are concatenated in order
+        # Extension factories are concatenated in order of appearance
         ext_args = []
+        any_positional_ext = False
         all_kwargs = {}
         for x in args:
             if isinstance(x, TrainerConfig):
@@ -183,8 +183,15 @@ class TrainerConfig(NameDict):
                 all_kwargs.update(d)
             elif issubclass(x, TrainerExtension):
                 ext_args.append(x)
+                any_positional_ext = True
+        if 'extension_fs' in kwargs:  # overrides inherited extensions, like other kwargs
+            if any_positional_ext:
+                raise ValueError(...)
+            ext = tuple(kwargs.pop('extension_fs'))
+        else:
+            ext = tuple(ext_args)
         all_kwargs.update(kwargs)
-        super().__init__(**all_kwargs, extension_fs=tuple(ext_args) + tuple(kwargs.get('extension_fs', ())))
+        super().__init__(**all_kwargs, extension_fs=ext)
 ```
 
 **Composition example:**

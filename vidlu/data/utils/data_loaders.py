@@ -42,7 +42,7 @@ def make_data_loaders(data_loader_f, datasets, kwargs):
     return data_loaders
 
 
-def combined_data_loader(*datasets, data_loader_f=None, collate_fn=None,
+def combined_data_loader(*datasets, data_loader_f=tud.DataLoader, collate_fn=None,
                          primary_index='shortest', **kwargs):
     """Merges a fixed number of examples from each dataset into single batches.
 
@@ -59,7 +59,7 @@ def combined_data_loader(*datasets, data_loader_f=None, collate_fn=None,
     # setdefault, not a partial binding, so a caller-provided (e.g. deterministic)
     # worker_init_fn is not clobbered nor duplicated.
     kwargs.setdefault('worker_init_fn', worker_init_fn)
-    inner_f = partial(tud.DataLoader, collate_fn=list)
+    inner_f = partial(data_loader_f, collate_fn=list)
     data_loaders = make_data_loaders(inner_f, datasets, kwargs)
     return CombinedDataLoader(*data_loaders, collate_fn=collate_fn or default_collate,
                               primary_index=primary_index)

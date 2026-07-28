@@ -51,6 +51,19 @@ def _repeat(iterable, n):
 
 @typechecked
 class MultiDataLoaderBase:
+    """Base class for iterating over several data loaders in lock-step.
+
+    Each iteration yields one batch from each inner loader (as a `BatchTuple`). Loaders
+    shorter than the primary one are cycled, so all keep producing until the primary is
+    exhausted.
+
+    Args:
+        *data_loaders: The inner data loaders to iterate jointly.
+        primary_index: Selects the loader whose length is the epoch length: an index, or
+            ``'shortest'``/``'longest'`` (fewest/most batches), or ``'equal'``, which
+            requires equal lengths and uses the first.
+    """
+
     def __init__(self, *data_loaders,
                  primary_index: T.Optional[
                      T.Union[num.Integral, T.Literal['longest', 'shortest', 'equal']]] = 'shortest'):
