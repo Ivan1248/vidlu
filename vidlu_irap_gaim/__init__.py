@@ -13,6 +13,8 @@ from .models import (
     ResNetEncoder,
     ViTEncoder,
     dinov2_vit_encoder,
+    MAEEncoder,
+    mae_vit_encoder,
     MultiScaleSequenceInference,
 )
 from .models.pretraining import vistas_params_spec
@@ -26,7 +28,8 @@ from .metrics import (
 )
 
 # Training
-# Trainer configs come from .training.configs.__all__, so new ones need no change here.
+# Trainer configs are re-exported via .training.configs.__all__ so new configs
+# don't need to be added here manually.
 from .training.configs import *
 from .training import (
     FreezeThenFinetune,

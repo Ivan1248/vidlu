@@ -216,55 +216,6 @@ Use `variant='facebook/vit-mae-large'` / `'-huge'` (or any HF ViT-MAE repo id) f
 larger models. `irap_local_rec_trainer` (freeze-then-finetune) also works, since the
 encoder's `pooling_parameters()` is empty (frozen phase trains heads only).
 
-### Qwen3-VL image encoder (LoRA fine-tuning)
-
-Uses the **vision tower** of `Qwen/Qwen3-VL-8B-Instruct` as the backbone, fine-tuned
-with LoRA (the base tower stays frozen). This is distinct from `Qwen3VLClassifier`,
-which fine-tunes the whole generative VLM. The tower is run per frame, so the model's
-own image processor handles patchification and Qwen normalization — feed raw `[0,1]`
-inputs with the `id` adapter. Requires `peft` (and `bitsandbytes` for 4-bit):
-
-```bash
-IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
-  "id" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.Qwen3VLVisionEncoder,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=16,load_in_4bit=True)" \
-  "irap_gaim.irap_local_rec_trainer_qwen" \
-  --metrics "irap_gaim.get_irap_metrics(data.train)"
-```
-
-The `irap_local_rec_trainer_qwen` trainer restricts the optimizer to the trainable
-(heads + LoRA) parameters and skips `FreezeThenFinetune` (which would unfreeze the
-whole base tower). Only `attention=False` is supported for now.
-
-### Horizontal flips with flip-flag conditioning
-
-Horizontal flips are not label-preserving for iRAP attributes: 12 of the 41 attributes
-form driver-side/passenger-side pairs (pedestrian flow along the road, roadside severity
-distance/object, paved shoulder, land use, sidewalk), and a flipped image additionally
-depicts mirrored signage and markings. Instead of swapping the paired labels, the
-`irap_local_rec_trainer_hflip` trainer keeps targets fixed and passes a per-example
-binary flip flag to the model, which must be built with `flip_conditioning=True`
-(a zero-initialized embedding added to the sequence feature before the attribute heads).
-At inference the flag is always 0, so flipped samples act as a regularizer through the
-shared backbone features while the artificial mirrored-world distribution stays isolated
-in the `flip=1` mode. Flips are applied to the whole frame stack at once, keeping the
-temporal context consistent.
-
-```bash
-IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
-  "standardize" \
-  "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,flip_conditioning=True,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False)" \
-  "irap_gaim.irap_local_rec_trainer_hflip" \
-  --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "irap_gaim.get_irap_metrics(data.train)"
-```
-
-`flip_conditioning=False` (the default) leaves the model and existing checkpoints
-unchanged; the flip probability can be overridden via
-`"irap_gaim.irap_local_rec_trainer_hflip,train_step=irap_gaim.HFlipSupervisedStep(amp=True,p=0.5)"`.
-
 ### iRAP-Vietnam
 
 iRAP-Vietnam shares the same 41-attribute schema (same `attribute_metadata.json`)
@@ -294,7 +245,6 @@ form silently reloads `make_bih_data()` to resolve the attribute set.
 | ResNet-18 + Vistas | `ResNetEncoder(pretrained=False)` + `--params` | Vistas `.pt` file | Best for road scenes; load via `--params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt"` |
 | DINOv2 ViT-B/14 | `dinov2_vit_encoder(variant='dinov2_vitb14')` | Auto-downloaded | Self-supervised; no `--params` needed |
 | MAE ViT-B/16 | `mae_vit_encoder(variant='facebook/vit-mae-base')` | Auto-downloaded (HF) | Masking disabled; use `standardize(imagenet)` |
-| Qwen3-VL vision tower | `Qwen3VLVisionEncoder(model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=16)` | Auto-downloaded (HF) | LoRA fine-tuning; use `id` adapter + `irap_local_rec_trainer_qwen`; needs `peft` |
 
 ## Metrics & dynamic weighting
 
@@ -659,11 +609,10 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 
 | Symbol | Description |
 |--------|-------------|
-| `ImageSequenceClassifier(class_counts, sequence_length, attention, encoder_f, flip_conditioning)` | Temporal sequence classifier; `flip_conditioning=True` adds a horizontal-flip-flag embedding |
+| `ImageSequenceClassifier(class_counts, sequence_length, attention, encoder_f)` | Temporal sequence classifier |
 | `ResNetEncoder(pretrained=True\|False)` | ResNet-18/34/50 backbone |
 | `dinov2_vit_encoder(variant, params_dir)` | DINOv2 ViT encoder factory |
 | `mae_vit_encoder(variant, params_dir)` | MAE ViT encoder factory (masking disabled; ImageNet norm) |
-| `Qwen3VLVisionEncoder(model_id, lora_r, load_in_4bit, ...)` | Qwen3-VL vision tower backbone with LoRA |
 | `MultiScaleSequenceInference(base_model, scales)` | Multi-scale probability averaging wrapper |
 | `GeneralLSTMModel(n_classes, input_encoders)` | Per-attribute LSTM for temporal smoothing |
 | `Qwen3VLClassifier(model_id, lora_r, ...)` | Qwen3-VL with LoRA for fine-tuning |
@@ -673,9 +622,7 @@ Replace `<FEATURE_DIM>` with the flattened dimension of one exported `*.npy`, an
 | Symbol | Description |
 |--------|-------------|
 | `irap_local_rec_trainer` | Supervised trainer (2 frozen + 8 finetune epochs, color jitter, dynamic weights) |
-| `irap_local_rec_trainer_hflip` | Supervised trainer with horizontal-flip augmentation and flip-flag conditioning (model needs `flip_conditioning=True`) |
 | `irap_local_rec_trainer_multiscale` | Supervised trainer with multi-scale augmentation |
-| `irap_local_rec_trainer_qwen` | Supervised trainer for the LoRA `Qwen3VLVisionEncoder` backbone (optimizes heads + LoRA only, no freeze phase) |
 | `irap_semisup_trainer` | Semi-supervised consistency regularization trainer |
 | `irap_pseudo_label_trainer` | On-the-fly pseudo-label trainer |
 | `irap_pseudo_label_offline_trainer` | Offline pseudo-label trainer |
