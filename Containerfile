@@ -90,7 +90,10 @@ if cuda_toolkit_version.split(".")[:2] != torch_cuda_version.split(".")[:2]:
 PY
 
 # IRAP-Vietnam data preparation: Excel + parquet I/O
-RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir pandas openpyxl xlrd pyarrow 
+RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir pandas openpyxl xlrd pyarrow
+
+# Experiment tracking
+RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir wandb
 
 #ENV CUDA_HOME=/usr/local/cuda
 #ENV PATH=${CUDA_HOME}/bin:${PATH}
@@ -106,15 +109,17 @@ RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir pandas openpyxl xl
 
 #RUN echo 'alias python=python3' >> ~/.bashrc
 
-#RUN --mount=type=secret,id=wandb,target=/root/.wandb/api.key wandb login `cat /root/.wandb/api.key`
-
 # Expose a port if your app requires it (optional)
 # EXPOSE 8080
 
 #WORKDIR /app
 #WORKDIR /app/scripts
 
-#RUN --mount=type=secret,id=wandb,target=/root/.wandb/api.key wandb login `cat /root/.wandb/api.key`
+# W&B: no login/API key is baked into the image (it would persist in the layer and
+# leak on `docker push`, and it's useless with `--user $(id -u)`, whose $HOME is not
+# writable). Pass the key at `docker run` time instead:
+#   docker run ... -e WANDB_API_KEY=<key> -e WANDB_PROJECT=vidlu ... vidlu_image ...
+# WANDB_API_KEY bypasses ~/.netrc entirely, so it works regardless of $HOME/user.
 
 # Command to run when the container is started with no specified command
 CMD ["bash", "-i"]
@@ -122,4 +127,4 @@ CMD ["bash", "-i"]
 ## docker build -t vidlu_image .
 ## docker run -it -v ~/data:/data -v ~/projects:/projects vidlu_image /bin/bash
 ## docker run -v ~/data:/data -v ~/app/vidlu:/app/vidlu vidlu_image python run.py
-## docker run -it -v ~/data:/app/data -v ~/projects/vidlu:/app/vidlu -w /app/vidlu/scripts -e <(env | grep -E 'CUDA_.*|VIDLU_.*') vidlu_image bash $command
+## docker run -it -v ~/data:/app/data -v ~/projects/vidlu:/app/vidlu -w /app/vidlu/scripts -e <(env | grep -E 'CUDA_.*|VIDLU_.*|WANDB_.*') vidlu_image bash $command

@@ -37,6 +37,11 @@ class MetricTracker(T.Protocol):
     def log_scalars(self, metrics: T.Mapping[str, T.Any], step: int,
                     split: str | None = None) -> None: ...
 
+    def log_images(self, images: T.Mapping[str, T.Any], step: int,
+                   split: str | None = None) -> None: ...
+
+    def finish(self, exit_code: int = 0) -> None: ...
+
 
 @dataclass
 class TrainingExperimentFactoryArgs:
@@ -50,7 +55,9 @@ class TrainingExperimentFactoryArgs:
     imports: str
     pre: str
     experiment_suffix: str
+    quick_eval_count: int
     resume: T.Optional[T.Literal["strict", "?", "best", "restart"]]
+    tracker: T.Optional[T.Literal["wandb"]]
     device: T.Optional[torch.device]
     verbosity: int
     deterministic: bool
@@ -83,12 +90,25 @@ def to_dhm_str(time):
 #     return epochs[argmax]
 
 
+def training_progress_step(training_state: IterState) -> int:
+    """Computes a monotonic global step from the training loop's state.
+
+    Unlike `IterState.abs_iteration`, this stays monotonic across resumed runs
+    because `epoch` is checkpointed while `abs_iteration` is not. Returns 0
+    before training has started (`batch_count` unknown).
+    """
+    ts = training_state
+    if ts.get("batch_count") is None:
+        return 0
+    return max(ts.epoch, 0) * ts.batch_count + ts.iteration % ts.batch_count
+
+
 def report_metrics(
         state: IterState, is_training: bool, metrics: dict, epoch: int, epoch_count: int,
         split_name=None, line_width=120,
         special_format: T.Mapping[str, T.Callable[[str, T.Any], str]] = None,
         prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None,
-        tracker: "MetricTracker | None" = None,
+        tracker: "MetricTracker | None" = None, step: int | None = None,
         filter=lambda k, v: not k.startswith("_")):
     def fmt(v, scalar_prec=scalar_prec):
         with np.printoptions(precision=array_prec, threshold=4 if is_training else None,
@@ -129,7 +149,12 @@ def report_metrics(
         logger.log(f"{prefix}: {make_eval_str(metrics_to_report)}")
         # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
         if tracker is not None:
-            tracker.log_scalars(metrics_to_report, step=state.iteration,
+            # The tracker gets all metrics, not just the ones shown on the console. The "_"
+            # prefix is a console-display convention, so it is stripped here, not in the tracker.
+            tracked_metrics = {k[1:] if isinstance(k, str) and k.startswith("_") else k: v
+                               for k, v in metrics.items()}
+            tracker.log_scalars(tracked_metrics,
+                                step=state.abs_iteration if step is None else step,
                                 split="train" if is_training else split_name)
 
 
@@ -212,7 +237,10 @@ class ProgressMonitor(TrainingCallback):
     def on_training_started(self, state: IterState):
         """Create progress bar for training (manual updates, no data loader mutation)."""
         total = state.batch_count * state.max_epochs
-        self.train_pbar = tqdm(total=total, desc="Training", leave=True, dynamic_ncols=True)
+        # Resume is epoch-granular, so `state.epoch + 1` completed epochs precede this run
+        # (`state.epoch == -1` on a fresh start, giving `initial=0`).
+        self.train_pbar = tqdm(total=total, initial=(state.epoch + 1) * state.batch_count, 
+                               desc="Training", leave=True, dynamic_ncols=True)
 
     def on_training_completed(self, state: IterState):
         if hasattr(self, 'train_pbar'):
@@ -226,11 +254,18 @@ class ProgressMonitor(TrainingCallback):
         self.train_pbar.update(1)
         iter_ = state.iteration % state.batch_count
         if iter_ in self.report_iters:
+            step = training_progress_step(state)
             metrics = self.trainer.get_metric_values(reset=True)
             report_metrics(state, is_training=True, metrics=metrics,
                            epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
                            line_width=self.line_width, special_format=self.special_format,
-                           logger=self.logger, tracker=self.tracker)
+                           logger=self.logger, tracker=self.tracker, step=step)
+            if self.tracker is not None:
+                lrs = self.trainer.lr_scheduler.get_last_lr()
+                self.tracker.log_scalars(
+                    {"lr": lrs[0]} if len(lrs) == 1 else
+                    {f"lr.{i}": lr for i, lr in enumerate(lrs)},
+                    step=step, split=None)
 
     def on_evaluation_started(self, state: IterState):
         """Create progress bar for evaluation (manual updates, no data loader mutation)."""
@@ -256,7 +291,8 @@ class ProgressMonitor(TrainingCallback):
                        epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
                        split_name=split_name, line_width=self.line_width,
                        special_format=self.special_format, logger=self.logger,
-                       tracker=self.tracker)
+                       tracker=self.tracker,
+                       step=training_progress_step(self.trainer.training.state))
 
     def __repr__(self):
         return f"ProgressMonitor(eval_count={self.eval_count}, epoch_count={self.epoch_count}, min_train_report_count={self.min_train_report_count}, line_width={self.line_width}, special_format={self.special_format})"
@@ -301,23 +337,21 @@ class ValidationCheckpointHandler(TrainingCallback):
 
 
 class QuickValidationHandler(TrainingCallback):
-    """Runs periodic in-epoch evaluation on a small validation dataset (val_quick).
+    """Schedules periodic in-epoch evaluation on a small validation dataset (val_quick).
 
     Enabled when data contains a "val_quick" key. Does not affect checkpointing.
     quick_eval_count is the total number of quick validations for the whole
     training run, distributed evenly across all iterations (like eval_count).
+
+    This callback only decides *when* to run the eval. Reporting (console and
+    tracker) is handled by ProgressMonitor's `on_evaluation_epoch_completed`,
+    which fires for every completed evaluation, including the one triggered here.
     """
 
-    def __init__(self, data, quick_eval_count: int = 5, logger: Logger = None,
-                 line_width: int = 120, special_format: T.Mapping[str, T.Callable] = None,
-                 epoch_count: int = 1, tracker: "MetricTracker | None" = None):
+    def __init__(self, data, quick_eval_count: int = 5, epoch_count: int = 1):
         self.val_quick_ds = data.get("val_quick")
         self.quick_eval_count = quick_eval_count
         self.report_iters = None
-        self.logger = logger
-        self.tracker = tracker
-        self.line_width = line_width
-        self.special_format = special_format or {}
         self.epoch_count = epoch_count
 
     def on_training_iter_completed(self, state: IterState):
@@ -326,15 +360,8 @@ class QuickValidationHandler(TrainingCallback):
         if self.report_iters is None:
             total_iters = self.epoch_count * state.batch_count
             self.report_iters = get_report_iters(self.quick_eval_count, total_iters)
-        if state.abs_iteration not in self.report_iters:
-            return
-        self.trainer.eval(self.val_quick_ds, split_name="val_quick")
-        metrics = self.trainer.get_metric_values("val_quick", reset=True)
-        report_metrics(
-            state, is_training=False, metrics=metrics,
-            epoch=self.trainer.training.state.epoch, epoch_count=self.epoch_count,
-            split_name="val_quick", line_width=self.line_width,
-            special_format=self.special_format, logger=self.logger, tracker=self.tracker)
+        if state.abs_iteration in self.report_iters:
+            self.trainer.eval(self.val_quick_ds, split_name="val_quick")
 
     def __repr__(self):
         return f"QuickValidationHandler(quick_eval_count={self.quick_eval_count})"
@@ -439,9 +466,8 @@ def define_training_loop_actions(
             checkpoint_split_prefix=checkpoint_split_prefix)]
     if "val_quick" in data:
         callbacks.append(QuickValidationHandler(
-            data=data, quick_eval_count=quick_eval_count, logger=logger,
-            line_width=line_width, special_format=special_format,
-            epoch_count=trainer.epoch_count, tracker=tracker))
+            data=data, quick_eval_count=quick_eval_count,
+            epoch_count=trainer.epoch_count))
     callbacks.append(InteractiveController(data=data, cpman=cpman, logger=logger,
                                            main_metrics=main_metrics,
                                            interact_shortcuts=interact_shortcuts,
@@ -478,18 +504,33 @@ def get_device(device_id: T.Optional[T.Union[str, int]], distributed: bool):
         return torch.device(device_id)
 
 
-def get_experiment_name(training_args):
+def get_experiment_command(training_args, prefix="run.py train "):
+    """Builds the ``run.py train ...`` command line that (re)starts the experiment.
+
+    `prefix` is prepended before the arguments; pass ``""`` to get only the
+    arguments (e.g. for storing in a tracker).
+    """
     a = training_args
-    learner_name = to_valid_path(f"{a.input_adapter}/{a.model}/{a.trainer}"
-                                 + (f"/{a.params}" if a.params else ""), split_long_names=True)
-    expsuff = a.experiment_suffix or "_"
-    experiment_id = f'{to_valid_path(a.data, split_long_names=True)}/{learner_name}/{expsuff}'
-    return experiment_id
+    return (f'{prefix}"{a.data}" "{a.input_adapter}" "{a.model}"'
+            + f' "{a.trainer}" --params "{a.params}" -d {repr(a.device)}'
+            + f' --metrics "{a.metrics}"'
+            + (f' --tracker {a.tracker}' if a.tracker else '')
+            + f' -e {a.experiment_suffix or "_"} -r')
+
+
+def get_experiment_id_parts(training_args):
+    a = training_args
+    return [a.data, a.input_adapter, a.model, a.trainer, a.params or "", a.experiment_suffix or "_"]
+
+
+def get_experiment_path(training_args):
+    path = "/".join(get_experiment_id_parts(training_args))
+    return f'{to_valid_path(path, split_long_names=True)}'
 
 
 def create_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_root):
     a = training_args
-    experiment_id = get_experiment_name(training_args)
+    experiment_id = get_experiment_path(training_args)
     cpman = CheckpointManager(
         checkpoints_root, experiment_name=experiment_id, experiment_info=training_args,
         separately_saved_state_parts=("model",), n_best_kept=1,
@@ -501,6 +542,28 @@ def create_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, chec
         log_func=lambda s: s.get('log', ""),
         name_suffix_func=lambda s: f"{s['epoch']}_{s['perf']:.3f}")
     return cpman
+
+
+def make_tracker(training_args: TrainingExperimentFactoryArgs,
+                 cpman: CheckpointManager) -> "MetricTracker | None":
+    """Creates the metric-tracking backend selected by `training_args.tracker`.
+
+    Returns None when tracking is disabled or in non-main distributed processes.
+    """
+    a = training_args
+    if a.tracker is None or not vud.is_main_process():
+        return None
+    if a.tracker != "wandb":
+        raise ValueError(f"Unknown tracker: {a.tracker!r}. Supported: \"wandb\".")
+    from vidlu.tracking import WandbTracker
+    # device is not serializable and tracker is redundant in the stored config.
+    non_config_fields = {"device", "tracker"}
+    assert non_config_fields <= vars(a).keys(), "Excluded field renamed in the args dataclass?"
+    config = {k: v for k, v in vars(a).items() if k not in non_config_fields}
+    config["command"] = get_experiment_command(a)
+    return WandbTracker(run_name=get_experiment_command(a, ""), config=config,
+                        run_id_path=cpman.experiment_dir / "wandb_run_id.txt",
+                        resume=a.resume not in (None, "restart"))
 
 
 def load_parameters(model, params_str, params_dir):
@@ -582,6 +645,7 @@ class TrainingExperiment:
     cpman: CheckpointManager
     attachments: T.Sequence[object]
     logger: Logger
+    tracker: "MetricTracker | None" = None
 
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
@@ -598,6 +662,8 @@ class TrainingExperiment:
 
         with indent_print('\nInitializing checkpoint manager...'):
             experiment.cpman = cpman = create_checkpoint_manager(a, dirs.saved_states)
+
+        experiment.tracker = tracker = make_tracker(a, cpman)
 
         try:
             with indent_print('\nInitializing data...'):
@@ -621,7 +687,8 @@ class TrainingExperiment:
                 experiment.trainer = trainer
 
             define_training_loop_actions(trainer, cpman, experiment.data, logger,
-                                         main_metrics=main_metrics)
+                                         main_metrics=main_metrics, tracker=tracker, 
+                                         quick_eval_count=a.quick_eval_count)
         except Exception:
             raise
         finally:

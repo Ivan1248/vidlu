@@ -3,7 +3,9 @@ from pathlib import Path
 import pytest
 from argparse import Namespace
 
-from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
+from vidlu.experiments import (TrainingExperiment, TrainingExperimentFactoryArgs,
+                               training_progress_step)
+from vidlu.training.trainers import IterState
 
 
 def get_dirs(tmpdir):
@@ -13,6 +15,11 @@ def get_dirs(tmpdir):
     for d in dirs.values():
         d.mkdir(exist_ok=True)
     return Namespace(**dirs)
+
+
+def test_training_progress_step():
+    assert training_progress_step(IterState()) == 0  # before training, batch_count unknown
+    assert training_progress_step(IterState(batch_count=10, epoch=2, iteration=3)) == 23
 
 
 @pytest.mark.skip(reason="Fatal Python error: Aborted in GitHub Actions.")

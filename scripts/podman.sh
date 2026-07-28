@@ -130,15 +130,32 @@ if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
 fi
 # --------------------------------------------------------------------------
 
+# W&B: mount ~/.netrc so a `wandb login` (on the host or in an earlier container) persists,
+# and forward any WANDB_* variables exported in the calling shell for one-off overrides.
+# The files are touched first so that podman does not create directories in their place.
+netrc_file="$(echo ~/.netrc)"
+touch "$netrc_file"
+wandb_args=(-v "$netrc_file:$netrc_file")
+for var in WANDB_API_KEY WANDB_PROJECT WANDB_ENTITY WANDB_MODE; do
+  if [ -n "${!var:-}" ]; then wandb_args+=(-e "$var=${!var}"); fi
+done
+
+# Bash history, persisted across container runs.
+histfile="$(echo ~/.bash_history)"
+touch "$histfile"
+
 set -o xtrace
 podman run -it --rm --gpus all \
   --ipc=host \
   -e "HOME=$(echo ~)" \
   -v "$(echo ~/data):$(echo ~/data)" \
   -v "$(echo ~/projects):$(echo ~/projects)" \
+  -v "$(echo ~/.cache):$(echo ~/.cache)" \
+  -v "$histfile:$histfile" \
   --workdir $PWD \
   -e "TERM=xterm-256color" \
   "${gui_args[@]}" \
+  "${wandb_args[@]}" \
   -v "/mnt:/mnt" \
   $image_name "$@"
 set +o xtrace

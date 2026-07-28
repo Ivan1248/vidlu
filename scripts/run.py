@@ -21,7 +21,8 @@ import _context  # vidlu, dirs
 import dirs
 from vidlu import factories
 import vidlu.experiments as ve
-from vidlu.experiments import TrainingExperiment, TrainingExperimentFactoryArgs
+from vidlu.experiments import (TrainingExperiment, TrainingExperimentFactoryArgs,
+                               get_experiment_command)
 from vidlu.utils.func import Empty, call_with_assignable_args
 from vidlu.utils.misc import indent_print, query_user
 from vidlu.utils import debug
@@ -57,7 +58,7 @@ def log_run(status, result=None):
 
 def fetch_remote_experiment(args, dirs):
     remote_name, port, *_ = f'{args.remote}:'.split(':')
-    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_name(args))).strip("'")
+    dir = shlex.quote(str(Path(dirs.saved_states) / ve.get_experiment_path(args))).strip("'")
     cmd = ["rsync", "-azvLO", "--relative", "--delete", f"{remote_name}:{dir}/", f"/"]
     if len(port) > 0:
         cmd += [f"--rsh", f"ssh -p{port}"]
@@ -109,6 +110,7 @@ def eval_on_test_sets(exp, prefix="test"):
             exp.trainer.eval(ds, split_name=name)
 
 def train(args):
+    exp = None
     try:
         if args.distributed:
             dist.init_process_group(os.environ.get("VIDLU_DIST_INIT", 'gloo'))
@@ -124,11 +126,8 @@ def train(args):
         exp = make_experiment(args, dirs=dirs)
 
         is_resuming = args.resume not in (None, "restart")
-        (print if is_resuming else exp.logger.log)("Resume command:\n\x1b[0;30;42m"
-            + f'run.py train "{args.data}" "{args.input_adapter}" "{args.model}"'
-            + f' "{args.trainer}" --params "{args.params}" -d {repr(args.device)} '
-                f'--metrics "{args.metrics}"'
-            + f' -e {args.experiment_suffix or "_"} -r\x1b[0m')
+        (print if is_resuming else exp.logger.log)(
+            "Resume command:\n\x1b[0;30;42m" + get_experiment_command(args) + "\x1b[0m")
         (print if is_resuming else exp.logger.log)(f"RNG seed: {args.seed}")
 
         with get_profiler() if args.profile else ctx.suppress() as prof:
@@ -178,13 +177,15 @@ def train(args):
             cache_cleanup_time = int(os.environ.get("VIDLU_DATA_CACHE_CLEANUP_TIME", 60))
             clean_up_dataset_cache(dirs.cache / 'datasets', timedelta(days=cache_cleanup_time))
     finally:
+        if exp is not None and exp.tracker is not None:
+            exp.tracker.finish(exit_code=0 if sys.exc_info()[0] is None else 1)
         if args.distributed and dist.is_initialized():
             dist.destroy_process_group()
 
 
 def get_path(args):
     a = call_with_assignable_args(TrainingExperimentFactoryArgs, args.__dict__)
-    print(dirs.saved_states / ve.get_experiment_name(a))
+    print(dirs.saved_states / ve.get_experiment_path(a))
 
 
 def test(args):
@@ -264,12 +265,17 @@ def add_standard_arguments(parser, func):
                         help="No evaluation on the training set.")  # TODO: remove
     parser.add_argument("--train_eval", action='store_true',
                         help="Evaluation on the training set.")
+    parser.add_argument("--quick_eval_count", type=int, default=100,
+                        help="Number of quick evaluations (on val_quick) per training run.")
     parser.add_argument("-s", "--seed", type=int, default=None,
                         help="RNG seed. Default: int(time()) %% 100.")
     parser.add_argument("--deterministic", action='store_true',
                         help="Usage of deterministic operations.")
     parser.add_argument("--factory_version", type=int, default=2)
     # reporting, debugging
+    parser.add_argument("--tracker", type=str, choices=["wandb"], default=None,
+                        help="Experiment tracking backend. Configure via the WANDB_PROJECT,"
+                             + " WANDB_ENTITY and WANDB_MODE environment variables.")
     parser.add_argument("--debug", help="", action='store_true')
     parser.add_argument("--print_calls", help="", action='store_true')
     parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
