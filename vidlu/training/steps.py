@@ -32,9 +32,11 @@ from vidlu.training.robustness import attack_as_perturber
 def untag(x):
     """Changes the type of an instance of a Tensor subtype (such as vidlu.data.DataModality) to Tensor.
 
+    Applies to every tensor in `x`, which can also be a collection that contains tensors.
+
     The original object is unchanged.
     """
-    return x.as_subclass(torch.Tensor)
+    return vtu.map_tensors(x, lambda t: t.as_subclass(torch.Tensor))
 
 
 def maybe_with_output_shape(model, output_shape):

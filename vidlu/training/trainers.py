@@ -13,9 +13,10 @@ from torch import nn
 import numpy as np
 
 import vidlu.utils.distributed as vud
-from vidlu.data import DataLoader, BatchTuple, Dataset
+from vidlu.data import DataLoader, Dataset
 import vidlu.data.utils as vdu
 import vidlu.modules.utils as vmu
+import vidlu.torch_utils as vtu
 from vidlu.optim.lr_schedulers import ConstLR
 from vidlu.utils.func import params, Empty, Required
 from vidlu.utils.collections import NameDict
@@ -120,10 +121,12 @@ class EpochLoop(object):
                 self.state.abs_iteration += 1
                 self.iter_completed(self.state)
                 del self.state.batch, self.state.result
-            finally:
-                if self.should_terminate or self.should_terminate_epoch:
-                    self.should_terminate = self.should_terminate_epoch = False
-                    return True
+            except Exception as e:
+                self.logger.exception(f"Exception in iteration {i}.")
+            if self.should_terminate or self.should_terminate_epoch:
+                self.should_terminate = self.should_terminate_epoch = False
+                return True
+        return False
 
     def run(self, data, max_epochs=1, restart=True, **kwargs):
         """Runs the `process_function` over the passed data.
@@ -179,23 +182,19 @@ class EpochLoop(object):
 # Batch preparation ################################################################################
 
 def default_prepare_batch(batch, feature_type=torch.Tensor, device=None, non_blocking=False):
-    """A function for putting feature batches on the relevant device"""
+    """Moves every tensor in a batch to the relevant device.
 
-    def _prepare(x):
-        if isinstance(x, torch.Tensor):
-            return x.to(device=device, non_blocking=non_blocking)
-        return x
-
-    if isinstance(batch, feature_type):
-        return _prepare(batch)
-    elif hasattr(type(batch), "items"):
-        return type(batch)({k: _prepare(x) for k, x in batch.items()})
-    elif isinstance(batch, BatchTuple):
-        return BatchTuple(default_prepare_batch(b, feature_type, device, non_blocking)
-                          for b in batch)
-    elif isinstance(batch, T.Sequence):
-        return type(batch)(_prepare(x) for x in batch)
-    raise TypeError(f"Invalid batch type {type(batch)}")
+    Recurses into nested mappings and sequences, so a batch whose entries are themselves
+    collections of tensors (e.g. one entry per input modality) is moved whole. Entries
+    that are not tensors or collections (ids, strings, other metadata) pass through at
+    any depth; only the batch itself is required to be of a supported type, which catches
+    a caller passing something that is not a batch.
+    """
+    if not (isinstance(batch, feature_type) or hasattr(type(batch), "items")
+            or (isinstance(batch, T.Sequence) and not isinstance(batch, (str, bytes)))):
+        raise TypeError(f"Invalid batch type {type(batch)}")
+    return vtu.map_tensors(batch, lambda x: x.to(device=device, non_blocking=non_blocking), 
+                           feature_type=feature_type)
 
 
 # Evaluator and trainer ############################################################################

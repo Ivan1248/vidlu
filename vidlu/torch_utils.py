@@ -26,6 +26,27 @@ def round_float_to_int(x, dtype=torch.int):
     return x.sign().mul_(0.5).add_(x).to(dtype)
 
 
+def map_tensors(x, func, feature_type=torch.Tensor):
+    """Applies `func` to every tensor in a tree of tensors, preserving the structure.
+
+    Mappings and sequences are branches; anything else is a leaf. A leaf that is not a
+    tensor -- an id, a string, other metadata -- is returned unchanged, since a batch
+    legitimately carries such entries alongside its tensors.
+
+    This is what lets a batch hold one entry per input modality, each entry a collection
+    of tensors, rather than only top-level tensors.
+    """
+    if isinstance(x, feature_type):
+        return func(x)
+    if hasattr(type(x), "items"):
+        return type(x)({k: map_tensors(v, func) for k, v in x.items()})
+    # `str`/`bytes` are `Sequence`s, and rebuilding one from a generator would replace it
+    # with the generator's repr rather than recursing into it.
+    if isinstance(x, T.Sequence) and not isinstance(x, (str, bytes)):
+        return type(x)(map_tensors(v, func) for v in x)
+    return x
+
+
 # General context managers (move out of utils/torch?
 
 def switch_use_of_deterministic_algorithms(value):

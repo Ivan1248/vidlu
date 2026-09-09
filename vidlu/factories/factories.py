@@ -9,7 +9,7 @@ import vidlu.modules as vm
 from vidlu.models import params as mparams
 import vidlu.data.utils as vdu
 from vidlu.data import DataLoader, Dataset, Record
-from vidlu.training import Trainer
+from vidlu.training import Trainer, default_prepare_batch
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
 import vidlu.utils.func as uf
@@ -17,6 +17,7 @@ from vidlu.utils.func import Reserved, partial
 from vidlu.utils.importing import parse_aliased_imports_expression
 from vidlu.extensions import extensions
 from vidlu.transforms.data_preparation import prepare_element
+import vidlu.torch_utils as vtu
 
 from . import defaults
 
@@ -305,13 +306,26 @@ def get_input_adapter(input_adapter_str, *, data_stats=None):
     raise NotImplementedError()
 
 
+def make_init_input_smaller(init_input):
+    """A large image is cropped, since only shapes drive the build.
+
+    Only image batches (NCHW) are croppable; an input of any other form -- a feature
+    sequence, or a mapping with one entry per input modality -- is built on as it is.
+    """
+    if (isinstance(init_input, torch.Tensor) and init_input.dim() == 4
+            and min(init_input.shape[-2:]) > 128):
+        return init_input[:, :, :128, :128]
+    return init_input
+
+
 def build_and_init_model(model, init_input, device):
     model.eval()
     if device is not None:
         model.to(device)
-        init_input = init_input.to(device)
-    if min(init_input.shape[-2:]) > 128:  # smaller input for faster initialization
-        init_input = init_input[:, :, :128, :128]
+        # Not `init_input.to(device)`: an input can be a collection with one entry per
+        # input modality, and every tensor in it has to reach the device.
+        init_input = vtu.map_tensors(init_input, lambda x: x.to(device=device))
+    init_input = make_init_input_smaller(init_input)
     if hasattr(model, 'initialize'):
         model.initialize(init_input)
     else:
