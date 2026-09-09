@@ -1,17 +1,17 @@
 import dataclasses as dc
-import os
-from pathlib import Path
-import shutil
-import warnings
-import typing as T
 import logging
 import math
+import os
+import shutil
+import typing as T
+import warnings
+from pathlib import Path
 
 import torch
 
-from vidlu.utils.path import create_file_atomic
 from vidlu.utils.func import params
-from vidlu.utils.storage import TorchLoadSave, JsonLoadSave, TextLoadSave
+from vidlu.utils.path import create_file_atomic
+from vidlu.utils.storage import JsonLoadSave, TextLoadSave, TorchLoadSave
 
 
 class _SmallestFloat(float):  # float inheritance needed storing as JSON
@@ -38,6 +38,15 @@ class Files:
     log = ("log.txt", TextLoadSave)
 
 
+def get_file_name_and_interface(key: str) -> tuple[str, type]:
+    """File name and load/save interface of a checkpoint part.
+
+    Parts without an entry in `Files` -- the separately saved state parts, which are named
+    `f"{part}_state"` -- are Torch-pickled under that name.
+    """
+    return getattr(Files, key, None) or (f"{key}.pth", TorchLoadSave)
+
+
 @dc.dataclass
 class Checkpoint:  # TODO
     info: T.Mapping
@@ -53,15 +62,15 @@ class Checkpoint:  # TODO
         extracted_state_parts = {f"{k}_state": self.state[k] for k in separately_saved_state_parts}
         other_state = {k: v for k, v in self.state.items() if k not in separately_saved_state_parts}
 
-        fields = {k: getattr(self, k) for k in self.__annotations__}
+        fields = {f.name: getattr(self, f.name) for f in dc.fields(self)}
         stuff = dict(**{**fields, "state": other_state}, **extracted_state_parts)
 
         try:
             for k, v in stuff.items():
-                name, file_interface = getattr(Files, k, None) or (f"{k}.pth", TorchLoadSave)
+                name, file_interface = get_file_name_and_interface(k)
                 create_file_atomic(path=path / name, mode=file_interface.write_mode,
-                                   write_action=lambda f: file_interface.save(v, f))
-        except Exception as e:
+                                   write_action=lambda f, fi=file_interface, v=v: fi.save(v, f))
+        except Exception:
             shutil.rmtree(path)
             raise
 
@@ -71,7 +80,7 @@ class Checkpoint:  # TODO
             map_location = "cpu"
         fields = {k: (getattr(cls, k) if k in ("perf", "log") else
                       Checkpoint._load(path, k, map_location=map_location))
-                  for k in cls.__annotations__}
+                  for k in (f.name for f in dc.fields(cls))}
         for k in fields["info"]["separately_saved_state_parts"] \
                 if isinstance(fields["info"], T.Mapping) else ["model"]:  # TODO: remove ['model']
             fields["state"][k] = cls._load(path, f"{k}_state", map_location=map_location)
@@ -79,7 +88,7 @@ class Checkpoint:  # TODO
 
     @staticmethod
     def _load(path, k, map_location=None):
-        name, fi = getattr(Files, k, None) or (f"{k}.pth", TorchLoadSave)
+        name, fi = get_file_name_and_interface(k)
         path = path / name
         try:
             return fi.load(path, map_location=map_location) if "map_location" in params(fi.load) \
@@ -90,8 +99,63 @@ class Checkpoint:  # TODO
 
 ModeArg = T.Literal["restart", "resume", "resume_or_start", "start"]
 
+WhichCheckpointArg = T.Literal["best", "last"]
 
-class CheckpointManager(object):
+
+def get_checkpoint_dirs(experiment_dir) -> list[Path]:
+    """Checkpoint directories of an experiment, ordered by increasing index.
+
+    A checkpoint directory is named `{index}{name_suffix}`, where `index` is an integer. 
+    """
+    experiment_dir = Path(experiment_dir)
+    if not experiment_dir.exists():
+        return []
+    dirs = [p for p in experiment_dir.iterdir()
+            if not p.is_file() and p.name.split("_")[0].isdigit()]
+    return sorted(dirs, key=lambda p: int(p.name.split("_")[0]))
+
+
+def find_checkpoint_dir(experiment_dir, which: WhichCheckpointArg = "best") -> Path:
+    """Path of the best or the last checkpoint of an experiment.
+
+    Unlike `CheckpointManager`, this reads only each checkpoint's `perf.json` instead of loading
+    whole checkpoints (`CheckpointManager.sync` loads the state too), so it is cheap for
+    inference-time loading of a single checkpoint.
+
+    Args:
+        experiment_dir: Directory containing checkpoint directories, i.e.
+            `{checkpoints_root}/{experiment_name}`.
+        which: "best" selects the greatest stored performance, "last" the greatest index.
+
+    Returns:
+        The path of the selected checkpoint directory.
+    """
+    if (dirs := get_checkpoint_dirs(experiment_dir)) == []:
+        raise FileNotFoundError(f'No checkpoints found in "{experiment_dir}".')
+    if which == "last":
+        return dirs[-1]
+    elif which != "best":
+        raise ValueError(f"Argument {which=} does not match type {WhichCheckpointArg}.")
+    return max(dirs, key=_load_perf)
+
+
+def _load_perf(checkpoint_dir: Path) -> float:
+    """Performance stored in a checkpoint directory by `Checkpoint.save`.
+
+    `Checkpoint.load` does not restore this field (it keeps the class default), so it is read
+    here directly. `JsonLoadSave.load` is `json.load`, which needs an open file, not a path.
+    """
+    name, file_interface = Files.perf
+    path = checkpoint_dir / name
+    try:
+        with path.open(file_interface.read_mode) as f:
+            return file_interface.load(f)
+    except Exception as e:
+        raise RuntimeError(
+            f'Could not read the performance of the checkpoint at "{checkpoint_dir}". Error {e}.')
+
+
+class CheckpointManager:
     """Checkpoint manager can be used to periodically save algorithm states and summaries to disk.
     
     Based on https://github.com/pytorch/ignite/ignite/handlers/checkpoint.py.
@@ -176,10 +240,10 @@ class CheckpointManager(object):
         self,
         checkpoints_root: str | os.PathLike,
         experiment_name: str,
-        experiment_info: T.Mapping = None,
-        n_recent_kept: T.Union[int, T.Literal[math.inf]] = 1,
+        experiment_info: T.Mapping | None = None,
+        n_recent_kept: int | T.Literal[math.inf] = 1,
         n_best_kept: int = 0,
-        start_mode: T.Optional[ModeArg] = "start",
+        start_mode: ModeArg | None = "start",
         separately_saved_state_parts: T.Sequence[str] = (),
         state_loaded: bool = False,
         perf_func: T.Callable[[T.Mapping], float] = lambda s: smallest,
@@ -205,7 +269,7 @@ class CheckpointManager(object):
             self.restart()
         elif start_mode == "resume":
             if not self.resuming_required:
-                raise RuntimeError(f"Cannot resume from checkpoint. Checkpoints not found in"
+                raise RuntimeError("Cannot resume from checkpoint. Checkpoints not found in"
                                    + f" {self.experiment_dir}.")
         elif start_mode == "start":
             if self.resuming_required:
@@ -227,18 +291,7 @@ class CheckpointManager(object):
         self.resuming_required = False
 
     def sync(self):
-        def get_existing_checkpoints():
-            if not self.experiment_dir.exists():
-                return []
-            # Only directories starting with an integer are checkpoints
-            index_to_checkpoint_dir = [
-                (int(index), p.name)
-                for p in self.experiment_dir.iterdir()
-                if not p.is_file() and (index := p.name.split("_")[0]).isdigit()
-            ]
-            return [p[1] for p in sorted(index_to_checkpoint_dir, key=lambda p: p[0])]
-
-        self.saved = get_existing_checkpoints()
+        self.saved = [p.name for p in get_checkpoint_dirs(self.experiment_dir)]
         self.id_to_perf = dict()
         for id in list(self.saved):
             try:
@@ -328,4 +381,4 @@ class CheckpointManager(object):
         )
 
     def __str__(self):
-        return f"{repr(self)} with checkpoints {repr(self.saved)}"
+        return f"{repr(self)} with checkpoints {self.saved!r}"

@@ -504,7 +504,8 @@ get_trainer.help = \
      + ' Example: "ResNetCifarTrainer"')
 
 
-def get_metrics(metrics_str: str, trainer, *, problem=None, data=None, namespace=dict()):
+def get_metrics(metrics_str: str, trainer, *, problem=None, data=None, namespace=dict(),
+                main_metrics_str: str = ""):
     # TODO: require something like metrics-str == "default()" for default metrics
     dataset = None if data is None else next(iter(data.values()))
     if problem is None:
@@ -518,6 +519,10 @@ def get_metrics(metrics_str: str, trainer, *, problem=None, data=None, namespace
         metrics_str = metrics_str[:-1]
         from .problem import get_universal_metrics
         default_metrics, main_metrics = get_universal_metrics(), ()
+    # Parse explicit main metric names from comma-separated string.
+    names = tuple(s.strip() for s in main_metrics_str.split(",") if s.strip())
+    if len(names) > 0:
+        main_metrics = names
 
     def as_list(x):  # a single metric, a list/tuple of metrics, or []
         return list(x) if isinstance(x, T.Sequence) and not isinstance(x, str) else [x]

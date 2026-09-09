@@ -31,13 +31,6 @@ def get_classification_metrics(problem, metric_names):
     return result
 
 
-def get_multi_attribute_classification_metrics(problem, metric_names):
-    result = get_universal_metrics()
-    # TODO: implement multi-attribute classification metrics
-    #result.append(metrics.MultiAttributeClassificationMetrics(class_counts=problem.class_counts, metrics=metric_names))
-    return result
-
-
 class ProblemExtra(Enum):
     ADV = 'adv'
 
@@ -72,9 +65,9 @@ class MultiAttributeClassification(Supervised):
     class_counts: T.Tuple[int, ...] = (2, 2)
 
     def get_metrics(self):
-        metrics = ('amF1', 'amP', 'amR', 'mF1', 'A')
-        result = get_multi_attribute_classification_metrics(self, metrics)
-        return result, ('amF1',)
+        # Default to 'amF1' as the primary metric for multi-attribute classification,
+        # produced by domain metric factories (e.g. vidlu_irap_gaim.get_irap_metrics).
+        return get_universal_metrics(), ('amF1',)
 
 @dc.dataclass
 class SemanticSegmentation(Classification):

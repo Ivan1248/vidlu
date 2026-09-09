@@ -111,22 +111,19 @@ class EpochLoop(object):
 
     def _run_once_on_dataset(self):
         for i, batch in enumerate(self.state.data_loader):
-            try:
-                self.state.batch = batch
-                self.iter_started(self.state)
+            self.state.batch = batch
+            self.iter_started(self.state)
 
-                self.state.result = self.step(self, batch)
+            self.state.result = self.step(self, batch)
 
-                self.state.iteration = i
-                self.state.abs_iteration += 1
-                self.iter_completed(self.state)
-                del self.state.batch, self.state.result
-            except Exception as e:
-                self.logger.exception(f"Exception in iteration {i}.")
+            self.state.iteration = i
+            self.state.abs_iteration += 1
+            self.iter_completed(self.state)
+            del self.state.batch, self.state.result
+
             if self.should_terminate or self.should_terminate_epoch:
-                self.should_terminate = self.should_terminate_epoch = False
-                return True
-        return False
+                break
+        self.should_terminate_epoch = False  # `should_terminate` is cleared by `run`
 
     def run(self, data, max_epochs=1, restart=True, **kwargs):
         """Runs the `process_function` over the passed data.
@@ -165,6 +162,7 @@ class EpochLoop(object):
                     f"Epoch {self.state.epoch} completed after {hours:02}:{mins:02}:{secs:02}.")
                 self.epoch_completed(self.state)
 
+            self.should_terminate = False  # so that a later `run` is not stopped immediately
             self.completed(self.state)
 
         hours, mins, secs = _to_hours_mins_secs(sw_total.time)

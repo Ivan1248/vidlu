@@ -1,33 +1,36 @@
-import sys
 import argparse
-import random
-from datetime import datetime, timedelta
-import os
-import warnings
 import contextlib as ctx
-from pathlib import Path
-import subprocess
+import os
+import random
 import shlex
+import subprocess
+import sys
 import time
 import traceback
-
-import torch
-import torch.distributed as dist
-import numpy as np
+import warnings
+from datetime import datetime, timedelta
+from pathlib import Path
 
 # noinspection PyUnresolvedReferences
-import _context  # vidlu, dirs
-
+import _context  # vidlu, dirs  # noqa: F401
 import dirs
-from vidlu import factories
+import numpy as np
+import torch
+import torch.distributed as dist
+
 import vidlu.experiments as ve
-from vidlu.experiments import (TrainingExperiment, TrainingExperimentFactoryArgs,
-                               get_experiment_command)
+import vidlu.torch_utils as vtu
+from vidlu import factories
+from vidlu.data import clean_up_dataset_cache
+from vidlu.experiments import (
+    TrainingExperiment,
+    TrainingExperimentFactoryArgs,
+    get_experiment_command,
+)
+from vidlu.training.checkpoint_manager import find_checkpoint_dir
+from vidlu.utils import debug
 from vidlu.utils.func import Empty, call_with_assignable_args
 from vidlu.utils.misc import indent_print, query_user
-from vidlu.utils import debug
-import vidlu.torch_utils as vtu
-from vidlu.data import clean_up_dataset_cache
 
 
 def log_run(status, result=None):
@@ -134,7 +137,6 @@ def train(args):
             if not args.no_init_eval:
                 print('\nEvaluating initially...')
                 eval_on_test_sets(exp, prefix="val")
-                eval_on_test_sets(exp, prefix="test")
             log_run('cont.' if args.resume else 'start')
 
             print(('\nContinuing' if args.resume not in (
@@ -183,9 +185,18 @@ def train(args):
             dist.destroy_process_group()
 
 
-def get_path(args):
+def get_experiment_dir(args):
     a = call_with_assignable_args(TrainingExperimentFactoryArgs, args.__dict__)
-    print(dirs.saved_states / ve.get_experiment_path(a))
+    return dirs.saved_states / ve.get_experiment_path(a)
+
+
+def get_path(args):
+    print(get_experiment_dir(args))
+
+
+def get_checkpoint_path(args):
+    """Prints the path of one checkpoint, which inference tools can be pointed at directly."""
+    print(find_checkpoint_dir(get_experiment_dir(args), which=args.which))
 
 
 def test(args):
@@ -233,6 +244,9 @@ def add_standard_arguments(parser, func):
                         help='The name of the file containing parameters.')
     parser.add_argument("--metrics", type=str, default="",
                         help='A comma-separated list of metrics.')
+    parser.add_argument("--main_metrics", type=str, default="",
+                        help='Comma-separated list of metric names replacing the default'
+                             + ' main metrics; the first metric determines best checkpoint selection.')
     parser.add_argument("--imports", type=str, default="",
                         help="List of package names optional aliases to be imported into the factory namespace.")
     parser.add_argument("--pre", type=str, default="",
@@ -294,6 +308,12 @@ if __name__ == "__main__":
 
     parser_get_path = subparsers.add_parser("get_path")
     add_standard_arguments(parser_get_path, get_path)
+
+    parser_get_checkpoint_path = subparsers.add_parser("get_checkpoint_path")
+    add_standard_arguments(parser_get_checkpoint_path, get_checkpoint_path)
+    parser_get_checkpoint_path.add_argument(
+        "--which", type=str, choices=["best", "last"], default="best",
+        help="Whether to print the best-performing or the most recent checkpoint.")
 
     parser_test = subparsers.add_parser("test")
     add_standard_arguments(parser_test, test)

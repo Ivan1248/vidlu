@@ -1,6 +1,7 @@
+import random
+
 import pytest
 
-import random
 from vidlu import factories
 
 
@@ -23,3 +24,15 @@ def test_get_data_multiple(tmpdir):
         tmpdir)
     assert len(datasets) == 3
     assert len(datasets[1]) == 11
+
+
+def test_get_metrics_main_metrics_default_and_override():
+    from vidlu.factories.problem import Classification
+
+    problem = Classification(class_count=3)
+    _, main_metrics = factories.get_metrics("", trainer=None, problem=problem)
+    assert main_metrics == ('A',)
+
+    _, main_metrics = factories.get_metrics("", trainer=None, problem=problem,
+                                            main_metrics_str="mF1, mR")
+    assert main_metrics == ('mF1', 'mR')

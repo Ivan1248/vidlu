@@ -35,8 +35,9 @@ import argparse
 import os
 import subprocess
 import sys
-import torch
 from pathlib import Path
+
+from vidlu.training.checkpoint_manager import get_file_name_and_interface
 
 SCRIPTS_DIR = Path(__file__).parent
 RUN_PY = str(SCRIPTS_DIR / "run.py")
@@ -82,49 +83,65 @@ def _fill(template: str, **kwargs) -> str:
 
 # ── Checkpoint discovery ──────────────────────────────────────────────────────
 
-def _get_experiment_dir(data: str, input_adapter: str, model: str, trainer: str,
-                        exp_suffix: str, params: str, metrics: str) -> Path:
-    """Ask run.py for the experiment directory path via get_path subcommand."""
-    cmd = [sys.executable, RUN_PY, "get_path",
+# The file that a checkpoint directory stores the model state in. `run.py` saves it separately
+# from the rest of the training state (`vidlu.experiments.create_checkpoint_manager`). Derived
+# rather than spelled out, so a change to the naming cannot leave this silently finding nothing.
+MODEL_STATE_FILE_NAME, _ = get_file_name_and_interface("model_state")
+
+
+def _ask_run_py_for_a_path(subcommand: str, data: str, input_adapter: str, model: str,
+                           trainer: str, exp_suffix: str, params: str, metrics: str,
+                           extra_args: tuple[str, ...] = ()) -> Path:
+    """Asks run.py for a path belonging to the experiment identified by the arguments.
+
+    run.py owns the experiment-to-directory mapping and the checkpoint naming, so asking it is
+    what keeps this pipeline from having to reimplement either. Both `get_path` (the experiment
+    directory) and `get_checkpoint_path` (one checkpoint in it) print the path as the last line;
+    other initialization code prints to stdout before it.
+    """
+    cmd = [sys.executable, RUN_PY, subcommand,
            data, input_adapter, model, trainer,
            "-e", exp_suffix]
     if params:
         cmd += ["--params", params]
     if metrics:
         cmd += ["--metrics", metrics]
+    cmd += list(extra_args)
     result = subprocess.run(cmd, capture_output=True, text=True, check=True, env=os.environ)
-    # get_path prints the experiment dir as the last line, e.g.:
-    #   /data/experiments/states/<exp_name>
-    # Other initialization code may print to stdout before it, so take only the last line.
     return Path(result.stdout.strip().splitlines()[-1])
 
 
-def _find_best_checkpoint(exp_dir: Path) -> Path:
-    """Scan exp_dir for checkpoint subdirectories and return the best model_state.pth."""
-    best_perf = None
-    best_subdir = None
-    for subdir in exp_dir.iterdir():
-        if not subdir.is_dir():
-            continue
-        summary_path = subdir / "summary.p"
-        if not summary_path.exists():
-            continue
-        try:
-            summary = torch.load(summary_path, map_location="cpu", weights_only=False)
-            perf = summary.get("perf", None)
-            if perf is None:
-                continue
-            if best_perf is None or perf > best_perf:
-                best_perf = perf
-                best_subdir = subdir
-        except Exception:
-            continue
-    if best_subdir is None:
+def _run_py_error_message(e: subprocess.CalledProcessError) -> str:
+    """The most informative line of a failed run.py call.
+
+    run.py installs a traceback formatter that writes to stdout, so the cause is the last line
+    there rather than in stderr, which only holds warnings.
+    """
+    for stream in (e.stdout, e.stderr):
+        if lines := (stream or "").strip().splitlines():
+            return lines[-1]
+    return str(e)
+
+
+def _get_experiment_dir(data: str, input_adapter: str, model: str, trainer: str,
+                        exp_suffix: str, params: str, metrics: str) -> Path:
+    """The directory holding the experiment's checkpoints, e.g. /data/experiments/states/<name>."""
+    return _ask_run_py_for_a_path("get_path", data, input_adapter, model, trainer, exp_suffix,
+                                  params, metrics)
+
+
+def _find_best_checkpoint(data: str, input_adapter: str, model: str, trainer: str,
+                          exp_suffix: str, params: str, metrics: str) -> Path:
+    """The model state file of the experiment's best checkpoint, loadable as a teacher."""
+    try:
+        checkpoint_dir = _ask_run_py_for_a_path(
+            "get_checkpoint_path", data, input_adapter, model, trainer, exp_suffix, params,
+            metrics, extra_args=("--which", "best"))
+    except subprocess.CalledProcessError as e:
         raise RuntimeError(
-            f"No valid checkpoints found in {exp_dir}. "
-            "Did the 'supervised' phase complete successfully?"
-        )
-    return best_subdir / "model_state.pth"
+            f'No checkpoint found for the "{exp_suffix}" experiment. Did the "supervised" phase'
+            f" complete successfully?\n{_run_py_error_message(e)}")
+    return checkpoint_dir / MODEL_STATE_FILE_NAME
 
 
 # ── Subprocess runner ─────────────────────────────────────────────────────────
@@ -229,10 +246,11 @@ def _check_supervised_exists(args) -> None:
             args.trainer_supervised, f"{args.name}_supervised",
             args.params, args.metrics,
         )
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as e:
         raise SystemExit(
             "ERROR: Could not resolve supervised experiment directory. "
             "Run the 'supervised' phase first or check your --data-supervised / --model / --trainer-supervised args."
+            f"\n{_run_py_error_message(e)}"
         )
     if not exp_dir.exists():
         raise SystemExit(
@@ -349,12 +367,11 @@ def main():
     if "train-pseudolabel" in phases:
         if args.mode in ("onthefly", "both"):
             # Discover teacher checkpoint
-            exp_dir = _get_experiment_dir(
+            teacher_path = _find_best_checkpoint(
                 args.data_supervised, args.input_adapter, args.model,
                 args.trainer_supervised, f"{args.name}_supervised",
                 args.params, args.metrics,
             )
-            teacher_path = _find_best_checkpoint(exp_dir)
             print(f"[pipeline] Teacher checkpoint: {teacher_path}")
             run_train_onthefly(args, teacher_path)
 

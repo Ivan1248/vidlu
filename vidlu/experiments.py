@@ -1,27 +1,27 @@
 import os
 import re
+import time
+import typing as T
 import warnings
 from argparse import Namespace
 from dataclasses import dataclass
 from pathlib import Path
-import typing as T
+
 import numpy as np
-import time
 import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel
+from tqdm import tqdm
+
+import vidlu.modules as vm
+import vidlu.utils.distributed as vud
 
 # from torch.utils.tensorboard import SummaryWriter
-
 from vidlu import factories
-import vidlu.modules as vm
-from vidlu.training import Trainer, CheckpointManager, EpochLoop, IterState
-from vidlu.utils.misc import indent_print
-import vidlu.utils.distributed as vud
-from tqdm import tqdm
+from vidlu.training import CheckpointManager, EpochLoop, IterState, Trainer
 from vidlu.utils.logger import Logger
+from vidlu.utils.misc import Stopwatch, indent_print, query_user, try_input
 from vidlu.utils.path import to_valid_path
-from vidlu.utils.misc import try_input, Stopwatch, query_user
 
 DEFAULT_INTERACT_SHORTCUTS: T.Mapping[str, str] = {"i": "embed()", "skip": "loop.terminate()"}
 
@@ -56,13 +56,14 @@ class TrainingExperimentFactoryArgs:
     pre: str
     experiment_suffix: str
     quick_eval_count: int
-    resume: T.Optional[T.Literal["strict", "?", "best", "restart"]]
-    tracker: T.Optional[T.Literal["wandb"]]
-    device: T.Optional[torch.device]
+    resume: T.Literal["strict", "?", "best", "restart"] | None
+    tracker: T.Literal["wandb"] | None
+    device: torch.device | None
     verbosity: int
     deterministic: bool
     factory_version: int
-    distributed: T.Optional[bool]
+    distributed: bool | None
+    main_metrics: str = ""
 
 
 # Component factories (or factory wrappers) ########################################################
@@ -182,7 +183,7 @@ class TrainingCallback:
                 self._handles.append(event.add_handler(getattr(self, name)))
 
     def detach(self):
-        """Remove handlers and drop trainer reference."""
+        """Removes handlers and drops the trainer reference."""
         for h in getattr(self, "_handles", []):
             h.remove()
         self._handles = []
@@ -235,7 +236,7 @@ class ProgressMonitor(TrainingCallback):
         self.logger.log(info_str)
 
     def on_training_started(self, state: IterState):
-        """Create progress bar for training (manual updates, no data loader mutation)."""
+        """Creates a progress bar for training (manual updates, no data loader mutation)."""
         total = state.batch_count * state.max_epochs
         # Resume is epoch-granular, so `state.epoch + 1` completed epochs precede this run
         # (`state.epoch == -1` on a fresh start, giving `initial=0`).
@@ -268,7 +269,7 @@ class ProgressMonitor(TrainingCallback):
                     step=step, split=None)
 
     def on_evaluation_started(self, state: IterState):
-        """Create progress bar for evaluation (manual updates, no data loader mutation)."""
+        """Creates a progress bar for evaluation (manual updates, no data loader mutation)."""
         self.eval_pbar = tqdm(total=state.batch_count, desc="Evaluation", leave=True,
                               dynamic_ncols=True)
 
@@ -298,6 +299,31 @@ class ProgressMonitor(TrainingCallback):
         return f"ProgressMonitor(eval_count={self.eval_count}, epoch_count={self.epoch_count}, min_train_report_count={self.min_train_report_count}, line_width={self.line_width}, special_format={self.special_format})"
 
 
+def get_main_metric_value(metrics: T.Mapping[str, T.Any], main_metrics: T.Sequence[str],
+                          split_name: str):
+    """Retrieves the primary evaluation metric value for checkpoint selection.
+
+    Args:
+        metrics: Dictionary mapping metric names to evaluated values.
+        main_metrics: Ordered sequence of main metric names. If empty, defaults to
+            the first metric in `metrics`.
+        split_name: Name of the evaluated split (used for diagnostic error messages).
+
+    Returns:
+        The value of the primary metric.
+    """
+    if len(main_metrics) == 0:
+        return next(iter(metrics.values()))
+    name = main_metrics[0]
+    if name not in metrics:
+        raise KeyError(
+            f"The main metric {name!r} is not among the metrics produced on split"
+            f" {split_name!r}: {sorted(metrics)}. Main-metric names have to match a key the"
+            f" metrics produce, so either pass `--main_metrics` naming one of those, or extend"
+            f" `--metrics` with a metric that produces {name!r}.")
+    return metrics[name]
+
+
 class ValidationCheckpointHandler(TrainingCallback):
     def __init__(self, data, cpman: CheckpointManager, main_metrics: T.Sequence[str],
                  eval_count, epoch_count, logger: Logger,
@@ -323,11 +349,10 @@ class ValidationCheckpointHandler(TrainingCallback):
                         not checkpoint_saved and (self.checkpoint_split_prefix is None or
                                                   name.startswith(self.checkpoint_split_prefix)))
                 if should_checkpoint:
-                    main_metric_name = self.main_metrics[0] if len(self.main_metrics) > 0 else next(
-                        iter(es_val.metrics.keys()))
+                    perf = get_main_metric_value(es_val.metrics, self.main_metrics, name)
                     self.cpman.save(self.trainer.state_dict(),
                                     summary=dict(logger=self.logger.state_dict(),
-                                                 perf=es_val.metrics[main_metric_name],
+                                                 perf=perf,
                                                  log=self.logger.as_text(),
                                                  epoch=state.epoch))
                     checkpoint_saved = True
@@ -512,10 +537,14 @@ def get_experiment_command(training_args, prefix="run.py train "):
     """
     a = training_args
     return (f'{prefix}"{a.data}" "{a.input_adapter}" "{a.model}"'
-            + f' "{a.trainer}" --params "{a.params}" -d {repr(a.device)}'
+            + f' "{a.trainer}"'
+            + ('' if a.params is None else f' --params "{a.params}"')
+            + ('' if a.device is None else f' --device "{a.device}"')
             + f' --metrics "{a.metrics}"'
+            + (f' --main_metrics "{a.main_metrics}"' if a.main_metrics else '')
             + (f' --tracker {a.tracker}' if a.tracker else '')
-            + f' -e {a.experiment_suffix or "_"} -r')
+            + f' -e {a.experiment_suffix or "_"}'
+            + (' -r best' if a.resume == "best" else ' -r'))
 
 
 def get_experiment_id_parts(training_args):
@@ -526,6 +555,10 @@ def get_experiment_id_parts(training_args):
 def get_experiment_path(training_args):
     path = "/".join(get_experiment_id_parts(training_args))
     return f'{to_valid_path(path, split_long_names=True)}'
+
+
+def load_checkpoint_for_resume(cpman, resume, map_location=None):
+    return (cpman.load_best if resume == "best" else cpman.load_last)(map_location=map_location)
 
 
 def create_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_root):
@@ -625,14 +658,14 @@ def init_model(model_str: str, input_adapter_str: str, verbosity, device, distri
 
 
 def get_trainer_and_metrics(trainer_str, metrics_str, deterministic, distributed, model,
-                            verbosity, namespace: dict, *, data=None):
+                            verbosity, namespace: dict, *, data=None, main_metrics_str=""):
     print(trainer_str)
     trainer = factories.get_trainer(trainer_str, model=model, data=data, verbosity=verbosity,
                                     deterministic=deterministic, distributed=distributed,
                                     namespace=namespace)
     # TODO: distributed metrics
     metrics, main_metrics = factories.get_metrics(
-        metrics_str, trainer, data=data, namespace=namespace)
+        metrics_str, trainer, data=data, namespace=namespace, main_metrics_str=main_metrics_str)
     trainer.metrics = metrics
     return trainer, (metrics, main_metrics)
 
@@ -682,20 +715,18 @@ class TrainingExperiment:
             with indent_print('\nInitializing trainer and evaluation...'):
                 trainer, (metrics, main_metrics) = get_trainer_and_metrics(
                     a.trainer, a.metrics, a.deterministic, distributed, model,
-                    a.verbosity, namespace=factory_namespace, data=experiment.data)
+                    a.verbosity, namespace=factory_namespace, data=experiment.data,
+                    main_metrics_str=a.main_metrics)
                 # Trainer already receives data via factory; avoid post-construction mutation.
                 experiment.trainer = trainer
 
             define_training_loop_actions(trainer, cpman, experiment.data, logger,
                                          main_metrics=main_metrics, tracker=tracker, 
                                          quick_eval_count=a.quick_eval_count)
-        except Exception:
-            raise
         finally:
             resuming_required = cpman.resuming_required
             if resuming_required:
-                state, summary, _ = (cpman.load_best if a.resume == "best" else cpman.load_last)(
-                    map_location=device)
+                state, summary, _ = load_checkpoint_for_resume(cpman, a.resume, map_location=device)
                 logger.load_state_dict(summary['logger'])
                 logger.print_all()
 
