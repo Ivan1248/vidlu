@@ -1,8 +1,7 @@
-import math
-
 from torch.optim import lr_scheduler
 from torch.optim.lr_scheduler import *
 
+from vidlu.optim import lr_shapes
 from vidlu.utils.func import default_args
 from vidlu.utils.misc import broadcast
 
@@ -68,12 +67,17 @@ class ScalableLR(lr_scheduler.LambdaLR):
 
     Args:
         optimizer (Optimizer): Wrapped optimizer.
-        func (function or list): A function which computes a multiplicative
-            factor from the epoch index divided by the total number of epochs (a
-            number between 0 and 1), or a list of such functions, one for each
-            group in optimizer.param_groups.
+        func (function or list): A learning rate shape (see `vidlu.optim.lr_shapes`): a
+            function computing a multiplicative factor from training progress, the epoch
+            index divided by the total number of epochs. It is called only with progress in
+            `[0, 1]`. Can also be a list of such functions, one for each group in
+            optimizer.param_groups.
         epoch_count: The total number of epochs.
         last_epoch (int): The index of last epoch. Default: -1.
+
+    Raises:
+        ValueError: When stepped past `epoch_count`, which would take the shape outside the
+            `[0, 1]` progress interval it is defined on.
 
     Example:
         >>> # Assuming optimizer has two groups.
@@ -91,19 +95,51 @@ class ScalableLR(lr_scheduler.LambdaLR):
                  last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
         func, scaling, min = [broadcast(x, len(optimizer.param_groups))
                               for x in (func, scaling, min)]
-        func = [lambda e: ll(0 if e == 0 else e / epoch_count) * s + m
-                for ll, s, m in zip(func, scaling, min)]
-        super().__init__(optimizer=optimizer, lr_lambda=func, last_epoch=last_epoch)
+
+        def make_lr_factor(shape, scaling, min):
+            def lr_factor(epoch):
+                progress = 0 if epoch == 0 else epoch / epoch_count
+                if progress > 1:
+                    raise ValueError(f"The scheduler was stepped to epoch {epoch}, past"
+                                     f" {epoch_count=}, so the progress {progress} is outside"
+                                     f" the interval the learning rate shape is defined on.")
+                return shape(progress) * scaling + min
+
+            return lr_factor
+
+        super().__init__(optimizer=optimizer,
+                         lr_lambda=[make_lr_factor(*a) for a in zip(func, scaling, min)],
+                         last_epoch=last_epoch)
 
 
-def quarter_cos(x):
-    if not 0 <= x <= 1:
-        raise ValueError(f"{x=} should be between 0 and 1.")
-    return math.cos(x * math.pi / 2)
+class WarmupCosineLR(ScalableLR):
+    """Multiplicative learning rate scheduler with linear warmup and cosine decay.
+
+    The factor from `lr_shapes.with_warmup` is applied multiplicatively to each parameter
+    group's base learning rate. Unlike `CosineLR`, whose `eta_min` is an absolute floor
+    applied identically to every group, this preserves the ratios between group learning
+    rates that layer-wise LR decay sets up.
+
+    Args:
+        optimizer: Wrapped optimizer.
+        epoch_count: The total number of epochs.
+        warmup_proportion: Proportion of training spent on linear warmup, in `[0, 1)`.
+        start_factor: Learning rate factor at epoch 0.
+        min_factor: Learning rate factor at the final epoch.
+        last_epoch: The index of the last epoch.
+    """
+
+    def __init__(self, optimizer, epoch_count, warmup_proportion=0.1, start_factor=0.1,
+                 min_factor=0., last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
+        super().__init__(
+            optimizer,
+            func=lr_shapes.with_warmup(lr_shapes.cosine_lr, warmup_proportion=warmup_proportion,
+                                       start_factor=start_factor, min_factor=min_factor),
+            epoch_count=epoch_count, last_epoch=last_epoch)
 
 
 class QuarterCosLR(ScalableLR):
     def __init__(self, optimizer, epoch_count, min=0.,
                  last_epoch=default_args(lr_scheduler.LambdaLR).last_epoch):
-        super().__init__(optimizer, func=quarter_cos, epoch_count=epoch_count, min=min,
+        super().__init__(optimizer, func=lr_shapes.quarter_cos, epoch_count=epoch_count, min=min,
                          last_epoch=last_epoch)
