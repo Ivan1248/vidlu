@@ -1,10 +1,4 @@
-"""A minimal mapping with attribute access and lazy fields.
-
-Used as the container for `Dataset.info` so that:
-- consumers can access fields with either ``info['x']`` or ``info.x``;
-- expensive info entries (e.g. disk-cached statistics) can be wrapped in
-  ``Lazy(...)`` and computed only on first access.
-"""
+"""Mapping container supporting attribute access and lazily evaluated values."""
 
 from collections import abc
 import typing as T
@@ -43,7 +37,8 @@ class LazyDict(abc.MutableMapping):
         if len(args) > 1:
             raise TypeError(
                 f"LazyDict expects at most one positional argument, got {len(args)}.")
-        backing: dict = dict(args[0]) if args else dict()
+        # Copying another LazyDict takes its backing dict directly
+        backing = dict() if len(args) == 0 else dict(args[0]._dict if isinstance(args[0], LazyDict) else args[0])
         backing.update(kwargs)
         object.__setattr__(self, "_dict", backing)
 
@@ -76,6 +71,14 @@ class LazyDict(abc.MutableMapping):
 
     def __setattr__(self, key, value):
         self._dict[key] = value
+
+    def __eq__(self, other):
+        """Compare equality with another mapping without evaluating lazy entries.
+
+        When comparing against another `LazyDict`, compares backing dictionary entries
+        directly so unevaluated `Lazy` instances are compared by reference rather than evaluated.
+        """
+        return (self._dict == other._dict) if isinstance(other, LazyDict) else super().__eq__(other)
 
     def __repr__(self):
         parts = [f"{k}=<unevaluated>" if isinstance(v, Lazy) else f"{k}={v!r}"

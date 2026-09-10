@@ -20,8 +20,24 @@ INPUT_DIM: tuple[int, int, int] = (384, 288, 3)
 IGNORE_LABEL_INDEX: int = -1
 
 
+def compute_label_matrix(segment_id_to_labels, segment_ids, num_attributes) -> np.ndarray:
+    """Stacks per-segment attribute labels into an array.
+
+    Args:
+        segment_id_to_labels: Mapping from segment ID to per-attribute class indices.
+        segment_ids: Sequence of segment IDs to include, in output row order.
+        num_attributes: Total number of attributes.
+
+    Returns:
+        Array of shape `(len(segment_ids), num_attributes)` with dtype int64.
+        Unannotated entries contain `IGNORE_LABEL_INDEX` (-1).
+    """
+    return np.array([segment_id_to_labels[sid] for sid in segment_ids],
+                    dtype=np.int64).reshape(len(segment_ids), num_attributes)
+
+
 class MetaFiles:
-    """File names (relative to a dataset's metadata directory)."""
+    """File names relative to a dataset metadata directory."""
 
     ATTRIBUTE_METADATA = "attribute_metadata.json"
     SPLITS = "splits.json"
@@ -45,7 +61,7 @@ def resolve_irap_paths(
     dataset_dir: str | Path | None = None,
     metadata_dir: str | Path | None = None,
 ) -> tuple[Path, Path]:
-    """Resolve IRAP dataset and metadata directories.
+    """Resolves IRAP dataset and metadata directories.
 
     Returns:
         Tuple of (dataset_dir, metadata_dir) as Path objects.
@@ -64,27 +80,21 @@ def load_ncontext_segment_ids(
     max_N: int = 10,
     splits: T.Sequence[str] = ("train", "val", "test"),
 ) -> set[str]:
-    """Load segment IDs from precomputed result pickle files with N-context filtering.
+    """Loads segment IDs from precomputed split results with per-split N-context filtering.
 
-    This replicates the filtering in the original train_local_rec.py which:
-    1. Loads segment IDs from seg_to_res_path/{split}.pickle files PER SPLIT
-    2. Applies N-context filtering PER SPLIT (segments must have max_N neighbors
-       on each side, all within the SAME split)
-    3. Returns the union of filtered segments from all splits
-
-    IMPORTANT: The original applies N-context filtering separately for each split,
-    meaning a train segment must have all 10+10 context neighbors also in the train
-    split. This differs from filtering on combined splits.
+    For each split in `splits`, loads segment IDs from `<seg_to_res_path>/<split>.pickle`
+    and filters them so each kept segment has `max_N` preceding and `max_N` following
+    neighbors on the same road within that split.
 
     Args:
-        seg_to_res_path: Directory containing {train,val,test}.pickle files.
-        road_sequences: Either a path to road_id_to_segment_id_sequence.json,
-            or a dict mapping road_id -> list of segment IDs.
-        max_N: Context window size (segments must have max_N neighbors on each side).
-        splits: Which splits to load segment IDs from.
+        seg_to_res_path: Directory containing `<split>.pickle` files with `segment_id_to_idx`.
+        road_sequences: Path to `road_id_to_segment_id_sequence.json` or a mapping of
+            road ID to ordered segment IDs.
+        max_N: Number of context neighbors required on each side within the split.
+        splits: Split names to load and filter.
 
     Returns:
-        Set of segment IDs that pass the N-context filter.
+        Set of segment IDs passing the N-context filter across all specified splits.
     """
     seg_to_res_path = Path(seg_to_res_path)
 
@@ -101,7 +111,7 @@ def load_ncontext_segment_ids(
             road_id_to_segment_id_sequence = json.load(f)
 
     def ncontext_filter_for_split(split_segment_ids: set[str]) -> set[str]:
-        """Apply N-context filtering for a single split (matches NContextDataset.build_contexts)."""
+        """Applies N-context filtering for a single split (matches NContextDataset.build_contexts)."""
         filtered = set()
         for road_id, segment_sequence in road_id_to_segment_id_sequence.items():
             n_segments = len(segment_sequence)
@@ -171,30 +181,28 @@ def make_irap_data(
     seg_to_res_path: str | Path | None = None,
     allow_missing_attributes: bool = False,
 ):
-    """Build IRAP datasets from an explicit dataset + metadata directory.
+    """Builds IRAP datasets for all splits in a dataset metadata directory.
 
-    Generic loader shared by the per-release presets :func:`make_bih_data` and
-    :func:`make_vietnam_data`. Splits are discovered from ``splits.json``, so any
-    IRAP release loads by pointing ``dataset_dir`` / ``metadata_dir`` at it (with
-    matching flags); nothing here is BiH-specific.
+    Discovers splits from `splits.json` in `metadata_dir` and constructs an
+    `IRAPDataset` instance for each split.
 
     Args:
-        dataset_dir: Directory holding the image/data files.
-        metadata_dir: Directory holding the metadata JSONs (``splits.json``, ...).
-        context_offsets: Offsets for context frames, e.g., (0, -1, -4).
-        mean: RGB channel means for normalization.
-        std: RGB channel stds for normalization.
-        input_dim_rgb: Target image dimensions (W, H, C).
-        transforms: Custom transforms dict.
-        ncontext_segment_id_subset: Explicit set of segment IDs to include.
-        use_ncontext_filter: If True, apply N-context filtering using pickle
-            files at seg_to_res_path (or metadata_dir/seg_to_res if seg_to_res_path is None).
-            Set to False to skip N-context filtering entirely.
-        seg_to_res_path: Path to directory containing precomputed result pickle files
-            ({train,val,test}.pickle). If None and use_ncontext_filter=True, uses
-            metadata_dir/seg_to_res. Only used if use_ncontext_filter=True.
-        allow_missing_attributes: If True, map missing/unmappable attribute codes to
-            ``IGNORE_LABEL_INDEX`` instead of dropping the segment.
+        dataset_dir: Directory containing image and sensor data files.
+        metadata_dir: Directory containing metadata JSON files (`splits.json`, etc.).
+        context_offsets: Offsets for temporal context frames relative to the target segment.
+        mean: Channel means for RGB normalization.
+        std: Channel standard deviations for RGB normalization.
+        input_dim_rgb: Target image dimensions (width, height, channels).
+        transforms: Custom transforms mapping by split name or single transform dict.
+        ncontext_segment_id_subset: Optional explicit set of segment IDs to include.
+        use_ncontext_filter: Whether to apply N-context filtering from precomputed result files.
+        seg_to_res_path: Directory containing precomputed `<split>.pickle` files for N-context
+            filtering. Defaults to `<metadata_dir>/seg_to_res`.
+        allow_missing_attributes: If True, missing or unmappable attribute labels are mapped
+            to `IGNORE_LABEL_INDEX` (-1) rather than dropping the segment.
+
+    Returns:
+        LazyDict mapping split names to `IRAPDataset` instances.
     """
     dataset_dir, metadata_dir = Path(dataset_dir), Path(metadata_dir)
 
@@ -248,12 +256,10 @@ def make_bih_data(
     use_ncontext_filter: bool = True,
     **kwargs,
 ):
-    """Build IRAP-BiH datasets (preset over :func:`make_irap_data`).
+    """Builds IRAP-BiH dataset splits.
 
-    Defaults ``dataset_dir`` / ``metadata_dir`` to ``<root>/IRAP_BIH`` /
-    ``<root>/IRAP_BIH_METADATA`` and ``use_ncontext_filter=True`` (BiH ships the
-    precomputed N-context pickles). All other keyword arguments are forwarded to
-    :func:`make_irap_data`.
+    Convenience wrapper around `make_irap_data` with default directories resolved
+    from `IRAP_HOME` (`IRAP_BIH` and `IRAP_BIH_METADATA`) and `use_ncontext_filter=True`.
     """
     dataset_dir, metadata_dir = resolve_irap_paths(
         dataset_dir=dataset_dir, metadata_dir=metadata_dir
@@ -273,33 +279,26 @@ def make_vietnam_data(
     allow_missing_attributes: bool = True,
     **kwargs,
 ):
-    """Build IRAP-Vietnam datasets (preset over :func:`make_irap_data`).
+    """Builds IRAP-Vietnam dataset splits.
 
-    Returns a dict with one entry per key in ``splits.json``. Labeled splits
-    are always ``train`` / ``val`` / ``test``. When the prep pipeline wrote
-    unlabeled images, the dict additionally contains ``unlabeled_train``,
-    ``unlabeled_val``, ``unlabeled_test``, and optionally ``unlabeled_unlocated``
-    (segments from image folders with no labeled siblings). Unlabeled splits
-    yield samples whose ``target`` is the all-``IGNORE_LABEL_INDEX`` tensor.
+    Convenience wrapper around `make_irap_data` with default directory resolved
+    from `IRAP_HOME` (`IRAP_Vietnam`), colocated metadata, `use_ncontext_filter=False`,
+    and `allow_missing_attributes=True`.
 
-    Differs from :func:`make_bih_data` only in defaults:
+    Args:
+        dataset_dir: Dataset root directory. If None, resolved from environment.
+        use_ncontext_filter: Whether to apply N-context filtering. Defaults to False.
+        allow_missing_attributes: Whether to retain segments with missing attribute codes
+            by assigning `IGNORE_LABEL_INDEX`. Defaults to True.
+        **kwargs: Additional keyword arguments forwarded to `make_irap_data`.
 
-    - ``dataset_dir`` defaults to ``<root>/IRAP_Vietnam`` and ``metadata_dir`` to
-      ``<dataset_dir>`` (Vietnam colocates data and metadata).
-    - ``use_ncontext_filter=False``: the Vietnam release does not include the
-      precomputed N-context pickles.
-    - ``allow_missing_attributes=True``: five flow attributes (motorcycle /
-      bicycle / pedestrian) are empty in every coding table — without this
-      flag every segment would be dropped. Missing/unmappable codes are
-      mapped to PyTorch's standard ``ignore_index = -1``.
-
-    All other keyword arguments are forwarded to :func:`make_irap_data`.
+    Returns:
+        LazyDict mapping split names to `IRAPDataset` instances.
     """
-    if "metadata_dir" in kwargs:
-        if kwargs.pop("metadata_dir") != dataset_dir:
-            raise ValueError(
-                "metadata_dir should not be passed explicitly or should be the same as dataset_dir"
-            )
+    if kwargs.pop("metadata_dir", None) != dataset_dir:
+        raise ValueError(
+            "metadata_dir should not be passed explicitly or should be the same as dataset_dir"
+        )
 
     if dataset_dir is None:
         dataset_dir = resolve_datasets_root() / "IRAP_Vietnam"
@@ -328,7 +327,7 @@ IRAP_DATASET_FACTORIES = {
 
 
 def make_irap_data_by_name(name: str, **kwargs):
-    """Build an IRAP dataset dict by release name (``"bih"`` / ``"vietnam"``).
+    """Builds an IRAP dataset dict by release name (``"bih"`` / ``"vietnam"``).
 
     Thin dispatch over :data:`IRAP_DATASET_FACTORIES`; forwards ``kwargs`` to the
     selected preset. Raises ``ValueError`` for an unknown name.
@@ -343,12 +342,7 @@ def make_irap_data_by_name(name: str, **kwargs):
 
 
 def get_class_counts(metadata_dir: str | Path) -> tuple[int, ...]:
-    """Number of classes per attribute, read directly from metadata.
-
-    Lightweight: only loads ``attribute_metadata.json``. Useful in model
-    factory expressions where constructing a dataset just to read
-    ``info.class_counts`` would be wasteful.
-    """
+    """Returns a tuple containing the number of classes for each attribute in canonical order."""
     ordered_attrs, attribute_value_to_irap = load_attribute_metadata(metadata_dir=metadata_dir)
     return tuple(len(attribute_value_to_irap[attr]) for attr in ordered_attrs)
 
@@ -361,14 +355,14 @@ def get_bih_class_counts(metadata_dir: str | Path | None = None) -> tuple[int, .
 def load_attribute_metadata(
     metadata_dir: str | Path,
 ) -> tuple[list[str], dict[str, dict[str, int]]]:
-    """Load IRAP attribute metadata and return attributes in canonical order.
+    """Loads IRAP attribute metadata and returns attributes in canonical order.
 
     Args:
         metadata_dir: Metadata directory.
 
     Returns:
         ordered_attrs: Attribute names ordered by their index in the metadata.
-        attribute_value_to_irap: Mapping attr -> {value -> irap_number}.
+        attribute_value_to_irap_number: Mapping attr -> {value -> irap_number}.
     """
     with open(metadata_dir / MetaFiles.ATTRIBUTE_METADATA, "r") as f:
         attr_meta = json.load(f)
@@ -381,21 +375,22 @@ def load_attribute_metadata(
 
 
 class IRAPDataset(Dataset):
-    """
-    IRAP road sequence dataset.
+    """IRAP road sequence dataset for multi-attribute classification.
 
-    Expects a config dict with keys:
-      - dataset_path (root for data files)
-      - segment_id_to_data_paths_path (json mapping seg_id -> {rgb, depth})
-      - splits_path (json with {train,val,test}: list[str])
-      - road_id_to_segment_id_sequence_path (for context; optional)
-      - context_offsets: list[int], e.g. [0, -1, -4]
+    Loads image sequences and corresponding road attribute labels for segments in a split.
 
-    For each segment index, returns a dict with keys:
-      - rgb: Tensor sequence of shape (S, C, H, W)
-      - depth: optional tensor sequence (S, 1, H, W)
-      - target: LongTensor with shape (A,) if labels provided via label_map
-      - segment_id: str
+    Args:
+        root: Dataset root directory containing image and sensor files.
+        subset: Split name to load (e.g. 'train', 'val', 'test', 'unlabeled_train').
+        metadata_dir: Directory containing metadata JSON files. If None, inferred
+            from `root`.
+        context_offsets: Frame offsets for context images relative to the target segment.
+        mean: Channel means for RGB normalization.
+        std: Channel standard deviations for RGB normalization.
+        transforms: Optional transform mapping per modality.
+        ncontext_segment_id_subset: Optional segment ID filter set.
+        allow_missing_attributes: If True, missing or unmappable attribute labels are
+            assigned `IGNORE_LABEL_INDEX` (-1) instead of discarding the segment.
     """
 
     # Canonical labeled subsets. The constructor accepts any key present in
@@ -405,10 +400,10 @@ class IRAPDataset(Dataset):
 
     def __init__(
         self,
-        root: T.Union[str, Path],
+        root: str | Path,
         subset: str = "train",
         *,
-        metadata_dir: T.Union[str, Path, None] = None,
+        metadata_dir: str | Path | None = None,
         context_offsets: T.Sequence[int] = (0, -1, -4),
         mean: T.Sequence[float] = RGB_MEAN,
         std: T.Sequence[float] = RGB_STD,
@@ -573,9 +568,8 @@ class IRAPDataset(Dataset):
         # via incompatible_attributes.json). Such attributes accumulate an empty
         # confusion matrix and would yield NaN metrics, so consumers use this to
         # restrict the evaluated/prompted attribute subset to scoreable ones.
-        label_matrix = np.array(
-            [self.segment_id_to_labels[sid] for sid in self.segment_ids], dtype=np.int64
-        ).reshape(-1, len(ordered_attrs))
+        label_matrix = compute_label_matrix(self.segment_id_to_labels, self.segment_ids,
+                                            len(ordered_attrs))
         num_labeled = (label_matrix != IGNORE_LABEL_INDEX).sum(axis=0)
         attr_to_num_labeled = {a: int(n) for a, n in zip(ordered_attrs, num_labeled)}
 
@@ -589,6 +583,7 @@ class IRAPDataset(Dataset):
                 attr_to_num_labeled=attr_to_num_labeled,
                 segment_id_to_labels=self.segment_id_to_labels,
                 segment_ids=self.segment_ids,
+                metadata_dir=str(self.metadata_dir),
             ),
         )
 
