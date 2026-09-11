@@ -100,16 +100,16 @@ def create_file_atomic(path, write_action, mode="w+b"):
         write_action: A procedure that accepts a file as the only argument.
         mode: File opening mode.
     """
-    tmp = tempfile.NamedTemporaryFile(mode=mode, delete=False, dir=Path(path).parent)
+    path = Path(path)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent)
     try:
-        write_action(tmp.file)
+        with open(fd, mode=mode) as file:
+            write_action(file)
     except BaseException:
-        tmp.close()
-        os.remove(tmp.name)
+        os.remove(tmp_name)
         raise
     else:
-        tmp.close()
-        os.rename(tmp.name, path)
+        os.replace(tmp_name, path)
 
 
 def read_text(path):
