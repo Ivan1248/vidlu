@@ -1,26 +1,25 @@
 import re
-from argparse import Namespace
 import typing as T
+from argparse import Namespace
 
 import torch
 
-from vidlu import models, metrics
-import vidlu.modules as vm
-from vidlu.models import params as mparams
 import vidlu.data.utils as vdu
+import vidlu.modules as vm
+import vidlu.torch_utils as vtu
+import vidlu.utils.func as uf
+from vidlu import metrics, models
 from vidlu.data import DataLoader, Dataset, Record
+from vidlu.extensions import extensions
+from vidlu.models import params as mparams
 from vidlu.training import Trainer, default_prepare_batch
+from vidlu.transforms.data_preparation import prepare_element
 from vidlu.utils import tree
 from vidlu.utils.collections import NameDict
-import vidlu.utils.func as uf
 from vidlu.utils.func import Reserved, partial
 from vidlu.utils.importing import parse_aliased_imports_expression
-from vidlu.extensions import extensions
-from vidlu.transforms.data_preparation import prepare_element
-import vidlu.torch_utils as vtu
 
 from . import defaults
-
 
 # eval
 
@@ -138,7 +137,7 @@ def parse_data_str(data_str):
 def apply_default_transforms(datasets, cache_dir):
     # TODO: de-hardcode
     import os
-    if int(os.environ.get("VIDLU_DUMMY_DATA", 0)) and cache_dir is not None:
+    if int(os.environ.get("VIDLU_DUMMY_DATA", '0')) and cache_dir is not None:
         for i, ds in enumerate(datasets):
             datasets[i] = vdu.cache_lazily(ds[:1].map(lambda r: type(r)(**r)),
                                            cache_dir=cache_dir).repeat(len(ds))  # .cache().repeat
@@ -156,7 +155,7 @@ def apply_default_transforms(datasets, cache_dir):
 
 def get_default_transforms(cache_dir):
     import os
-    if int(os.environ.get("VIDLU_DUMMY_DATA", 0)):
+    if int(os.environ.get("VIDLU_DUMMY_DATA", '0')):
         return dict(dummy=lambda ds: ds[:1].map(lambda r: type(r)(**r)).cache().repeat(len(ds)))
     return dict(
         add_pixel_stats=partial(vdu.add_pixel_stats_to_info_lazily, cache_dir=cache_dir),
@@ -172,7 +171,7 @@ def _provides_pixel_stats(ds) -> bool:
     `LazyDict`'s lazy values.
     """
     info = getattr(ds, 'info', None)
-    return info is not None and hasattr(info, 'keys') and 'pixel_stats' in info.keys()
+    return info is not None and hasattr(info, 'keys') and 'pixel_stats' in info.keys()  # noqa: SIM118
 
 
 def get_default_data_prep(datasets: T.Mapping, cache_dir):
@@ -227,7 +226,7 @@ def get_data(data_str: str, datasets_dir, cache_dir=None, namespace=None) \
 
     try:
         return factory_eval(data_str, glob)
-    except SyntaxError as e:
+    except SyntaxError:
         factory_exec(data_str, glob)
         return glob['data']
 
@@ -283,9 +282,9 @@ def get_input_adapter(input_adapter_str, *, data_stats=None):
     Returns:
         A torch module.
     """
+    import vidlu.configs.data.stats as cds
     import vidlu.modules as M
     from vidlu.transforms import image as imt
-    import vidlu.configs.data.stats as cds
 
     if input_adapter_str.startswith("standardize"):
         if input_adapter_str == "standardize":
@@ -301,7 +300,7 @@ def get_input_adapter(input_adapter_str, *, data_stats=None):
     else:
         try:
             return factory_eval(input_adapter_str)
-        except Exception as e:
+        except (NameError, SyntaxError, TypeError, ValueError, AttributeError) as e:
             raise ValueError(f"Invalid input_adapter_str: {input_adapter_str}, \n{e}")
     raise NotImplementedError()
 

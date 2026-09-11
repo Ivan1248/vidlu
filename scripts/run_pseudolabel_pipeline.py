@@ -94,10 +94,10 @@ def _ask_run_py_for_a_path(subcommand: str, data: str, input_adapter: str, model
                            extra_args: tuple[str, ...] = ()) -> Path:
     """Asks run.py for a path belonging to the experiment identified by the arguments.
 
-    run.py owns the experiment-to-directory mapping and the checkpoint naming, so asking it is
-    what keeps this pipeline from having to reimplement either. Both `get_path` (the experiment
-    directory) and `get_checkpoint_path` (one checkpoint in it) print the path as the last line;
-    other initialization code prints to stdout before it.
+    run.py owns the experiment-to-directory mapping and the checkpoint naming, so asking it keeps 
+    this pipeline from having to reimplement either. Both `get_path` (the experiment directory) and
+    `get_checkpoint_path` (one checkpoint in it) print the path as the last line; other 
+    initialization code prints to stdout before it.
     """
     cmd = [sys.executable, RUN_PY, subcommand,
            data, input_adapter, model, trainer,

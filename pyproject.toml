@@ -6,3 +6,9 @@ version = "0.2.0a"  # as in vidlu/version.py
 description = "ViDLU: Vision Deep Learning Utilities -- a PyTorch-based deep learning framework for research with emphasis on computer vision."
 requires-python = ">=3.10"
 dependencies = []
+
+[tool.ruff.lint]
+# Mirrors the flake8 ignores in setup.cfg.
+ignore = [
+  "C408",  # allow dict(...) calls instead of {...} literals
+]
