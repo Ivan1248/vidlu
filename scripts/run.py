@@ -1,5 +1,6 @@
 import argparse
 import contextlib as ctx
+import dataclasses as dc
 import os
 import random
 import shlex
@@ -78,9 +79,10 @@ def get_profiler():
     return profile(use_cuda=torch.cuda.is_available())
 
 
-def make_experiment(args, dirs):
-    return TrainingExperiment.from_args(
-        call_with_assignable_args(TrainingExperimentFactoryArgs, args.__dict__), dirs=dirs)
+def make_experiment(args, dirs, **factory_arg_overrides):
+    factory_args = call_with_assignable_args(TrainingExperimentFactoryArgs, args.__dict__)
+    return TrainingExperiment.from_args(dc.replace(factory_args, **factory_arg_overrides),
+                                        dirs=dirs)
 
 
 @torch.no_grad()
@@ -112,6 +114,12 @@ def eval_on_test_sets(exp, prefix="test"):
             print(f"Evaluating on {name} {getattr(ds, 'identifier', '')} ({len(ds)} examples)...")
             exp.trainer.eval(ds, split_name=name)
 
+
+def set_up_dry_run(exp):
+    exp.cpman.save = lambda *args, **kwargs: print("Dry run: not saving a checkpoint.")
+    print(f"\nDry run: experiment initialized. Directory:\n{exp.cpman.experiment_dir}")
+
+
 def train(args):
     exp = None
     try:
@@ -126,7 +134,11 @@ def train(args):
         if args.remote and args.resume not in [None, "restart"]:
             fetch_remote_experiment(args, dirs)
 
-        exp = make_experiment(args, dirs=dirs)
+        # Tracking is disabled in a dry run because it has effects outside the experiment.
+        exp = make_experiment(args, dirs=dirs, tracker=None if args.dry_run else args.tracker)
+
+        if args.dry_run:
+            set_up_dry_run(exp)
 
         is_resuming = args.resume not in (None, "restart")
         (print if is_resuming else exp.logger.log)(
@@ -137,7 +149,8 @@ def train(args):
             if not args.no_init_eval:
                 print('\nEvaluating initially...')
                 eval_on_test_sets(exp, prefix="val")
-            log_run('cont.' if args.resume else 'start')
+            if not args.dry_run:
+                log_run('cont.' if args.resume else 'start')
 
             print(('\nContinuing' if args.resume not in (
                 "restart", None) else 'Starting') + ' training...')
@@ -153,7 +166,8 @@ def train(args):
                     eval_on_test_sets(exp)
                     eval_on_test_sets(exp, prefix="val")
 
-            log_run('done', str(exp.cpman.id_to_perf))
+            if not args.dry_run:
+                log_run('done', str(exp.cpman.id_to_perf))
 
             if args.train_eval:
                 for name, ds in training_datasets.items():
@@ -171,7 +185,6 @@ def train(args):
             print(prof.key_averages().table(sort_by="self_cuda_time_total"))
 
         exp.cpman.remove_old_checkpoints()
-
         print(f"\nRNG seed: {args.seed}")
         print(f'State saved in\n{exp.cpman.last_checkpoint_path}')
 
@@ -203,7 +216,11 @@ def test(args):
     if not args.resume:
         warnings.warn("`resume` is set to `False`. The initial parameters will be tested.")
 
-    e = make_experiment(args, dirs=dirs)
+    # Tracking is disabled in a dry run because it has effects outside the experiment.
+    e = make_experiment(args, dirs=dirs, tracker=None if args.dry_run else args.tracker)
+
+    if args.dry_run:
+        set_up_dry_run(e, args.num_dry_run_iterations)
 
     if (module_arg := args.module) is not None:
         import importlib
@@ -290,6 +307,8 @@ def add_standard_arguments(parser, func):
     parser.add_argument("--tracker", type=str, choices=["wandb"], default=None,
                         help="Experiment tracking backend. Configure via the WANDB_PROJECT,"
                              + " WANDB_ENTITY and WANDB_MODE environment variables.")
+    parser.add_argument("--dry_run", action='store_true',
+                        help="Run the experiment without saving checkpoints, logging the run, or tracking.")
     parser.add_argument("--debug", help="", action='store_true')
     parser.add_argument("--print_calls", help="", action='store_true')
     parser.add_argument("--profile", help="Enable CUDA profiling.", action='store_true')
