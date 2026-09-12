@@ -7,6 +7,9 @@
 #   subuid/subgid so container root already resolves to the host user on disk.
 # - --runtime=nvidia replaced by --gpus all (CDI-based, requires nvidia-ctk).
 # - Adds --ipc=host so torch DataLoader workers can share memory.
+# - Adds --network=host so that servers started inside the container (`streamlit run`,
+#   tensorboard, ...) are reachable at localhost:<port> on the host and SSH X11 forwarding
+#   works. Rootless podman would otherwise make the container's IP unroutable from the host.
 #
 # The image is named after the directory containing Containerfile, lowercased,
 # with "-devel" appended.
@@ -70,7 +73,6 @@ echo "Running command in podman: $command"
 # --gpus '"device=2,3"'
 # --cpus=16 --memory=128G
 # --env-file <(env | grep -E 'CUDA_.*|VIDLU_.*|QT.*') \
-#  --network=host \
 # -v "$(echo ~)/.config:$(echo ~)/.config" \
 
 # --- GUI forwarding (X11 / Xwayland / Wayland / session D-Bus) -------------
@@ -95,12 +97,8 @@ if [ -n "${DISPLAY:-}" ] && [ -d /tmp/.X11-unix ]; then
     -v "/tmp/.X11-unix:/tmp/.X11-unix:rw"
   )
   # SSH X11 forwarding (DISPLAY like "localhost:11.0" or "host:N") routes
-  # over a TCP port on the host's loopback. The container's "localhost" is
-  # itself, so it needs the host network namespace to reach that port.
-  case "$DISPLAY" in
-    :*) ;;  # pure local socket, no TCP needed
-    *)  gui_args+=( --network=host ) ;;
-  esac
+  # over a TCP port on the host's loopback, which the container reaches
+  # because it runs with --network=host.
   # Permit local connections from this user only (narrower than `xhost +local:`).
   xhost +SI:localuser:"$(id -un)" >/dev/null 2>&1 || true
   trap 'rm -f "$xauth_file"' EXIT
@@ -147,6 +145,7 @@ touch "$histfile"
 set -o xtrace
 podman run -it --rm --gpus all \
   --ipc=host \
+  --network=host \
   -e "HOME=$(echo ~)" \
   -v "$(echo ~/data):$(echo ~/data)" \
   -v "$(echo ~/projects):$(echo ~/projects)" \
