@@ -202,3 +202,5 @@ semseg_cascade/
 /vidlu/models/mo_models.py
 /test_vidlu_irap_gaim/
 /.devdocs
+/.claude/
+/commit-plan.md
