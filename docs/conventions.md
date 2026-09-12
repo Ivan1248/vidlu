@@ -27,16 +27,23 @@ Reserve `eps` / `EPS` for a numerical tolerance that absorbs floating-point erro
 
 ### 1.2 Function naming by role
 
-Reuse an established verb prefix rather than inventing a new one:
+Use an **imperative verb phrase**, with exceptions: 
+- **Predicates** should be phrased as affirmative statements, with the same subject rule as boolean properties ([§ Values](#values)): `is_running()`, `contains()`, `intersects()`. (`polygon.contains(point)` reads "polygon contains point".)
+- If there is a **standard noun term** for a function, it is acceptable: `exp`, `argmax`, `fft`.
+- **Conversions** with `to` or `from` as the prefix or infix can be named without a verb: `direction_to_heading`.
+- **Factories and constructors** can be named after what they produce.
+- **Event handlers** should be named with the `on_` prefix followed by the event name (a noun with a past participle): `on_iter_finished`.
+
+**Accessors**: prefer a Python property (`@property`) whenever the value is cheap, deterministic, and side-effect-free. Where a property is not possible, either use `get_`/`compute_` per the table, or omit `get_` and name the work: `scan_` for hardware discovery (`scan_devices()`), `fetch_` for I/O, `compute_` for non-trivial math.
 
 | Prefix | Role | Example |
 |---|---|---|
 | `compute_` | Pure algorithm / math | `compute_confusion_matrix` |
 | `on_` | Event handler / callback | `on_epoch_end` |
-| `to_` / `from_` | Type conversion | `to_numpy`, `from_config` |
 | `set_` / `update_` | Mutator / partial state change | `set_lr`, `update_metrics` |
 | `get_` | Accessor, possibly with args | `get_class_counts` |
 | `run_` / `execute_` | Start a long-running process | `run_training` |
+| `to_` / `from_` | Type conversion | `to_numpy`, `from_config` |
 | `is_` / `has_` / `can_` | Boolean predicate (affirmative statement) | `is_finite`, `has_labels` |
 
 A method that doesn't read `self` should be a module-level function instead of an instance method.
