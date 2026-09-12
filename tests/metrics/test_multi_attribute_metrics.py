@@ -194,7 +194,7 @@ def test_confusion_matrices_are_exposed_per_attribute():
     batch = random_batch()
     m = make_metrics(("aA",))
     m.update(batch)
-    cms = m.confusion_matrices()
+    cms = m.get_confusion_matrices()
     assert set(cms) == set(CLASS_COUNTS)
     assert cms["a"].shape == (3, 3) and cms["a"].sum() == 64
     assert cms["a"].sum(1).tolist() == torch.bincount(batch.target[:, 0], minlength=3).tolist()

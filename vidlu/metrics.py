@@ -666,7 +666,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
             for m in self._children(a):
                 m.update(sliced)
 
-    def confusion_matrices(self) -> dict[T.Hashable, torch.Tensor]:
+    def get_confusion_matrices(self) -> dict[T.Hashable, torch.Tensor]:
         """The accumulated (C_i, C_i) confusion matrix of every attribute, rows = ground truth."""
         return {a: m.cm for a, m in self.attr_to_cm_metrics.items()}
 

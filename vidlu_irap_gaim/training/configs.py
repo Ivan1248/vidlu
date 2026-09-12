@@ -39,24 +39,6 @@ combined_train_loader_f = partial(Trainer.data_loader_f, multi_dl_f="combine",
                                   primary_index="longest")
 
 
-def _make_dynamic_balanced_recall_weights(dirs):
-    """Factory function for DynamicBalancedRecallWeights.
-
-    Args:
-        dirs: Experiment directories object (required). This is automatically provided
-            from the experiment via the factory namespace. The cache_dir is extracted
-            from dirs.cache (handling the case where it might be a list).
-    """
-    # Handle case where dirs.cache might be a list (use first element)
-    cache_dir = dirs.cache[0] if isinstance(dirs.cache, (list, tuple)) else dirs.cache
-    from irap_data.attrs import get_attrs_to_include
-
-    attrs_to_include = get_attrs_to_include()
-    return DynamicBalancedRecallWeights(
-        cache_dir=cache_dir, attrs_to_include=attrs_to_include
-    )
-
-
 # Basic classification trainer with supervised step
 # Loss is supplied externally as multi-attribute wrapper (see factory usage)
 # Default epoch counts match the original repo's train_local_rec_paper_ep10.sh variant
@@ -75,7 +57,7 @@ irap_local_rec_trainer = TrainerConfig(
     extension_fs=[
         # frozen_epochs controls the transition; finetune duration is implied by epoch_count
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],
@@ -94,7 +76,7 @@ irap_local_rec_trainer_multiscale = TrainerConfig(
     jitter=make_sequence_color_jitter(),
     extension_fs=[
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],
@@ -139,7 +121,7 @@ irap_semisup_trainer = TrainerConfig(
     extension_fs=[
         partial(SemisupVAT, attack_f=partial(ColorJitterAttack, preset=JITTER_STRONG)),
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],
@@ -159,7 +141,7 @@ irap_semisup_trainer_ph20 = TrainerConfig(
             ),
         ),
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],
@@ -178,7 +160,7 @@ irap_semisup_trainer_ph3 = TrainerConfig(
             ),
         ),
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],
@@ -207,7 +189,7 @@ irap_pseudo_label_trainer = TrainerConfig(
     extension_fs=[
         partial(SemisupVAT, attack_f=partial(ColorJitterAttack, preset=JITTER_STRONG)),
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],
@@ -247,7 +229,7 @@ irap_pseudo_label_offline_trainer = TrainerConfig(
     jitter=make_sequence_color_jitter(),
     extension_fs=[
         partial(FreezeThenFinetune, num_frozen_epochs=2),
-        _make_dynamic_balanced_recall_weights,
+        DynamicBalancedRecallWeights,
         VisualizationExtension,
         MultiAttributeScorePrinter,
     ],

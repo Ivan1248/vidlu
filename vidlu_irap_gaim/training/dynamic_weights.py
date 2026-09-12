@@ -1,417 +1,362 @@
+"""Dynamic balanced-recall class weights for multi-attribute classification.
+
+A port of ``calculate_new_class_weights`` from ``libs/irap_gaim-orig/train_local_rec.py:127-169``:
+weights attribute cross-entropy as
+
+    w_c = inverse_frequency_c * (1 - recall_c) + sqrt(inverse_frequency_c) * recall_c,
+
+where inverse frequencies derive from training class counts and recalls derive from
+the previous epoch's validation confusion matrix. High-recall classes are damped
+toward ``sqrt(inverse_frequency)``, while low-recall classes retain the full inverse frequency.
+"""
+
+import logging
 from collections.abc import Sequence
-from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 import torch
-from sklearn.metrics import recall_score
-from tqdm import tqdm
+from irap_data.attrs import get_attrs_to_include, map_attr_names_to_indices
+from irap_data.irap_dataset import IGNORE_LABEL_INDEX, compute_label_matrix
 
+from vidlu.metrics import confusion_matrix_class_stats
 from vidlu.training.extensions import TrainerExtension
-from irap_data.dataset import Dataset
-from vidlu_irap_gaim.metrics import InternalMetricsProvider
+
+log = logging.getLogger(__name__)
 
 
-def compute_attr_idx_to_class_occurrence_counts(dataset, class_counts: tuple[int, ...]) -> dict[int, torch.Tensor]:
-    """Compatibility wrapper for legacy index-based calls."""
-    attr_to_class_count = {i: c for i, c in enumerate(class_counts)}
-    return compute_attr_key_to_class_occurrence_counts(dataset, attr_to_class_count)
+@runtime_checkable
+class ConfusionMatricesProvider(Protocol):
+    """A metric exposing one confusion matrix per attribute, rows = ground truth."""
+
+    def get_confusion_matrices(self) -> dict[object, torch.Tensor]: ...
+
+# Inverse frequency substituted for a class with no training examples, from the original
+# (``train_local_rec.py:152``). Such a class never occurs as a target, so cross-entropy never
+# reads its weight – provided the counts cover the same data the loss runs on, which is
+# what ``_get_train_datasets`` enforces.
+INVERSE_FREQUENCY_FOR_ABSENT_CLASS = 1e-4
 
 
-def compute_attr_key_to_class_occurrence_counts(
-    dataset, attr_to_class_count: dict[object, int], attr_to_index: dict[object, int] | None = None
-) -> dict[object, torch.Tensor]:
-    """
-    Compute class occurrence counts from dataset labels.
+def compute_attr_to_class_occurrence_counts(
+    datasets: Sequence, attr_to_index: dict[str, int], attr_to_num_classes: dict[str, int]
+) -> dict[str, torch.Tensor]:
+    """Counts class occurrences per attribute, pooled over ``datasets``.
 
-    This corresponds to `attribute_class_idx_to_occurrences` in the original IRAP GAIM code.
-    Uses dict with Generic Keys (Names or Indices) to match metrics configuration.
-
-    Args:
-        dataset: Dataset whose `info` has `segment_id_to_labels` and `segment_ids`.
-        attr_to_class_count: Dict mapping key -> number of classes.
-        attr_to_index: Dict mapping key -> global attribute index. If None, assumes keys are indices.
-
-    Returns:
-        Dict mapping Key to occurrence tensor. result[key][class_idx] = count.
-    """
-    counts = {key: torch.zeros(nc, dtype=torch.long) for key, nc in attr_to_class_count.items()}
-
-    for required_attr in ("segment_id_to_labels", "segment_ids"):
-        if not hasattr(dataset.info, required_attr):
-            raise AttributeError(
-                f"dataset.info must have the '{required_attr}' attribute, which an IRAPDataset"
-                f" provides. Got a dataset of type {type(dataset).__name__}.")
-
-    segment_ids = dataset.info.segment_ids
-    segment_id_to_labels = dataset.info.segment_id_to_labels
-
-    # Check for data consistency: all segment_ids should have labels
-    missing_labels = [sid for sid in segment_ids if sid not in segment_id_to_labels]
-    if missing_labels:
-        raise ValueError(
-            f"Found {len(missing_labels)} segment IDs without labels in segment_id_to_labels. "
-            f"First few missing: {missing_labels[:5]}. "
-            f"This indicates a data inconsistency - segments in segment_ids should have corresponding labels."
-        )
-
-    for sid in tqdm(segment_ids, desc="Computing class occurrence counts"):
-        labels = segment_id_to_labels[sid]
-        for key in counts.keys():
-            # Determine global index
-            if attr_to_index is not None:
-                idx = attr_to_index[key]
-            else:
-                idx = key if isinstance(key, int) else -1
-
-            if idx >= 0 and idx < len(labels):
-                counts[key][int(labels[idx])] += 1
-
-    return counts
-
-
-def add_attr_idx_to_class_occurrence_counts_to_info_lazily(
-    ds: Dataset, cache_dir: str | Path, recompute: bool = False
-) -> Dataset:
-    """
-    Add class occurrence counts to dataset.info using HDD caching.
-
-    This corresponds to `attribute_class_idx_to_occurrences` in the original IRAP GAIM code.
-    The cached value is stored in dataset.info.attr_idx_to_class_occurrence_counts.
+    Corresponds to ``attribute_class_idx_to_occurrences`` in ``libs/irap_gaim-orig``.
+    Excludes the ignore label (``IGNORE_LABEL_INDEX``): because negative indices are
+    valid in Python arrays, counting it would silently assign unannotated samples
+    to the final class and distort the inverse frequency baseline.
 
     Args:
-        ds: Dataset with info.class_counts and underlying segment_id_to_labels/segment_ids
-        cache_dir: Directory for caching (will create info_cache subdirectory)
-        recompute: If True, force recomputation even if cache exists
+        datasets: iRAP datasets whose `info` carries `segment_ids` and
+            `segment_id_to_labels`. Counts are summed over all of them, so joint training
+            on several `train*` splits gets the priors of their union.
+        attr_to_index: Maps an attribute name to its column in the label matrix.
+        attr_to_num_classes: Maps an attribute name to its number of classes.
 
     Returns:
-        Dataset wrapped with HDDInfoCacheDataset that has info.attr_idx_to_class_occurrence_counts cached
-
-    Example:
-        >>> train_ds = make_bih_data()['train']
-        >>> train_ds = add_attr_idx_to_class_occurrence_counts_to_info_lazily(train_ds, cache_dir="/path/to/cache")
-        >>> # Now train_ds.info.attr_idx_to_class_occurrence_counts is available (computed lazily on first access)
+        Maps an attribute name to an int64 tensor of length `attr_to_num_classes[attr]`,
+        whose element `c` is the number of examples labelled with class `c`.
     """
-
-    def _compute(dataset: Dataset) -> dict[int, torch.Tensor]:
-        """Compute class occurrence counts for caching."""
-        if not hasattr(dataset, "info") or not hasattr(dataset.info, "class_counts"):
-            raise ValueError(
-                "Dataset must have info.class_counts for class occurrence count computation. "
-                "Ensure the dataset was created with proper info attributes."
-            )
-        return compute_attr_idx_to_class_occurrence_counts(dataset, dataset.info.class_counts)
-
-    breakpoint() # don't forget that caching is happening
-
-    return ds.info_cache_hdd(
-        {"attr_idx_to_class_occurrence_counts": _compute},
-        directory=cache_dir,
-        recompute=recompute,
-    )
-
-
-def _estimate_random_classifier_recalls(n_classes: int) -> np.ndarray:
-    return np.array([1.0 / n_classes] * n_classes, dtype=np.float64)
+    counts = {attr: np.zeros(n, dtype=np.int64) for attr, n in attr_to_num_classes.items()}
+    for dataset in datasets:
+        info = dataset.info
+        labels = compute_label_matrix(info.segment_id_to_labels, info.segment_ids,
+                                      len(info.class_counts))
+        for attr, num_classes in attr_to_num_classes.items():
+            column = labels[:, attr_to_index[attr]]
+            observed = column[column != IGNORE_LABEL_INDEX]
+            if observed.size and (observed.min() < 0 or observed.max() >= num_classes):
+                invalid = observed[(observed < 0) | (observed >= num_classes)]
+                raise ValueError(
+                    f"Attribute '{attr}' has class indices outside [0, {num_classes}) and"
+                    f" other than the ignore label {IGNORE_LABEL_INDEX}:"
+                    f" {sorted(set(invalid.tolist()))}.")
+            counts[attr] += np.bincount(observed, minlength=num_classes)
+    return {attr: torch.from_numpy(c) for attr, c in counts.items()}
 
 
-def _calculate_attr_key_to_class_weights(
-    attr_key_to_class_occurrence_counts: dict[object, torch.Tensor],
-    attr_key_to_result_lists: dict[object, dict[str, np.ndarray]] | None = None,
-    attr_key_to_recalls: dict[object, np.ndarray] | None = None,
-) -> dict[object, torch.Tensor]:
-    """
-    Calculate class weights for dynamic balanced recall loss.
+def _calculate_attr_to_class_weights(
+    attr_to_class_occurrence_counts: dict[str, torch.Tensor],
+    attr_to_class_recalls: dict[str, np.ndarray] | None = None,
+) -> dict[str, torch.Tensor]:
+    """Calculates class weights for the dynamic balanced-recall loss.
 
-    This corresponds to `calculate_new_class_weights` in the original IRAP GAIM code.
-
-    All arguments use Generic Keys (likely Strings) as dict keys.
+    This corresponds to `calculate_new_class_weights` in the original iRAP GAIM code.
 
     Args:
-        attr_key_to_class_occurrence_counts: Dict mapping Key to occurrence tensor.
-            Corresponds to `attribute_class_idx_to_occurrences` in original code.
-            attr_key_to_class_occurrence_counts[key][class_idx] = count.
-        attr_key_to_result_lists: Optional dict mapping Key to result dicts
-            with 'y_true' and 'y_pred' keys. If None and attr_key_to_recalls is None,
-            uses random classifier recalls.
-        attr_key_to_recalls: Optional dict mapping Key to recall arrays.
-            If provided, used directly instead of computing from result_lists.
+        attr_to_class_occurrence_counts: Maps an attribute name to its per-class training
+            occurrence counts.
+        attr_to_class_recalls: Maps an attribute name to its per-class validation recalls.
+            `None` before any evaluation has run, in which case a random classifier's
+            recalls (`1 / num_classes`) are assumed, as in the original. An attribute the
+            validation metric does not cover gets recall 1, the same convention as a class
+            with no validation examples.
 
     Returns:
-        Dict mapping Key to weight tensor (attr_key_to_class_weights).
+        Maps an attribute name to a float32 weight tensor, for every attribute in
+        `attr_to_class_occurrence_counts`.
     """
-    # Build recalls for all attributes that have occurrence counts
-    attr_key_to_class_recalls = dict()
-    if attr_key_to_recalls is not None:
-        attr_key_to_class_recalls = attr_key_to_recalls
-    elif attr_key_to_result_lists is None:
-        # No results yet - estimate random classifier recalls for all attributes
-        for key, occ_counts in attr_key_to_class_occurrence_counts.items():
-            nc = len(occ_counts)
-            attr_key_to_class_recalls[key] = _estimate_random_classifier_recalls(nc)
-    else:
-        # Compute recalls only for attributes that have results
-        for key, result_lists in attr_key_to_result_lists.items():
-            nc = len(attr_key_to_class_occurrence_counts[key])
-            labels = list(range(nc))
-            attr_key_to_class_recalls[key] = recall_score(
-                result_lists["y_true"], result_lists["y_pred"], average=None, labels=labels, zero_division=1
-            )
+    attr_to_class_weights = {}
+    for attr, occurrence_counts in attr_to_class_occurrence_counts.items():
+        num_classes = len(occurrence_counts)
+        if attr_to_class_recalls is None:
+            recalls = np.full(num_classes, 1 / num_classes, dtype=np.float64)
+        else:
+            recalls = np.asarray(attr_to_class_recalls.get(attr, np.ones(num_classes)),
+                                 dtype=np.float64)
 
-    # Compute weights only for attributes that have both occurrences AND recalls
-    attr_key_to_class_weights = {}
-    for key, occ_counts in attr_key_to_class_occurrence_counts.items():
-        if key not in attr_key_to_class_recalls:
-            continue  # Skip attributes without recall data
-        total = occ_counts.sum().item()
-        occ = np.array([int(occ_counts[c].item()) for c in range(len(occ_counts))], dtype=np.float64)
-        zero_occ_const = 1e-4
-        inv_freq = np.array([(total / c) if c > 0 else zero_occ_const for c in occ], dtype=np.float64)
-        class_recalls = np.asarray(attr_key_to_class_recalls[key], dtype=np.float64)
-        w = inv_freq * (1.0 - class_recalls) + np.sqrt(inv_freq) * class_recalls
-        attr_key_to_class_weights[key] = torch.tensor(w, dtype=torch.float32)
-    return attr_key_to_class_weights
+        occurrences = occurrence_counts.numpy().astype(np.float64)
+        total = occurrences.sum()
+        inverse_frequencies = np.where(occurrences > 0, total / np.maximum(occurrences, 1),
+                                       INVERSE_FREQUENCY_FOR_ABSENT_CLASS)
+        weights = (inverse_frequencies * (1.0 - recalls)
+                   + np.sqrt(inverse_frequencies) * recalls)
+        attr_to_class_weights[attr] = torch.tensor(weights, dtype=torch.float32)
+    return attr_to_class_weights
 
 
-def _find_dataset_by_prefix(data: dict[str, Dataset] | None, prefix: str) -> Dataset | None:
-    """Find dataset in data dict by key prefix."""
-    if data is None:
-        return None
-    return next((ds for name, ds in data.items() if name.startswith(prefix)), None)
+def _compute_attr_to_class_recalls(
+    attr_to_class_stats: dict[str, dict[str, torch.Tensor]]
+) -> dict[str, np.ndarray]:
+    """Per-class recalls from confusion-matrix statistics.
 
-
-def _get_attr_key_to_class_occurrence_counts(
-    dataset: Dataset,
-    cache_dir: Path,
-    attr_to_class_count: dict[object, int],
-    attr_to_index: dict[object, int] | None = None,
-) -> dict[object, torch.Tensor]:
-    try:
-        # Try new cache name
-        return dataset.info.attr_key_to_class_occurrence_counts
-    except AttributeError:
-        # Helper to attach cache lazily
-        def _compute(ds):
-            return compute_attr_key_to_class_occurrence_counts(ds, attr_to_class_count, attr_to_index)
-
-        # We rename the property on info to attr_key_...
-        dataset = dataset.info_cache_hdd(
-            {"attr_key_to_class_occurrence_counts": _compute},
-            directory=cache_dir,
-            recompute=False,
-        )
-        return dataset.info.attr_key_to_class_occurrence_counts
+    A class with no validation examples gets recall 1, matching the original's
+    `recall_score(..., zero_division=1)`.
+    """
+    attr_to_class_recalls = {}
+    for attr, stats in attr_to_class_stats.items():
+        true_positives = stats["tp"].numpy().astype(np.float64)
+        actual = stats["actual"].numpy().astype(np.float64)
+        attr_to_class_recalls[attr] = np.where(actual == 0, 1.0,
+                                               true_positives / np.maximum(actual, 1))
+    return attr_to_class_recalls
 
 
 class DynamicBalancedRecallWeights(TrainerExtension):
-    """
-    After each epoch, recompute per-attribute class weights from validation results (macro recalls)
-    and swap the trainer.loss with a wrapper that injects weights into cross-entropy per attribute.
+    """Re-weights each attribute's cross-entropy from training priors and validation recalls.
 
-    Class occurrence counts (corresponding to `attribute_class_idx_to_occurrences` in the original
-    IRAP GAIM code) are cached using dataset.info.attr_idx_to_class_occurrence_counts if available,
-    or cached on-the-fly using the provided cache_dir.
+    Computes training class occurrence counts once over all ``train*`` splits, so that joint
+    training uses the prior distribution of their union. After each evaluation of the tracked
+    validation split(s), reads per-class recalls from the metric belonging to that split, then
+    recomputes and applies the loss weights.
 
     Args:
-        cache_dir: Cache directory for storing class occurrence counts (required)
-        dataset_split_prefix: Prefix for validation dataset key (default: 'val').
-            Ignored if split_names is provided.
-        split_names: Explicit list of split names to use for weight updates (default: None).
-            If None, auto-detect by prefix. If provided, dataset_split_prefix is ignored.
-        attrs_to_include: Explicit attribute names to use, or None to auto-detect from dataset
+        attrs_to_include: Attribute names to weight; None (the default) means the canonical
+            attributes (`irap_data.attrs.get_attrs_to_include`). Attributes with no labelled
+            example in the training data are dropped from this set, since neither their
+            priors nor their recalls are defined (e.g. iRAP-Vietnam's seven BH-only
+            attributes).
+        val_split_prefix: Prefix identifying the validation splits. Ignored when
+            `recall_split_names` is given.
+        train_split_names: Training splits to take occurrence counts from. `None` (the
+            default) uses every `trainer.data` key starting with "train", which is what
+            `Trainer.get_training_data_loader` trains on.
+        recall_split_names: Validation splits to take recalls from. `None` (the default)
+            uses the *first* split matching `val_split_prefix`. Naming several splits
+            pools their confusion-matrix statistics within each epoch.
 
     Note:
-        - Requires an InternalMetricsProvider metric (e.g., MultiAttributeClassificationMetrics)
-          to be included in trainer.metrics.
-        - For best performance, pre-cache using add_attr_idx_to_class_occurrence_counts_to_info_lazily
-          in your data factory. The cache_dir is still required for on-the-fly caching fallback.
+        Requires a `ConfusionMatricesProvider` metric (e.g.
+        `MultiAttributeClassificationMetrics`) among `trainer.metrics`, and a loss
+        supporting `set_attrs_idx()` / `set_class_weights()` (i.e.
+        `MultiAttributeCrossEntropyLoss`).
     """
 
     def __init__(
         self,
-        cache_dir: str | Path,
-        dataset_split_prefix: str = "val",
-        split_names: Sequence[str] | None = None,
         attrs_to_include: Sequence[str] | None = None,
+        val_split_prefix: str = "val",
+        train_split_names: Sequence[str] | None = None,
+        recall_split_names: Sequence[str] | None = None,
     ):
-        self.dataset_split_prefix = dataset_split_prefix
-        self.split_names = list(split_names) if split_names is not None else None
-        self.attrs_to_include = attrs_to_include
-        self.cache_dir = Path(cache_dir)
-        self.attr_key_to_class_occurrence_counts: dict[object, torch.Tensor] | None = None
-        self.attr_key_to_class_weights: dict[object, torch.Tensor] | None = None
-        self.loss_adapter = None
-        self.attr_to_index = None
+        self.attrs_to_include = tuple(
+            get_attrs_to_include() if attrs_to_include is None else attrs_to_include)
+        self.val_split_prefix = val_split_prefix
+        self.train_split_names = None if train_split_names is None else list(train_split_names)
+        self.recall_split_names = None if recall_split_names is None else list(recall_split_names)
+        self.attr_to_class_occurrence_counts: dict[str, torch.Tensor] | None = None
+        self.attr_to_class_weights: dict[str, torch.Tensor] | None = None
+        self.attr_to_index: dict[str, int] | None = None
+        self.target_split_names: list[str] | None = None
+        self.loss = None
+        self._trainer = None
+        self._split_name_to_metric: dict[str, ConfusionMatricesProvider] = {}
+        self._pooled_attr_to_class_stats: dict[str, dict[str, torch.Tensor]] = {}
+        self._reported_attrs_without_recalls = False
 
     def initialize(self, trainer):
-        trainer.model.eval()
-
         if trainer.data is None:
             raise ValueError("DynamicBalancedRecallWeights requires trainer.data to be set.")
-
-        # Find and validate training dataset
-        train_ds = _find_dataset_by_prefix(trainer.data, "train")
-        if train_ds is None:
-            raise ValueError("No training dataset found in trainer.data (expected key starting with 'train').")
-
-        # Determine which attributes to include and construct mappings
-        # If attrs_to_include is None, we default to ALL attributes from dataset if possible
-        if self.attrs_to_include is None:
-            if hasattr(train_ds, "info") and hasattr(train_ds.info, "attribute_names"):
-                self.attrs_to_include = tuple(train_ds.info.attribute_names)
-
-        # Construct Key -> Index mapping
-        if self.attrs_to_include is not None:
-            from irap_data.attrs import map_attr_names_to_indices
-
-            attrs_idx_list = map_attr_names_to_indices(
-                self.attrs_to_include, train_ds.info.attr_to_value_to_class_idx.keys()
-            )
-            self.attr_to_index = {name: idx for name, idx in zip(self.attrs_to_include, attrs_idx_list)}
-
-            # Also construct Key -> Class Count
-            attr_to_class_count = {name: train_ds.info.class_counts[idx] for name, idx in self.attr_to_index.items()}
-        else:
-            # Fallback: assume keys are indices 0..N
-            self.attr_to_index = None
-            attr_to_class_count = {i: c for i, c in enumerate(train_ds.info.class_counts)}
-
-        # Get class occurrence counts (using generic key cache)
-        self.attr_key_to_class_occurrence_counts = _get_attr_key_to_class_occurrence_counts(
-            train_ds, self.cache_dir, attr_to_class_count, self.attr_to_index
-        )
-
-        # Configure Loss
-        # Loss adapter expects indices
-        self.loss_adapter = self._bind_loss_adapter(trainer.loss)
-        if self.attr_to_index is not None:
-            # Map keys (Names) to Indices
-            attrs_idx = list(self.attr_to_index.values())
-            self.loss_adapter.set_attrs_idx(attrs_idx)
-        else:
-            # Keys are already indices
-            self.loss_adapter.set_attrs_idx(list(attr_to_class_count.keys()))
-
-        # Initialize weights
-        self.attr_key_to_class_weights = _calculate_attr_key_to_class_weights(self.attr_key_to_class_occurrence_counts)
-        self._push_weights_to_loss()
-
-        # Determine target validation split names
-        if self.split_names is None:
-            # Auto-detect by prefix
-            self.target_split_names = [
-                name for name in trainer.data.keys() if name.startswith(self.dataset_split_prefix)
-            ]
-        else:
-            # Use explicit split names
-            self.target_split_names = [name for name in self.split_names if name in trainer.data]
-            missing = set(self.split_names) - set(self.target_split_names)
-            if missing:
-                raise ValueError(
-                    f"DynamicBalancedRecallWeights: Split names {missing} not found in trainer.data. "
-                    f"Available splits: {list(trainer.data.keys())}"
-                )
-
-        # Store trainer reference for lazy metric lookup
         self._trainer = trainer
-        self._metric = None
 
-        # Register epoch end handler on evaluation loop
+        train_datasets = self._get_train_datasets(trainer)
+        reference_info = next(iter(train_datasets.values())).info
+        self.attr_to_index = dict(zip(
+            self.attrs_to_include,
+            map_attr_names_to_indices(self.attrs_to_include,
+                                      list(reference_info.attr_to_value_to_class_idx.keys()))))
+        attr_to_num_classes = {attr: reference_info.class_counts[i]
+                               for attr, i in self.attr_to_index.items()}
+
+        counts = compute_attr_to_class_occurrence_counts(
+            list(train_datasets.values()), self.attr_to_index, attr_to_num_classes)
+        # An attribute a release does not annotate has every label ignored, so it has no
+        # priors and no recalls. Dropping it here keeps this set equal to the metric's,
+        # which `get_irap_metrics` derives the same way via `filter_labeled_attrs`.
+        unlabeled = [attr for attr, c in counts.items() if c.sum() == 0]
+        if unlabeled:
+            log.info(f"DynamicBalancedRecallWeights: not weighting {len(unlabeled)} attributes"
+                     f" with no labelled training example: {', '.join(unlabeled)}.")
+            for attr in unlabeled:
+                del counts[attr], self.attr_to_index[attr]
+        if not counts:
+            raise ValueError(
+                "DynamicBalancedRecallWeights: none of the attributes"
+                f" {list(self.attrs_to_include)} has a labelled training example.")
+        self.attr_to_class_occurrence_counts = counts
+
+        self.loss = self._check_loss_supports_class_weights(trainer.loss)
+        self.loss.set_attrs_idx(list(self.attr_to_index.values()))
+        self.attr_to_class_weights = _calculate_attr_to_class_weights(counts)
+        self._set_loss_class_weights()
+
+        self.target_split_names = self._get_target_split_names(trainer)
+        log.info(f"DynamicBalancedRecallWeights: class priors from"
+                 f" {', '.join(f'{n} ({len(ds)})' for n, ds in train_datasets.items())};"
+                 f" recalls from {', '.join(self.target_split_names)}.")
+
         @trainer.evaluation.epoch_completed.handler
-        def on_eval_epoch_end(state):
-            split_name = getattr(state, "split_name", "")
-            # Check if this split should trigger weight update
-            if self.split_names is not None:
-                # Explicit split names: exact match
-                if split_name in self.target_split_names:
-                    self._update_weights_from_reused_eval(trainer, state)
-            else:
-                # Prefix-based: check if split starts with prefix
-                if split_name.startswith(self.dataset_split_prefix):
-                    self._update_weights_from_reused_eval(trainer, state)
+        def on_evaluation_epoch_completed(state):
+            split_name = getattr(state, "split_name", None)
+            if split_name in self.target_split_names:
+                self._update_class_weights(split_name)
 
-    def _push_weights_to_loss(self):
-        """Translate key-based weights to index-based weights and push to loss."""
-        if self.attr_key_to_class_weights is None:
-            self.loss_adapter.set_class_weights(None)
-            return
-
-        if self.attr_to_index is not None:
-            # Translate Key -> Index
-            idx_weights = {self.attr_to_index[k]: w for k, w in self.attr_key_to_class_weights.items()}
-            self.loss_adapter.set_class_weights(idx_weights)
+    def _get_train_datasets(self, trainer) -> dict:
+        """The training splits the occurrence counts are taken over, validated."""
+        if self.train_split_names is None:
+            names = [name for name in trainer.data if name.startswith("train")]
+            if not names:
+                raise ValueError(
+                    "DynamicBalancedRecallWeights found no training split in trainer.data"
+                    f" (expected a key starting with 'train'); got {list(trainer.data)}.")
         else:
-            # Keys are already indices
-            self.loss_adapter.set_class_weights(self.attr_key_to_class_weights)
+            names = self.train_split_names
+            if missing := [n for n in names if n not in trainer.data]:
+                raise ValueError(
+                    f"DynamicBalancedRecallWeights: train splits {missing} are not in"
+                    f" trainer.data. Available: {list(trainer.data)}.")
 
-    def _get_metric(self):
-        """Lazily find the InternalMetricsProvider metric among the trainer's metrics."""
-        if self._metric is None:
-            self._metric = next((m for m in self._trainer.get_metrics()
-                                 if isinstance(m, InternalMetricsProvider)), None)
-            if self._metric is None:
+        datasets = {name: trainer.data[name] for name in names}
+        for name, dataset in datasets.items():
+            num_described = len(dataset.info.segment_ids)
+            if num_described != len(dataset):
+                raise ValueError(
+                    f"Split '{name}' has {len(dataset)} examples but its info describes"
+                    f" {num_described}, so class priors computed from it would not match the"
+                    f" data the loss sees. This happens when datasets are joined"
+                    f" (`a.join(b, info=b.info)` keeps only one info) or subsetted. Pass the"
+                    f" splits separately instead of joining them.")
+        return datasets
+
+    def _get_target_split_names(self, trainer) -> list[str]:
+        """The validation splits whose recalls drive the weight updates."""
+        if self.recall_split_names is None:
+            matching = [name for name in trainer.data
+                        if name.startswith(self.val_split_prefix)]
+            if not matching:
+                raise ValueError(
+                    "DynamicBalancedRecallWeights found no validation split in trainer.data"
+                    f" starting with '{self.val_split_prefix}'; got {list(trainer.data)}.")
+            # Only the first: evaluation runs per split, and each split's metric is reset
+            # once reported, so reacting to every one would let the last split's (or an
+            # already-reset metric's) recalls silently overwrite the rest.
+            return matching[:1]
+
+        if missing := [n for n in self.recall_split_names if n not in trainer.data]:
+            raise ValueError(
+                f"DynamicBalancedRecallWeights: recall splits {missing} are not in"
+                f" trainer.data. Available: {list(trainer.data)}.")
+        return list(self.recall_split_names)
+
+    def _get_confusion_matrices_provider(self, split_name) -> ConfusionMatricesProvider:
+        """The metric providing the per-attribute confusion matrices for `split_name`.
+
+        Resolved per split: `trainer.metrics` may be a `{split_name: metrics}` mapping, and
+        asking without the split name would always return the first entry's metrics, whose
+        confusion matrix belongs to a different split (and has since been reset).
+        """
+        if split_name not in self._split_name_to_metric:
+            metric = next((m for m in self._trainer.get_metrics(split_name)
+                           if isinstance(m, ConfusionMatricesProvider)), None)
+            if metric is None:
                 raise RuntimeError(
-                    "DynamicBalancedRecallWeights: No InternalMetricsProvider metric found in trainer.metrics. "
-                    "Ensure MultiAttributeClassificationMetrics is included in metrics."
-                )
-        return self._metric
+                    f"DynamicBalancedRecallWeights: no metric with get_confusion_matrices() for"
+                    f" split '{split_name}'. Ensure MultiAttributeClassificationMetrics is"
+                    f" included in the metrics for it.")
+            self._split_name_to_metric[split_name] = metric
+        return self._split_name_to_metric[split_name]
 
-    def _update_weights_from_reused_eval(self, trainer, state):
-        """Update weights using stats from the just-completed evaluation."""
-        # Get internal metrics directly from metric (always available via get_internal_metrics())
-        metric = self._get_metric()
-        stats = metric.get_internal_metrics()
-
-        if not stats:
+    def _update_class_weights(self, split_name):
+        """Recomputes the weights from the just-completed evaluation of `split_name`."""
+        attr_to_class_stats = {
+            attr: confusion_matrix_class_stats(cm.cpu())
+            for attr, cm in self._get_confusion_matrices_provider(split_name)
+            .get_confusion_matrices().items()}
+        if not attr_to_class_stats:
             raise RuntimeError(
-                "DynamicBalancedRecallWeights: Metric returned empty stats. "
-                "Ensure the metric has been updated with evaluation data."
-            )
+                f"DynamicBalancedRecallWeights: the metric for split '{split_name}' returned no"
+                f" statistics. Ensure it has been updated with evaluation data.")
 
-        # Compute recalls from stats
-        attr_key_to_recalls = {}
-        for key, s in stats.items():
-            tp = s["tp"].numpy()
-            actual = s["actual"].numpy()
-            # Handle zero division: if actual is 0, recall is 1 (matches zero_division=1)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                r = tp / actual
-                r[actual == 0] = 1.0
-            attr_key_to_recalls[key] = r
+        if not self._reported_attrs_without_recalls:
+            self._reported_attrs_without_recalls = True
+            if missing := [a for a in self.attr_to_class_occurrence_counts
+                           if a not in attr_to_class_stats]:
+                log.warning(f"DynamicBalancedRecallWeights: the metric for '{split_name}' does"
+                            f" not cover {', '.join(missing)}, which do have training class"
+                            f" priors. They are weighted as if perfectly recalled.")
 
-        self.attr_key_to_class_weights = _calculate_attr_key_to_class_weights(
-            self.attr_key_to_class_occurrence_counts, attr_key_to_recalls=attr_key_to_recalls
-        )
-        self._push_weights_to_loss()
+        if split_name == self.target_split_names[0]:
+            self._pooled_attr_to_class_stats = {}  # a new epoch's pass over the splits
+        for attr, stats in attr_to_class_stats.items():
+            pooled = self._pooled_attr_to_class_stats.get(attr)
+            self._pooled_attr_to_class_stats[attr] = (
+                dict(stats) if pooled is None
+                else {k: pooled[k] + v for k, v in stats.items()})
 
-    def _bind_loss_adapter(self, loss_callable):
-        required_methods = ("set_attrs_idx", "set_class_weights")
-        for method in required_methods:
-            if not hasattr(loss_callable, method):
+        self.attr_to_class_weights = _calculate_attr_to_class_weights(
+            self.attr_to_class_occurrence_counts,
+            _compute_attr_to_class_recalls(self._pooled_attr_to_class_stats))
+        self._set_loss_class_weights()
+
+    def _set_loss_class_weights(self):
+        """Pushes the current weights into the loss, keyed by global attribute index."""
+        self.loss.set_class_weights(
+            {self.attr_to_index[attr]: w for attr, w in self.attr_to_class_weights.items()})
+
+    @staticmethod
+    def _check_loss_supports_class_weights(loss):
+        for method in ("set_attrs_idx", "set_class_weights"):
+            if not callable(getattr(loss, method, None)):
                 raise TypeError(
-                    "DynamicBalancedRecallWeights requires the configured loss to support "
-                    f"{method}(). Use MultiAttributeCrossEntropyLoss or supply a compatible loss wrapper."
-                )
-            if not callable(getattr(loss_callable, method)):
-                raise TypeError(f"DynamicBalancedRecallWeights expected trainer.loss.{method} to be callable.")
-        return loss_callable
+                    "DynamicBalancedRecallWeights requires the configured loss to support"
+                    f" {method}(). Use MultiAttributeCrossEntropyLoss or a compatible wrapper.")
+        return loss
 
     def state_dict(self) -> dict:
-        """Return state to be persisted in checkpoints."""
-        return {
-            "attr_key_to_class_weights": self.attr_key_to_class_weights,
-            "attr_key_to_class_occurrence_counts": self.attr_key_to_class_occurrence_counts,
-        }
+        # Only the weights: they carry the previous epoch's recalls and cannot be
+        # recovered from the data, whereas the occurrence counts are recomputed in
+        # `initialize` -- persisting those would let a checkpoint restore stale counts
+        # over freshly computed ones.
+        return {"attr_to_class_weights": self.attr_to_class_weights}
 
     def load_state_dict(self, state_dict: dict):
-        """Restore state from a checkpoint."""
-        # Clean backward compatibility: fallback to reading old keys if new keys missing
-        self.attr_key_to_class_weights = state_dict.get(
-            "attr_key_to_class_weights", state_dict.get("attr_idx_to_class_weights")
-        )
-        self.attr_key_to_class_occurrence_counts = state_dict.get(
-            "attr_key_to_class_occurrence_counts", state_dict.get("attr_idx_to_class_occurrence_counts")
-        )
-
-        # Update the loss adapter with the restored weights
-        if self.loss_adapter is not None:
-            self._push_weights_to_loss()
+        if "attr_to_class_weights" not in state_dict:
+            raise KeyError(
+                f"The DynamicBalancedRecallWeights state holds {sorted(state_dict)} but no"
+                f" 'attr_to_class_weights'. It was not written by this version of the extension;"
+                f" start the run from scratch instead of resuming.")
+        self.attr_to_class_weights = state_dict["attr_to_class_weights"]
+        if self.loss is not None:
+            self._set_loss_class_weights()

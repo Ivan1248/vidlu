@@ -48,7 +48,6 @@ from .training import (
     MultiScaleSupervisedStep,
     MultiAttributePseudoLabelStep,
     DynamicBalancedRecallWeights,
-    add_attr_idx_to_class_occurrence_counts_to_info_lazily,
     multi_attribute_kl_div_ll,
     make_semisup_data,
     make_pseudo_labeled_data,

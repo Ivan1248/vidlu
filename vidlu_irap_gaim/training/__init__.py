@@ -10,16 +10,12 @@ from .extensions import (
     MultiAttributeScorePrinter,
     VisualizationExtension,
 )
-from .dynamic_weights import (
-    DynamicBalancedRecallWeights,
-    add_attr_idx_to_class_occurrence_counts_to_info_lazily,
-)
+from .dynamic_weights import DynamicBalancedRecallWeights
 from .jitter import (
     make_sequence_color_jitter,
     JITTER_STANDARD,
     JITTER_STRONG,
 )
-from .helpers import make_irap_trainer_with_attrs
 from .semisup import (
     multi_attribute_kl_div_ll,
     make_semisup_data,
