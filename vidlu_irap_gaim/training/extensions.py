@@ -6,6 +6,7 @@ from PIL import Image
 from torch.optim.lr_scheduler import MultiplicativeLR
 from collections.abc import Mapping
 
+from vidlu.experiments import console_shown_name
 from vidlu.training.extensions import TrainerExtension
 from vidlu.utils.collections import NameDict
 
@@ -160,9 +161,8 @@ class MultiAttributeScorePrinter(TrainerExtension):
             ))
 
             # Columns: Attribute, Metric1, Metric2...
-            # Metric headers: Display name (lstrip _)
-            metric_names = sorted(per_attr_metrics.keys(), key=lambda x: x.lstrip("_"))
-            headers = ["Attribute"] + [m.lstrip("_") for m in metric_names]
+            metric_names = sorted(per_attr_metrics.keys(), key=console_shown_name)
+            headers = ["Attribute"] + [console_shown_name(m) for m in metric_names]
 
             # Determine column widths
             col_widths = [len(h) for h in headers]

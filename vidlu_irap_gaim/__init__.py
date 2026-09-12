@@ -21,10 +21,14 @@ from .models.pretraining import vistas_params_spec
 
 # Losses & Metrics
 from .losses import multi_attribute_cross_entropy, MultiAttributeCrossEntropyLoss
+from vidlu.metrics import MultiAttributeClassificationMetrics, OutputKind
 from .metrics import (
-    MultiAttributeClassificationMetrics,
-    MultiAttributeAccuracy,
+    IRAP_ATTRIBUTE_METRIC_NAMES,
+    IRAP_MAIN_METRIC,
+    IRAP_CLASS_SUPPORT_THRESHOLDS,
+    get_irap_attribute_metrics,
     get_irap_metrics,
+    irap_metric_names,
 )
 
 # Training

@@ -104,13 +104,31 @@ def training_progress_step(training_state: IterState) -> int:
     return max(ts.epoch, 0) * ts.batch_count + ts.iteration % ts.batch_count
 
 
+# A metric with its key prefixed with CONSOLE_HIDDEN_PREFIX is not reported
+CONSOLE_HIDDEN_PREFIX = "_"
+
+
+def console_hidden(name: str) -> str:
+    """The result key under which `name` is computed but not shown on the console line."""
+    return CONSOLE_HIDDEN_PREFIX + name
+
+
+def is_console_hidden(key) -> bool:
+    return isinstance(key, str) and key.startswith(CONSOLE_HIDDEN_PREFIX)
+
+
+def console_shown_name(key):
+    """`key` without the hidden-marker prefix, for trackers and tables that show every key."""
+    return key[len(CONSOLE_HIDDEN_PREFIX):] if is_console_hidden(key) else key
+
+
 def report_metrics(
         state: IterState, is_training: bool, metrics: dict, epoch: int, epoch_count: int,
         split_name=None, line_width=120,
         special_format: T.Mapping[str, T.Callable[[str, T.Any], str]] = None,
         prefix=None, array_prec=2, scalar_prec=4, logger: Logger = None,
         tracker: "MetricTracker | None" = None, step: int | None = None,
-        filter=lambda k, v: not k.startswith("_")):
+        filter=lambda k, v: not is_console_hidden(k)):
     def fmt(v, scalar_prec=scalar_prec):
         with np.printoptions(precision=array_prec, threshold=4 if is_training else None,
                              linewidth=line_width, floatmode='maxprec_equal', suppress=True):
@@ -145,15 +163,12 @@ def report_metrics(
             prefix = (
                 f'{format(epoch + 1, epoch_fmt)}.{format(iter_ % state.batch_count + 1, iter_fmt)}' if is_training else
                 f'{format(epoch + 1, epoch_fmt)} {split_name or "(?)"}')
-        # When training, hide metrics with "_" prefix (per-attr metrics kept for eval/MultiAttributeScorePrinter)
         metrics_to_report = {k: v for k, v in metrics.items() if filter(k, v)}
         logger.log(f"{prefix}: {make_eval_str(metrics_to_report)}")
         # logger.log(f"Epoch to performance: {cpman.id_to_perf}")
         if tracker is not None:
-            # The tracker gets all metrics, not just the ones shown on the console. The "_"
-            # prefix is a console-display convention, so it is stripped here, not in the tracker.
-            tracked_metrics = {k[1:] if isinstance(k, str) and k.startswith("_") else k: v
-                               for k, v in metrics.items()}
+            # The tracker gets all metrics, not just the ones shown on the console.
+            tracked_metrics = {console_shown_name(k): v for k, v in metrics.items()}
             tracker.log_scalars(tracked_metrics,
                                 step=state.abs_iteration if step is None else step,
                                 split="train" if is_training else split_name)

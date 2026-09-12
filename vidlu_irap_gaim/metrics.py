@@ -1,281 +1,90 @@
-from typing import Sequence, Protocol, runtime_checkable
+"""The iRAP evaluation protocol: which metrics, over which attributes.
 
-import torch
+The machinery is `vidlu.metrics.MultiAttributeClassificationMetrics`; this module only selects
+metric names and thresholds and maps iRAP attribute names to output indices and class counts.
+"""
 
-from vidlu.metrics import AccumulatingMetric, ClassificationMetrics
-from vidlu.utils.collections import NameDict
+from collections.abc import Sequence
 
-import numpy as np
+from vidlu.experiments import console_hidden
+from vidlu.metrics import (
+    SUPPORT_SUFFIX,
+    AttributeSpec,
+    ClassificationMetrics,
+    MultiAttributeClassificationMetrics,
+    OutputKind,
+)
+
+# iRAP evaluation metric names and defaults.
+IRAP_ATTRIBUTE_METRIC_NAMES = ("mF1", "mP", "mR")
+IRAP_MAIN_METRIC = "mF1"  # "amF1" for the multi-attribute models
+# Macro averages over the classes present in the split, as in Kačan et al. (2025), rather than
+# counting absent classes as 0.
+IRAP_IGNORE_MISSING_CLASSES = True
+# Default minimum class support thresholds for restricted metrics (_suppN).
+IRAP_CLASS_SUPPORT_THRESHOLDS = (5, 10)
 
 
-@runtime_checkable
-class InternalMetricsProvider(Protocol):
-    """Protocol for metrics that provide internal metrics/statistics for extensions.
+def irap_metric_names(min_class_supports: Sequence[int] = IRAP_CLASS_SUPPORT_THRESHOLDS,
+                      output_kind: OutputKind = "logits") -> dict[str, str]:
+    """The metrics `get_irap_metrics` requests, as result key -> metric name, console scalars
+    first.
 
-    Metrics implementing this protocol can be discovered by extensions that need
-    internal data (e.g., class-level recall/precision statistics for dynamic weight computation).
+    Scalars shown on the console: the attribute averages of the macro metrics and of
+    accuracy, the chance-corrected `aMCC`, for probabilistic outputs the proper scoring rules
+    `aNLL`, `aBrier` and the class-balanced `amNLL`, and per support threshold the restricted
+    `amF1_suppN` (and `amNLL_suppN`) beside the unrestricted ones, so that the two can be
+    compared directly rather than one replacing the other. The per-attribute metrics get
+    `console_hidden` keys: kept for `MultiAttributeScorePrinter` and the tracker, off the
+    console line; `nc_suppN` is the number of classes entering a restricted mean, without
+    which it cannot be read.
     """
-
-    def get_internal_metrics(self) -> dict[int, dict[str, torch.Tensor]]: ...
-
-
-def _resolve_attr_index(key: object, attr_to_index: dict[object, int] | None) -> int:
-    """Resolves a global tensor index from an attribute key/name."""
-    if attr_to_index is not None:
-        if key in attr_to_index:
-            return attr_to_index[key]
-        else:
-            raise ValueError(f"Attribute key {key} not found in attr_to_index (available attributes: {list(attr_to_index.keys())})")
-    elif isinstance(key, int):
-        return key
-    else:
-        raise ValueError(f"Unsupported attribute key type: {type(key)}")
-
-
-class MultiAttributeClassificationMetrics(AccumulatingMetric):
-    """
-    Multi-attribute classification metrics.
-
-    Metrics naming convention:
-        - a{X}: average of {X} across attributes (returns scalar for scalar base metrics)
-        - {X}: per-attribute {X} (returns dict mapping attribute index to value)
-
-    Where {X} is any base metric from ClassificationMetrics:
-        - A: Accuracy (scalar)
-        - mP, mR, mF1, mIoU: Macro-averaged Precision/Recall/F1/IoU (scalars)
-        - P, R, F1, IoU: Per-class metrics (arrays)
-        - n: number of non-ignore instances
-
-    Return format:
-        The returned dictionary uses the exact metric names from `self.metrics`.
-        - For average metrics (a{X}): returns a scalar value (averaged across attributes)
-        - For per-attribute metrics ({X}): returns a dict {attr_index: value}
-        - Attempting to average per-class metrics (aP, aR, aF1, aIoU) raises ValueError
-
-    Examples:
-        With metrics=('amF1', 'amP', 'amR', 'mF1', 'A'):
-        {
-            'amF1': 0.85,                   # scalar - average F1
-            'amP': 0.85,                    # scalar - average precision
-            'amR': 0.85,                    # scalar - average recall
-            'mF1': {0: 0.70, 1: 0.74, ...}, # dict - per-attribute macro F1
-            'A': {0: 0.84, 1: 0.86, ...},   # dict - per-attribute accuracy
-        }
-    """
-
-    # Base metrics supported by ClassificationMetrics
-    BASE_METRICS = {"A", "mP", "mR", "mF1", "mIoU", "P", "R", "F1", "IoU", "n"}
-
-    def __init__(
-        self,
-        attr_to_class_count: dict[object, int] | list[int] | None = None,
-        attrs_to_include: Sequence[object] = None,
-        attr_to_index: dict[object, int] | None = None,
-        metrics: Sequence[str] = ("amF1", "amP", "amR"),
-        ignore_missing_classes: bool = False,
-    ):
-        """
-        Args:
-            class_counts: Tuple of class counts per attribute.
-            attrs: Sequence of attribute indices to compute metrics for.
-            metrics: Sequence of metric names to compute. Can include:
-                - Base metrics: A, mP, mR, mF1, mIoU, P, R, F1, IoU
-                - Average metrics: aA, amP, amR, amF1, amIoU (for scalar base metrics)
-        """
-        self.attr_to_class_count = (
-            attr_to_class_count if isinstance(attr_to_class_count, dict) else dict(enumerate(attr_to_class_count))
-        )
-        self.attrs = list(attrs_to_include)
-        self.attr_to_index = attr_to_index  # If None, assumes keys are indices
-        self.metrics = metrics
-
-        # Determine base metrics needed for ClassificationMetrics
-        def _get_base_metric(m):
-            clean = m.lstrip("_")
-            if clean in self.BASE_METRICS:
-                return clean
-            if clean.startswith("a") and clean[1:] in self.BASE_METRICS:
-                return clean[1:]
-            return None
-
-        base_metrics = set()
-        for m in metrics:
-            base = _get_base_metric(m)
-            if base:
-                base_metrics.add(base)
-
-        self.attr_to_metrics = {}
-        if self.attr_to_class_count is not None:
-            for a in self.attrs:
-                if a not in self.attr_to_class_count:
-                    continue
-                # We use a custom get_target/get_hard_prediction because we'll pass sliced data
-                self.attr_to_metrics[a] = ClassificationMetrics(
-                    class_count=self.attr_to_class_count[a],
-                    get_target=lambda r: r["target"],
-                    get_hard_prediction=lambda r: r["out"].argmax(1),
-                    metrics=tuple(base_metrics),
-                    ignore_missing_classes=ignore_missing_classes,
-                )
-        self.reset()
-
-    def reset(self):
-        for m in self.attr_to_metrics.values():
-            m.reset()
-
-    @torch.no_grad()
-    def update(self, iter_result):
-        outs = iter_result.out  # tuple of (B, K_i)
-        true = iter_result.target  # (B, A)
-        if outs is None:
-            return
-        for key, m in self.attr_to_metrics.items():
-            # Determine tensor index
-            idx = _resolve_attr_index(key, self.attr_to_index)
-            if idx >= 0 and idx < len(outs):
-                m.update(NameDict(target=true[:, idx], out=outs[idx]))
-
-    def get_internal_metrics(self) -> dict[int, dict[str, torch.Tensor]]:
-        """Returns internal metrics/statistics for programmatic consumption.
-
-        This method is always available and does not require any special metric names
-        in the metrics list. Statistics are computed from the current confusion matrices.
-
-        Returns:
-            Dictionary mapping attribute index to stats dict with keys:
-            - 'tp': true positives per class (tensor, on CPU)
-            - 'pos': predicted positives per class (tensor, on CPU)
-            - 'actual': actual positives per class (tensor, on CPU)
-        """
-        stats = {}
-        for a, m in self.attr_to_metrics.items():
-            # m.cm is on device, move to cpu
-            cm = m.cm.cpu()
-            tp = cm.diagonal()
-            actual = cm.sum(1)
-            pos = cm.sum(0)
-            stats[a] = {"tp": tp, "pos": pos, "actual": actual}
-        return stats
-
-    @torch.no_grad()
-    def compute(self, metrics=None):
-        """
-        Computes metrics for all attributes.
-
-        Args:
-            metrics: Optional list of metrics to compute, overrides `self.metrics`. If None,
-            computes all metrics.
-
-        Returns:
-            Dictionary with keys matching `self.metrics`. Values are:
-            - Scalars for average metrics (a{X})
-            - Dicts mapping attribute indices to values for per-attribute metrics ({X})
-        """
-        attr_to_metrics = {a: m.compute() for a, m in self.attr_to_metrics.items()}
-
-        results = {}
-        for metric_key in self.metrics if metrics is None else metrics:
-            clean_key = metric_key.lstrip("_")
-            metric_type = None  # 'per_attr' or 'average'
-            base_metric = None
-
-            if clean_key in self.BASE_METRICS:
-                metric_type = "per_attr"
-                base_metric = clean_key
-            elif clean_key.startswith("a") and clean_key[1:] in self.BASE_METRICS:
-                metric_type = "average"
-                base_metric = clean_key[1:]
-
-            if metric_type == "per_attr":
-                # Per-attribute metric: output dict mapping attr index to value
-                results[metric_key] = {
-                    a: attr_results[base_metric]
-                    for a, attr_results in attr_to_metrics.items()
-                    if base_metric in attr_results
-                }
-            elif metric_type == "average":
-                # Average metric across attributes (e.g., 'amF1' -> average of 'mF1')
-                values = [m.get(base_metric) for m in attr_to_metrics.values() if base_metric in m]
-                if values:
-                    # Handle both scalar and array values
-                    if np.isscalar(values[0]) or (isinstance(values[0], np.ndarray) and values[0].ndim == 0):
-                        results[metric_key] = np.mean(values)
-                    else:
-                        raise ValueError(f"Cannot average per-class metrics across attributes: {base_metric}")
-                else:
-                    results[metric_key] = 0.0
-
-        return results
-
-
-class MultiAttributeAccuracy(AccumulatingMetric):
-    def __init__(
-        self,
-        name: str = "acc",
-        attrs_to_include: Sequence[object] | None = None,
-        attr_to_index: dict[object, int] | None = None,
-    ):
-        self.name = name
-        self.attrs = list(attrs_to_include) if attrs_to_include is not None else None
-        self.attr_to_index = attr_to_index
-        self.reset()
-
-    def reset(self):
-        self.correct = 0
-        self.total = 0
-
-    @torch.no_grad()
-    def update(self, iter_result):
-        outs = iter_result.out
-        true = iter_result.target
-        if outs is None:
-            return
-        if self.attrs is None:
-            raise RuntimeError("MultiAttributeAccuracy.attrs_to_include must be set.")
-
-        keys_to_update = self.attrs
-        matched = 0
-        total = 0
-        for key in keys_to_update:
-            # Determine tensor index
-            idx = _resolve_attr_index(key, self.attr_to_index)
-            if idx < 0 or idx >= len(outs):
-                continue
-            t = true[:, idx]
-            # Skip ignore_index (-1) targets, e.g. IRAP-Vietnam's unlabeled
-            # attributes, so accuracy isn't deflated by positions with no label.
-            valid = t != -1
-            pred = outs[idx].argmax(1)
-            matched += torch.sum((pred == t) & valid)
-            total += int(valid.sum())
-        self.correct += matched.item() if isinstance(matched, torch.Tensor) else matched
-        self.total += total
-
-    @torch.no_grad()
-    def compute(self):
-        return {self.name: (self.correct / max(1, self.total))}
+    probabilistic = output_kind != "hard"
+    shown = [*("a" + name for name in IRAP_ATTRIBUTE_METRIC_NAMES), "aA", "aMCC"]
+    hidden = ["mF1", "A", "n", "MCC"]
+    if probabilistic:
+        shown += ["aNLL", "aBrier", "amNLL"]
+        hidden += ["NLL", "Brier", "mNLL"]
+    for n in min_class_supports:
+        shown.append(f"a{IRAP_MAIN_METRIC}{SUPPORT_SUFFIX}{n}")
+        hidden += [f"{IRAP_MAIN_METRIC}{SUPPORT_SUFFIX}{n}", f"nc{SUPPORT_SUFFIX}{n}"]
+        if probabilistic:
+            shown.append(f"amNLL{SUPPORT_SUFFIX}{n}")
+    return {**{name: name for name in shown}, **{console_hidden(name): name for name in hidden}}
 
 
 def get_irap_metrics(
     dataset=None,
     class_counts: tuple[int, ...] | None = None,
     attrs_to_include: tuple[str, ...] | None = None,
-):
-    """
-    Creates IRAP metrics configured with attrs_to_include filtering.
+    min_class_supports: Sequence[int] = IRAP_CLASS_SUPPORT_THRESHOLDS,
+    output_kind: OutputKind = "logits",
+) -> MultiAttributeClassificationMetrics:
+    """Creates the iRAP evaluation metric over the canonical attribute subset.
 
     Args:
-        dataset: Dataset with info.attribute_names (used to map attribute names to indices).
-        class_counts: Optional tuple of class counts per attribute. If None, uses dataset.info.class_counts.
-        attrs_to_include: Optional tuple of attribute names. If None, uses canonical paper subset.
-
-    Returns:
-        Tuple of (MultiAttributeClassificationMetrics, MultiAttributeAccuracy) configured with attrs_idx.
+        dataset: Dataset whose `info.attr_to_value_to_class_idx` gives the attribute order
+            (and thus the output indices) and whose `info.attr_to_num_labeled` tells which
+            attributes have labels. None loads the BiH training split.
+        class_counts: Number of classes per attribute in the dataset's attribute order.
+            None uses `dataset.info.class_counts`.
+        attrs_to_include: Attribute names to evaluate. None means the canonical subset
+            (`irap_data.attrs.get_attrs_to_include`) minus the attributes with no labeled
+            example in `dataset` (e.g. IRAP-Vietnam's BH-only attributes), which would
+            otherwise score NaN from an empty confusion matrix.
+        min_class_supports: Support thresholds for the restricted variants of the main
+            metric; see `irap_metric_names`. Pass `()` for the unrestricted metrics only.
+        output_kind: What the evaluation step puts in `iter_result.out`: 'logits'
+            (`SupervisedStep`, the default), 'probs' (`MultiScaleSupervisedStep`) or 'hard'
+            (one-hot pseudo-logits: VLM text parsing, random baselines). Metrics come from
+            `--metrics`, not from the trainer, so this cannot be checked against the eval
+            step; a wrong value gives wrong `NLL`/`Brier`, silently for 'logits' vs 'probs'.
+            With 'hard' the probabilistic metrics are left out.
     """
     from irap_data.attrs import (
+        filter_labeled_attrs,
         get_attrs_to_include,
         map_attr_names_to_indices,
-        filter_labeled_attrs,
     )
 
     if dataset is None:
@@ -289,41 +98,34 @@ def get_irap_metrics(
         class_counts = dataset.info.class_counts
 
     if attrs_to_include is None:
-        # Derive the subset from the dataset's own metadata (single source of truth
-        # shared with the VLM data factories). Drops attributes with no labeled
-        # sample in the dataset (e.g. IRAP-Vietnam's BH-only attributes), which
-        # would otherwise yield NaN metrics from an empty confusion matrix.
         attrs_to_include = filter_labeled_attrs(
-            get_attrs_to_include(), dataset.info.attr_to_num_labeled
-        )
+            get_attrs_to_include(), dataset.info.attr_to_num_labeled)
 
-    attrs_idx_list = map_attr_names_to_indices(attrs_to_include, dataset.info.attr_to_value_to_class_idx.keys())
+    indices = map_attr_names_to_indices(attrs_to_include,
+                                        dataset.info.attr_to_value_to_class_idx.keys())
+    attributes = {}
+    for name, idx in zip(attrs_to_include, indices):
+        if idx >= len(class_counts):
+            raise ValueError(f"Attribute {name!r} has index {idx}, but class_counts has only"
+                             f" {len(class_counts)} entries.")
+        attributes[name] = AttributeSpec(index=idx, class_count=class_counts[idx])
 
-    # Construct mappings for name-based logic
-    # We rely on map_attr_names_to_indices behavior or dataset.info structure to get meaningful names
-    # Actually, attrs_to_include ARE the names we want to use.
-    # We construct proper mapping: Name -> Index
-    attr_to_index = {name: idx for name, idx in zip(attrs_to_include, attrs_idx_list)}
+    return MultiAttributeClassificationMetrics(
+        attributes, metrics=irap_metric_names(min_class_supports, output_kind),
+        output_kind=output_kind, ignore_missing_classes=IRAP_IGNORE_MISSING_CLASSES)
 
-    # Construct class counts keyed by name
-    # We need to map Name -> Class Count. class_counts tuple is ordered by GLOBAL indices?
-    # No, class_counts tuple usually corresponds to dataset.attribute_names order.
-    # attrs_idx_list contains indices into that tuple.
-    attr_to_class_count = {name: class_counts[idx] for name, idx in attr_to_index.items() if idx < len(class_counts)}
 
-    ma_metrics = ("amF1", "amP", "amR")
-    # Enable per-attribute metrics by default for better visibility
-    # Use "_" prefix to hide from standard logger but keep available for printer
-    ma_metrics = (*ma_metrics, "_mF1", "_A", "_n")
+def get_irap_attribute_metrics(class_count: int) -> ClassificationMetrics:
+    """Creates evaluation metrics for a single attribute in sequential enhancement.
 
-    return (
-        # ignore_missing_classes=True is for excluding non-present classes like in Kačan et al. (2025)
-        MultiAttributeClassificationMetrics(
-            metrics=ma_metrics,
-            attr_to_class_count=attr_to_class_count,
-            attrs_to_include=attrs_to_include,
-            attr_to_index=attr_to_index,
-            ignore_missing_classes=True,
-        ),
-        MultiAttributeAccuracy(attrs_to_include=attrs_to_include, attr_to_index=attr_to_index),
-    )
+    Computes macro F1, precision, recall, and instance count matching multi-attribute definitions.
+
+    Args:
+        class_count: Number of classes for the attribute.
+
+    Returns:
+        Configured `ClassificationMetrics` instance.
+    """
+    return ClassificationMetrics(class_count=class_count,
+                                 metrics=(*IRAP_ATTRIBUTE_METRIC_NAMES, "n"),
+                                 ignore_missing_classes=IRAP_IGNORE_MISSING_CLASSES)
