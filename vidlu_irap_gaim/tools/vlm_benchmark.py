@@ -21,6 +21,11 @@ Usage:
 
     # Generate plots
     python -m vidlu_irap_gaim.tools.vlm_benchmark --analyze-only results.json --plot
+
+Only measured quantities are recorded. `BenchmarkRun` previously also carried
+`ttft_ms` and `generation_ms`, which were not measurements but a fixed 30/70 split
+of `total_ms`; they are gone, so `--analyze-only` rejects result files written
+before that change. Re-run the benchmark rather than editing old files.
 """
 import argparse
 import json
@@ -55,12 +60,10 @@ class BenchmarkRun:
     text_tokens: int
     prompt_tokens: int  # visual + text (total input)
     output_tokens: int  # actual generated
-    
-    # Timing measurements (milliseconds)
-    ttft_ms: float  # time to first token
-    generation_ms: float  # decode phase only
-    total_ms: float  # end-to-end
-    
+
+    # Timing measurement (milliseconds), end-to-end
+    total_ms: float
+
     # Memory
     peak_memory_gb: float
     
@@ -180,16 +183,23 @@ def get_full_preset() -> dict[str, SweepConfig]:
 # Token Counting Utilities
 # =============================================================================
 
-def estimate_visual_tokens(image_size: tuple[int, int], patch_size: int = 14) -> int:
-    """Estimate visual tokens for an image size.
-    
-    Qwen-VL uses patch_size=14 by default.
-    Visual tokens = ceil(height/patch_size) * ceil(width/patch_size)
+def visual_token_count(processor, image: Image.Image) -> int:
+    """The visual tokens the processor actually produces for `image`.
+
+    Measured rather than estimated from the image size: the number depends on the
+    processor's own resizing and on its 2x2 patch merge, so a
+    `ceil(h/patch) * ceil(w/patch)` formula overstates it about fourfold -- which
+    would divide the reported ms-per-visual-token by the same factor.
     """
-    width, height = image_size
-    h_patches = int(np.ceil(height / patch_size))
-    w_patches = int(np.ceil(width / patch_size))
-    return h_patches * w_patches
+    image_processor = processor.image_processor
+    grid = image_processor(images=[image], return_tensors="pt").get("image_grid_thw")
+    if grid is None:
+        raise RuntimeError(
+            f"{type(image_processor).__name__} reports no `image_grid_thw`, so the number of"
+            f" visual tokens cannot be read off it. The benchmark loads Qwen predictors, whose"
+            f" processors do; this is an unsupported model family, not a reason to estimate.")
+    merge_size = getattr(image_processor, "merge_size", 1)
+    return int(grid.prod().item()) // (merge_size ** 2)
 
 
 def create_test_image(size: tuple[int, int], seed: int = 42) -> Image.Image:
@@ -241,9 +251,9 @@ class VLMBenchmark:
         
         # Lazy-loaded components
         self._predictor = None
-        self._processor = None
         self._attr_to_value_to_class_idx = None
         self._all_attributes = None
+        self._response_scheme = None
         
     def _load_predictor(self):
         """Load the VLM predictor."""
@@ -252,14 +262,17 @@ class VLMBenchmark:
             
         print(f"[Benchmark] Loading model: {self.model_id} (backend={self.backend})")
         
+        # `max_response_tokens` is not set: the sweep varies the budget, and
+        # `_generate_batch` takes it as an argument, so the predictor's own value is
+        # never consulted.
         if self.backend == "vllm":
             from vidlu_irap_gaim.vlm import Qwen3VLvLLMPredictor
             self._predictor = Qwen3VLvLLMPredictor(
                 model_id=self.model_id,
                 gpu_memory_utilization=self.gpu_memory_utilization,
                 max_model_len=self.max_model_len,
-                max_response_tokens=1024,  # Will be overridden per run
-                chunk_size=100,  # Large to avoid chunking in benchmarks
+                # One session for whatever the benchmark asks about.
+                attrs_per_session=None,
                 debug=self.debug,
             )
         else:
@@ -269,8 +282,7 @@ class VLMBenchmark:
                 device="cuda",
                 torch_dtype="bfloat16",
                 use_flash_attention=True,
-                max_response_tokens=1024,
-                chunk_size=100,
+                attrs_per_session=None,
                 debug=self.debug,
             )
         
@@ -279,19 +291,31 @@ class VLMBenchmark:
         print("[Benchmark] Model loaded successfully")
         
     def _load_attribute_metadata(self):
-        """Load attribute metadata for prompt generation."""
+        """Load attribute metadata and the response scheme prompts are built with."""
         if self._attr_to_value_to_class_idx is not None:
             return
-            
+
         from irap_data import make_bih_data
-        
+        from vidlu_irap_gaim.vlm import StandardResponseScheme
+
         print("[Benchmark] Loading attribute metadata...")
         data = make_bih_data()
         ref_ds = data["test"]
         self._attr_to_value_to_class_idx = ref_ds.info.attr_to_value_to_class_idx
         self._all_attributes = list(self._attr_to_value_to_class_idx.keys())
+        # One scheme for the whole benchmark: rebuilding it per prompt would put the
+        # cost of constructing it inside the measured configurations.
+        self._response_scheme = StandardResponseScheme(self._attr_to_value_to_class_idx)
         print(f"[Benchmark] Loaded {len(self._all_attributes)} attributes")
-        
+
+    def _build_prompt(self, attrs_to_include: list[str]) -> str:
+        """The prompt a session asking about `attrs_to_include` would send."""
+        from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
+
+        return self._response_scheme.build_prompt(
+            attrs_to_include, detail_level=DEFAULT_DETAIL_LEVEL)
+
+
     def _get_gpu_info(self) -> str:
         """Get GPU name."""
         if torch.cuda.is_available():
@@ -316,102 +340,43 @@ class VLMBenchmark:
         prompt: str,
     ) -> tuple[int, int, int]:
         """Count visual tokens, text tokens, and total prompt tokens.
-        
+
         Returns:
             (visual_tokens, text_tokens, prompt_tokens)
         """
-        # Visual tokens estimated from image size
-        visual_tokens = estimate_visual_tokens(image.size)
-        
-        # Text tokens from processor/tokenizer
-        if hasattr(self._predictor, '_processor') and self._predictor._processor is not None:
-            processor = self._predictor._processor
-            # Tokenize just the text prompt
-            text_encoding = processor.tokenizer(prompt, return_tensors="pt")
-            text_tokens = text_encoding.input_ids.shape[1]
-        else:
-            # Fallback estimation: ~4 chars per token
-            text_tokens = len(prompt) // 4
-        
-        # Total prompt tokens
-        prompt_tokens = visual_tokens + text_tokens
-        
-        return visual_tokens, text_tokens, prompt_tokens
-    
+        visual_tokens = visual_token_count(self._predictor._processor, image)
+        text_tokens = len(
+            self._predictor.tokenizer.encode(prompt, add_special_tokens=False))
+        return visual_tokens, text_tokens, visual_tokens + text_tokens
+
     def _run_single_inference(
         self,
         image: Image.Image,
         attrs_to_include: list[str],
         max_response_tokens: int,
-    ) -> tuple[str, int, float, float, float]:
+    ) -> tuple[str, int, float]:
         """Run a single inference and measure timing.
-        
-        Returns:
-            (response, output_tokens, ttft_ms, generation_ms, total_ms)
-        """
-        from vidlu_irap_gaim.vlm import StandardResponseScheme
-        from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
 
-        # Build prompt
-        scheme = StandardResponseScheme(self._attr_to_value_to_class_idx)
-        prompt = scheme.build_prompt(attrs_to_include, detail_level=DEFAULT_DETAIL_LEVEL)
-        
-        # Update max_response_tokens for this run
-        original_max_tokens = self._predictor.max_response_tokens
-        self._predictor.max_response_tokens = max_response_tokens
-        if hasattr(self._predictor, '_sampling_params') and self._predictor._sampling_params is not None:
-            self._predictor._sampling_params.max_tokens = max_response_tokens
-        
-        # Prepare input for vLLM
-        if self.backend == "vllm":
-            vllm_input = self._predictor._prepare_vllm_input(image, prompt)
-            
-            # Time the generation
-            self._reset_memory_stats()
-            
-            start_time = time.perf_counter()
-            outputs = self._predictor._llm.generate(
-                [vllm_input], 
-                self._predictor._sampling_params, 
-                use_tqdm=False
-            )
-            end_time = time.perf_counter()
-            
-            total_ms = (end_time - start_time) * 1000
-            
-            # Extract response
-            response = outputs[0].outputs[0].text
-            output_tokens = len(outputs[0].outputs[0].token_ids)
-            
-            # vLLM doesn't provide TTFT directly in basic usage
-            # Estimate: prefill time is proportional to input tokens
-            # For now, we'll use a heuristic
-            if output_tokens > 0:
-                ttft_ms = total_ms * 0.3  # Rough estimate: 30% prefill
-                generation_ms = total_ms * 0.7
-            else:
-                ttft_ms = total_ms
-                generation_ms = 0
-        else:
-            # HuggingFace backend
-            self._reset_memory_stats()
-            
-            start_time = time.perf_counter()
-            response = self._predictor._generate_single(image, prompt)
-            end_time = time.perf_counter()
-            
-            total_ms = (end_time - start_time) * 1000
-            
-            # Estimate output tokens (rough: 4 chars per token)
-            output_tokens = len(response) // 4
-            ttft_ms = total_ms * 0.3
-            generation_ms = total_ms * 0.7
-        
-        # Restore original max_tokens
-        self._predictor.max_response_tokens = original_max_tokens
-        
-        return response, output_tokens, ttft_ms, generation_ms, total_ms
-    
+        Both backends go through `_generate_batch`, the one contract they share:
+        it takes the token budget as an argument, so the benchmark neither
+        duplicates a backend's generation plumbing nor mutates the predictor to
+        vary the budget.
+
+        Returns:
+            (response, output_tokens, total_ms)
+        """
+        prompt = self._build_prompt(attrs_to_include)
+
+        self._reset_memory_stats()
+        start_time = time.perf_counter()
+        (response, _, _), = self._predictor._generate_batch(
+            [image], prompt, max_response_tokens)
+        total_ms = (time.perf_counter() - start_time) * 1000
+
+        output_tokens = len(
+            self._predictor.tokenizer.encode(response, add_special_tokens=False))
+        return response, output_tokens, total_ms
+
     def run_sweep(
         self,
         config: SweepConfig,
@@ -457,21 +422,18 @@ class VLMBenchmark:
             attrs_to_include = self._all_attributes[:num_attrs]
             
             # Build prompt for token counting
-            from vidlu_irap_gaim.vlm import StandardResponseScheme
-            from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
-            scheme = StandardResponseScheme(self._attr_to_value_to_class_idx)
-            prompt = scheme.build_prompt(attrs_to_include, detail_level=DEFAULT_DETAIL_LEVEL)
-            
+            prompt = self._build_prompt(attrs_to_include)
+
             # Count tokens
             visual_tokens, text_tokens, prompt_tokens = self._count_tokens(
                 test_image, prompt
             )
-            
+
             for run_idx in range(config.num_runs):
                 # Run inference
-                response, output_tokens, ttft_ms, generation_ms, total_ms = \
+                response, output_tokens, total_ms = \
                     self._run_single_inference(test_image, attrs_to_include, max_tokens)
-                
+
                 # Get memory
                 peak_memory_gb = self._get_peak_memory_gb()
                 
@@ -487,8 +449,6 @@ class VLMBenchmark:
                     text_tokens=text_tokens,
                     prompt_tokens=prompt_tokens,
                     output_tokens=output_tokens,
-                    ttft_ms=ttft_ms,
-                    generation_ms=generation_ms,
                     total_ms=total_ms,
                     peak_memory_gb=peak_memory_gb,
                 )

@@ -25,7 +25,20 @@ class IdentityEncoder(InputEncoder):
 
 
 class LabelEmbeddingEncoder(InputEncoder):
-    def __init__(self, num_embeddings: int, embedding_dim: int):
+    """Embeds the base model's predicted class for each segment of the sequence.
+
+    `num_embeddings` is the attribute's class count, with no extra row: the input is a
+    prediction, so it is always in `[0, num_embeddings)`.
+
+    Args:
+        num_embeddings: Number of classes of the attribute.
+        embedding_dim: Width of the embedding. Defaults to the original implementation's
+            `max(num_embeddings, 4)`, which keeps a binary attribute from being squeezed
+            into two dimensions.
+    """
+
+    def __init__(self, num_embeddings: int, embedding_dim: int | None = None):
+        embedding_dim = max(num_embeddings, 4) if embedding_dim is None else embedding_dim
         super().__init__(output_dim=embedding_dim)
         self.embedding = nn.Embedding(num_embeddings, embedding_dim)
 
@@ -37,14 +50,22 @@ class LabelEmbeddingEncoder(InputEncoder):
 
 
 class GeneralLSTMModel(nn.Module):
-    """
-    A modular LSTM-based sequential enhancement model.
-    Matches the architecture of libs/irap_gaim-main/seq_enh_model.py:GeneralLSTMModel
+    """LSTM-based sequential enhancement model for temporal smoothing.
 
-    Key features:
-    - Modular input encoders (label embeddings, feats, etc.)
-    - LSTM processing of concatenated inputs
-    - Aggregation of global context (final hidden state) and local context (middle output)
+    Encodes multi-modal sequence inputs via modular input encoders, processes them through
+    a multi-layer LSTM, and aggregates central-frame and sequence hidden representations
+    to classify the target segment.
+
+    Args:
+        n_classes: Number of output target classes.
+        input_encoders: Mapping of input field names to `InputEncoder` modules.
+        hidden_dim: LSTM hidden state dimension per direction.
+        n_layers: Number of recurrent layers.
+        bidirectional: If True, uses a bidirectional LSTM.
+        middle_index: Position of the classified segment in the input sequence, where the
+            local-context output is read. `SeqEnhDataset` publishes it as
+            `info.target_index`. Defaults to the sequence midpoint, which is that position
+            only for a window symmetric about the target.
     """
 
     def __init__(
@@ -89,12 +110,21 @@ class GeneralLSTMModel(nn.Module):
         fc_input_dim = self.n_directions * (self.n_layers + 1) * self.hidden_dim
         self.fc = nn.Linear(fc_input_dim, n_classes)
 
-    def forward(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    def forward(self, inputs: "torch.Tensor | dict[str, torch.Tensor]") -> torch.Tensor:
         """
         Args:
-            inputs: Dictionary mapping input type names (matching input_encoders keys) to tensors.
-                    Tensors should be (B, S, ...)
+            inputs: Dictionary mapping input type names (matching input_encoders keys) to
+                    tensors shaped (B, S, ...). With a single input encoder, its tensor
+                    can be passed directly instead of a one-entry dictionary; that is
+                    what `SeqEnhDataset` provides for a single data source.
         """
+        if isinstance(inputs, torch.Tensor):
+            if len(self.input_encoders) != 1:
+                raise ValueError(
+                    f"A single input tensor is ambiguous for {len(self.input_encoders)} input"
+                    f" encoders ({sorted(self.input_encoders)}); pass a dictionary.")
+            inputs = {next(iter(self.input_encoders)): inputs}
+
         # 1. Encode and concatenate inputs
         encoded_inputs = []
         # Ensure consistent order based on keys
@@ -125,12 +155,8 @@ class GeneralLSTMModel(nn.Module):
         # Original code: hn = hn.transpose(0, 1).contiguous().view(B, -1)
         hn = hn.transpose(0, 1).contiguous().view(B, -1)
 
-        # 4. Aggregate Local Context (Middle Output)
-        if self.middle_index is not None:
-            mid_idx = self.middle_index
-        else:
-            mid_idx = S // 2
-
+        # 4. Aggregate Local Context (the classified segment's own output)
+        mid_idx = S // 2 if self.middle_index is None else self.middle_index
         middle_out = output[:, mid_idx, :]
 
         # 5. Concatenate and Predict

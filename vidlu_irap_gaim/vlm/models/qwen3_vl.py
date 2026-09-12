@@ -2,10 +2,12 @@
 Qwen3-VL predictor for zero-shot road attribute classification.
 """
 
+from typing import Sequence
+
 from PIL import Image
 
 from .base_hf import BaseHFPredictor
-from .qwen_utils import build_qwen_chat_messages
+from .qwen_utils import build_qwen_generation_inputs
 
 
 class Qwen3VLPredictor(BaseHFPredictor):
@@ -32,20 +34,7 @@ class Qwen3VLPredictor(BaseHFPredictor):
             self.model_id, trust_remote_code=True
         )
 
-    def _prepare_hf_inputs(self, pil_image: Image.Image, prompt: str) -> dict:
-        from qwen_vl_utils import process_vision_info  # type: ignore
-
-        messages = build_qwen_chat_messages(pil_image, prompt)
-        text = self._processor.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
-        )
-
-        image_inputs, video_inputs = process_vision_info(messages)
-        return self._processor(
-            text=[text],
-            images=image_inputs,
-            videos=video_inputs,
-            padding=True,
-            return_tensors="pt",
-        )
+    def _build_generation_inputs(self, pil_images: Sequence[Image.Image], prompt: str) -> dict:
+        return build_qwen_generation_inputs(
+            self._processor, pil_images, [prompt] * len(pil_images),
+            template_kwargs={"enable_thinking": self.enable_thinking})

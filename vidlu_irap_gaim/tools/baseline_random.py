@@ -104,9 +104,9 @@ def evaluate_baseline(
 ) -> dict[str, float | dict]:
     """Evaluate a single baseline mode on the evaluation dataset."""
     attrs_to_include = get_attrs_to_include()
-    metrics = get_irap_metrics(eval_ds, attrs_to_include=attrs_to_include)
-    for m in metrics:
-        m.reset()
+    # The baselines produce one-hot outputs, so no probabilistic metrics.
+    metrics = get_irap_metrics(eval_ds, attrs_to_include=attrs_to_include, output_kind="hard")
+    metrics.reset()
 
     num_samples = len(eval_ds)
 
@@ -122,16 +122,9 @@ def evaluate_baseline(
         targets = torch.stack(targets)  # (B, A)
         outs = generate_predictions(mode, current_batch_size, stats)
 
-        iter_result = NameDict(out=outs, target=targets)
-        for m in metrics:
-            m.update(iter_result)
+        metrics.update(NameDict(out=outs, target=targets))
 
-    # Compute final metrics
-    computed_metrics = {}
-    for m in metrics:
-        computed_metrics.update(m.compute())
-
-    return computed_metrics
+    return metrics.compute()
 
 
 def print_metrics(mode: str, metrics: dict[str, float | dict]) -> None:

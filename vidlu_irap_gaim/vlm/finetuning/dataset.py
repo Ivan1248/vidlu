@@ -4,11 +4,12 @@ VLM dataset wrapper for IRAPDataset.
 The dataset returns plain dicts with standard types. Tokenization
 happens in the training step where the processor is available.
 """
+import dataclasses as dc
 from pathlib import Path
 
 import torch.nn.functional as F
 
-from irap_data import Dataset
+from irap_data import Dataset, LazyDict
 
 from irap_data.attrs import get_attrs_to_include, filter_labeled_attrs
 from irap_data.attribute_frequencies import (
@@ -27,6 +28,67 @@ from vidlu_irap_gaim.vlm.response_scheme import (
 )
 
 DEFAULT_RESPONSE_SCHEME_NAME = "standard"
+
+# Keys VLMIrapDataset publishes on `info`, and the only channel by which the
+# prompt convention reaches the eval step, the metrics and the standalone
+# evaluation tool.  Named here, next to the code that writes them.
+INFO_RESPONSE_SCHEME = "vlm_response_scheme"
+INFO_ATTRS_TO_INCLUDE = "vlm_attrs_to_include"
+INFO_DETAIL_LEVEL = "vlm_detail_level"
+
+
+@dc.dataclass(frozen=True)
+class VLMDatasetConfig:
+    """How a VLM dataset prompts and how its responses are to be read.
+
+    Prompt building, ground-truth formatting, parsing and metrics all have to
+    agree, so they read one of these rather than each deriving its own answer.
+    Re-deriving `attrs_to_include` independently is how the zero-shot path once
+    ended up scoring the unfiltered attribute list while fine-tuning scored the
+    labeled subset, making the two incomparable.
+    """
+
+    response_scheme: ResponseScheme
+    attrs_to_include: list[str]
+    detail_level: str
+    attr_to_value_to_class_idx: dict[str, dict[str, int]]
+
+
+def vlm_config_from_dataset(dataset) -> VLMDatasetConfig:
+    """Reads the prompt/response configuration off one dataset's ``info``.
+
+    Raises:
+        RuntimeError: If the dataset was not built by the VLM data factories.
+    """
+    if not has_vlm_config(dataset):
+        raise RuntimeError(
+            f"Dataset {getattr(dataset, 'identifier', dataset)!r} carries no"
+            f" {INFO_RESPONSE_SCHEME}/{INFO_ATTRS_TO_INCLUDE} on `info`. Ensure it was"
+            f" created with make_vlm_bih_data() / make_vlm_vietnam_data().")
+    info = dataset.info
+    return VLMDatasetConfig(
+        response_scheme=getattr(info, INFO_RESPONSE_SCHEME),
+        attrs_to_include=list(getattr(info, INFO_ATTRS_TO_INCLUDE)),
+        detail_level=getattr(info, INFO_DETAIL_LEVEL, DEFAULT_DETAIL_LEVEL),
+        attr_to_value_to_class_idx=info.attr_to_value_to_class_idx,
+    )
+
+
+def has_vlm_config(dataset) -> bool:
+    """Whether ``dataset.info`` carries the prompt/response configuration."""
+    info = getattr(dataset, "info", None)
+    return (getattr(info, INFO_RESPONSE_SCHEME, None) is not None
+            and bool(getattr(info, INFO_ATTRS_TO_INCLUDE, None)))
+
+
+def vlm_config_from_data(data: dict) -> VLMDatasetConfig:
+    """Reads the configuration from the first split that carries it."""
+    dataset = next((ds for ds in data.values() if has_vlm_config(ds)), None)
+    if dataset is None:
+        raise RuntimeError(
+            f"No split in {list(data.keys())} carries the VLM prompt configuration on"
+            f" `info`. Ensure the datasets were created with make_vlm_bih_data().")
+    return vlm_config_from_dataset(dataset)
 
 
 class VLMIrapDataset(Dataset):
@@ -67,9 +129,12 @@ class VLMIrapDataset(Dataset):
         upsampling_factor: int = 1,
     ):
         base_info = getattr(base_dataset, "info", None)
-        info = dict(base_info if base_info is not None else {},
-                    vlm_response_scheme=response_scheme,
-                    vlm_attrs_to_include=list(attrs_to_include))
+        info = LazyDict(base_info if base_info is not None else {},
+                        **{INFO_RESPONSE_SCHEME: response_scheme,
+                           INFO_ATTRS_TO_INCLUDE: list(attrs_to_include),
+                           # Published too, so evaluation cannot prompt at a
+                           # different verbosity than training did without saying so.
+                           INFO_DETAIL_LEVEL: detail_level})
 
         super().__init__(name="vlm_irap", data=base_dataset, info=info)
         self.base_dataset = base_dataset

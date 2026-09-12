@@ -3,6 +3,7 @@ from functools import partial, wraps
 import torch
 
 from vidlu.configs.training import TrainerConfig
+from vidlu.modules import losses
 from vidlu.optim.lr_schedulers import CosineLR, WarmupCosineLR
 from vidlu.training.steps import SupervisedStep, SemisupConsStep
 from vidlu.training.extensions import SemisupVAT
@@ -457,13 +458,42 @@ gemma4_vlm_finetune_trainer = TrainerConfig(
     batch_size=2,
     eval_batch_size=1,
     # In-training eval = teacher-forced loss only (set VLM_SKIP_GENERATIVE_EVAL=1).
-    # Generative metric scoring is deferred to scripts/eval_generative_gemma.py
+    # Generative metric scoring is deferred to scripts/eval_vlm_checkpoint.py
     # so that the slow per-sample autoregressive decode does not dominate
     # training wall-clock.  See plan §"Phase 1 — Cheap wins".
     eval_count=10,
     extension_fs=[
         MultiAttributeScorePrinter,
     ],
+)
+
+
+# Qwen3.5-9B VLM trainer.  Differs from `gemma4_vlm_finetune_trainer` mainly in
+# what the memory budget allows: Qwen3.5-9B is dense (no MoE experts for
+# bitsandbytes to skip), so it loads 4-bit on a single A6000 rather than needing
+# bf16 sharded across four via naive model parallel.  That leaves headroom for a
+# larger eval batch, and lets the four GPUs be used for DDP instead.
+# LoRA hyperparameters follow the Gemma 4 config (lr=1e-4, wd=1e-3), which is
+# the standard LoRA range and already tuned against this dataset.
+qwen35_vlm_finetune_trainer = TrainerConfig(
+    gemma4_vlm_finetune_trainer,
+    eval_batch_size=4,
+)
+
+
+# Sequential enhancement: trains a `GeneralLSTMModel` on per-segment features
+# exported from a trained classifier (see `vidlu_irap_gaim.seq`). The inputs are
+# small feature vectors, so large batches and a higher LR are appropriate.
+seq_enh_lstm_trainer = TrainerConfig(
+    eval_step=SupervisedStep(eval=True, amp=False),
+    train_step=SupervisedStep(amp=False),
+    loss=losses.nll_loss_l,
+    optimizer_f=partial(torch.optim.Adam, lr=1e-3, weight_decay=1e-4),
+    epoch_count=30,
+    batch_size=256,
+    eval_batch_size=512,
+    eval_count=10,
+    lr_scheduler_f=CosineLR,
 )
 
 

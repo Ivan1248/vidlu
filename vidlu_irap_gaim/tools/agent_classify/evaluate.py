@@ -14,7 +14,8 @@ entry point here is :func:`evaluate_agent_predictions`. It loads the ground-trut
 dataset, parses the predicted values using the same fuzzy-matching parser as
 ``vlm_inference.py``, computes metrics with ``get_irap_metrics``, and saves
 ``predictions.json`` + ``summary.json`` in the same format as
-``vidlu_irap_gaim.tools.vlm_inference.run_evaluation``.
+``vidlu_irap_gaim.tools.vlm_inference.run_evaluation`` -- including both scorings of an
+unusable response and the invalid rate, so agent runs and VLM runs are comparable.
 """
 
 import json
@@ -31,9 +32,23 @@ class AgentEvaluationResult:
     num_samples_with_predictions: int
     num_samples_completed: int
     num_valid_predictions: int
+    num_scored_attribute_responses: int
+    num_invalid_attribute_responses: int
     metrics: dict[str, float] | None
+    metrics_excluding_invalid: dict[str, float] | None
     output_dir: Path
     predictions_file: Path
+
+    @property
+    def invalid_rate(self) -> float:
+        """Fraction of (segment, attribute) responses that were unusable.
+
+        Derived rather than stored, matching `vlm_inference.EvaluationResult`, so
+        it cannot be constructed inconsistently with the two counts.
+        """
+        if self.num_scored_attribute_responses == 0:
+            return float("nan")
+        return self.num_invalid_attribute_responses / self.num_scored_attribute_responses
 
 
 def _parse_agent_prediction(
@@ -62,9 +77,14 @@ def evaluate_agent_predictions(
     dataset_name: str = "bih",
     split: str = "test",
     output_dir: str | Path = "agent_eval_results",
-    allow_invalid_predictions: bool = True,
 ) -> AgentEvaluationResult:
     """Evaluate agent predictions against ground-truth labels.
+
+    An attribute the agent gave no usable response for is scored both ways, because
+    neither scoring subsumes the other (see ``vlm.scoring``):
+    as class 0, which is what the training-time eval does, and excluded, which measures
+    skill conditional on a format-compliant response. Both are reported, beside the invalid rate
+    the second one has to be read against.
 
     Args:
         predictions_file: Path to the agent's predictions JSON (the file
@@ -72,19 +92,16 @@ def evaluate_agent_predictions(
         dataset_name: ``"bih"`` or ``"vietnam"``.
         split: Dataset split to evaluate against.
         output_dir: Where to write ``predictions.json`` and ``summary.json``.
-        allow_invalid_predictions: If True, unparseable values fall back to class 0
-            (biases metrics but keeps evaluation running). Default True for agent output.
 
     Returns:
         AgentEvaluationResult with evaluation summary.
     """
-    from vidlu_irap_gaim.vlm.predictions import (
-        predictions_to_output_tuple,
-        predictions_to_json_serializable,
-    )
+    from vidlu_irap_gaim.vlm.predictions import predictions_to_json_serializable
+    from vidlu_irap_gaim.vlm.scoring import (count_scored_and_invalid_responses,
+                                             metrics_to_json_dict, print_metrics,
+                                             update_both_scorings)
     from ._common import load_split_and_attrs
     from vidlu_irap_gaim.metrics import get_irap_metrics
-    from vidlu.utils.collections import NameDict
 
     predictions_file = Path(predictions_file)
     output_dir = Path(output_dir)
@@ -103,9 +120,13 @@ def evaluate_agent_predictions(
     print(f"  {len(dataset)} segments in split.")
     attrs_order = list(attr_to_value_to_class_idx.keys())
 
-    # Set up metrics
-    metrics = get_irap_metrics(dataset, attrs_to_include=tuple(attrs_to_include))
-    for m in metrics:
+    # Two metric sets, one per scoring of an unusable response. Both are reported. Parsed text
+    # gives one-hot outputs, so no probabilistic metrics.
+    metrics = get_irap_metrics(dataset, attrs_to_include=tuple(attrs_to_include),
+                               output_kind="hard")
+    metrics_excluding_invalid = get_irap_metrics(
+        dataset, attrs_to_include=tuple(attrs_to_include), output_kind="hard")
+    for m in (metrics, metrics_excluding_invalid):
         m.reset()
 
     # Evaluate
@@ -113,6 +134,8 @@ def evaluate_agent_predictions(
     num_with_predictions = 0
     num_valid = 0
     num_completed = 0
+    num_scored_responses = 0
+    num_invalid_responses = 0
 
     print(f"Evaluating {len(dataset)} segments...")
     import torch
@@ -125,102 +148,83 @@ def evaluate_agent_predictions(
 
         agent_pred = raw_predictions.get(segment_id)
 
+        # A segment the agent never responded to -- it produced nothing, or it reported the
+        # image missing -- is an all-invalid sample, represented by an empty prediction
+        # dict. Each scoring then counts it by its own rule, exactly as for an unusable
+        # response to a single attribute: class 0 in one, excluded from the other.
+        error = None
         if agent_pred is None:
-            # No prediction for this segment — treat as all-invalid
-            all_output_predictions[segment_id] = {"error": "no_prediction"}
-            num_completed += 1
-            # Still update metrics with dummy predictions so denominator is correct
-            dummy_preds = {}
-            out = predictions_to_output_tuple(
-                dummy_preds,
-                attr_to_value_to_class_idx,
-                attrs_order,
-                batch_size=1,
-                device="cpu",
-                allow_invalid=True,
-            )
-            if target is not None:
-                t = target.unsqueeze(0) if isinstance(target, torch.Tensor) else target
-                for m in metrics:
-                    m.update(NameDict(out=out, target=t))
-            continue
+            error = "no_prediction"
+        else:
+            num_with_predictions += 1
+            if agent_pred.get("image_not_found"):
+                error = "image_not_found"
 
-        num_with_predictions += 1
-
-        # Handle "image_not_found" sentinel
-        if agent_pred.get("image_not_found"):
-            all_output_predictions[segment_id] = {"error": "image_not_found"}
-            num_completed += 1
-            dummy_preds = {}
-            out = predictions_to_output_tuple(
-                dummy_preds,
-                attr_to_value_to_class_idx,
-                attrs_order,
-                batch_size=1,
-                device="cpu",
-                allow_invalid=True,
-            )
-            if target is not None:
-                t = target.unsqueeze(0) if isinstance(target, torch.Tensor) else target
-                for m in metrics:
-                    m.update(NameDict(out=out, target=t))
-            continue
-
-        # Parse predicted values
-        predictions = _parse_agent_prediction(
-            agent_pred, attr_to_value_to_class_idx, attrs_to_include
-        )
-
-        valid_count = sum(1 for p in predictions.values() if p.pred_idx >= 0)
-        if valid_count > 0:
-            num_valid += 1
-
-        # Log invalid predictions
-        invalid = {a: p for a, p in predictions.items() if p.pred_idx < 0}
-        if invalid:
-            print(
-                f"  [INVALID] {segment_id}: {len(invalid)}/{len(predictions)} attrs unparsed"
-                f" — e.g. {next(iter(invalid.values())).pred_value!r}"
+        if error is not None:
+            all_output_predictions[segment_id] = {"error": error}
+            predictions = {}
+        else:
+            predictions = _parse_agent_prediction(
+                agent_pred, attr_to_value_to_class_idx, attrs_to_include
             )
 
-        all_output_predictions[segment_id] = {
-            "predictions": predictions_to_json_serializable(predictions),
-        }
+            if any(p.pred_idx >= 0 for p in predictions.values()):
+                num_valid += 1
 
-        # Update metrics
+            invalid = {a: p for a, p in predictions.items() if p.pred_idx < 0}
+            if invalid:
+                example = next(iter(invalid.values())).pred_value
+                print(
+                    f"  [INVALID] {segment_id}: {len(invalid)}/{len(predictions)} attrs"
+                    f" unparsed — e.g. {example!r}"
+                )
+
+            all_output_predictions[segment_id] = {
+                "predictions": predictions_to_json_serializable(predictions),
+            }
+
+        num_scored, num_invalid = count_scored_and_invalid_responses(predictions, attrs_to_include,
+                                                attr_to_value_to_class_idx)
+        num_scored_responses += num_scored
+        num_invalid_responses += num_invalid
+
         if target is not None:
-            out = predictions_to_output_tuple(
-                predictions,
-                attr_to_value_to_class_idx,
-                attrs_order,
-                batch_size=1,
-                device="cpu",
-                allow_invalid=allow_invalid_predictions,
-                required_attrs=set(attrs_to_include),
-            )
-            t = target.unsqueeze(0) if isinstance(target, torch.Tensor) else target
-            for m in metrics:
-                m.update(NameDict(out=out, target=t))
+            t = (target if isinstance(target, torch.Tensor)
+                 else torch.as_tensor(target)).unsqueeze(0)
+            update_both_scorings([metrics], [metrics_excluding_invalid], [predictions], t,
+                               attr_to_value_to_class_idx, attrs_order,
+                               attrs_to_include=attrs_to_include)
 
         num_completed += 1
 
-    # Compute metrics
-    computed_metrics: dict[str, Any] = {}
-    for m in metrics:
-        computed_metrics.update(m.compute())
+    computed_metrics = metrics.compute()
+    computed_metrics_excluding_invalid = metrics_excluding_invalid.compute()
+    predictions_out_file = output_dir / "predictions.json"
+
+    # Built before the report so that what is printed and what is saved are read off
+    # the returned object, rather than recomputed from the same counters.
+    result = AgentEvaluationResult(
+        num_samples_in_split=len(dataset),
+        num_samples_with_predictions=num_with_predictions,
+        num_samples_completed=num_completed,
+        num_valid_predictions=num_valid,
+        num_scored_attribute_responses=num_scored_responses,
+        num_invalid_attribute_responses=num_invalid_responses,
+        metrics=computed_metrics,
+        metrics_excluding_invalid=computed_metrics_excluding_invalid,
+        output_dir=output_dir,
+        predictions_file=predictions_out_file,
+    )
 
     print("\n=== Evaluation Metrics ===")
     coverage = num_with_predictions / len(dataset) if len(dataset) > 0 else 0.0
     print(f"  Coverage: {num_with_predictions}/{len(dataset)} segments ({coverage:.1%})")
-    for k, v in computed_metrics.items():
-        if isinstance(v, (int, float)):
-            print(f"  {k}: {v:.4f}")
-        elif isinstance(v, dict):
-            avg = sum(v.values()) / len(v) if v else 0.0
-            print(f"  {k} (avg): {avg:.4f}")
+    print_metrics("unusable responses scored as class 0", computed_metrics)
+    print_metrics("unusable responses excluded", computed_metrics_excluding_invalid)
+    print(f"\n  invalid responses: {num_invalid_responses}/{num_scored_responses} "
+          f"({result.invalid_rate:.4f})")
 
     # Save outputs
-    predictions_out_file = output_dir / "predictions.json"
     with open(predictions_out_file, "w", encoding="utf-8") as f:
         json.dump(all_output_predictions, f, indent=2, ensure_ascii=False)
 
@@ -229,14 +233,15 @@ def evaluate_agent_predictions(
         "num_samples_with_predictions": num_with_predictions,
         "num_samples_completed": num_completed,
         "num_valid_predictions": num_valid,
+        "num_scored_attribute_responses": num_scored_responses,
+        "num_invalid_attribute_responses": num_invalid_responses,
+        "invalid_rate": result.invalid_rate,
         "coverage": coverage,
         "split": split,
         "dataset": dataset_name,
         "predictions_source": str(predictions_file),
-        "metrics": {
-            k: (v if isinstance(v, (int, float, type(None))) else dict(v))
-            for k, v in computed_metrics.items()
-        },
+        "metrics": metrics_to_json_dict(computed_metrics),
+        "metrics_excluding_invalid": metrics_to_json_dict(computed_metrics_excluding_invalid),
     }
     with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
@@ -245,12 +250,4 @@ def evaluate_agent_predictions(
     print(f"  predictions.json: {len(all_output_predictions)} entries")
     print("  summary.json")
 
-    return AgentEvaluationResult(
-        num_samples_in_split=len(dataset),
-        num_samples_with_predictions=num_with_predictions,
-        num_samples_completed=num_completed,
-        num_valid_predictions=num_valid,
-        metrics=computed_metrics,
-        output_dir=output_dir,
-        predictions_file=predictions_out_file,
-    )
+    return result

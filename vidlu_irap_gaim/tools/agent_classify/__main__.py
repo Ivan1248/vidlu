@@ -54,7 +54,6 @@ def _cmd_evaluate(args):
         dataset_name=args.dataset,
         split=args.split,
         output_dir=args.output_dir,
-        allow_invalid_predictions=args.allow_invalid_predictions,
     )
 
 
@@ -93,8 +92,6 @@ def main():
     p_evaluate.add_argument("--predictions", required=True,
                             help="Agent predictions JSON (the file the agent wrote; "
                                  "the prepare step prints its path)")
-    p_evaluate.add_argument("--allow-invalid-predictions", action="store_true", default=True,
-                            help="Map unparseable values to class 0 (default: True)")
     p_evaluate.set_defaults(func=_cmd_evaluate)
 
     args = parser.parse_args()

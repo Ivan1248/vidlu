@@ -4,6 +4,8 @@ VLM (Vision-Language Model) integration for zero-shot road attribute classificat
 
 from .models import (
     VLMPredictionResult,
+    VLMSessionResult,
+    attribute_sessions,
     BaseVLMPredictor,
     Qwen3VLPredictor,
     Qwen3VLvLLMPredictor,
@@ -27,13 +29,15 @@ from .response_parser import (
     parse_vlm_response,
 )
 from .predictions import (
-    predictions_to_output_tuple,
+    attribute_predictions_to_one_hot_outputs,
     predictions_to_json_serializable,
 )
 
 __all__ = [
     # Base
     "VLMPredictionResult",
+    "VLMSessionResult",
+    "attribute_sessions",
     "BaseVLMPredictor",
     # Predictors
     "Qwen3VLPredictor",
@@ -57,6 +61,6 @@ __all__ = [
     "AttributePrediction",
     "parse_vlm_response",
     # Predictions (tensor/output conversion)
-    "predictions_to_output_tuple",
+    "attribute_predictions_to_one_hot_outputs",
     "predictions_to_json_serializable",
 ]

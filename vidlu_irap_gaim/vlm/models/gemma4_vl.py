@@ -2,10 +2,12 @@
 Gemma 4 predictor for zero-shot road attribute classification.
 """
 
+from typing import Sequence
+
 from PIL import Image
 
 from .base_hf import BaseHFPredictor
-from .gemma_utils import build_gemma_chat_messages
+from .gemma_utils import build_gemma_generation_inputs
 
 
 class Gemma4VLPredictor(BaseHFPredictor):
@@ -29,16 +31,7 @@ class Gemma4VLPredictor(BaseHFPredictor):
         )
         self._processor = AutoProcessor.from_pretrained(self.model_id)
 
-    def _prepare_hf_inputs(self, pil_image: Image.Image, prompt: str) -> dict:
-        # Image is embedded in messages by build_gemma_chat_messages;
-        # do NOT pass images= (transformers >= 5.5 extracts from messages
-        # and a second images kwarg raises "got multiple values").
-        messages = build_gemma_chat_messages(pil_image, prompt)
-        return self._processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-            add_generation_prompt=True,
-            enable_thinking=self.enable_thinking,
-        )
+    def _build_generation_inputs(self, pil_images: Sequence[Image.Image], prompt: str) -> dict:
+        return build_gemma_generation_inputs(
+            self._processor, pil_images, [prompt] * len(pil_images),
+            template_kwargs={"enable_thinking": self.enable_thinking})

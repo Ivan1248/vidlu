@@ -14,13 +14,9 @@ from typing import Sequence
 import torch
 from PIL import Image
 
-from .base import (
-    BaseVLMPredictor,
-    VLMPredictionResult,
-    _to_pil_image,
-)
-from .thinking import strip_thinking
-from ..prompts import DEFAULT_DETAIL_LEVEL, DetailLevel
+from .base import BaseVLMPredictor
+from ..response_scheme import DEFAULT_RESPONSE_TOKEN_MARGIN, ResponseScheme
+from .thinking import DEFAULT_THINKING_BUDGET
 
 
 class BaseVLLMPredictor(BaseVLMPredictor):
@@ -36,23 +32,29 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         gpu_memory_utilization: float = 0.80,
         tensor_parallel_size: int | None = None,
         max_model_len: int = 8192,
-        max_response_tokens: int = 512,
+        max_response_tokens: int | None = 512,
+        response_scheme: "ResponseScheme | None" = None,
         prompt_config_path: str | Path | None = None,
-        chunk_size: int = 15,
+        attrs_per_session: int | None = None,
+        response_token_margin: int = DEFAULT_RESPONSE_TOKEN_MARGIN,
         min_new_tokens: int = 0,
         debug: bool = False,
         trust_remote_code: bool = True,
         enable_thinking: bool = False,
+        thinking_budget: int = DEFAULT_THINKING_BUDGET,
         temperature: float = 0.0,
     ):
         super().__init__(
             model_id=model_id,
             max_response_tokens=max_response_tokens,
+            response_scheme=response_scheme,
             prompt_config_path=prompt_config_path,
-            chunk_size=chunk_size,
+            attrs_per_session=attrs_per_session,
+            response_token_margin=response_token_margin,
             min_new_tokens=min_new_tokens,
             debug=debug,
             enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
             temperature=temperature,
         )
         self.gpu_memory_utilization = gpu_memory_utilization
@@ -60,10 +62,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         self.max_model_len = int(max_model_len)
         self.trust_remote_code = trust_remote_code
 
-        # Lazy-loaded components
-        self._llm = None
-        self._processor = None
-        self._sampling_params = None
+        self._llm = None  # loaded lazily, with `self._processor`
 
     def _load_model(self) -> None:
         """Load the vLLM engine and processor (called on first prediction)."""
@@ -74,7 +73,7 @@ class BaseVLLMPredictor(BaseVLMPredictor):
 
         print(f"[{type(self).__name__}] Loading model with vLLM: {self.model_id}")
 
-        from vllm import LLM, SamplingParams
+        from vllm import LLM
         from transformers import AutoProcessor
 
         tp_size = self.tensor_parallel_size
@@ -89,18 +88,13 @@ class BaseVLLMPredictor(BaseVLMPredictor):
             tensor_parallel_size=tp_size,
             max_model_len=self.max_model_len,
             seed=0,
+            # The session loop holds the prompt fixed and varies the image, and
+            # the chat layout is text-then-image, so the whole prompt is a shared
+            # prefix across the batch – which is exactly what this reuses.
             enable_prefix_caching=True,
         )
 
         self._processor = AutoProcessor.from_pretrained(self.model_id)
-
-        self._sampling_params = SamplingParams(
-            temperature=self.temperature,
-            max_tokens=self.max_response_tokens,
-            min_tokens=self.min_new_tokens,
-            top_k=-1,
-            stop_token_ids=[],
-        )
 
         print(f"[{type(self).__name__}] Model loaded successfully")
 
@@ -113,120 +107,49 @@ class BaseVLLMPredictor(BaseVLMPredictor):
         """Prepare input in vLLM format for the specific model family."""
         pass
 
-    def _generate_single(
-        self,
-        pil_image: Image.Image,
-        prompt: str,
-    ) -> tuple[str, str | None]:
-        """Generate response for a single prompt+image."""
-        vllm_input = self._prepare_vllm_input(pil_image, prompt)
+    def _sampling_params(self, max_response_tokens: int):
+        """Sampling parameters for one session.
 
-        if self.debug:
-            print(f"[DEBUG] Prompt chars: {len(prompt)}")
-
-        outputs = self._llm.generate([vllm_input], self._sampling_params, use_tqdm=False)
-        raw_response = outputs[0].outputs[0].text
-
-        thinking_text = None
-        if self.enable_thinking:
-            raw_response, thinking_text = strip_thinking(raw_response)
-            if self.debug and thinking_text:
-                print(f"[DEBUG] Thinking ({len(thinking_text)} chars): {thinking_text[:300]}...")
-
-        if self.debug:
-            print(f"[DEBUG] Response chars: {len(raw_response)}")
-            print(f"[DEBUG] Response preview: {raw_response[:200]}...")
-
-        return raw_response, thinking_text
-
-    def predict_batch(
-        self,
-        images: Sequence[Image.Image],
-        attr_to_value_to_class_idx: dict[str, dict[str, int]],
-        attrs_to_include: Sequence[str] | None = None,
-        *,
-        detail_level: DetailLevel = DEFAULT_DETAIL_LEVEL,
-    ) -> list[VLMPredictionResult]:
-        """Batched prediction using single vLLM generate() call per attribute chunk.
-
-        This override processes all images in parallel for each attribute chunk,
-        significantly improving GPU utilization compared to sequential processing.
-
-        Args:
-            images: Sequence of PIL images.
-            attr_to_value_to_class_idx: Mapping of attribute name -> {value -> class_idx}.
-            attrs_to_include: Subset of attributes to classify.
-            detail_level: Prompt detail level.
-
-        Returns:
-            List of VLMPredictionResult, one per image.
+        Built per session rather than once at load time because the response
+        budget is derived from how many attributes the session asks about.
         """
-        self._load_model()
+        from vllm import SamplingParams
 
-        pil_images = [_to_pil_image(img) for img in images]
-        num_images = len(pil_images)
+        return SamplingParams(
+            temperature=self.temperature,
+            max_tokens=max_response_tokens,
+            min_tokens=self.min_new_tokens,
+            top_k=-1,
+            stop_token_ids=[],
+        )
 
-        if attrs_to_include is None:
-            attrs_to_include = list(attr_to_value_to_class_idx.keys())
+    def _generate_batch(
+        self,
+        pil_images: Sequence[Image.Image],
+        prompt: str,
+        max_response_tokens: int,
+    ) -> list[tuple[str, str | None, bool | None]]:
+        """Responses ``prompt`` for every image in one ``llm.generate`` call.
 
-        attrs_list = list(attrs_to_include)
-        chunks = [attrs_list[i : i + self.chunk_size] for i in range(0, len(attrs_list), self.chunk_size)]
-
+        ``max_response_tokens`` is the *response* budget; reasoning shares this
+        backend's single cap, so ``single_call_budget`` adds its allowance.
+        """
+        budget = self.single_call_budget(max_response_tokens)
         if self.debug:
-            print(f"[DEBUG] Batched inference: {num_images} images, {len(chunks)} attribute chunks")
+            print(f"[DEBUG] vLLM batch of {len(pil_images)}, prompt chars: {len(prompt)},"
+                  f" budget {budget} tokens")
 
-        response_scheme = self._get_response_scheme(attr_to_value_to_class_idx)
-
-        all_predictions_per_image: list[dict] = [{} for _ in range(num_images)]
-        all_prompts_per_image: list[list[str]] = [[] for _ in range(num_images)]
-        all_responses_per_image: list[list[str]] = [[] for _ in range(num_images)]
-        all_thinking_texts_per_image: list[list[str | None]] = [[] for _ in range(num_images)]
-
-        for chunk_idx, chunk_attrs in enumerate(chunks):
-            if self.debug:
-                print(
-                    f"[DEBUG] Processing chunk {chunk_idx + 1}/{len(chunks)}: {len(chunk_attrs)} attrs, {num_images} images"
-                )
-
-            prompt = response_scheme.build_prompt(chunk_attrs, detail_level=detail_level)
-            vllm_inputs = [self._prepare_vllm_input(img, prompt) for img in pil_images]
-            outputs = self._llm.generate(vllm_inputs, self._sampling_params, use_tqdm=False)
-
-            for img_idx, output in enumerate(outputs):
-                raw_response = output.outputs[0].text
-
-                thinking_text = None
-                if self.enable_thinking:
-                    raw_response, thinking_text = strip_thinking(raw_response)
-                    if self.debug and thinking_text:
-                        print(f"[DEBUG] Thinking img {img_idx} ({len(thinking_text)} chars): {thinking_text[:200]}...")
-
-                all_responses_per_image[img_idx].append(raw_response)
-                all_prompts_per_image[img_idx].append(prompt)
-                all_thinking_texts_per_image[img_idx].append(thinking_text)
-
-                chunk_predictions = response_scheme.parse_response(raw_response, chunk_attrs)
-                all_predictions_per_image[img_idx].update(chunk_predictions)
+        vllm_inputs = [self._prepare_vllm_input(img, prompt) for img in pil_images]
+        outputs = self._llm.generate(
+            vllm_inputs, self._sampling_params(budget), use_tqdm=False)
 
         results = []
-        for img_idx in range(num_images):
-            responses = all_responses_per_image[img_idx]
-            prompts = all_prompts_per_image[img_idx]
-            thinking_texts = all_thinking_texts_per_image[img_idx]
-            has_thinking = any(t is not None for t in thinking_texts)
+        for output in outputs:
+            completion = output.outputs[0]
+            raw_response = completion.text
+            # vLLM reports why it stopped, so truncation needs no token
+            # inspection: "length" means it ran into the cap.
+            is_truncated = completion.finish_reason == "length"
 
-            combined_response = "\n---CHUNK---\n".join(responses)
-            combined_prompt = "\n---CHUNK---\n".join(prompts)
-
-            results.append(
-                VLMPredictionResult(
-                    predictions=all_predictions_per_image[img_idx],
-                    raw_response=combined_response,
-                    prompt=combined_prompt,
-                    chunk_responses=responses if len(chunks) > 1 else None,
-                    chunk_prompts=prompts if len(chunks) > 1 else None,
-                    thinking_texts=thinking_texts if has_thinking else None,
-                )
-            )
-
+            results.append(self.split_thinking_and_truncation(raw_response, is_truncated))
         return results

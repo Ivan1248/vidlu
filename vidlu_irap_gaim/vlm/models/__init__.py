@@ -2,7 +2,8 @@
 VLM model implementations: base classes, model-family predictors, and utilities.
 """
 
-from .base import VLMPredictionResult, BaseVLMPredictor
+from .base import (VLMPredictionResult, VLMSessionResult, BaseVLMPredictor,
+                   attribute_sessions)
 from .base_hf import BaseHFPredictor
 from .base_vllm import BaseVLLMPredictor
 from .gemma4_vl import Gemma4VLPredictor
@@ -12,10 +13,12 @@ from .qwen3_vl import Qwen3VLPredictor
 from .qwen3_vl_vllm import Qwen3VLvLLMPredictor
 from .qwen36_vl_vllm import Qwen36VLvLLMPredictor
 from .qwen_utils import build_qwen_chat_messages
-from .thinking import strip_thinking
+from .thinking import split_thinking
 
 __all__ = [
     "VLMPredictionResult",
+    "VLMSessionResult",
+    "attribute_sessions",
     "BaseVLMPredictor",
     "BaseHFPredictor",
     "BaseVLLMPredictor",
@@ -26,5 +29,5 @@ __all__ = [
     "Qwen3VLvLLMPredictor",
     "Qwen36VLvLLMPredictor",
     "build_qwen_chat_messages",
-    "strip_thinking",
+    "split_thinking",
 ]
