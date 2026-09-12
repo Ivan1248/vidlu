@@ -1,3 +1,17 @@
+import importlib.util as _importlib_util
+import sys as _sys
+from pathlib import Path as _Path
+
+# `irap_data` is a separate project living in `irap-data/` of this checkout, so importing
+# it needs that directory on `sys.path` – the repo root alone is not enough. `scripts/run.py`
+# gets this from `scripts/_context.py`, but entry points that do not go through it (notably
+# `python -m vidlu_irap_gaim.tools.<name>`) otherwise fail here with ModuleNotFoundError.
+# Installed environments already resolve `irap_data` and are left untouched.
+if _importlib_util.find_spec("irap_data") is None:
+    _irap_data_project = _Path(__file__).resolve().parent.parent / "irap-data"
+    if _irap_data_project.is_dir():
+        _sys.path.insert(0, str(_irap_data_project))
+
 # Data factories (re-exported so they resolve in factory expressions,
 # e.g. "irap_gaim.get_irap_metrics(irap_gaim.make_vietnam_data()['train'])")
 from irap_data import (

@@ -17,7 +17,7 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 import torch
 from irap_data.attrs import get_attrs_to_include, map_attr_names_to_indices
-from irap_data.irap_dataset import IGNORE_LABEL_INDEX, compute_label_matrix
+from irap_data.irap_dataset import compute_class_occurrence_counts
 
 from vidlu.metrics import confusion_matrix_class_stats
 from vidlu.training.extensions import TrainerExtension
@@ -39,42 +39,27 @@ INVERSE_FREQUENCY_FOR_ABSENT_CLASS = 1e-4
 
 
 def compute_attr_to_class_occurrence_counts(
-    datasets: Sequence, attr_to_index: dict[str, int], attr_to_num_classes: dict[str, int]
+    datasets: Sequence, attrs: Sequence[str]
 ) -> dict[str, torch.Tensor]:
-    """Counts class occurrences per attribute, pooled over ``datasets``.
+    """Counts class occurrences of the attributes `attrs`, pooled over ``datasets``.
 
-    Corresponds to ``attribute_class_idx_to_occurrences`` in ``libs/irap_gaim-orig``.
-    Excludes the ignore label (``IGNORE_LABEL_INDEX``): because negative indices are
-    valid in Python arrays, counting it would silently assign unannotated samples
-    to the final class and distort the inverse frequency baseline.
+    Corresponds to ``attribute_class_idx_to_occurrences`` in ``libs/irap_gaim-orig``. The
+    counting, which excludes the ignore label, is `irap_data`'s
+    :func:`compute_class_occurrence_counts`.
 
     Args:
-        datasets: iRAP datasets whose `info` carries `segment_ids` and
-            `segment_id_to_labels`. Counts are summed over all of them, so joint training
-            on several `train*` splits gets the priors of their union.
-        attr_to_index: Maps an attribute name to its column in the label matrix.
-        attr_to_num_classes: Maps an attribute name to its number of classes.
+        datasets: iRAP datasets whose `info` carries `segment_ids`, `segment_id_to_labels`,
+            `class_counts` and `attr_to_value_to_class_idx`. Counts are summed over all of
+            them, so joint training on several `train*` splits gets the priors of their union.
+        attrs: The attribute names to count.
 
     Returns:
-        Maps an attribute name to an int64 tensor of length `attr_to_num_classes[attr]`,
-        whose element `c` is the number of examples labelled with class `c`.
+        Maps an attribute name to an int64 tensor of length `class_counts[attr]`, whose
+        element `c` is the number of examples labelled with class `c`.
     """
-    counts = {attr: np.zeros(n, dtype=np.int64) for attr, n in attr_to_num_classes.items()}
-    for dataset in datasets:
-        info = dataset.info
-        labels = compute_label_matrix(info.segment_id_to_labels, info.segment_ids,
-                                      len(info.class_counts))
-        for attr, num_classes in attr_to_num_classes.items():
-            column = labels[:, attr_to_index[attr]]
-            observed = column[column != IGNORE_LABEL_INDEX]
-            if observed.size and (observed.min() < 0 or observed.max() >= num_classes):
-                invalid = observed[(observed < 0) | (observed >= num_classes)]
-                raise ValueError(
-                    f"Attribute '{attr}' has class indices outside [0, {num_classes}) and"
-                    f" other than the ignore label {IGNORE_LABEL_INDEX}:"
-                    f" {sorted(set(invalid.tolist()))}.")
-            counts[attr] += np.bincount(observed, minlength=num_classes)
-    return {attr: torch.from_numpy(c) for attr, c in counts.items()}
+    per_dataset = [compute_class_occurrence_counts(dataset.info) for dataset in datasets]
+    return {attr: torch.from_numpy(sum(counts[attr] for counts in per_dataset))
+            for attr in attrs}
 
 
 def _calculate_attr_to_class_weights(
@@ -197,11 +182,8 @@ class DynamicBalancedRecallWeights(TrainerExtension):
             self.attrs_to_include,
             map_attr_names_to_indices(self.attrs_to_include,
                                       list(reference_info.attr_to_value_to_class_idx.keys()))))
-        attr_to_num_classes = {attr: reference_info.class_counts[i]
-                               for attr, i in self.attr_to_index.items()}
-
         counts = compute_attr_to_class_occurrence_counts(
-            list(train_datasets.values()), self.attr_to_index, attr_to_num_classes)
+            list(train_datasets.values()), list(self.attr_to_index))
         # An attribute a release does not annotate has every label ignored, so it has no
         # priors and no recalls. Dropping it here keeps this set equal to the metric's,
         # which `get_irap_metrics` derives the same way via `filter_labeled_attrs`.
@@ -355,8 +337,8 @@ class DynamicBalancedRecallWeights(TrainerExtension):
         if "attr_to_class_weights" not in state_dict:
             raise KeyError(
                 f"The DynamicBalancedRecallWeights state holds {sorted(state_dict)} but no"
-                f" 'attr_to_class_weights'. It was not written by this version of the extension;"
-                f" start the run from scratch instead of resuming.")
+                f" 'attr_to_class_weights', so it predates this version of the extension."
+                f" Start the run from scratch instead of resuming.")
         self.attr_to_class_weights = state_dict["attr_to_class_weights"]
         if self.loss is not None:
             self._set_loss_class_weights()

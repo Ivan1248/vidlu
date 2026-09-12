@@ -137,7 +137,7 @@ def test_ignore_label_is_excluded_not_counted_as_a_class():
     """Vietnam leaves 7 attributes unannotated as -1. `counts[-1] += 1` would credit
     every one of those examples to the *last* class and inflate the total."""
     dataset = _one_attribute_dataset([IGNORE] * 50 + [0, 2], num_classes=3)
-    counts = compute_attr_to_class_occurrence_counts([dataset], {"Attr": 0}, {"Attr": 3})
+    counts = compute_attr_to_class_occurrence_counts([dataset], ["Attr"])
     assert counts["Attr"].tolist() == [1, 0, 1]  # not [1, 0, 51]
 
 
@@ -146,24 +146,24 @@ def test_counts_only_the_examples_the_split_yields():
     segments than the split."""
     dataset = _one_attribute_dataset([0, 0, 1, 1], num_classes=2)
     dataset.info.segment_ids = ["s0", "s1", "s2"]  # 's3' is in the mapping, not the split
-    counts = compute_attr_to_class_occurrence_counts([dataset], {"Attr": 0}, {"Attr": 2})
+    counts = compute_attr_to_class_occurrence_counts([dataset], ["Attr"])
     assert counts["Attr"].tolist() == [2, 1]
 
 
 def test_counts_are_pooled_over_every_train_split():
     bih = _one_attribute_dataset([0, 0, 0], num_classes=2)
     vietnam = _one_attribute_dataset([1, 1], num_classes=2)
-    pooled = compute_attr_to_class_occurrence_counts([bih, vietnam], {"Attr": 0}, {"Attr": 2})
+    pooled = compute_attr_to_class_occurrence_counts([bih, vietnam], ["Attr"])
     assert pooled["Attr"].tolist() == [3, 2]
     # Taking only the first split -- the old behaviour -- gives a different, wrong answer.
     assert compute_attr_to_class_occurrence_counts(
-        [bih], {"Attr": 0}, {"Attr": 2})["Attr"].tolist() == [3, 0]
+        [bih], ["Attr"])["Attr"].tolist() == [3, 0]
 
 
 def test_class_index_outside_the_range_raises():
     dataset = _one_attribute_dataset([0, 5], num_classes=2)
     with pytest.raises(ValueError, match="outside"):
-        compute_attr_to_class_occurrence_counts([dataset], {"Attr": 0}, {"Attr": 2})
+        compute_attr_to_class_occurrence_counts([dataset], ["Attr"])
 
 
 def test_extension_pools_priors_over_every_train_split():
@@ -211,7 +211,7 @@ def test_without_recalls_a_random_classifier_is_assumed():
 def test_totals_exclude_ignored_examples():
     """The inverse frequencies are taken over labelled examples, not over all segments."""
     dataset = _one_attribute_dataset([IGNORE] * 96 + [0, 0, 0, 1], num_classes=2)
-    counts = compute_attr_to_class_occurrence_counts([dataset], {"Attr": 0}, {"Attr": 2})
+    counts = compute_attr_to_class_occurrence_counts([dataset], ["Attr"])
     weights = _calculate_attr_to_class_weights(counts, {"Attr": np.array([0.0, 0.0])})["Attr"]
     assert weights.tolist() == pytest.approx([4 / 3, 4.0])  # total 4, not 100
 

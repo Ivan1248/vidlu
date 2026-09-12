@@ -36,6 +36,37 @@ def compute_label_matrix(segment_id_to_labels, segment_ids, num_attributes) -> n
                     dtype=np.int64).reshape(len(segment_ids), num_attributes)
 
 
+def compute_class_occurrence_counts(info) -> dict[str, np.ndarray]:
+    """Counts, per attribute, how many of a split's examples are labelled with each class.
+
+    The ignore label is excluded rather than counted: as a negative index it would
+    silently credit every unannotated example to the last class.
+
+    Args:
+        info: Dataset info carrying `segment_ids`, `segment_id_to_labels`, `class_counts`
+            and `attr_to_value_to_class_idx`. Only the segments in `segment_ids` are counted.
+
+    Returns:
+        Maps each attribute name, in schema order, to an int64 array of length
+        `class_counts[attribute]` whose element `c` is the number of examples of class `c`.
+    """
+    labels = compute_label_matrix(info.segment_id_to_labels, info.segment_ids,
+                                  len(info.class_counts))
+    counts = {}
+    for attr_index, (attr, num_classes) in enumerate(zip(info.attr_to_value_to_class_idx,
+                                                          info.class_counts)):
+        column = labels[:, attr_index]
+        observed = column[column != IGNORE_LABEL_INDEX]
+        if observed.size and (observed.min() < 0 or observed.max() >= num_classes):
+            invalid = observed[(observed < 0) | (observed >= num_classes)]
+            raise ValueError(
+                f"Attribute '{attr}' has class indices outside [0, {num_classes}) and"
+                f" other than the ignore label {IGNORE_LABEL_INDEX}:"
+                f" {sorted(set(invalid.tolist()))}.")
+        counts[attr] = np.bincount(observed, minlength=num_classes)
+    return counts
+
+
 class MetaFiles:
     """File names relative to a dataset metadata directory."""
 
