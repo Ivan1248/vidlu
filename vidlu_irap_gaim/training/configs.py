@@ -3,7 +3,7 @@ from functools import partial, wraps
 import torch
 
 from vidlu.configs.training import TrainerConfig
-from vidlu.optim.lr_schedulers import CosineLR
+from vidlu.optim.lr_schedulers import CosineLR, WarmupCosineLR
 from vidlu.training.steps import SupervisedStep, SemisupConsStep
 from vidlu.training.extensions import SemisupVAT
 from vidlu.training.trainers import Trainer
@@ -17,6 +17,7 @@ from .extensions import (
     VisualizationExtension,
 )
 from .jitter import make_sequence_color_jitter, JITTER_STRONG
+from .optim import EncoderOptimizerMaker
 from .steps import (
     MultiScaleSupervisedStep,
     MultiAttributePseudoLabelStep,
@@ -285,6 +286,119 @@ def trainable_parameters_optimizer(optimizer_f):
     return wrapper
 
 
+# Transformer-backbone trainers ####################################################################
+#
+# One config per fine-tuning regime, all backbone-agnostic: the backbone comes from the model
+# string and the country from the data string. None of them uses `FreezeThenFinetune` – the
+# regime is fixed for the whole run, and `EncoderOptimizerMaker` sets the encoder's trainability
+# and builds the parameter groups. They all derive from `irap_local_rec_trainer_nofreeze`, so
+# each states only what distinguishes it.
+
+# The batch of `irap_local_rec_trainer`, so that switching backbones changes one thing rather
+# than two. A 3-frame example is 3 backbone images, so this is 36 images per step: roughly 4 GB
+# for ViT-B and 12 GB for ViT-L under full fine-tuning, or ~6 GB with `grad_checkpointing=True`.
+# Batch size and learning rate are coupled – MAE scales its rate as `blr * batch/256` while the
+# rates below are absolute – so overriding this changes the effective recipe.
+_vit_batch_size = 12
+
+
+# Linear probing: the backbone is a fixed feature extractor and only the heads and a parametric
+# pooling head (e.g. SigLIP's attention pooling) are trained. The cheapest comparison of raw
+# feature quality between backbones, and for DINOv3 the evaluated regime rather than merely the
+# cheap one (https://arxiv.org/abs/2508.10104). The LR is high because everything trained is
+# randomly initialized. DINOv3's own linear evaluation sweeps it over 1e-5..1e-1
+# (`dinov3/eval/linear.py`), so this single value is worth a sweep.
+irap_vit_linear_probe = TrainerConfig(
+    irap_local_rec_trainer_nofreeze,
+    optimizer_f=EncoderOptimizerMaker(torch.optim.AdamW, trainable="pool",
+                                      lr=1e-3, weight_decay=1e-4),
+    batch_size=_vit_batch_size,
+)
+
+
+# Full fine-tuning with layer-wise LR decay: earlier blocks get exponentially smaller rates.
+#
+# `layer_decay` and `weight_decay` are MAE's fine-tuning values (https://arxiv.org/abs/2111.06377,
+# FINETUNE.md): 0.65 and 0.05 for ViT-B, 0.75 and 0.05 for ViT-L/H. The decay compounds over
+# depth, hence one config per depth: at 0.65 a 24-block ViT-L would train its first block at
+# ~3e-5 of the base rate.
+#
+# The schedule must be multiplicative (see `WarmupCosineLR`): `CosineLR`'s `eta_min` is an
+# absolute floor and would flatten the layer-wise decay.
+_irap_vit_llrd = TrainerConfig(
+    irap_local_rec_trainer_nofreeze,
+    lr_scheduler_f=partial(WarmupCosineLR, warmup_proportion=0.1, min_factor=0.01),
+    batch_size=_vit_batch_size,
+)
+
+# Config inheritance overrides a whole field, so what varies *inside* `optimizer_f` is bound
+# here instead: the arguments the LLRD regimes share, with the differing one or two given at
+# each use. That leaves every `EncoderOptimizerMaker` argument reachable.
+_vit_llrd_optimizer_f = partial(EncoderOptimizerMaker, torch.optim.AdamW, trainable="all",
+                                lr=1e-4, weight_decay=0.05,
+                                head_lr_multiplier=10., head_weight_decay=1e-4)
+
+
+# ViT-B backbones (SigLIP 2 / SPAR).
+irap_vit_finetune_llrd = TrainerConfig(
+    _irap_vit_llrd, optimizer_f=_vit_llrd_optimizer_f(layer_decay=0.65))
+# ViT-L backbones (DINOv3-L): shallower decay per MAE. Build the encoder with
+# `grad_checkpointing=True` – at this batch it takes ViT-L from ~12 GB to ~6 GB.
+#
+# These are MAE's ImageNet-1k values and DINOv3 publishes no full-fine-tuning recipe, but the
+# transplant works: on Vietnam (10,818 examples) this reaches 0.4542 amF1 against 0.4334 for
+# `irap_vit_partial_finetune` and 0.4189 for `irap_vit_linear_probe`, at a run-to-run spread
+# of ~0.007. Prefer `epoch_count=5`: amF1 is flat to 20 epochs while the validation loss
+# degrades badly. See the README for the full table.
+irap_vitl_finetune_llrd = TrainerConfig(
+    _irap_vit_llrd, optimizer_f=_vit_llrd_optimizer_f(layer_decay=0.75))
+
+
+# Partial fine-tuning: only the last few transformer blocks, the output norm and the pooling
+# head. The usual recommendation when the backbone is far larger than the dataset, though on
+# iRAP-Vietnam it lands between the probe and the full fine-tune rather than above them (0.4334
+# amF1 against 0.4189 and 0.4542). `num_trainable_blocks` is set on the encoder (default 2, as
+# in SPAR's own fine-tuning configuration).
+irap_vit_partial_finetune = TrainerConfig(
+    _irap_vit_llrd,
+    optimizer_f=_vit_llrd_optimizer_f(layer_decay=0.75, trainable="last_blocks"))
+
+
+# LoRA: only the low-rank adapters injected into the backbone's transformer blocks are trained.
+# Requires an encoder built with a LoRA rank (`lora_r=` for `TimmViTEncoder`, always for
+# `Qwen3VLVisionEncoder`). The LR is an order of magnitude above a full fine-tune's, which
+# adapters tolerate. `batch_size` is 4 because this config's original user is the
+# 8-billion-parameter Qwen3-VL vision tower; a timm ViT-B/L under LoRA can use 12.
+irap_vit_lora = TrainerConfig(
+    irap_local_rec_trainer_nofreeze,
+    optimizer_f=EncoderOptimizerMaker(torch.optim.AdamW, trainable="lora",
+                                      lr=1e-4, weight_decay=1e-4),
+    batch_size=4,
+)
+
+
+def without_dynamic_weights(config):
+    """Drops `DynamicBalancedRecallWeights`, leaving the cross-entropy unweighted.
+
+    For ablations isolating the effect of the recall weighting. (It is no longer needed
+    under `combined_train_loader_f`: the extension now pools priors over every `train*`
+    split.)
+    """
+    # `getattr(..., "func", ...)` sees through a `partial` of the class.
+    return TrainerConfig(
+        config,
+        extension_fs=[ext for ext in config["extension_fs"]
+                      if getattr(ext, "func", ext) is not DynamicBalancedRecallWeights],
+    )
+
+
+irap_vit_linear_probe_nodyn = without_dynamic_weights(irap_vit_linear_probe)
+irap_vit_finetune_llrd_nodyn = without_dynamic_weights(irap_vit_finetune_llrd)
+irap_vitl_finetune_llrd_nodyn = without_dynamic_weights(irap_vitl_finetune_llrd)
+irap_vit_partial_finetune_nodyn = without_dynamic_weights(irap_vit_partial_finetune)
+irap_vit_lora_nodyn = without_dynamic_weights(irap_vit_lora)
+
+
 # VLM fine-tuning trainer configuration
 # Uses loss as proxy metric during training; full generation eval done separately
 vlm_finetune_trainer = TrainerConfig(
@@ -371,7 +485,8 @@ gemma4_vlm_finetune_trainer = TrainerConfig(
 )
 
 
-# Public API: every TrainerConfig defined above, plus the data-loader factory.
-__all__ = ["combined_train_loader_f"] + [
+# Public API: every TrainerConfig defined above, plus the data-loader factory and the
+# helper for deriving variants of a config.
+__all__ = ["combined_train_loader_f", "without_dynamic_weights"] + [
     name for name, value in globals().items() if isinstance(value, TrainerConfig)
 ]

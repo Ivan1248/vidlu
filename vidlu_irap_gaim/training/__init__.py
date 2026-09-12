@@ -1,4 +1,5 @@
 from .configs import *
+from .optim import EncoderOptimizerMaker
 from .steps import (
     MultiScaleSupervisedStep,
     MultiAttributePseudoLabelStep,

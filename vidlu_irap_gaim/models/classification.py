@@ -5,7 +5,9 @@ import torch
 from torch import nn
 from torch.nn import init
 
-from .encoders import AttentionBlock
+import vidlu.modules.elements as E
+
+from .encoders import AttentionBlock, FrameEncoder, TrainabilityMode
 
 
 def build_classification_heads(
@@ -13,7 +15,7 @@ def build_classification_heads(
     class_counts: tuple[int, ...],
 ) -> nn.ModuleList:
     """
-    Build classification heads.
+    Builds classification heads.
 
     Args:
         input_dim: Input dimension for the heads
@@ -36,7 +38,7 @@ def build_attention_blocks(
     class_counts: tuple[int, ...],
 ) -> nn.ModuleList:
     """
-    Build attention blocks.
+    Builds attention blocks.
 
     Args:
         per_frame_attn_dim: Feature dimension per frame for attention
@@ -51,15 +53,22 @@ def build_attention_blocks(
     return nn.ModuleList([AttentionBlock(per_frame_attn_dim) for _ in class_counts])
 
 
-class ImageSequenceClassifier(nn.Module):
-    """
-    ViDLU-compatible multi-attribute classifier over sequences using SPP features.
+class ImageSequenceClassifier(E.Module):
+    """Multi-attribute classifier for image sequences using a FrameEncoder backbone.
 
-    Inputs:
-        - During training: a tensor shaped (B, S, C, H, W)
-        - In tests / direct calls: a dict with key 'rgb' shaped (B, S, C, H, W)
+    Encodes input image frames with `frame_encoder`, concatenates pooled temporal features,
+    and applies per-attribute classification heads (with optional spatial attention).
 
-    Output: tuple of logits tensors, one per attribute, each shaped (B, K_i)
+    The heads are built on the first call (see `build`), sized from the encoder's actual
+    output on that input. `vidlu.factories.get_model` performs such a call with a real
+    batch; anywhere else the model has to be called once before its heads are used (e.g.
+    before creating an optimizer or loading a state dict).
+
+    Args:
+        class_counts: Tuple containing the number of classes for each attribute.
+        sequence_length: Number of frames in each input sequence.
+        attention: If True, applies per-attribute spatial attention on encoder feature maps.
+        encoder_f: Factory producing a `FrameEncoder`.
     """
 
     def __init__(
@@ -73,36 +82,16 @@ class ImageSequenceClassifier(nn.Module):
         super().__init__()
         self.sequence_length = sequence_length
         self.attention = attention
-        if isinstance(encoder_f, nn.Module):
-            self.frame_encoder = encoder_f
-        elif callable(encoder_f):
-            self.frame_encoder = encoder_f()
-        else:
-            raise TypeError(f"encoder_f must be a FrameEncoder instance or a callable factory, got {type(encoder_f)}")
+        self.frame_encoder = encoder_f()
+        if not isinstance(self.frame_encoder, FrameEncoder):
+            raise TypeError(
+                f"encoder_f must produce a FrameEncoder, got {type(self.frame_encoder).__name__}.")
         self.class_counts = class_counts
+        self.heads: nn.ModuleList | None = None
+        self.attn_blocks: nn.ModuleList | None = None
 
-        dummy_input = torch.zeros(2, 3, 224, 224)
-        with torch.no_grad():
-            feature_map, pooled = self.frame_encoder(dummy_input)
-        spp_output_dim = pooled.shape[1]
-        per_frame_attn_dim = feature_map.shape[1] if attention else 0
-
-        head_input_dim = (
-            sequence_length * spp_output_dim
-            if not attention
-            else sequence_length * (spp_output_dim + per_frame_attn_dim)
-        )
-        self.heads = build_classification_heads(head_input_dim, self.class_counts)
-
-        if attention:
-            self.attn_blocks = build_attention_blocks(per_frame_attn_dim, self.class_counts)
-        else:
-            self.attn_blocks = None
-
-    def forward(self, x, return_features: bool = False):
-        """
-        Accept either a tensor (training path) or a dict with 'rgb' (equivalence tests).
-        """
+    def _frames_from_input(self, x) -> torch.Tensor:
+        """Extracts the `(B, S, C, H, W)` frame tensor from a tensor, array, or 'rgb' dict."""
         if isinstance(x, dict):
             if "rgb" not in x:
                 raise KeyError(f"Expected key 'rgb' in input dict, got keys: {list(x.keys())}")
@@ -115,22 +104,60 @@ class ImageSequenceClassifier(nn.Module):
         if not isinstance(rgb, torch.Tensor):
             raise TypeError(f"Expected rgb to be a Tensor or numpy array, got {type(rgb)}")
 
+        if rgb.shape[1] != self.sequence_length:
+            raise ValueError(f"Expected sequence length {self.sequence_length}, got {rgb.shape[1]}")
+        return rgb
+
+    def build(self, x):
+        """Sizes the heads from the encoder's output widths on the first input.
+
+        The widths of every supported encoder are independent of the input resolution,
+        so the shapes of this input carry over to all later ones.
+        """
+        rgb = self._frames_from_input(x)
+        # Only shapes are needed: in eval mode the pass leaves BatchNorm running statistics
+        # (and any other train-mode state) untouched.
+        was_training = self.frame_encoder.training
+        self.frame_encoder.eval()
+        try:
+            with torch.no_grad():
+                feature_map, pooled = self.frame_encoder(rgb.flatten(0, 1))
+        finally:
+            self.frame_encoder.train(was_training)
+        pooled_dim = pooled.shape[1]
+        per_frame_attn_dim = feature_map.shape[1] if self.attention else 0
+        head_input_dim = self.sequence_length * (pooled_dim + per_frame_attn_dim)
+        self.heads = build_classification_heads(head_input_dim, self.class_counts)
+        if self.attention:
+            self.attn_blocks = build_attention_blocks(per_frame_attn_dim, self.class_counts)
+
+    def forward(self, x, return_features: bool = False):
+        """Forward pass across the sequence.
+
+        Args:
+            x: Input tensor of shape `(batch_size, sequence_length, C, H, W)`, or a dict
+                with an 'rgb' entry of that shape.
+            return_features: If True, returns a tuple `(logits_tuple, pooled_features)`.
+
+        Returns:
+            Tuple of per-attribute logit tensors, each of shape `(batch_size, num_classes)`.
+            If `return_features` is True, returns `(logits_tuple, seq_features)`.
+        """
+        rgb = self._frames_from_input(x)
         B, S = rgb.shape[:2]
-        frame_results = [self.frame_encoder(rgb[:, i]) for i in range(S)]
-        feats_before = [feature_map for feature_map, _ in frame_results]
-        feats = [pooled for _, pooled in frame_results]
 
-        if len(feats) == 0:
-            raise ValueError("Expected at least one frame per sequence.")
-
-        if S != self.sequence_length:
-            raise ValueError(f"Expected sequence length {self.sequence_length}, got {S}")
-
-        seq_feat = torch.cat(feats, dim=1)
+        # The whole sequence is encoded in one call, with frames folded into the batch
+        # dimension, rather than one call per frame. Same arithmetic, but a transformer
+        # backbone then sees B*S images per forward instead of B, which is what makes a
+        # useful batch size reachable for the larger encoders.
+        feature_maps, pooled = self.frame_encoder(rgb.flatten(0, 1))
+        seq_feat = pooled.reshape(B, -1)  # [frame 0 | frame 1 | ...] per example
 
         if self.attention:
+            per_frame_maps = feature_maps.reshape(B, S, *feature_maps.shape[1:])
             outs = [
-                fc(torch.cat([attn_block(f) for f in feats_before] + [seq_feat], dim=1))
+                fc(torch.cat([attn_block(per_frame_maps[:, i]) for i in range(S)] + [seq_feat],
+                             dim=1))
                 for fc, attn_block in zip(self.heads, self.attn_blocks)
             ]
         else:
@@ -140,14 +167,33 @@ class ImageSequenceClassifier(nn.Module):
             return tuple(outs), seq_feat
         return tuple(outs)
 
-    def get_trainable_parameters(self):
-        """Return trainable parameters following original logic: heads + pooling + attention blocks"""
-        trainable_params = []
-        for head in self.heads:
-            trainable_params.extend(head.parameters())
-        trainable_params.extend(self.frame_encoder.pooling_parameters())
-        if self.attn_blocks is not None:
-            for attn_block in self.attn_blocks:
-                trainable_params.extend(attn_block.parameters())
-        return list(trainable_params)
+    def head_modules(self) -> list[nn.Module]:
+        """Returns the classification head and attention modules."""
+        if not self.is_built():
+            raise RuntimeError(
+                f"{type(self).__name__} has no heads yet: they are built on the first call."
+                f" Call the model on a batch before using its heads.")
+        return [m for m in (self.heads, self.attn_blocks) if m is not None]
 
+    def head_parameters(self) -> list[nn.Parameter]:
+        return [p for m in self.head_modules() for p in m.parameters()]
+
+    def set_encoder_trainable(self, mode: TrainabilityMode) -> None:
+        """Sets trainability mode for the frame encoder backbone while keeping heads trainable.
+
+        Args:
+            mode: Backbone trainability mode ('none', 'pool', 'lora', 'last_blocks', 'all').
+        """
+        self.frame_encoder.set_trainable(mode)
+        for m in self.head_modules():
+            m.requires_grad_(True)
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        # `E.Module` would otherwise defer the load to the first call and drop `strict`
+        # and the missing/unexpected-keys result. Requiring an explicit build keeps
+        # partial (`strict=False`) loads honest.
+        if not self.is_built():
+            raise RuntimeError(
+                f"{type(self).__name__} is not built yet, so a state dict cannot be loaded into"
+                f" it. Call the model on a batch first.")
+        return super().load_state_dict(state_dict, strict=strict)

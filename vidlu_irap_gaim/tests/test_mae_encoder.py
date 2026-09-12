@@ -13,6 +13,7 @@ import torch
 from torch import nn
 
 from vidlu_irap_gaim.models.classification import ImageSequenceClassifier
+from vidlu_irap_gaim.models.encoders import FrameEncoder, PixelStats
 from vidlu_irap_gaim.models.encoders.vit import patch_tokens_to_feature_map
 
 HEAVY = os.environ.get("IRAP_RUN_HEAVY_TESTS")
@@ -36,7 +37,7 @@ def test_patch_tokens_to_feature_map_bad_count():
         patch_tokens_to_feature_map(tokens, frame, 16)
 
 
-class _StubMAEEncoder(nn.Module):
+class _StubMAEEncoder(FrameEncoder):
     """Mimics MAEEncoder's (feature_map, cls) contract without HF weights."""
 
     def __init__(self, dim=768, grid=14):
@@ -44,8 +45,9 @@ class _StubMAEEncoder(nn.Module):
         self.proj = nn.Linear(3 * 16 * 16, dim)
         self.grid = grid
         self.dim = dim
+        self._set_pixel_stats(PixelStats(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
 
-    def forward(self, frame):
+    def encode(self, frame):
         B = frame.shape[0]
         patches = frame.unfold(2, 16, 16).unfold(3, 16, 16)  # (B,3,gh,gw,16,16)
         patches = patches.reshape(B, 3, self.grid, self.grid, 16 * 16)
@@ -55,20 +57,17 @@ class _StubMAEEncoder(nn.Module):
         cls = tokens.mean(dim=1)
         return feature_map, cls
 
-    def pooling_parameters(self):
-        return []
-
 
 def test_mae_style_encoder_wires_into_classifier():
     torch.manual_seed(0)
     model = ImageSequenceClassifier(
         class_counts=(3, 4), sequence_length=2, attention=False,
-        encoder_f=_StubMAEEncoder(dim=32),
+        encoder_f=lambda: _StubMAEEncoder(dim=32),
     )
     x = torch.randn(2, 2, 3, 224, 224)
     outs = model(x)
     assert [o.shape for o in outs] == [(2, 3), (2, 4)]
-    # heads sized to sequence_length * pooled_dim = 2 * 32
+    # heads sized to sequence_length * pooled width = 2 * 32
     assert model.heads[0].in_features == 2 * 32
 
 
@@ -89,7 +88,10 @@ def test_mae_encoder_integration(tmp_path):
     assert pooled1.shape == (2, enc.config.hidden_size)
     assert fm1.shape[:2] == (2, enc.config.hidden_size)
     assert fm1.shape[-1] == enc.image_size // enc.patch_size
-    assert enc.pooling_parameters() == []
+    # Pooling is by CLS token, so linear probing trains the heads only.
+    assert enc.pool_parameters() == []
+    # ImageNet statistics, read from the checkpoint's own preprocessor config.
+    assert enc.pixel_stats.mean == pytest.approx((0.485, 0.456, 0.406))
     # Determinism proves masking/shuffling is off.
     assert torch.allclose(pooled1, pooled2)
     assert torch.allclose(fm1, fm2)

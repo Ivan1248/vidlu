@@ -9,13 +9,20 @@ from irap_data import (
 
 # Models
 from .models import (
+    FrameEncoder,
     ImageSequenceClassifier,
+    MAEEncoder,
+    MultiScaleSequenceInference,
+    PixelStats,
+    Qwen3VLVisionEncoder,
     ResNetEncoder,
+    TimmViTEncoder,
     ViTEncoder,
     dinov2_vit_encoder,
-    MAEEncoder,
+    dinov3_vit_encoder,
+    load_spar_trunk_state_dict,
     mae_vit_encoder,
-    MultiScaleSequenceInference,
+    siglip2_vit_encoder,
 )
 from .models.pretraining import vistas_params_spec
 
@@ -36,6 +43,7 @@ from .metrics import (
 # don't need to be added here manually.
 from .training.configs import *
 from .training import (
+    EncoderOptimizerMaker,
     FreezeThenFinetune,
     MultiScaleSupervisedStep,
     MultiAttributePseudoLabelStep,

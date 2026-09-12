@@ -1,12 +1,13 @@
 """
-Exact port of libs/irap_gaim-main/resnet.py for IRAP GAIM compatibility.
+Port of libs/irap_gaim-main/resnet.py for IRAP GAIM compatibility.
 """
-import torch
-import torch.nn as nn
-import torch.utils.model_zoo as model_zoo
-from itertools import chain
-import torch.nn.functional as F
 import warnings
+from itertools import chain
+
+import torch
+import torch.nn.functional as F
+from torch import nn
+from torch.utils import model_zoo
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-f37072fd.pth',
@@ -36,7 +37,7 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, use_bn=True):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         self.use_bn = use_bn
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes) if self.use_bn else None
@@ -68,7 +69,7 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None, efficient=True, use_bn=True, separable=False):
-        super(Bottleneck, self).__init__()
+        super().__init__()
         self.use_bn = use_bn
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes) if self.use_bn else None
@@ -106,7 +107,7 @@ class Bottleneck(nn.Module):
 class _BNReluConv(nn.Sequential):
     def __init__(self, num_maps_in, num_maps_out, k=3, batch_norm=True, bn_momentum=0.1, bias=False, dilation=1,
                  drop_rate=.0):
-        super(_BNReluConv, self).__init__()
+        super().__init__()
 
         if batch_norm:
             self.add_module('norm', nn.BatchNorm2d(num_maps_in, momentum=bn_momentum))
@@ -127,7 +128,7 @@ class SpatialPyramidPooling(nn.Module):
     def __init__(self, num_maps_in, num_levels, bt_size=512, level_size=128, out_size=128,
                  grids=(6, 3, 2, 1), square_grid=False, bn_momentum=0.1, use_bn=True, drop_rate=.0,
                  fixed_size=None, starts_with_bn=True):
-        super(SpatialPyramidPooling, self).__init__()
+        super().__init__()
 
         self.fixed_size = fixed_size
         self.grids = grids
@@ -183,7 +184,7 @@ class ResNet(nn.Module):
                  spp_grids=(6, 3, 2, 1), spp_square_grid=True, spp_drop_rate=0.0,
                  target_size=None, output_stride=4,
                  **kwargs):
-        super(ResNet, self).__init__()
+        super().__init__()
         self.inplanes = 64
         self.use_bn = use_bn
 

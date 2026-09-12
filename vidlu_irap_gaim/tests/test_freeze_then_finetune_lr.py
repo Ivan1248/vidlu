@@ -44,9 +44,12 @@ class _TinyModel(nn.Module):
         super().__init__()
         self.backbone = nn.Linear(4, 4)
         self.head = nn.Linear(4, 2)
+        self.encoder_trainability = None
 
-    def get_trainable_parameters(self):
-        return list(self.head.parameters())
+    def set_encoder_trainable(self, mode):
+        self.encoder_trainability = mode
+        self.backbone.requires_grad_(mode == "all")
+        self.head.requires_grad_(True)
 
 
 class _FakeTrainer:
@@ -86,3 +89,25 @@ def test_extension_rejects_epoch_count_without_finetune_epochs():
     trainer = _FakeTrainer(epoch_count=2)
     with pytest.raises(ValueError, match="epoch_count"):
         FreezeThenFinetune(num_frozen_epochs=2).initialize(trainer)
+
+
+def test_phases_delegate_trainability_to_the_encoder():
+    trainer = _FakeTrainer(epoch_count=10)
+    FreezeThenFinetune(num_frozen_epochs=2).initialize(trainer)
+    assert trainer.model.encoder_trainability == "pool"
+    assert not trainer.model.backbone.weight.requires_grad
+
+    (on_epoch_started,) = trainer.training.epoch_started.handlers
+    on_epoch_started(SimpleNamespace(epoch=2))
+    assert trainer.model.encoder_trainability == "all"
+    assert trainer.model.backbone.weight.requires_grad
+
+
+def test_finetune_trainability_is_configurable_for_adapter_backbones():
+    """A LoRA-adapted backbone must not have its frozen base unfrozen at the transition."""
+    trainer = _FakeTrainer(epoch_count=10)
+    FreezeThenFinetune(num_frozen_epochs=2, finetune_trainability="lora").initialize(trainer)
+    (on_epoch_started,) = trainer.training.epoch_started.handlers
+    on_epoch_started(SimpleNamespace(epoch=2))
+    assert trainer.model.encoder_trainability == "lora"
+    assert not trainer.model.backbone.weight.requires_grad

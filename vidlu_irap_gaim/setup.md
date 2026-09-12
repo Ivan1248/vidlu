@@ -82,9 +82,10 @@ Applied via `ColorJitter` in the dataset transformation pipeline.
 *   Key mapping: `frame_encoder.resnet.{k[9:]}` maps to `backbone.{k}` from checkpoint.
 *   Strict loading: `False` (allows missing keys like heads).
 
-**Freezing Logic:**
-*   **Frozen Phase:** Only parameters returned by `get_trainable_parameters()` (Heads + SPP) are trainable. Backbone is frozen.
-*   **Finetune Phase:** All parameters are trainable.
+**Freezing Logic:** delegated to the encoder via `model.set_encoder_trainable(mode)`, since
+"unfreeze the backbone" differs per backbone (see `models/encoders/base.py`).
+*   **Frozen Phase:** `mode='pool'` – the heads plus the encoder's pooling head (here, the SPP). The rest of the backbone is frozen.
+*   **Finetuning Phase:** `mode='all'` – every backbone parameter. Configurable via `FreezeThenFinetune(finetune_trainability=...)`; an adapter-tuned backbone uses `'lora'` instead.
 
 ## 7. Scheduler timing
 

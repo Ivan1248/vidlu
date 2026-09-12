@@ -25,6 +25,11 @@ class FreezeThenFinetune(TrainerExtension):
     `epoch_count` does not change the LR the phase ends at. The defaults are the original
     recipe's totals (2 epochs at 0.8/epoch, 13 at 0.88/epoch), so `epoch_count=15` reproduces
     it exactly.
+
+    Which backbone parameters each phase trains is decided by the encoder
+    (`set_encoder_trainable`), not here: "unfreeze the backbone" means different things for
+    a ResNet, a LoRA-adapted tower and a frozen feature extractor. Pass
+    `finetune_trainability='lora'` for a backbone that is fine-tuned through adapters.
     """
 
     def __init__(
@@ -36,6 +41,8 @@ class FreezeThenFinetune(TrainerExtension):
         finetune_weight_decay: float = 1e-3,
         frozen_lr_total_decay: float = 0.8 ** 2,
         finetune_lr_total_decay: float = 0.88 ** 13,
+        frozen_trainability: str = "pool",
+        finetune_trainability: str = "all",
     ):
         # Phase lengths (the finetune phase spans the trainer's remaining epochs)
         self.num_frozen_epochs = num_frozen_epochs
@@ -47,6 +54,8 @@ class FreezeThenFinetune(TrainerExtension):
         self.finetune_wd = finetune_weight_decay
         self.frozen_lr_total_decay = frozen_lr_total_decay
         self.finetune_lr_total_decay = finetune_lr_total_decay
+        self.frozen_trainability = frozen_trainability
+        self.finetune_trainability = finetune_trainability
 
     def initialize(self, trainer):
         num_finetune_epochs = trainer.epoch_count - self.num_frozen_epochs
@@ -66,40 +75,13 @@ class FreezeThenFinetune(TrainerExtension):
             trainer.optimizer = opt
             trainer.lr_scheduler = MultiplicativeLR(opt, lr_lambda=lambda epoch: factor)
 
-        def get_trainable_parameters():
-            """Get trainable parameters following original logic: use model's method if available"""
-            if hasattr(trainer.model, "get_trainable_parameters"):
-                return trainer.model.get_trainable_parameters()
-            else:
-                # Fallback: heads + SPP + attention for frozen phase
-                trainable_params = []
-                heads = getattr(trainer.model, "heads", [])
-                for head in heads:
-                    trainable_params.extend(head.parameters())
-                attn_blocks = getattr(trainer.model, "attn_blocks", None)
-                if attn_blocks is not None:
-                    trainable_params.extend(attn_blocks)
-                spp = getattr(trainer.model, "spp", None)
-                if spp is not None:
-                    trainable_params.extend(spp.parameters())
-                return trainable_params
-
         def set_phase(phase: str):
-            # Freeze/unfreeze parameters following original logic
             if phase == "frozen":
-                # First freeze all parameters
-                for p in trainer.model.parameters():
-                    p.requires_grad = False
-                # Then enable only the trainable subset (heads + SPP)
-                trainable_params = get_trainable_parameters()
-                for p in trainable_params:
-                    p.requires_grad = True
+                trainer.model.set_encoder_trainable(self.frozen_trainability)
                 reinit_optimizer_and_scheduler(self.frozen_lr, self.frozen_wd,
                                                self.frozen_lr_total_decay, self.num_frozen_epochs)
             else:  # finetune
-                # Enable all parameters in finetune phase
-                for p in trainer.model.parameters():
-                    p.requires_grad = True
+                trainer.model.set_encoder_trainable(self.finetune_trainability)
                 reinit_optimizer_and_scheduler(self.finetune_lr, self.finetune_wd,
                                                self.finetune_lr_total_decay, num_finetune_epochs)
 
@@ -247,9 +229,8 @@ class VisualizationExtension(TrainerExtension):
                 else:
                     imgs = x
 
-                # Denormalize if necessary (assuming standard normalization or 0-1)
-                # Here we assume 0-1 range for simplicity as per input_adapter="id" in command
-                # If "standardize" was used, we might need to revert it, but "id" implies identity.
+                # Model inputs are in [0, 1]: each encoder applies its own normalization
+                # internally (see `models.encoders.base`), so nothing has to be undone here.
 
                 # Log input statistics
                 with open(os.path.join(self.debug_dir, "input_stats.txt"), "w") as f:
@@ -260,18 +241,8 @@ class VisualizationExtension(TrainerExtension):
                             f"Image {i} - Min: {img_tensor.min().item()}, Max: {img_tensor.max().item()}, Mean: {img_tensor.mean().item()}, Std: {img_tensor.std().item()}\n"
                         )
 
-                # BIH mean and std
-                from irap_data.irap_dataset import RGB_MEAN, RGB_STD
-
-                mean = torch.tensor(RGB_MEAN).view(3, 1, 1)
-                std = torch.tensor(RGB_STD).view(3, 1, 1)
-
                 for i in range(min(imgs.shape[0], 8)):  # Save up to 8 images
-                    img_tensor = imgs[i].detach().cpu()
-
-                    # Denormalize
-                    img_tensor = img_tensor * std + mean
-                    img_tensor = torch.clamp(img_tensor, 0, 1)
+                    img_tensor = torch.clamp(imgs[i].detach().cpu(), 0, 1)
 
                     # (C, H, W) -> (H, W, C)
                     img_np = img_tensor.permute(1, 2, 0).numpy()

@@ -18,16 +18,19 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 import numpy as np
-from irap_data.irap_dataset import RGB_MEAN, RGB_STD
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# Allow running as a script from repo root without installation (match dataset_viewer.py behavior)
+# Allow running as a script from repo root without installation (match dataset_viewer.py
+# behavior). Both directories are needed, as in scripts/_context.py: the repo root for
+# `vidlu_irap_gaim`, and <repo>/irap-data for `irap_data`, which is a separate src-layout
+# project rather than a subpackage.
 _current_file = Path(__file__).resolve()
 _project_root = _current_file.parent.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
+for _path in (_project_root, _project_root / "irap-data"):
+    if _path.is_dir() and str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from irap_data.attrs import get_attrs_to_include  # noqa: E402
 from vidlu_irap_gaim.compat.legacy_seq_enh_model import LegacyGeneralLSTMModel  # noqa: E402
@@ -41,17 +44,6 @@ def _parse_int_list_csv(x: str) -> tuple[int, ...]:
     if x.strip() == "":
         return tuple()
     return tuple(int(s.strip()) for s in x.split(",") if s.strip() != "")
-
-
-def _standardize_rgb(x: torch.Tensor, mean: Sequence[float], std: Sequence[float]) -> torch.Tensor:
-    """Standardize an RGB sequence tensor.
-
-    Args:
-        x: (B, S, 3, H, W) in [0, 1]
-    """
-    mean_t = torch.tensor(mean, device=x.device, dtype=x.dtype)[None, None, :, None, None]
-    std_t = torch.tensor(std, device=x.device, dtype=x.dtype)[None, None, :, None, None]
-    return (x - mean_t) / std_t
 
 
 def _load_model_state_dict(model_state_path: str | Path, *, map_location: str | torch.device):
@@ -94,8 +86,23 @@ def run_local(args) -> None:
         class_counts=tuple(ds.info.class_counts),
         attention=args.attention,
         sequence_length=len(args.context_offsets),
-        encoder_f=lambda: ResNetEncoder(pretrained=args.pretrained_backbone),
+        encoder_f=lambda: ResNetEncoder(pretrained=args.pretrained_backbone,
+                                        pixel_stats=ds.info.pixel_stats),
     ).to(device)
+
+    # DataLoader
+    dl = DataLoader(
+        ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=(device.type == "cuda"),
+    )
+
+    # The heads are built on the first call, so the checkpoint can only be loaded after one.
+    model.eval()
+    with torch.no_grad():
+        model({"rgb": next(iter(dl))["rgb"].to(device)})
 
     # Load model weights
     if args.model_state_path is None and args.checkpoint_dir is None:
@@ -114,30 +121,14 @@ def run_local(args) -> None:
         if unexpected:
             print(f"Unexpected keys (count={len(unexpected)}): {unexpected[:10]}")
 
-    # DataLoader
-    dl = DataLoader(
-        ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
-    )
-
-    model.eval()
     n_done = 0
     with torch.no_grad():
         for batch in tqdm(dl, desc=f"local:{args.split}"):
             rgb = batch["rgb"].to(device)
             seg_ids = batch["segment_id"]
 
-            if args.input_adapter == "standardize":
-                rgb_in = _standardize_rgb(rgb, mean=args.mean, std=args.std)
-            elif args.input_adapter == "id":
-                rgb_in = rgb
-            else:
-                raise ValueError(f"Unknown input_adapter: {args.input_adapter}")
-
-            outputs = model({"rgb": rgb_in})  # tuple of (B, K_i)
+            # The encoder normalizes internally, so it takes [0, 1] frames as loaded.
+            outputs = model({"rgb": rgb})  # tuple of (B, K_i)
 
             for i in range(rgb.shape[0]):
                 lines: list[str] = []
@@ -377,10 +368,8 @@ def parse_args(argv: Sequence[str] | None = None):
     p.add_argument("--attention", action="store_true")
     p.add_argument("--pretrained_backbone", action="store_true", help="Use ImageNet pretrained ResNet18 backbone")
 
-    # Input adapter emulation (match training)
-    p.add_argument("--input_adapter", choices=("id", "standardize"), default="id")
-    p.add_argument("--mean", type=float, nargs=3, default=RGB_MEAN)
-    p.add_argument("--std", type=float, nargs=3, default=RGB_STD)
+    # Normalization is the encoder's own (see models/encoders/base.py), so there is
+    # nothing to match here – applying it again would double-normalize.
 
     # Sequential legacy args
     p.add_argument("--seq_config_path", type=str, default=None, help="Legacy sequential config.json path")
