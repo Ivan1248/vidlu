@@ -523,6 +523,23 @@ def test_the_evaluated_attributes_are_the_canonical_subset_labeled_in_this_relea
     assert len(indices) == 34
 
 
+def test_summary_drops_attributes_whose_metric_is_undefined():
+    """`MCC` is NaN where a split's ground truth is one class. Counting that attribute would
+    make the whole `aMCC` NaN; counting it as 0 would understate the rest."""
+    per_attribute = {0: dict(val=dict(mF1=0.5, MCC=0.2)),
+                     1: dict(val=dict(mF1=0.7, MCC=float("nan")))}
+    averaged, _ = summarize_multi_attribute(per_attribute, [0, 1])
+    assert averaged["val"]["aMCC"] == pytest.approx(0.2)
+    assert averaged["val"]["amF1"] == pytest.approx(0.6)
+    assert averaged["val"]["num_attributes"] == 2
+
+
+def test_summary_reports_an_all_undefined_metric_as_undefined_rather_than_zero():
+    per_attribute = {0: dict(val=dict(MCC=float("nan"))), 1: dict(val=dict(MCC=float("nan")))}
+    averaged, _ = summarize_multi_attribute(per_attribute, [0, 1])
+    assert np.isnan(averaged["val"]["aMCC"])
+
+
 def test_summary_rejects_attributes_evaluated_with_different_metrics():
     """Averaging them would give mP a denominator of 1 and mF1 one of 2, silently."""
     per_attribute = {0: dict(val=dict(mF1=0.5, mP=0.4, mR=0.6)),

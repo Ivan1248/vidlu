@@ -16,7 +16,7 @@ from vidlu.metrics import (
 )
 
 # iRAP evaluation metric names and defaults.
-IRAP_ATTRIBUTE_METRIC_NAMES = ("mF1", "mP", "mR")
+IRAP_ATTRIBUTE_METRIC_NAMES = ("mF1", "mP", "mR", "MCC")
 IRAP_MAIN_METRIC = "mF1"  # "amF1" for the multi-attribute models
 # Macro averages over the classes present in the split, as in Kačan et al. (2025), rather than
 # counting absent classes as 0.
@@ -30,8 +30,9 @@ def irap_metric_names(min_class_supports: Sequence[int] = IRAP_CLASS_SUPPORT_THR
     """The metrics `get_irap_metrics` requests, as result key -> metric name, console scalars
     first.
 
-    Scalars shown on the console: the attribute averages of the macro metrics and of
-    accuracy, the chance-corrected `aMCC`, for probabilistic outputs the proper scoring rules
+    Scalars shown on the console: the attribute averages of the per-attribute metrics (the
+    macro metrics and the chance-corrected `MCC`) and of accuracy, for probabilistic
+    outputs the proper scoring rules
     `aNLL`, `aBrier` and the class-balanced `amNLL`, and per support threshold the restricted
     `amF1_suppN` (and `amNLL_suppN`) beside the unrestricted ones, so that the two can be
     compared directly rather than one replacing the other. The per-attribute metrics get
@@ -40,7 +41,7 @@ def irap_metric_names(min_class_supports: Sequence[int] = IRAP_CLASS_SUPPORT_THR
     which it cannot be read.
     """
     probabilistic = output_kind != "hard"
-    shown = [*("a" + name for name in IRAP_ATTRIBUTE_METRIC_NAMES), "aA", "aMCC"]
+    shown = [*("a" + name for name in IRAP_ATTRIBUTE_METRIC_NAMES), "aA"]
     hidden = ["mF1", "A", "n", "MCC"]
     if probabilistic:
         shown += ["aNLL", "aBrier", "amNLL"]

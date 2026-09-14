@@ -17,9 +17,11 @@ import hashlib
 import json
 from pathlib import Path
 
-from ..metrics import IRAP_ATTRIBUTE_METRIC_NAMES, IRAP_MAIN_METRIC
 from irap_data import load_attribute_metadata
 
+from vidlu.metrics import mean_over_defined_attributes
+
+from ..metrics import IRAP_ATTRIBUTE_METRIC_NAMES, IRAP_MAIN_METRIC
 from .dataset import DEFAULT_CONTEXT_OFFSETS, resolve_attribute_index
 from .feats import extract_features, pack_features
 
@@ -236,8 +238,11 @@ def summarize_multi_attribute(attribute_to_split_metrics: dict,
             for name in names:
                 metric_to_values.setdefault(name, []).append(metric_values[name])
     # Every metric has one value per attribute (checked above), so any of them counts them.
+    # An attribute with an undefined value is dropped from the average, as in
+    # `MultiAttributeClassificationMetrics`, so that e.g. `MCC` of an attribute whose split
+    # has a single ground-truth class does not make the whole `aMCC` NaN.
     split_to_metrics = {
-        split_name: {**{f"a{name}": sum(values) / len(values)
+        split_name: {**{f"a{name}": mean_over_defined_attributes(values)
                         for name, values in metric_to_values.items()},
                      "num_attributes": len(next(iter(metric_to_values.values()), []))}
         for split_name, metric_to_values in split_to_values.items()}

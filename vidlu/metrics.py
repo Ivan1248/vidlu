@@ -202,6 +202,19 @@ def macro_over_supported(per_class_values, support, min_support: int) -> torch.T
     return torch.where(mask, per_class_values, 0).sum(-1) / mask.sum(-1)
 
 
+def mean_over_defined_attributes(values: T.Iterable[float]) -> float:
+    """Mean of one metric's per-attribute values, dropping the undefined (NaN) ones.
+
+    An attribute whose value is undefined (`MCC` where every ground-truth label is one
+    class, a support-restricted mean with no qualifying class) is dropped rather than
+    counted as zero, so one degenerate attribute neither pulls the average down nor makes it
+    NaN. The result is NaN only when no attribute has a defined value, which is not a score
+    of 0.
+    """
+    defined = [float(v) for v in values if not np.isnan(v)]
+    return float(np.mean(defined)) if defined else float("nan")
+
+
 def select_metrics(metrics: T.Mapping[str, torch.Tensor], support: torch.Tensor, names):
     """Picks `names` from computed `metrics`, deriving the support-restricted ones.
 
@@ -699,10 +712,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
             values = list(per_attr.values())
             if any(isinstance(v, np.ndarray) and v.ndim > 0 for v in values):
                 raise ValueError(f"Cannot average per-class metric {p.name!r} over attributes.")
-            # An undefined (NaN) attribute value is dropped rather than counted as zero; no
-            # defined value at all is reported as NaN, not as a score of 0.
-            defined = [float(v) for v in values if not np.isnan(v)]
-            results[key] = float(np.mean(defined)) if defined else float("nan")
+            results[key] = mean_over_defined_attributes(values)
         return results
 
     def __repr__(self):
