@@ -1,46 +1,62 @@
-import dataclasses as dc
-import typing as T
 import copy
+import dataclasses as dc
 import os
+import typing as T
 
 import torch
 
-from vidlu.training.steps import SemisupCleanTargetConsStepBase
-
+from vidlu.training.steps import AmpMixin, SemisupCleanTargetConsStepBase
 from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
-from .jitter import make_sequence_color_jitter, JITTER_STRONG
+
+from .jitter import JITTER_STRONG, make_sequence_color_jitter
 
 
 @dc.dataclass
-class MultiScaleSupervisedStep:
-    """Eval step with multi-scale inference and probability averaging.
+class MultiScaleSupervisedStep(AmpMixin):
+    """Supervised step with multi-scale inference and probability averaging.
 
-    Applies the model at multiple scales, converts logits to probabilities,
-    and averages probabilities across scales for each attribute.
+    Applies the model at every scale in `scales`, converts each scale's logits to
+    probabilities and averages them per attribute.
+
+    `out` holds the averaged probabilities, so the metrics need `output_kind='probs'`, and
+    `loss` is their negative log-likelihood. The loss is computed on the log of the averaged
+    probabilities because `trainer.loss` (`MultiAttributeCrossEntropyLoss`) applies
+    `log_softmax`, which is the identity on log-probabilities. Passing the probabilities
+    themselves would take a softmax of a softmax and report a wrong number.
+
+    `eval` selects the role, as in `vidlu.training.steps.SupervisedStep`: evaluation puts the
+    model in eval mode and runs without gradients; training keeps gradients and takes an
+    optimization step. Training backpropagates through one forward pass per scale, so it
+    costs about `len(scales)` times the time and memory of a single-scale step.
     """
 
     scales: T.Sequence[float] = (1.0, 0.75, 1 / 0.75)
-    amp: bool = False
+    eval: bool = False
+    _ms_model: torch.nn.Module | None = dc.field(default=None, init=False, repr=False,
+                                                 compare=False)
 
     def __call__(self, trainer, batch):
-        from vidlu.training.steps import _unify_sup_batch, untag
-        from vidlu_irap_gaim.models.multiscale import MultiScaleSequenceInference
-        from vidlu.utils.collections import NameDict
         import contextlib as ctx
 
-        model = trainer.model
-        model.eval()
+        from vidlu.training.steps import _unify_sup_batch, untag
+        from vidlu.utils.collections import NameDict
+        from vidlu_irap_gaim.models.multiscale import MultiScaleSequenceInference
 
-        # Lazy-create the multi-scale wrapper
-        if not hasattr(self, "_ms_model") or self._ms_model is None:
+        model = trainer.model
+        model.eval() if self.eval else model.train()
+
+        if self._ms_model is None:
             self._ms_model = MultiScaleSequenceInference(model, scales=self.scales)
 
-        amp_ctx = torch.cuda.amp.autocast() if self.amp else ctx.nullcontext()
-        with amp_ctx:
-            with torch.no_grad():
-                x, y = _unify_sup_batch(batch)[:2]
-                probs = self._ms_model(untag(x))  # Tuple of averaged probabilities
-                loss = trainer.loss(probs, y, reduction="mean")
+        with self.maybe_amp(), torch.no_grad() if self.eval else ctx.suppress():
+            x, y = _unify_sup_batch(batch)[:2]
+            probs = self._ms_model(untag(x))  # Tuple of averaged probabilities
+            # `clamp_min` keeps `log` finite where a scale gives a class zero probability.
+            log_probs = tuple(p.clamp_min(torch.finfo(p.dtype).tiny).log() for p in probs)
+            loss = trainer.loss(log_probs, y, reduction="mean")
+
+        if not self.eval:
+            self.do_optimization_step(trainer.optimizer, loss)
 
         return NameDict(x=x, target=y, out=probs, loss=loss.item())
 
@@ -113,11 +129,11 @@ class MultiAttributePseudoLabelStep(SemisupCleanTargetConsStepBase):
     FixMatch-style: teacher runs on clean x_u, student is trained on jittered x_u
     (requires SemisupVAT(ColorJitterAttack) extension in the trainer config).
     """
-    pre_trained_teacher: T.Optional[T.Union[str, os.PathLike, torch.nn.Module]] = None
+    pre_trained_teacher: T.Union[str, os.PathLike, torch.nn.Module] | None = None
     temperature: float = 1.0
-    conf_thresh: T.Union[float, dict] = 0.0
+    conf_thresh: float | dict = 0.0
     eval_mode_teacher: bool = True  # always True for frozen teacher
-    _teacher: T.Optional[torch.nn.Module] = dc.field(default=None, repr=False, compare=False)
+    _teacher: torch.nn.Module | None = dc.field(default=None, repr=False, compare=False)
 
     def get_student_and_teacher(self, trainer):
         model = trainer.model

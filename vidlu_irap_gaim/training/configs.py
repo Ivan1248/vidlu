@@ -65,9 +65,15 @@ irap_local_rec_trainer = TrainerConfig(
 )
 
 
+# Training and evaluation average over the same scales, so training optimizes the prediction
+# evaluation reports rather than a single-scale one. `eval_step=None` derives the evaluation
+# step from the training one by copying it with `eval=True` (`Trainer._get_eval_step`), which
+# keeps the two from drifting apart. Training runs a forward and a backward pass per scale, so
+# a step costs about three times a single-scale one in time and activation memory; reduce
+# `batch_size` if it does not fit.
 irap_local_rec_trainer_multiscale = TrainerConfig(
-    eval_step=MultiScaleSupervisedStep(scales=(1.0, 0.75, 1 / 0.75), amp=True),
-    train_step=SupervisedStep(amp=True),  # Single-scale during training
+    train_step=MultiScaleSupervisedStep(scales=(1.0, 0.75, 1 / 0.75), amp=True),
+    eval_step=None,
     loss=MultiAttributeCrossEntropyLoss(),
     optimizer_f=partial(torch.optim.Adam, lr=5e-5, weight_decay=1e-3),
     epoch_count=epoch_count,

@@ -888,7 +888,11 @@ ms_model = MultiScaleSequenceInference(base_model, scales=(1.0, 0.75, 1/0.75))
 probs = ms_model(x)  # x: (B, S, C, H, W) -> tuple of (B, K_i) probability tensors
 ```
 
-For training with multi-scale supervision, use the `irap_local_rec_trainer_multiscale` trainer or the `MultiScaleSupervisedStep` train step. Its eval step puts the scale-averaged *probabilities* in `out`, so pass `--metrics "irap_gaim.get_irap_metrics(data.train, output_kind='probs')"`; with the default `'logits'` the `NLL`/`Brier` values would be silently wrong (see [Probability and chance-corrected metrics](#probability-and-chance-corrected-metrics-nll-brier-mnll-mcc)).
+For multi-scale training and evaluation, use the `irap_local_rec_trainer_multiscale` trainer. Its `train_step` is a `MultiScaleSupervisedStep` and its `eval_step` is `None`, so the trainer derives the evaluation step from the training one by copying it with `eval=True` (`Trainer._get_eval_step`); the two therefore average over the same scales by construction. `eval` selects the role exactly as in `SupervisedStep`: evaluation runs without gradients and takes no optimization step.
+
+The step puts the scale-averaged *probabilities* in `out`, so pass `--metrics "irap_gaim.get_irap_metrics(data.train, output_kind='probs')"`; with the default `'logits'` the `NLL`/`Brier` values would be silently wrong (see [Probability and chance-corrected metrics](#probability-and-chance-corrected-metrics-nll-brier-mnll-mcc)).
+
+Training this way backpropagates through one forward pass per scale, so a step costs about `len(scales)` times a single-scale one in time and activation memory. The config keeps `batch_size=12`; lower it if the run does not fit.
 
 ## VLM integration (zero-shot & fine-tuning)
 
@@ -1395,7 +1399,7 @@ For releases that do not use the default `$IRAP_HOME/IRAP_BIH_METADATA` (e.g. IR
 | Symbol | Description |
 |--------|-------------|
 | `irap_local_rec_trainer` | Supervised trainer (2 frozen + 8 finetune epochs, color jitter, dynamic weights) |
-| `irap_local_rec_trainer_multiscale` | Supervised trainer with multi-scale augmentation |
+| `irap_local_rec_trainer_multiscale` | Supervised trainer averaging predictions over scales, in training and evaluation alike |
 | `irap_vit_linear_probe` | Frozen backbone; trains the heads and any parametric pooling head |
 | `irap_vit_partial_finetune` | Trains the last `num_trainable_blocks` blocks, the output norm and the pooling head |
 | `irap_vit_finetune_llrd` | Full fine-tuning of a **ViT-B** backbone with layer-wise LR decay 0.65 |

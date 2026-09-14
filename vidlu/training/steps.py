@@ -194,11 +194,10 @@ class SupervisedStep(AmpMixin):
 
         model.eval() if self.eval else model.train()
 
-        with self.maybe_amp():
-            with torch.no_grad() if self.eval else ctx.suppress():
-                x, y = _unify_sup_batch(batch)[:2]
-                out = maybe_call_with_output_shape(model, untag(x), shape=y.shape[1:])
-                loss = trainer.loss(out, y, reduction="mean")
+        with self.maybe_amp(), torch.no_grad() if self.eval else ctx.suppress():
+            x, y = _unify_sup_batch(batch)[:2]
+            out = maybe_call_with_output_shape(model, untag(x), shape=y.shape[1:])
+            loss = trainer.loss(out, y, reduction="mean")
 
         if not self.eval:
             self.do_optimization_step(trainer.optimizer, loss)
