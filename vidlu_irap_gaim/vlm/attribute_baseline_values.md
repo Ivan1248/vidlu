@@ -167,7 +167,7 @@ Definitions:
 
 ## Notes
 
-1. **Empirical most-common values** can be computed from the BiH training set:
+1. **Empirical most-common values** can be computed from the BH training set:
    ```bash
    IRAP_HOME=~/projects/irap_home python -m vidlu_irap_gaim.tools.baseline_random --split train --mode most_common
    ```

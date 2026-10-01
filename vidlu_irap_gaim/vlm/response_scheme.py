@@ -731,7 +731,7 @@ def make_response_scheme(
         if attr_to_default_class_idx is None:
             raise ValueError(
                 f"Sparse scheme {name!r} requires attr_to_default_class_idx. "
-                "Pass it explicitly or use make_vlm_bih_data() which auto-computes from training data."
+                "Pass it explicitly or use make_vlm_bh_data() which auto-computes from training data."
             )
         return scheme_cls(
             attr_to_value_to_class_idx,

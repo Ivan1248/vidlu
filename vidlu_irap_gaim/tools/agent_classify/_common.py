@@ -38,7 +38,7 @@ def load_split_and_attrs(dataset_name: str, split: str):
     IRAP-Vietnam's BH-only attributes); a no-op for IRAP-BH.
 
     Args:
-        dataset_name: ``"bih"`` or ``"vietnam"``.
+        dataset_name: ``"bh"`` or ``"vietnam"``.
         split: Dataset split (``"train"``, ``"val"``, ``"test"``).
 
     Returns:

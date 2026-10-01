@@ -140,7 +140,7 @@ def _render_prompt(
 
 
 def prepare_agent_tasks(
-    dataset_name: str = "bih",
+    dataset_name: str = "bh",
     split: str = "test",
     output_dir: str | Path = "agent_tasks",
     limit: int | None = None,
@@ -149,7 +149,7 @@ def prepare_agent_tasks(
     """Generate ``agent_tasks.json`` and ``agent_prompt_rendered.md``.
 
     Args:
-        dataset_name: ``"bih"`` or ``"vietnam"``.
+        dataset_name: ``"bh"`` or ``"vietnam"``.
         split: Dataset split (``"train"``, ``"val"``, ``"test"``).
         output_dir: Directory to write the generated files.
         limit: Maximum number of segments to include (default: all).

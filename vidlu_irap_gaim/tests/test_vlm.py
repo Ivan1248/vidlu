@@ -1111,7 +1111,7 @@ class TestVLMDatasetConfig:
         from vidlu_irap_gaim.vlm.finetuning.dataset import (
             vlm_config_from_data, vlm_config_from_dataset)
 
-        with pytest.raises(RuntimeError, match="make_vlm_bih_data"):
+        with pytest.raises(RuntimeError, match="make_vlm_bh_data"):
             vlm_config_from_data({"train": self._mock_dataset()})
 
         with pytest.raises(RuntimeError, match="vlm_response_scheme"):

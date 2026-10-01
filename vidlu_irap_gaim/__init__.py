@@ -1,21 +1,18 @@
-import importlib.util as _importlib_util
-import sys as _sys
-from pathlib import Path as _Path
-
-# `irap_data` is a separate project living in `irap-data/` of this checkout, so importing
-# it needs that directory on `sys.path` – the repo root alone is not enough. `scripts/run.py`
-# gets this from `scripts/_context.py`, but entry points that do not go through it (notably
-# `python -m vidlu_irap_gaim.tools.<name>`) otherwise fail here with ModuleNotFoundError.
-# Installed environments already resolve `irap_data` and are left untouched.
-if _importlib_util.find_spec("irap_data") is None:
-    _irap_data_project = _Path(__file__).resolve().parent.parent / "irap-data"
-    if _irap_data_project.is_dir():
-        _sys.path.insert(0, str(_irap_data_project))
+try:
+    import irap_data as _irap_data  # noqa: F401
+except ModuleNotFoundError as _e:
+    if _e.name != "irap_data":
+        raise
+    raise ModuleNotFoundError(
+        "vidlu_irap_gaim needs the irap-data package from irap-tools"
+        " (https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_data). Install it with"
+        " `uv pip install -e <irap-tools>/packages/irap_data[torch]`, or see requirements.txt."
+    ) from _e
 
 # Data factories (re-exported so they resolve in factory expressions,
 # e.g. "irap_gaim.get_irap_metrics(irap_gaim.make_vietnam_data()['train'])")
 from irap_data import (
-    make_bih_data,
+    make_bh_data,
     make_irap_data,
     make_irap_data_by_name,
     make_vietnam_data,
@@ -89,6 +86,11 @@ from .vlm.finetuning import (
     VLMTrainStep,
     load_base_classifier,
     load_finetuned_classifier,
-    make_vlm_bih_data,
+    make_vlm_bh_data,
     make_vlm_vietnam_data,
 )
+
+# Former names of the iRAP-BH factories. Experiment paths contain the data factory expression,
+# so these keep the run.py commands of earlier runs valid for resuming and evaluation.
+make_bih_data = make_bh_data
+make_vlm_bih_data = make_vlm_bh_data

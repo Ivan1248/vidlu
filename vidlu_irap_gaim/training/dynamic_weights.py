@@ -17,7 +17,7 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 import torch
 from irap_data.attrs import get_attrs_to_include, map_attr_names_to_indices
-from irap_data.irap_dataset import compute_class_occurrence_counts
+from irap_data import compute_class_occurrence_counts
 
 from vidlu.metrics import confusion_matrix_class_stats
 from vidlu.training.extensions import TrainerExtension

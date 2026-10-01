@@ -72,7 +72,7 @@ Applied via `ColorJitter` in the dataset transformation pipeline.
 
 **Implementation:**
 *   Original: `build_rgb_transform()`
-*   Vidlu: `make_bih_data(jitter=(0.6, 0.3, 0.2, 0.02))`
+*   Vidlu: `make_bh_data(jitter=(0.6, 0.3, 0.2, 0.02))`
 
 ## 6. Model architecture & initialization
 

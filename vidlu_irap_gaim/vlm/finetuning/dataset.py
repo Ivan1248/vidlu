@@ -12,11 +12,8 @@ import torch.nn.functional as F
 from irap_data import Dataset, LazyDict
 
 from irap_data.attrs import get_attrs_to_include, filter_labeled_attrs
-from irap_data.attribute_frequencies import (
-    compute_attribute_frequency_stats,
-    frequency_stats_to_attr_to_default_class_idx,
-)
-from irap_data import make_bih_data, make_vietnam_data
+from irap_data import make_bh_data, make_vietnam_data
+from vidlu_irap_gaim.class_frequencies import compute_attr_to_most_common_class_idx
 from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
 from vidlu_irap_gaim.vlm.response_scheme import (
     ResponseScheme,
@@ -64,7 +61,7 @@ def vlm_config_from_dataset(dataset) -> VLMDatasetConfig:
         raise RuntimeError(
             f"Dataset {getattr(dataset, 'identifier', dataset)!r} carries no"
             f" {INFO_RESPONSE_SCHEME}/{INFO_ATTRS_TO_INCLUDE} on `info`. Ensure it was"
-            f" created with make_vlm_bih_data() / make_vlm_vietnam_data().")
+            f" created with make_vlm_bh_data() / make_vlm_vietnam_data().")
     info = dataset.info
     return VLMDatasetConfig(
         response_scheme=getattr(info, INFO_RESPONSE_SCHEME),
@@ -87,7 +84,7 @@ def vlm_config_from_data(data: dict) -> VLMDatasetConfig:
     if dataset is None:
         raise RuntimeError(
             f"No split in {list(data.keys())} carries the VLM prompt configuration on"
-            f" `info`. Ensure the datasets were created with make_vlm_bih_data().")
+            f" `info`. Ensure the datasets were created with make_vlm_bh_data().")
     return vlm_config_from_dataset(dataset)
 
 
@@ -186,7 +183,7 @@ class VLMIrapDataset(Dataset):
         return f"VLM[{self.response_scheme_name}]({base_id})"
 
 
-def make_vlm_bih_data(
+def make_vlm_bh_data(
     response_scheme: str | ResponseScheme = DEFAULT_RESPONSE_SCHEME_NAME,
     detail_level: str = DEFAULT_DETAIL_LEVEL,
     val_quick_size: int | None = None,
@@ -194,7 +191,7 @@ def make_vlm_bih_data(
     sparse_default_instruction: SparseDefaultInstruction = "per_attribute",
     upsampling_factor: int = 1,
 ) -> dict[str, VLMIrapDataset]:
-    """Factory for VLM-formatted BIH datasets.
+    """Factory for VLM-formatted BH datasets.
 
     Creates train/val/test datasets that produce examples for VLM fine-tuning. 
     Tokenization happens in the training step.
@@ -221,11 +218,11 @@ def make_vlm_bih_data(
         Optionally includes "val_quick" when val_quick_size is set.
 
     Usage in run.py::
-        "irap_gaim.make_vlm_bih_data()"
-        "irap_gaim.make_vlm_bih_data(response_scheme_name='sparse_indexed')"
-        "irap_gaim.make_vlm_bih_data(detail_level='attr_vals', val_quick_size=100)"
+        "irap_gaim.make_vlm_bh_data()"
+        "irap_gaim.make_vlm_bh_data(response_scheme_name='sparse_indexed')"
+        "irap_gaim.make_vlm_bh_data(detail_level='attr_vals', val_quick_size=100)"
     """.format(schemes=", ".join(f'"{k}"' for k in sorted(registry)))
-    base_data = make_bih_data()
+    base_data = make_bh_data()
     return _make_vlm_data(
         base_data,
         response_scheme=response_scheme,
@@ -247,11 +244,11 @@ def make_vlm_vietnam_data(
 ) -> dict[str, VLMIrapDataset]:
     """Factory for VLM-formatted IRAP-Vietnam datasets.
 
-    Twin of :func:`make_vlm_bih_data` that builds from :func:`make_vietnam_data`.
+    Twin of :func:`make_vlm_bh_data` that builds from :func:`make_vietnam_data`.
     Attributes with no labeled sample in Vietnam (its BH-only attributes, e.g. the
     flow attributes, Roadworks, Upgrade cost) are dropped from ``attrs_to_include``
     via :func:`filter_labeled_attrs`, so prompts and ground-truth responses only
-    cover scoreable attributes. See :func:`make_vlm_bih_data` for the shared
+    cover scoreable attributes. See :func:`make_vlm_bh_data` for the shared
     arguments.
     """
     base_data = make_vietnam_data()
@@ -292,10 +289,8 @@ def _make_vlm_data(
 
     if isinstance(response_scheme, str):
         if response_scheme in SPARSE_SCHEME_NAMES and attr_to_default_class_idx is None:
-            stats = compute_attribute_frequency_stats(base_data["train"])
-            attr_to_default_class_idx = frequency_stats_to_attr_to_default_class_idx(
-                stats, attr_to_value_to_class_idx
-            )
+            attr_to_default_class_idx = compute_attr_to_most_common_class_idx(
+                base_data["train"].info)
 
         response_scheme = make_response_scheme(
             response_scheme,

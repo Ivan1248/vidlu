@@ -1,76 +1,22 @@
 """
-Visualization utilities shared by `vidlu_irap_gaim` tools.
+Visualization utilities of the `vidlu_irap_gaim` inference tools.
 
-The dataset-agnostic primitives (color palette, `AttributeMetadataDecoder`,
-`tensor_image_to_uint8_np`, `create_composite_view_strip`) live in
-``irap_data.vis_utils`` and are re-exported here for backward compatibility.
-This module adds PIL-based panels and inference-time helpers used by
-`inference.py` and `inference_visualization.py`.
+A visualization shows the frames of a segment on the left and a text panel right after them.
+The class colors and the frame composite are those of the `irap_data` dataset viewer.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
-import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-from irap_data.vis_utils import (
-    AttributeMetadataDecoder,
+from irap_data.tools.viewer.vis_utils import (
     create_composite_view_strip,
     get_index_color,
     tensor_image_to_uint8_np,
 )
-
-
-def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
-    """Convert hex color string to RGB tuple."""
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
-
-
-def rgb_seq_to_pil_images(rgb_seq: torch.Tensor) -> list[Image.Image]:
-    """Convert (S, 3, H, W) float tensor in [0,1] to list of PIL images."""
-    if rgb_seq.ndim != 4 or rgb_seq.shape[1] != 3:
-        raise ValueError(f"Expected rgb_seq with shape (S, 3, H, W), got {tuple(rgb_seq.shape)}")
-    t = rgb_seq.detach().cpu().clamp(0, 1)
-    imgs: list[Image.Image] = []
-    for i in range(t.shape[0]):
-        arr = (t[i].permute(1, 2, 0).numpy() * 255.0).astype(np.uint8)
-        imgs.append(Image.fromarray(arr))
-    return imgs
-
-
-def make_grid_pil(images: list[Image.Image], *, out_w: int, out_h: int) -> Image.Image:
-    """Pack images into a grid canvas of size (out_w, out_h) with aspect-preserving fits."""
-    canvas = Image.new("RGB", (out_w, out_h), color=(0, 0, 0))
-    if not images:
-        return canvas
-
-    n = len(images)
-    cols = int(np.ceil(np.sqrt(n)))
-    rows = int(np.ceil(n / cols))
-    cell_w = max(1, out_w // cols)
-    cell_h = max(1, out_h // rows)
-
-    for idx, img in enumerate(images):
-        r = idx // cols
-        c = idx % cols
-        img_aspect = img.width / max(1, img.height)
-        cell_aspect = cell_w / max(1, cell_h)
-        if img_aspect > cell_aspect:
-            new_w = cell_w
-            new_h = max(1, int(new_w / img_aspect))
-        else:
-            new_h = cell_h
-            new_w = max(1, int(new_h * img_aspect))
-        resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        x0 = c * cell_w + (cell_w - new_w) // 2
-        y0 = r * cell_h + (cell_h - new_h) // 2
-        canvas.paste(resized, (x0, y0))
-
-    return canvas
 
 
 def _wrap_text_lines(text: str, *, max_chars: int) -> list[str]:
@@ -111,76 +57,6 @@ def render_text_panel_pil(
             break
         draw.text((padding, y), line, font=font, fill=fg)
         y += line_h
-    return img
-
-
-def format_prediction_line(
-    *,
-    attr: str,
-    pred_value: str,
-    pred_idx: int,
-    prob: float | None,
-    gt_value: str | None = None,
-    gt_idx: int | None = None,
-    gt_prob: float | None = None,
-) -> str:
-    """
-    Format a single attribute prediction line for visualization.
-
-    Intended output examples:
-      - "Curvature: Straight (0) [98.2%]"
-      - "Lane width: Wide (2) [85.7%] ✓"
-      - "Road condition: Good (1) [67.3%] ✗ GT: Poor (2) [12.1%]"
-    """
-    prob_str = "" if prob is None else f" [{100.0 * float(prob):.1f}%]"
-    base = f"{attr}: {pred_value} ({pred_idx}){prob_str}"
-    if gt_idx is None:
-        return base
-    if int(gt_idx) == int(pred_idx):
-        return f"{base} ✓"
-    gt_str = gt_value if gt_value is not None else str(int(gt_idx))
-    gt_prob_str = "" if gt_prob is None else f" [{100.0 * float(gt_prob):.1f}%]"
-    return f"{base} ✗ GT: {gt_str} ({int(gt_idx)}){gt_prob_str}"
-
-
-def render_prediction_panel_pil(
-    lines: Sequence[str] | Sequence[tuple[str, tuple[int, int, int]]],
-    *,
-    width: int,
-    height: int,
-    padding: int = 18,
-    bg: tuple[int, int, int] = (0, 0, 0),
-    fg: tuple[int, int, int] = (255, 255, 255),
-) -> Image.Image:
-    """
-    Render a text panel with optional per-line colors.
-
-    Args:
-        lines: Either a list of strings (all drawn using fg), or a list of (text, rgb_color).
-    """
-    img = Image.new("RGB", (width, height), color=bg)
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.load_default()
-
-    # Normalize to list[(text, color)]
-    colored_lines: list[tuple[str, tuple[int, int, int]]] = []
-    for x in lines:
-        if isinstance(x, tuple) and len(x) == 2 and isinstance(x[0], str):
-            colored_lines.append((x[0], x[1]))
-        else:
-            colored_lines.append((str(x), fg))
-
-    approx_char_w = 7
-    max_chars = max(10, (width - 2 * padding) // approx_char_w)
-    y = padding
-    line_h = font.getbbox("Ag")[3] + 4
-
-    for raw_text, color in colored_lines:
-        for line in _wrap_text_lines(raw_text, max_chars=max_chars):
-            if y + line_h > height - padding:
-                return img
-            draw.text((padding, y), line, font=font, fill=color)
-            y += line_h
     return img
 
 
@@ -253,11 +129,24 @@ def render_prediction_panel_rich(
 
     bar_bg = (60, 60, 60)
 
+    def draw_probability_bar(x: int, y: int, prob: float, color: str) -> int:
+        """Draws a bar filled to `prob`, with the percentage centered in it, and returns the x
+        position after it."""
+        draw.rectangle([x, y, x + bar_width, y + bar_height], fill=bar_bg)
+        fill_w = int(bar_width * prob)
+        if fill_w > 0:
+            draw.rectangle([x, y, x + fill_w, y + bar_height], fill=color)
+        prob_text = f"{100 * prob:.0f}%"
+        prob_x = x + max(0, (bar_width - text_width(prob_text)) // 2)
+        prob_y = y + max(0, (bar_height - line_h) // 2)
+        draw.text((prob_x, prob_y), prob_text, font=font, fill=(0, 0, 0))
+        return x + bar_width + gap
+
     for row in rows:
         if y + line_h + row_spacing > height - padding:
             break
 
-        pred_color = hex_to_rgb(get_index_color(row.pred_idx))
+        pred_color = get_index_color(row.pred_idx)
         x_cursor = x_base
 
         # Draw attribute name
@@ -271,27 +160,7 @@ def render_prediction_panel_rich(
         draw.text((x_cursor, y), pred_text, font=font, fill=pred_color)
         x_cursor += text_width(pred_text) + gap
 
-        # Draw probability bar for prediction
-        x_bar = x_cursor
-        draw.rectangle(
-            [x_bar, y, x_bar + bar_width, y + bar_height],
-            fill=bar_bg,
-            outline=None,
-        )
-        fill_w = int(bar_width * row.pred_prob)
-        if fill_w > 0:
-            draw.rectangle(
-                [x_bar, y, x_bar + fill_w, y + bar_height],
-                fill=pred_color,
-                outline=None,
-            )
-        # Probability text (black) centered inside the bar
-        prob_text = f"{100 * row.pred_prob:.0f}%"
-        prob_w = text_width(prob_text)
-        prob_x = x_bar + max(0, (bar_width - prob_w) // 2)
-        prob_y = y + max(0, (bar_height - line_h) // 2)
-        draw.text((prob_x, prob_y), prob_text, font=font, fill=(0, 0, 0))
-        x_cursor = x_bar + bar_width + gap
+        x_cursor = draw_probability_bar(x_cursor, y, row.pred_prob, pred_color)
 
         # Check/cross indicator
         if row.gt_idx is not None:
@@ -303,7 +172,7 @@ def render_prediction_panel_rich(
 
             # If incorrect, draw GT on the same line
             if not row.is_correct and row.gt_prob is not None:
-                gt_color = hex_to_rgb(get_index_color(row.gt_idx))
+                gt_color = get_index_color(row.gt_idx)
                 gt_value_str = row.gt_value if row.gt_value else f"({row.gt_idx})"
 
                 # GT label
@@ -311,144 +180,62 @@ def render_prediction_panel_rich(
                 draw.text((x_cursor, y), gt_label, font=font, fill=gt_color)
                 x_cursor += text_width(gt_label) + gap
 
-                # GT probability bar
-                x_gt_bar = x_cursor
-                draw.rectangle(
-                    [x_gt_bar, y, x_gt_bar + bar_width, y + bar_height],
-                    fill=bar_bg,
-                    outline=None,
-                )
-                gt_fill_w = int(bar_width * row.gt_prob)
-                if gt_fill_w > 0:
-                    draw.rectangle(
-                        [x_gt_bar, y, x_gt_bar + gt_fill_w, y + bar_height],
-                        fill=gt_color,
-                        outline=None,
-                    )
-                # GT probability text (black) centered inside the bar
-                gt_prob_text = f"{100 * row.gt_prob:.0f}%"
-                gt_prob_w = text_width(gt_prob_text)
-                gt_prob_x = x_gt_bar + max(0, (bar_width - gt_prob_w) // 2)
-                gt_prob_y = y + max(0, (bar_height - line_h) // 2)
-                draw.text((gt_prob_x, gt_prob_y), gt_prob_text, font=font, fill=(0, 0, 0))
-                x_cursor = x_gt_bar + bar_width + gap
+                x_cursor = draw_probability_bar(x_cursor, y, row.gt_prob, gt_color)
 
         y += line_h + row_spacing
 
     return img
 
 
-def composite_to_fitted_pil(
-    rgb_seq: torch.Tensor,
-    *,
-    out_w: int,
-    out_h: int,
-    align: str = "left",
-) -> Image.Image:
-    """
-    Convert an RGB sequence tensor to a composite image fitted to (out_w, out_h).
+def _fit_frames(rgb_seq: torch.Tensor, *, max_w: int, max_h: int) -> Image.Image:
+    """Composites the frames (see `create_composite_view_strip`) and resizes the composite to
+    fit (max_w, max_h), preserving its aspect ratio.
 
     Args:
-        rgb_seq: (S, 3, H, W) float tensor in [0, 1]
-        out_w, out_h: Target canvas dimensions
-        align: Horizontal alignment - "left", "center", or "right"
-
-    Returns:
-        PIL Image with composite fitted and aligned on black canvas.
+        rgb_seq: (S, 3, H, W) float tensor in [0, 1].
     """
     import cv2
 
-    imgs_np = tensor_image_to_uint8_np(rgb_seq)
-    composite = create_composite_view_strip(imgs_np)
-
+    composite = create_composite_view_strip(tensor_image_to_uint8_np(rgb_seq))
     if composite is None:
-        return Image.new("RGB", (out_w, out_h), color=(0, 0, 0))
-
-    # Resize to fit while preserving aspect ratio
-    h, w = composite.shape[:2]
-    scale = min(out_w / w, out_h / h)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-    resized = cv2.resize(composite, (new_w, new_h), interpolation=interp)
-
-    # Align on canvas
-    canvas = Image.new("RGB", (out_w, out_h), color=(0, 0, 0))
-    pil_img = Image.fromarray(resized)
-    if align == "left":
-        x_offset = 0
-    elif align == "right":
-        x_offset = out_w - new_w
-    else:  # center
-        x_offset = (out_w - new_w) // 2
-    y_offset = (out_h - new_h) // 2
-    canvas.paste(pil_img, (x_offset, y_offset))
-    return canvas
-
-
-def composite_to_fitted_pil_layout(
-    rgb_seq: torch.Tensor,
-    *,
-    out_w: int,
-    out_h: int,
-) -> tuple[Image.Image, int, int]:
-    """
-    Like `composite_to_fitted_pil`, but returns the *resized image only* (no padding canvas),
-    plus its (new_w, y_offset) when placed on an (out_w, out_h) canvas at x=0.
-
-    This is useful when you want to place the text panel right after the rendered image content,
-    instead of after the (potentially wider) image panel.
-    """
-    import cv2
-
-    imgs_np = tensor_image_to_uint8_np(rgb_seq)
-    composite = create_composite_view_strip(imgs_np)
-    if composite is None:
-        return Image.new("RGB", (1, 1), color=(0, 0, 0)), 1, 0
+        return Image.new("RGB", (1, 1), color=(0, 0, 0))
 
     h, w = composite.shape[:2]
-    scale = min(out_w / w, out_h / h)
+    scale = min(max_w / w, max_h / h)
     new_w = max(1, int(w * scale))
     new_h = max(1, int(h * scale))
     interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
-    resized = cv2.resize(composite, (new_w, new_h), interpolation=interp)
-    pil_img = Image.fromarray(resized)
-    y_offset = max(0, (out_h - new_h) // 2)
-    return pil_img, new_w, y_offset
+    return Image.fromarray(cv2.resize(composite, (new_w, new_h), interpolation=interp))
 
 
-def make_inference_visualization_image(
-    *,
+def make_visualization_image(
     rgb_seq: torch.Tensor,
-    text: str,
+    render_panel: Callable[[int, int], Image.Image],
+    *,
     out_size: tuple[int, int] = (1920, 1080),
-    text_area_ratio: float = 0.7,
+    text_area_ratio: float = 0.35,
     gap: int = 0,
 ) -> Image.Image:
-    """
-    Create a visualization image with composite frames on left and text panel on right.
+    """Places the frames of a segment on the left and a panel right after them.
+
+    The frames are fitted into the width that remains after `text_area_ratio` of the width is
+    reserved for the panel. The panel then takes all the width that the fitted frames leave.
 
     Args:
-        rgb_seq: (S, 3, H, W) float tensor in [0, 1]
-        text: Text to render in the panel
-        out_size: (width, height) of output image
-        text_area_ratio: Fraction of width for text panel
-        gap: Pixel gap between image and text panel
+        rgb_seq: (S, 3, H, W) float tensor in [0, 1].
+        render_panel: Renders the panel with a given (width, height).
+        out_size: (width, height) of the image.
+        text_area_ratio: The fraction of the width reserved for the panel.
+        gap: Pixel gap between the frames and the panel.
     """
     out_w, out_h = out_size
-    min_text_w = int(out_w * text_area_ratio)
-    img_max_w = max(1, out_w - min_text_w - gap)
-
-    # Fit image into the max image width, but place text right after the *actual* rendered image width.
-    img_resized, img_used_w, img_y = composite_to_fitted_pil_layout(rgb_seq, out_w=img_max_w, out_h=out_h)
-    x_text = min(out_w - 1, img_used_w + gap)
-    text_w = max(1, out_w - x_text)
-    text_panel = render_text_panel_pil(text, width=text_w, height=out_h)
-
-    combined = Image.new("RGB", (out_w, out_h), color=(0, 0, 0))
-    combined.paste(img_resized, (0, img_y))
-    combined.paste(text_panel, (x_text, 0))
-    return combined
+    frames = _fit_frames(rgb_seq, max_w=max(1, out_w - int(out_w * text_area_ratio) - gap),
+                         max_h=out_h)
+    x_panel = min(out_w - 1, frames.width + gap)
+    image = Image.new("RGB", (out_w, out_h), color=(0, 0, 0))
+    image.paste(frames, (0, max(0, (out_h - frames.height) // 2)))
+    image.paste(render_panel(max(1, out_w - x_panel), out_h), (x_panel, 0))
+    return image
 
 
 def save_inference_visualization(
@@ -460,9 +247,9 @@ def save_inference_visualization(
     out_size: tuple[int, int] = (1920, 1080),
     text_area_ratio: float = 0.35,
 ) -> Path:
-    img = make_inference_visualization_image(
-        rgb_seq=rgb_seq, text=text, out_size=out_size, text_area_ratio=text_area_ratio
-    )
+    img = make_visualization_image(
+        rgb_seq, lambda w, h: render_text_panel_pil(text, width=w, height=h),
+        out_size=out_size, text_area_ratio=text_area_ratio)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{segment_id}_prediction.png"

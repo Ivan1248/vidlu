@@ -6,16 +6,16 @@ exposes two subcommands:
 
     # 1. Build the task list + prompt for the agent.
     python -m vidlu_irap_gaim.tools.agent_classify prepare \\
-        --dataset bih --split test --output-dir ./agent_run/
+        --dataset bh --split test --output-dir ./agent_run/
 
     # 2. (the agent reads the prompt, classifies, and writes
-    #     agent_predictions_bih_test.json into ./agent_run/)
+    #     agent_predictions_bh_test.json into ./agent_run/)
 
     # 3. Score the agent's predictions against ground truth. `prepare` prints this
     #    exact command, with --predictions pointing at the file the agent wrote.
     python -m vidlu_irap_gaim.tools.agent_classify evaluate \\
-        --dataset bih --split test \\
-        --predictions ./agent_run/agent_predictions_bih_test.json
+        --dataset bh --split test \\
+        --predictions ./agent_run/agent_predictions_bh_test.json
 
 Artifact file names are defined once in ``_common.agent_artifact_paths``.
 """
@@ -66,8 +66,8 @@ def main():
 
     # Args common to both subcommands, declared once.
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--dataset", choices=["bih", "vietnam"], default="bih",
-                        help="Dataset (default: bih)")
+    common.add_argument("--dataset", choices=["bh", "vietnam"], default="bh",
+                        help="Dataset (default: bh)")
     common.add_argument("--split", choices=["train", "val", "test"], default="test",
                         help="Dataset split (default: test)")
     common.add_argument("--output-dir", default="agent_run",

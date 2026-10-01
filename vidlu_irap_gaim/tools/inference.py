@@ -15,18 +15,18 @@ import typing as T
 
 import torch
 import torch.nn.functional as F
-from PIL import Image
 
+from irap_data import IGNORE_LABEL_INDEX
 from vidlu.experiments import TrainingExperiment
 from vidlu.utils.misc import RemovableHandle
 from vidlu.utils.collections import NameDict
 
 from vidlu_irap_gaim.tools.vis_utils import (
-    AttributeMetadataDecoder,
-    composite_to_fitted_pil_layout,
     PredictionRow,
+    make_visualization_image,
     render_prediction_panel_rich,
 )
+from vidlu_irap_gaim.vlm.response_parser import build_idx_to_value
 
 
 @dataclass(kw_only=True)
@@ -186,10 +186,11 @@ class InferenceVisualizationCollector:
         self.images_dir = self.output_dir / "images"
         self.images_dir.mkdir(parents=True, exist_ok=True)
 
-        self.decoder = AttributeMetadataDecoder(self.dataset.info.attr_to_value_to_class_idx)
-        self._attr_to_idx = {a: i for i, a in enumerate(self.decoder.attr_to_value_to_class_idx.keys())}
+        attr_to_value_to_class_idx = self.dataset.info.attr_to_value_to_class_idx
+        self._idx_to_value = build_idx_to_value(attr_to_value_to_class_idx)
+        self._attr_to_idx = {a: i for i, a in enumerate(attr_to_value_to_class_idx)}
 
-        self.attribute_names = list(self.dataset.info.attr_to_value_to_class_idx.keys())
+        self.attribute_names = list(attr_to_value_to_class_idx)
         if self.attrs_to_include is not None:
             include = set(self.attrs_to_include)
             self.attribute_names = [a for a in self.attribute_names if a in include]
@@ -217,19 +218,13 @@ class InferenceVisualizationCollector:
         probs_list, pred_idx_list, pred_prob_list = _extract_probs(result.out)
         target = getattr(result, "target", None)
 
-        out_w, out_h = self.out_size
-        min_text_w = int(out_w * self.text_area_ratio)
-        img_max_w = max(1, out_w - min_text_w - self.gap)
-
         for i, sid in enumerate(seg_ids):
             if self.limit is not None and self.num_written >= self.limit:
                 break
 
             rgb_seq = rgb_b[i].detach().cpu()
 
-            gt_line_map: dict[str, tuple[str, int]] = {}
-            if target is not None and isinstance(target, torch.Tensor) and target.ndim == 2:
-                gt_line_map = self.decoder.decode_label_tensor(target[i].detach().cpu())
+            has_target = isinstance(target, torch.Tensor) and target.ndim == 2
 
             prediction_rows: list[PredictionRow] = []
             # Also build a structured record for JSON
@@ -239,15 +234,12 @@ class InferenceVisualizationCollector:
                 aidx = self._attr_to_idx[attr]
                 pred_idx = int(pred_idx_list[aidx][i].detach().cpu().item())
                 pred_prob = float(pred_prob_list[aidx][i].detach().cpu().item())
-                pred_value = self.decoder.value_str(attr=attr, class_idx=pred_idx)
+                pred_value = self._idx_to_value[attr][pred_idx]
 
                 gt_value, gt_idx, gt_prob = None, None, None
-                if attr in gt_line_map:
-                    gt_value_str, gt_idx_val = gt_line_map[attr]
-                    # gt_value_str already contains "(idx)" suffix; prefer raw mapping value if possible
-                    gt_idx = int(gt_idx_val)
-                    gt_value = self.decoder.value_str(attr=attr, class_idx=gt_idx)
-                    # Extract ground truth class probability
+                if has_target and (label := int(target[i, aidx])) != IGNORE_LABEL_INDEX:
+                    gt_idx = label
+                    gt_value = self._idx_to_value[attr][gt_idx]
                     gt_prob = float(probs_list[aidx][i, gt_idx].detach().cpu().item())
 
                 prediction_rows.append(
@@ -273,20 +265,11 @@ class InferenceVisualizationCollector:
             self.predictions[sid] = pred_rec
 
             if self.save_images:
-                # Fit image into max width, then place text panel right after the *actual* rendered image width
-                # (removes the black strip between image and text without cropping).
-                img_resized, img_used_w, img_y = composite_to_fitted_pil_layout(
-                    rgb_seq, out_w=img_max_w, out_h=out_h
-                )
-                x_text = min(out_w - 1, img_used_w + self.gap)
-                text_w = max(1, out_w - x_text)
-                text_panel = render_prediction_panel_rich(prediction_rows, width=text_w, height=out_h)
-                # Compose: [image_content] [gap] [text] (text may be wider if the image doesn't use img_max_w)
-                out_img = Image.new("RGB", (out_w, out_h), color=(0, 0, 0))
-                out_img.paste(img_resized, (0, img_y))
-                out_img.paste(text_panel, (x_text, 0))
-                out_path = self.images_dir / f"{sid}_pred.png"
-                out_img.save(out_path)
+                out_img = make_visualization_image(
+                    rgb_seq,
+                    lambda w, h: render_prediction_panel_rich(prediction_rows, width=w, height=h),
+                    out_size=self.out_size, text_area_ratio=self.text_area_ratio, gap=self.gap)
+                out_img.save(self.images_dir / f"{sid}_pred.png")
 
             self.num_written += 1
 

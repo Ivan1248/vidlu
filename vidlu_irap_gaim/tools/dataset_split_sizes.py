@@ -3,35 +3,25 @@ Report the number of segments in each split of the iRAP datasets.
 
 Loads each release (iRAP-BH, iRAP-Vietnam) via its factory and prints a table of
 per-split sizes plus per-dataset totals. Sizes reflect the same options used in
-training (e.g. BiH's N-context filter is on by default), so the numbers match the
+training (e.g. BH's N-context filter is on by default), so the numbers match the
 `n` reported by the metrics. Only metadata is read -- no images are loaded.
 
-Run as a plain file (not `-m`), so importing the `vidlu_irap_gaim` package -- which
-pulls in `irap_data` -- is avoided; this script imports `irap_data` directly and
-adds it to `sys.path` itself (matching `scripts/_context.py`), so no install or
-`run.py` bootstrap is needed:
+Run as a plain file (not `-m`), so importing the `vidlu_irap_gaim` package, with its model
+imports, is avoided. This script needs only the installed `irap_data`:
 
     IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/dataset_split_sizes.py
     IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/dataset_split_sizes.py --markdown
-    IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/dataset_split_sizes.py --datasets bih --json sizes.json
+    IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/dataset_split_sizes.py --datasets bh --json sizes.json
 """
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
-# `irap_data` is not installed; it lives at <repo>/irap-data (src-layout) and is
-# normally put on sys.path by scripts/_context.py. Do the same here so this tool
-# runs standalone. Layout: <repo>/vidlu_irap_gaim/tools/<this file>.
-_irap_data_project = Path(__file__).resolve().parents[2] / "irap-data"
-if _irap_data_project.is_dir() and str(_irap_data_project) not in sys.path:
-    sys.path.insert(0, str(_irap_data_project))
-
-from irap_data import IRAP_DATASET_FACTORIES, make_irap_data_by_name  # noqa: E402
+from irap_data import IRAP_DATASET_FACTORIES, make_irap_data_by_name
 
 # Human-readable labels for the registry keys used in the report headings.
-DISPLAY_NAMES = {"bih": "iRAP-BH", "vietnam": "iRAP-Vietnam"}
+DISPLAY_NAMES = {"bh": "iRAP-BH", "vietnam": "iRAP-Vietnam"}
 
 
 def collect_split_sizes(names):

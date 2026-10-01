@@ -422,7 +422,7 @@ vlm_finetune_trainer = TrainerConfig(
 #                  low trainable param count" bug (motivates including expert
 #                  layers in LoRA targets).
 #                  https://github.com/unslothai/unsloth/issues/4907
-#   [empirical]    Measured on this repo's 4× A6000 BIH dataset run.
+#   [empirical]    Measured on this repo's 4× A6000 BH dataset run.
 #
 # Per-hyperparameter justification:
 #

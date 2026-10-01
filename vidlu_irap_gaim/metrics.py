@@ -66,7 +66,7 @@ def get_irap_metrics(
     Args:
         dataset: Dataset whose `info.attr_to_value_to_class_idx` gives the attribute order
             (and thus the output indices) and whose `info.attr_to_num_labeled` tells which
-            attributes have labels. None loads the BiH training split.
+            attributes have labels. None loads the BH training split.
         class_counts: Number of classes per attribute in the dataset's attribute order.
             None uses `dataset.info.class_counts`.
         attrs_to_include: Attribute names to evaluate. None means the canonical subset
@@ -89,9 +89,9 @@ def get_irap_metrics(
     )
 
     if dataset is None:
-        from irap_data import make_bih_data
+        from irap_data import make_bh_data
 
-        dataset = make_bih_data()["train"]
+        dataset = make_bh_data()["train"]
 
     if class_counts is None:
         if not hasattr(dataset, "info") or not hasattr(dataset.info, "class_counts"):

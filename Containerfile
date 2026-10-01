@@ -92,6 +92,9 @@ PY
 # IRAP-Vietnam data preparation: Excel + parquet I/O
 RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir pandas openpyxl xlrd pyarrow
 
+# IRAP datasets, from irap-tools
+RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir     "irap-data[torch] @ git+https://github.com/Ivan1248/irap-tools#subdirectory=packages/irap_data"
+
 # Experiment tracking
 RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir wandb
 

@@ -3,7 +3,7 @@
 
 Orchestrates three phases of pseudo-label self-training by calling run.py as
 subprocesses. All data/model/trainer strings mirror run.py's positional
-argument convention and default to IRAP BiH values.
+argument convention and default to IRAP BH values.
 
 Usage examples:
   # Full pipeline (on-the-fly), IRAP defaults:
@@ -14,8 +14,8 @@ Usage examples:
 
   # Offline mode with custom labeled ratio in data string:
   python run_pseudolabel_pipeline.py \\
-    --data-semisup "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(),labeled_ratio=0.05)" \\
-    --data-offline "irap_gaim.make_pseudo_labeled_data(irap_gaim.make_bih_data(),labeled_ratio=0.05,pseudo_labels_path='{pseudo_labels_path}')" \\
+    --data-semisup "irap_gaim.make_semisup_data(irap_gaim.make_bh_data(),labeled_ratio=0.05)" \\
+    --data-offline "irap_gaim.make_pseudo_labeled_data(irap_gaim.make_bh_data(),labeled_ratio=0.05,pseudo_labels_path='{pseudo_labels_path}')" \\
     --mode offline
 
   # Generalising to another dataset (provide all four run.py args):
@@ -44,7 +44,7 @@ RUN_PY = str(SCRIPTS_DIR / "run.py")
 
 ALL_PHASES = ["supervised", "generate", "train-pseudolabel"]
 
-# ── IRAP BiH defaults ─────────────────────────────────────────────────────────
+# ── IRAP BH defaults ─────────────────────────────────────────────────────────
 _IRAP_MODEL = (
     "irap_gaim.ImageSequenceClassifier"
     ",class_counts=irap_gaim.get_class_counts()"
@@ -277,13 +277,13 @@ def main():
 
     # run.py factory string args
     g = parser.add_argument_group("run.py factory strings (mirror run.py positional args)")
-    g.add_argument("--data-supervised", default="irap_gaim.make_bih_data()",
+    g.add_argument("--data-supervised", default="irap_gaim.make_bh_data()",
                    help="Data factory for the supervised phase")
     g.add_argument("--data-semisup",
-                   default="irap_gaim.make_semisup_data(irap_gaim.make_bih_data(),labeled_ratio=0.1)",
+                   default="irap_gaim.make_semisup_data(irap_gaim.make_bh_data(),labeled_ratio=0.1)",
                    help="Data factory for generate and on-the-fly train-pseudolabel phases")
     g.add_argument("--data-offline",
-                   default="irap_gaim.make_pseudo_labeled_data(irap_gaim.make_bih_data(),labeled_ratio=0.1,pseudo_labels_path='{pseudo_labels_path}')",
+                   default="irap_gaim.make_pseudo_labeled_data(irap_gaim.make_bh_data(),labeled_ratio=0.1,pseudo_labels_path='{pseudo_labels_path}')",
                    help="Data factory for offline train-pseudolabel phase; {pseudo_labels_path} is filled by the script")
     g.add_argument("--input-adapter", default="standardize",
                    help="Input adapter string (run.py 2nd positional arg)")
@@ -299,7 +299,7 @@ def main():
                    default="id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt",
                    help="--params value passed to run.py (empty string to omit)")  # TODO: un-hard-code irap_gaim/vistas.pt
     g.add_argument("--metrics",
-                   default="irap_gaim.get_irap_metrics(irap_gaim.make_bih_data()['train'])",
+                   default="irap_gaim.get_irap_metrics(irap_gaim.make_bh_data()['train'])",
                    help="--metrics value passed to run.py (empty string to omit)")
     g.add_argument("--generate-module", default=_IRAP_GENERATE_MODULE,
                    help="run.py -m value for the generate phase; {pseudo_labels_path}, {conf_thresh}, {temperature} are filled")

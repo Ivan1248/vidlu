@@ -97,7 +97,7 @@ Names available in factory expressions come from:
    `losses`. So e.g. `modules.DeconvConv`, `components.PreactBlock`,
    `initialization.kaiming_resnet`, `steps.SemisupVATTrainStep`.
 3. installed `vidlu_*` **extensions**, exposed under their de-prefixed name
-   (e.g. `irap_gaim.make_bih_data`).
+   (e.g. `irap_gaim.make_bh_data`).
 4. the user's `--imports` / `--pre`, which run with/after `STANDARD_PRE` and so
    **extend or override** it.
 
@@ -111,7 +111,7 @@ Examples:
 --pre "import vidlu.configs.training as tc"
 
 # Promote an extension name so it can be used unprefixed
---pre "from vidlu_irap_gaim import make_bih_data"
+--pre "from vidlu_irap_gaim import make_bh_data"
 ```
 
 ### 3. `ArgTree` and Updatrees (`vidlu/utils/func/updatree.py`)

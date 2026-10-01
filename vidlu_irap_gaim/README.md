@@ -15,7 +15,7 @@ The extension is discovered by ViDLU via the `vidlu_` extension naming conventio
 - [Encoders](#encoders)
 - [Metrics & dynamic weighting](#metrics--dynamic-weighting)
 - [Semi-supervised learning with pseudo-labels](#semi-supervised-learning-with-pseudo-labels)
-- [Joint BiH + Vietnam training](#joint-bih--vietnam-training)
+- [Joint BH + Vietnam training](#joint-bh--vietnam-training)
 - [Multi-scale inference](#multi-scale-inference)
 - [VLM integration (zero-shot & fine-tuning)](#vlm-integration-zero-shot--fine-tuning)
 - [Inference & visualization](#inference--visualization)
@@ -65,60 +65,43 @@ With the default context sequence `(0, -1, -4)`:
 
 | Release | Training examples |
 |---|---|
-| iRAP-BiH | 209,459 |
+| iRAP-BH | 209,459 |
 | iRAP-Vietnam | 10,818 |
 
-A natural BiH:Vietnam ratio of **19.4:1**, which is what the `combined_train_loader_f`
+A natural BH:Vietnam ratio of **19.4:1**, which is what the `combined_train_loader_f`
 mixing ratio should be read against (see
-[Joint BiH + Vietnam training](#joint-bih--vietnam-training)), and which puts the two
+[Joint BH + Vietnam training](#joint-bh--vietnam-training)), and which puts the two
 releases in different regimes for choosing a fine-tuning strategy (see
 [Encoders](#encoders)). These counts are worth stating explicitly because several
 configuration choices only make sense relative to them.
 
 ### Inspecting the label distribution
 
-Three metadata-only tools; none loads an image, and all run as plain files without
-importing torch or vidlu.
+Neither of these tools loads an image.
 
 ```bash
-# Per-split example counts.
+# Per-split example counts, with the options used in training. Runs as a plain file, without
+# importing vidlu.
 IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/dataset_split_sizes.py
 
-# Per-attribute class distributions: how much is labelled, how skewed, which classes are
-# rare or never observed. Attributes a release does not annotate (7 of 41 on Vietnam) are
-# named once and then excluded from every table and count.
-IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/attribute_distribution_report.py \
-  --releases bih vietnam --splits train val test --rare-fraction 0.01 -o dist.json
+# Class frequencies of every attribute, label coverage, class balance, and rare and missing
+# classes, with plots, for the labeled segments and for the reference evaluation set.
+# Attributes a release does not annotate (7 of 41 on Vietnam) are named once and left out.
+IRAP_HOME=~/data/datasets irap-dataset-stats report vietnam -o reports/vietnam
 
-# Every class of every attribute as one figure: log axis, grouped by attribute, with
-# never-observed classes marked rather than dropped.
-IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/attribute_class_histogram.py \
-  --release vietnam --split train -o vietnam_train_classes.png
+# Every class of every attribute in one figure, the most skewed attributes first.
+IRAP_HOME=~/data/datasets irap-dataset-stats plot vietnam --split train \
+  --sort-attributes imbalance --sort-classes count -o vietnam_skew.png
 ```
 
-`attribute_class_histogram.py` delegates its counting to `attribute_distribution_report`,
-so the figure and the report cannot disagree. Options:
-
-| Option | Effect |
-|---|---|
-| `--normalize` | Plot each class as a share of its own attribute, making attributes with different amounts of labelling comparable |
-| `--linear` | Linear value axis. Honest about magnitude, but it hides the rare tail — hence the logarithmic default |
-| `--sort-attributes {schema,count,imbalance}` | Order of attribute groups. `count` is by descending labelled examples; `imbalance` puts the most skewed attributes first |
-| `--sort-classes {schema,count}` | Order within each group. `schema` keeps class-index order, which is meaningful for ordinal attributes such as speed limits; `count` is by descending examples, the same key one level down |
-
-```bash
-# Most skewed attributes first, classes by descending count within each.
-IRAP_HOME=~/data/datasets python vidlu_irap_gaim/tools/attribute_class_histogram.py \
-  --release vietnam --sort-attributes imbalance --sort-classes count -o vietnam_skew.png
-```
-
-Classes with no examples are drawn at a floor in a distinct colour on both scales rather
-than omitted: on a logarithmic axis zero cannot be placed at all, and on a linear one it
-has zero width, so either way an unobserved class would look like a missing one.
+`irap-dataset-stats` is part of `irap_data`. Its
+[README](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_data#dataset-statistics-report)
+describes the outputs and options. Pass `--context-offsets 0,-1,-4` to also report the
+segments that a model with these context offsets is trained and evaluated on.
 
 ### N-context filtering (default behavior)
 
-`irap_gaim.make_bih_data()` applies an N-context filter by default (`use_ncontext_filter=True`) using precomputed pickle files:
+`irap_gaim.make_bh_data()` applies an N-context filter by default (`use_ncontext_filter=True`) using precomputed pickle files:
 - `$IRAP_HOME/IRAP_BIH_METADATA/seg_to_res/train.pickle`
 - `$IRAP_HOME/IRAP_BIH_METADATA/seg_to_res/val.pickle`
 - `$IRAP_HOME/IRAP_BIH_METADATA/seg_to_res/test.pickle`
@@ -127,24 +110,21 @@ To disable this filtering (use all segments that pass label/context checks):
 
 ```bash
 python scripts/run.py train \
-  "irap_gaim.make_bih_data(use_ncontext_filter=False)" \
+  "irap_gaim.make_bh_data(use_ncontext_filter=False)" \
   "id" \
   "..." "..."
 ```
 
 ## Package structure
 
+The datasets and the canonical attribute subset come from [`irap_data`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_data) in irap-tools (see `requirements.txt`).
+
 ```
 vidlu_irap_gaim/
 ├── __init__.py                  # Public API exports
+├── class_frequencies.py         # Most common classes (sparse VLM defaults, baselines)
 ├── losses.py                    # MultiAttributeCrossEntropyLoss
-├── metrics.py                   # Per-attribute accuracy, precision, recall, F1, IoU
-├── data/                        # Dataset and attribute management
-│   ├── irap_dataset.py           # IRAPDataset dataset, make_bih_data factory
-│   ├── inference_dataset.py     # InferenceImageDataset for unlabeled data
-│   ├── attrs.py                 # Canonical 41-attribute subset definitions
-│   ├── attribute_frequencies.py # Class distribution analysis
-│   └── constants.py             # RGB normalization constants
+├── metrics.py                   # The iRAP evaluation protocol (get_irap_metrics)
 ├── models/                      # Neural network models and encoders
 │   ├── classification.py        # ImageSequenceClassifier
 │   ├── multiscale.py            # MultiScaleSequenceInference
@@ -180,25 +160,20 @@ vidlu_irap_gaim/
 │   ├── attribute_prompts.yaml   # YAML prompt configuration
 │   └── finetuning/              # LoRA fine-tuning pipeline
 │       ├── model.py             # Qwen3VLClassifier / Qwen35Classifier / Gemma4VLClassifier (LoRA wrappers)
-│       ├── dataset.py           # VLMIrapDataset, make_vlm_bih_data
+│       ├── dataset.py           # VLMIrapDataset, make_vlm_bh_data
 │       ├── loading.py           # load_finetuned_classifier (a checkpoint without an experiment)
 │       ├── predictor.py         # VLMClassifierPredictor, run_eval
 │       └── steps.py             # VLMTrainStep, VLMEvalStep
 ├── tools/                       # Utility scripts and visualization
-│   ├── vis_utils.py             # Visualization utilities (color palettes, composite images)
-│   ├── dataset_viewer.py        # Streamlit interactive data browser
+│   ├── vis_utils.py             # Frames with a prediction panel, for the inference tools
 │   ├── inference.py             # Evaluation hook for structured predictions
-│   ├── inference_visualization.py  # Standalone PNG generation
+│   ├── inference_visualization.py  # Standalone PNGs from a model state
 │   ├── generate_pseudo_labels.py   # Offline pseudo-label generation
 │   ├── baseline_random.py       # Random baseline predictor
 │   ├── attribute_most_common_report.py  # Attribute frequency analysis
 │   ├── dataset_split_sizes.py   # Per-split example counts
-│   ├── attribute_distribution_report.py  # Per-attribute class distributions
-│   ├── attribute_class_histogram.py      # All class frequencies in one figure
 │   ├── vlm_benchmark.py         # VLM benchmarking
 │   └── vlm_inference.py         # VLM inference pipeline
-├── compat/
-│   └── legacy_seq_enh_model.py  # Backward-compatible legacy LSTM models
 └── tests/
     ├── test_semisup.py
     ├── test_qwen3.py
@@ -222,7 +197,7 @@ Deterministic loading + center crop in the dataset, photometric jitter in the tr
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
+  "irap_gaim.make_bh_data()" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_local_rec_trainer" \
@@ -243,7 +218,7 @@ override the trainer's `epoch_count` (and `eval_count`, so the per-epoch validat
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
+  "irap_gaim.make_bh_data()" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_local_rec_trainer,epoch_count=15,eval_count=15" \
@@ -266,7 +241,7 @@ so it ends at the paper's final LR rather than matching `train_local_rec_paper_e
 
 ```bash
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
+  "irap_gaim.make_bh_data()" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.dinov2_vit_encoder,variant='dinov2_vitb14',params_dir=dirs.pretrained)" \
   "irap_gaim.irap_local_rec_trainer" \
@@ -281,7 +256,7 @@ ImageNet normalization, read from the checkpoint's own `preprocessor_config.json
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
+  "irap_gaim.make_bh_data()" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.mae_vit_encoder,variant='facebook/vit-mae-base',params_dir=dirs.pretrained)" \
   "irap_gaim.irap_local_rec_trainer_nofreeze" \
@@ -303,7 +278,7 @@ inputs with the `id` adapter. Requires `peft` (and `bitsandbytes` for 4-bit):
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
+  "irap_gaim.make_bh_data()" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.Qwen3VLVisionEncoder,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=16,load_in_4bit=True)" \
   "irap_gaim.irap_vit_lora" \
@@ -418,7 +393,7 @@ direction on this data. (Those runs used `irap_local_rec_trainer_qwen_nodyn`, a
 Qwen-specific unweighted variant that is **not in this checkout**; reproducing them needs
 that config committed first.)
 
-**On BiH none of this is measured.** The only BiH ViT run so far is a SigLIP 2 linear probe
+**On BH none of this is measured.** The only BH ViT run so far is a SigLIP 2 linear probe
 (0.5425, not comparable to any Vietnam number — 41 attributes rather than 34). The a priori
 argument that full fine-tuning is at least as safe on 209,459 examples still stands, and
 the Vietnam result now supports it rather than opposing it.
@@ -430,18 +405,18 @@ enough to wash out the differences between backbones.
 
 Do the backbone comparison on **Vietnam first**: it is 19x smaller, it is the primary
 target, and it is the setting where pretrained feature quality matters most. Confirm the
-winner on BiH rather than sweeping there.
+winner on BH rather than sweeping there.
 
 Note that heavy class imbalance is **not** an argument for freezing the backbone: the trunk
 is shared across all 41 attributes and is trained by every example, so its effective sample
 size is the whole split. Rare classes are a head-and-loss problem — that is what
 `DynamicBalancedRecallWeights` addresses — and freezing the backbone does nothing for them.
 
-Linear probing on SigLIP 2, on BiH:
+Linear probing on SigLIP 2, on BH:
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "irap_gaim.make_bih_data()" \
+  "irap_gaim.make_bh_data()" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.siglip2_vit_encoder,variant='base-512')" \
   "irap_gaim.irap_vit_linear_probe" \
@@ -530,7 +505,7 @@ fine-tuning; the recipes above come from MAE/DINOv3 instead.
 ### iRAP-Vietnam
 
 iRAP-Vietnam shares the same 41-attribute schema (same `attribute_metadata.json`)
-as iRAP-BiH, but does not annotate 7 of the attributes (the flow attributes,
+as iRAP-BH, but does not annotate 7 of the attributes (the flow attributes,
 Upgrade cost, Roadworks, Bicycle facility); those columns are the ignore label
 `-1` in every Vietnam target, so the loss skips them per example and the metrics
 report `n=0` for them.
@@ -546,7 +521,7 @@ CUDA_VISIBLE_DEVICES=0 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
 ```
 
 Pass the loaded training split to `get_irap_metrics(data.train)`; the no-argument
-form silently reloads `make_bih_data()` to resolve the attribute set.
+form silently reloads `make_bh_data()` to resolve the attribute set.
 
 ## Encoders
 
@@ -578,7 +553,7 @@ The input-adapter positional is `id` for all of them.
 
 ### Metrics
 
-`irap_gaim.get_irap_metrics(...)` builds one `vidlu.metrics.MultiAttributeClassificationMetrics` over the canonical 41-attribute subset: per attribute an `AttributeSpec(index, class_count)`, with the index taken from the schema order of `dataset.info.attr_to_value_to_class_idx`. Attributes the release does not annotate (via `info.attr_to_num_labeled`) are dropped, since they would otherwise score NaN from an empty confusion matrix. The metric itself is generic: any dataset with several categorical properties of one input can use it directly, e.g. `MultiAttributeClassificationMetrics({"gender": (0, 2), "age": (1, 5)}, metrics=("amF1", "aA", "_F1"))`. Accuracy is reported as `aA`, the mean over attributes of the per-attribute accuracies, which is the original `train_local_rec.py` definition (`accuracy_score` per attribute, then `np.mean` over the 41 attributes). The former `acc` pooled all labeled (segment, attribute) pairs instead; the two agree on BiH, where every segment is labeled for every attribute, and differ on IRAP-Vietnam, whose attributes have different label counts.
+`irap_gaim.get_irap_metrics(...)` builds one `vidlu.metrics.MultiAttributeClassificationMetrics` over the canonical 41-attribute subset: per attribute an `AttributeSpec(index, class_count)`, with the index taken from the schema order of `dataset.info.attr_to_value_to_class_idx`. Attributes the release does not annotate (via `info.attr_to_num_labeled`) are dropped, since they would otherwise score NaN from an empty confusion matrix. The metric itself is generic: any dataset with several categorical properties of one input can use it directly, e.g. `MultiAttributeClassificationMetrics({"gender": (0, 2), "age": (1, 5)}, metrics=("amF1", "aA", "_F1"))`. Accuracy is reported as `aA`, the mean over attributes of the per-attribute accuracies, which is the original `train_local_rec.py` definition (`accuracy_score` per attribute, then `np.mean` over the 41 attributes). The former `acc` pooled all labeled (segment, attribute) pairs instead; the two agree on BH, where every segment is labeled for every attribute, and differ on IRAP-Vietnam, whose attributes have different label counts.
 
 ```bash
 --metrics "irap_gaim.get_irap_metrics(data.train)"
@@ -696,12 +671,12 @@ Which data each term comes from:
   meaningless weights. The splits used are logged at startup.
 - **`recall`** — the previous epoch's per-class validation recall, read from the metric
   belonging to the split that was just evaluated. By default only the **first** `val*`
-  split drives the update; pass `recall_split_names=["val_vn", "val_bih"]` to pool several
+  split drives the update; pass `recall_split_names=["val_vn", "val_bh"]` to pool several
   splits' confusion matrices instead.
 
 Because the priors must describe the data the loss actually sees, a training split whose
 `info` does not match it is rejected — see the note under
-[Joint BiH + Vietnam training](#joint-bih--vietnam-training).
+[Joint BH + Vietnam training](#joint-bh--vietnam-training).
 
 ## Semi-supervised learning with pseudo-labels
 
@@ -712,7 +687,7 @@ This extension supports FixMatch-style pseudo-label self-training for leveraging
 `make_semisup_data` chooses the unlabeled pool in this order (default `prefer_real_unlabeled=True`):
 
 1. **Real `unlabeled_train` split** from `splits.json` when present (e.g. iRAP-Vietnam after running the prep pipeline). The full labeled `train` split is kept; `labeled_ratio` is ignored.
-2. **Synthetic split** of the labeled `train` set by `labeled_ratio` / `labeled_size` – the historical iRAP-BiH behaviour, still used when no `unlabeled_train` key exists.
+2. **Synthetic split** of the labeled `train` set by `labeled_ratio` / `labeled_size` – the historical iRAP-BH behaviour, still used when no `unlabeled_train` key exists.
 
 Pass `prefer_real_unlabeled=False` to force the synthetic path even on metadata that has a real unlabeled split.
 
@@ -720,7 +695,7 @@ Pass `prefer_real_unlabeled=False` to force the synthetic path even on metadata 
 
 ```bash
 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py train \
-  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=0.1)" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bh_data(), labeled_ratio=0.1)" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_pseudo_label_trainer,train_step=irap_gaim.MultiAttributePseudoLabelStep(pre_trained_teacher='/path/to/checkpoint.pth',conf_thresh=0.8,temperature=1.0)" \
@@ -743,7 +718,7 @@ save_pseudo_labels(result, 'pseudo_labels_fixed.npz')
 ```bash
 # Train on labeled + offline pseudo-labels
 python scripts/run.py train \
-  "irap_gaim.make_semisup_data(irap_gaim.make_bih_data(), labeled_ratio=0.1)" "id" \
+  "irap_gaim.make_semisup_data(irap_gaim.make_bh_data(), labeled_ratio=0.1)" "id" \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_pseudo_label_offline_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
@@ -765,13 +740,13 @@ python scripts/run.py train \
 | `< 1.0` (e.g. `0.8`) | Sharpened confidence – more selective, fewer pseudo-labels |
 | `> 1.0` (e.g. `1.2`) | Softened confidence – less selective, more pseudo-labels |
 
-## Joint BiH + Vietnam training
+## Joint BH + Vietnam training
 
 Because both releases share the same `attribute_metadata.json`, their per-attribute
 class indexing and `class_counts` are identical, and each emits length-41 targets
 with unlabeled attributes set to `-1`. So the two datasets are directly
 concatenable onto one 41-head model: the loss uses whichever attributes each
-example labels (Vietnam examples supervise the 34 shared attributes; BiH examples
+example labels (Vietnam examples supervise the 34 shared attributes; BH examples
 supervise all 41). No changes to the model or loss are needed — only how the data
 string composes the splits.
 
@@ -793,37 +768,37 @@ needs no such workaround — the extension pools their counts.
 Evaluation metrics are chosen **per split** (see
 [Per-split evaluation metrics](#per-split-evaluation-metrics)): pass a
 `dict(split_name=..., ...)` to `--metrics` to score `val_vn` on the 34 shared
-attributes (NaN-free) and `val_bih` on all 41. The first `val*` split in the `data`
+attributes (NaN-free) and `val_bh` on all 41. The first `val*` split in the `data`
 dict drives checkpoint selection, so list the Vietnam split first.
 
 ### Supervised, concatenated (proportions ∝ split sizes)
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "b = irap_gaim.make_bih_data(); v = irap_gaim.make_vietnam_data(); data = dict(train=b.train.join(v.train, info=v.train.info), val_vn=v.val, val_bih=b.val)" \
+  "b = irap_gaim.make_bh_data(); v = irap_gaim.make_vietnam_data(); data = dict(train=b.train.join(v.train, info=v.train.info), val_vn=v.val, val_bh=b.val)" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.without_dynamic_weights(irap_gaim.irap_local_rec_trainer)" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bh=irap_gaim.get_irap_metrics(data.val_bh))"
 ```
 
 ### Supervised, constant per-batch proportions
 
 Keep the two datasets as separate `train*` splits and use `combined_train_loader_f`,
-which draws a fixed count from each per batch (`batch_size=[bih, vietnam]`, matched
+which draws a fixed count from each per batch (`batch_size=[bh, vietnam]`, matched
 to the split order in the dict). An epoch covers the larger dataset once while the
 smaller repeats in full shuffled passes, so no example is revisited before the rest
 of its dataset's pass.
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "b = irap_gaim.make_bih_data(); v = irap_gaim.make_vietnam_data(); data = dict(train_bih=b.train, train_vn=v.train, val_vn=v.val, val_bih=b.val)" \
+  "b = irap_gaim.make_bh_data(); v = irap_gaim.make_vietnam_data(); data = dict(train_bh=b.train, train_vn=v.train, val_vn=v.val, val_bh=b.val)" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train_vn.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train_vn.info.pixel_stats)" \
   "irap_gaim.irap_local_rec_trainer,data_loader_f=irap_gaim.combined_train_loader_f,batch_size=[8,4]" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bh=irap_gaim.get_irap_metrics(data.val_bh))"
 ```
 
 ### Semi-supervised (other release as the unlabeled pool)
@@ -836,12 +811,12 @@ TODO: all available labels should be used, and additional unlabeled Vietnam spli
 
 ```bash
 IRAP_HOME=~/data/datasets/ python scripts/run.py train \
-  "b = irap_gaim.make_bih_data(); v = irap_gaim.make_vietnam_data(); data = dict(train=b.train, train_u=v.train, val_vn=v.val, val_bih=b.val)" \
+  "b = irap_gaim.make_bh_data(); v = irap_gaim.make_vietnam_data(); data = dict(train=b.train, train_u=v.train, val_vn=v.val, val_bh=b.val)" \
   "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_semisup_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
-  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+  --metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bh=irap_gaim.get_irap_metrics(data.val_bh))"
 ```
 
 ### Per-split evaluation metrics
@@ -855,19 +830,19 @@ are identical; the **only** thing the argument changes is this attribute set:
 - A **Vietnam** split (`data.val_vn`) → the **34** shared attributes. All 34 are
   labeled in both releases, so the split is NaN-free and its aggregate
   `amF1`/`amP`/`amR` (used for checkpoint selection) stays finite.
-- A **BiH** split (`data.val_bih`) → all **41** attributes. On a *Vietnam* split this
-  would reintroduce NaN (the 7 BiH-only attributes have no labeled Vietnam example),
-  but on `val_bih` itself every attribute is labeled, so all 41 are valid.
+- A **BH** split (`data.val_bh`) → all **41** attributes. On a *Vietnam* split this
+  would reintroduce NaN (the 7 BH-only attributes have no labeled Vietnam example),
+  but on `val_bh` itself every attribute is labeled, so all 41 are valid.
 
 To score each split with the attribute set that suits it, pass `--metrics` a
 **mapping** from split name to metrics instead of a single list:
 
 ```bash
---metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bih=irap_gaim.get_irap_metrics(data.val_bih))"
+--metrics "dict(val_vn=irap_gaim.get_irap_metrics(data.val_vn), val_bh=irap_gaim.get_irap_metrics(data.val_bh))"
 ```
 
 Each listed split is evaluated with its own metrics (`val_vn`: 34 attributes,
-`val_bih`: 41). A split not named in the mapping — and the training-progress display
+`val_bh`: 41). A split not named in the mapping — and the training-progress display
 — falls back to the **first** entry's metrics (here `val_vn`), so list the split
 whose metrics should also apply to training first. The single-list form
 (`--metrics "irap_gaim.get_irap_metrics(data.val_vn)"`) still works and applies the
@@ -875,7 +850,7 @@ same metrics to every split.
 
 **Checkpoint selection** uses the first `val*` split in the `data` dict (its
 `amF1`), unless overridden with `checkpoint_split_prefix`. List the Vietnam split
-first (`data = dict(..., val_vn=v.val, val_bih=b.val)`) to checkpoint on Vietnam.
+first (`data = dict(..., val_vn=v.val, val_bh=b.val)`) to checkpoint on Vietnam.
 
 ## Multi-scale inference
 
@@ -1000,7 +975,7 @@ Response parsing supports multiple formats via `ResponseScheme` subclasses:
 `Qwen3VLClassifier` wraps Qwen3-VL with LoRA adapters for Vidlu training integration:
 
 ```bash
-python scripts/run.py train "irap_gaim.make_vlm_bih_data(detail_level='attr_desc_vals', response_scheme='standard')" "id" "irap_gaim.Qwen3VLClassifier,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=64" "irap_gaim.vlm_finetune_trainer"
+python scripts/run.py train "irap_gaim.make_vlm_bh_data(detail_level='attr_desc_vals', response_scheme='standard')" "id" "irap_gaim.Qwen3VLClassifier,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=64" "irap_gaim.vlm_finetune_trainer"
 ```
 
 Key design: adapter-only state dict (~100MB vs ~16GB full model), eager loading for optimizer compatibility, 4-bit quantization support.
@@ -1012,7 +987,7 @@ and inherits its tokenization and generation path; it only overrides the load cl
 flash-attn builds at forward), the LoRA targets, and thinking mode.
 
 ```bash
-python scripts/run.py train "irap_gaim.make_vlm_bih_data()" "standardize" "irap_gaim.Qwen35Classifier,lora_r=64" "irap_gaim.qwen35_vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics(output_kind='hard')"
+python scripts/run.py train "irap_gaim.make_vlm_bh_data()" "standardize" "irap_gaim.Qwen35Classifier,lora_r=64" "irap_gaim.qwen35_vlm_finetune_trainer" --metrics "irap_gaim.get_irap_metrics(output_kind='hard')"
 ```
 
 Two things are specific to this architecture:
@@ -1162,7 +1137,7 @@ greedy decoding, same metrics — and both models load through
 quantization and generation path and differ only in the LoRA adapter.
 
 ```bash
-DATA="irap_gaim.make_vlm_bih_data(detail_level='attr_desc_vals', response_scheme='standard')"
+DATA="irap_gaim.make_vlm_bh_data(detail_level='attr_desc_vals', response_scheme='standard')"
 MODEL="irap_gaim.Qwen3VLClassifier,lora_r=64"
 TRAINER="irap_gaim.vlm_finetune_trainer,batch_size=2,eval_batch_size=4"
 PRED=vidlu_irap_gaim.vlm.finetuning.predictor
@@ -1208,7 +1183,7 @@ the same pair, so its runs and VLM runs compare directly.
 
 ```bash
 VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
-  "irap_gaim.make_bih_data()" "id" \
+  "irap_gaim.make_bh_data()" "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_local_rec_trainer" \
   --params "id[backbone]->frame_encoder.resnet:irap_gaim/vistas.pt" \
@@ -1223,7 +1198,7 @@ Creates a `visualizations/test` directory with `predictions.json` and PNG images
 
 ```bash
 python scripts/run.py test \
-  "irap_gaim.make_bih_data()" "id" \
+  "irap_gaim.make_bh_data()" "id" \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
@@ -1234,11 +1209,10 @@ python scripts/run.py test \
 
 ### Standalone visualization tool
 
-Generate per-segment PNGs with predicted attributes, colored probability bars, and ground truth comparison:
+Generate per-segment PNGs with the predicted attribute values of an `ImageSequenceClassifier` loaded from a model state, without a vidlu experiment. The colored probability bars and the ground truth comparison are drawn by the evaluation hook above (`tools/inference.py`):
 
 ```bash
 python vidlu_irap_gaim/tools/inference_visualization.py \
-  --mode local \
   --split val \
   --context_offsets "0,-1,-4" \
   --checkpoint_dir "/path/to/checkpoint" \
@@ -1246,12 +1220,10 @@ python vidlu_irap_gaim/tools/inference_visualization.py \
   --limit 50 --verbose
 ```
 
-For legacy sequential enhancement models, use `--mode sequential_legacy` with `--seq_config_path`, `--seq_models_root`, and `--feat_dir`.
-
 ### Dataset viewer (Streamlit)
 
 ```bash
-IRAP_HOME=/path/to/IRAP_HOME streamlit run irap_data/irap_data/dataset_viewer.py
+IRAP_HOME=/path/to/IRAP_HOME irap-dataset-viewer  # needs irap-data[viewer]
 ```
 
 ## Feature export & sequential enhancement
@@ -1307,7 +1279,7 @@ uses `get_irap_attribute_metrics`, the single-attribute restriction of
 mean in the base run; and `IRAP_MAIN_METRIC` (`mF1`) selects each attribute's best
 checkpoint, matching the base run's `amF1`-based selection instead of accuracy.
 
-Metadata paths are resolved from the base dataset automatically (works for both BiH and
+Metadata paths are resolved from the base dataset automatically (works for both BH and
 Vietnam), and attributes no segment is labeled with (IRAP-Vietnam's five flow
 attributes) are skipped. Each per-attribute LSTM experiment is independently
 reproducible with the `run.py train` command printed when it starts, and the metrics it
@@ -1321,7 +1293,7 @@ automatically; note the explicit `e` argument):
 
 ```bash
 python scripts/run.py test \
-  "irap_gaim.make_bih_data()" "id" \
+  "irap_gaim.make_bh_data()" "id" \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
@@ -1363,9 +1335,9 @@ For releases that do not use the default `$IRAP_HOME/IRAP_BIH_METADATA` (e.g. IR
 | Symbol | Description |
 |--------|-------------|
 | `make_irap_data(dataset_dir=, metadata_dir=, ...)` | Generic IRAP loader for any release |
-| `make_bih_data(use_ncontext_filter=True, ...)` | Load IRAP-BiH (preset over `make_irap_data`) |
+| `make_bh_data(use_ncontext_filter=True, ...)` | Load IRAP-BH (preset over `make_irap_data`). `make_bih_data` is an alias for the commands of earlier runs |
 | `make_vietnam_data(...)` | Load IRAP-Vietnam (preset over `make_irap_data`) |
-| `make_irap_data_by_name("bih"\|"vietnam", ...)` | Build a release by name (registry dispatch) |
+| `make_irap_data_by_name("bh"\|"vietnam", ...)` | Build a release by name (registry dispatch) |
 | `make_semisup_data(base_data, labeled_ratio=..., ...)` | Semi-supervised split over a base dataset dict |
 | `IRAPDataset(...)` | Dataset class (`info.class_counts`, `info.pixel_stats`, `info.attribute_names`) |
 | `InferenceImageDataset.from_folder(...)` | Inference on unlabeled image folders |
@@ -1447,7 +1419,7 @@ For releases that do not use the default `$IRAP_HOME/IRAP_BIH_METADATA` (e.g. IR
 | `vlm.Qwen3VLvLLMPredictor` | Zero-shot predictor (vLLM) |
 | `vlm.PromptBuilder` | Prompt builder with configurable detail levels |
 | `vlm.make_response_scheme(name)` | Response scheme factory |
-| `make_vlm_bih_data()` | VLM fine-tuning dataset factory |
+| `make_vlm_bh_data()` | VLM fine-tuning dataset factory. `make_vlm_bih_data` is an alias for the commands of earlier runs |
 | `VLMClassifierPredictor` | Evaluation of a loaded classifier, pretrained or fine-tuned |
 | `load_finetuned_classifier(checkpoint)` | Load a fine-tuned classifier from a checkpoint, without building an experiment |
 
@@ -1463,7 +1435,7 @@ For releases that do not use the default `$IRAP_HOME/IRAP_BIH_METADATA` (e.g. IR
 ## Troubleshooting
 
 - **Missing `seg_to_res/*.pickle`**:
-  Either create the pickle files under `IRAP_BIH_METADATA/seg_to_res/`, or disable filtering with `make_bih_data(use_ncontext_filter=False)`.
+  Either create the pickle files under `IRAP_BIH_METADATA/seg_to_res/`, or disable filtering with `make_bh_data(use_ncontext_filter=False)`.
 
 - **`vistas.pt` not found**:
   Put it at `<VIDLU_PRETRAINED>/irap_gaim/vistas.pt`, or use an absolute path in the `--params` string.

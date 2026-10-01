@@ -74,7 +74,7 @@ def _parse_agent_prediction(
 
 def evaluate_agent_predictions(
     predictions_file: str | Path,
-    dataset_name: str = "bih",
+    dataset_name: str = "bh",
     split: str = "test",
     output_dir: str | Path = "agent_eval_results",
 ) -> AgentEvaluationResult:
@@ -89,7 +89,7 @@ def evaluate_agent_predictions(
     Args:
         predictions_file: Path to the agent's predictions JSON (the file
             ``prepare_agent_tasks`` told the agent to write).
-        dataset_name: ``"bih"`` or ``"vietnam"``.
+        dataset_name: ``"bh"`` or ``"vietnam"``.
         split: Dataset split to evaluate against.
         output_dir: Where to write ``predictions.json`` and ``summary.json``.
 

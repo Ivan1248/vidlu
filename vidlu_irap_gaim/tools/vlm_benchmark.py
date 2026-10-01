@@ -295,11 +295,11 @@ class VLMBenchmark:
         if self._attr_to_value_to_class_idx is not None:
             return
 
-        from irap_data import make_bih_data
+        from irap_data import make_bh_data
         from vidlu_irap_gaim.vlm import StandardResponseScheme
 
         print("[Benchmark] Loading attribute metadata...")
-        data = make_bih_data()
+        data = make_bh_data()
         ref_ds = data["test"]
         self._attr_to_value_to_class_idx = ref_ds.info.attr_to_value_to_class_idx
         self._all_attributes = list(self._attr_to_value_to_class_idx.keys())

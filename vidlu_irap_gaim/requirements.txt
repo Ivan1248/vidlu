@@ -1,3 +1,6 @@
+# IRAP datasets from irap-tools. For development, install it from a checkout instead:
+# uv pip install -e <irap-tools>/packages/irap_data[torch,report]
+irap-data[torch,report] @ git+https://github.com/Ivan1248/irap-tools#subdirectory=packages/irap_data
 numpy
 opencv-python
 pillow

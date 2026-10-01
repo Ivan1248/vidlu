@@ -1,43 +1,36 @@
 """
-Inference + visualization utility for IRAP BiH sequences.
+Inference + visualization utility for IRAP BH sequences.
 
 This is a vidlu-native port of `libs/irap_gaim-main/inference_visualization.py`:
-- Uses `irap_data.make_bih_data` (instead of DatasetWrapper/ImageSequenceDataset).
-- Uses `vidlu_irap_gaim.models.classification.ImageSequenceClassifier` for "local" mode.
+- Uses `irap_data.make_bh_data` (instead of DatasetWrapper/ImageSequenceDataset).
+- Uses `vidlu_irap_gaim.models.classification.ImageSequenceClassifier`.
 - Loads checkpoints from Vidlu's `CheckpointManager` format (supports `model_state.pth`).
 
 The script writes per-segment images combining:
-- a grid of context RGB frames
+- the context RGB frames
 - a text panel with predicted attribute values
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Sequence
 
-import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# Allow running as a script from repo root without installation (match dataset_viewer.py
-# behavior). Both directories are needed, as in scripts/_context.py: the repo root for
-# `vidlu_irap_gaim`, and <repo>/irap-data for `irap_data`, which is a separate src-layout
-# project rather than a subpackage.
-_current_file = Path(__file__).resolve()
-_project_root = _current_file.parent.parent.parent
-for _path in (_project_root, _project_root / "irap-data"):
-    if _path.is_dir() and str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
+# Allow running as a script from the repository root without installing `vidlu_irap_gaim`.
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 
 from irap_data.attrs import get_attrs_to_include  # noqa: E402
-from vidlu_irap_gaim.compat.legacy_seq_enh_model import LegacyGeneralLSTMModel  # noqa: E402
-from irap_data import make_bih_data, resolve_irap_paths  # noqa: E402
+from irap_data import make_bh_data  # noqa: E402
 from vidlu_irap_gaim.models.classification import ImageSequenceClassifier  # noqa: E402
 from vidlu_irap_gaim.models.encoders.resnet import ResNetEncoder  # noqa: E402
-from vidlu_irap_gaim.tools.vis_utils import AttributeMetadataDecoder, save_inference_visualization  # noqa: E402
+from vidlu_irap_gaim.tools.vis_utils import save_inference_visualization  # noqa: E402
+from vidlu_irap_gaim.vlm.response_parser import build_idx_to_value  # noqa: E402
 
 
 def _parse_int_list_csv(x: str) -> tuple[int, ...]:
@@ -58,26 +51,18 @@ def _load_model_state_dict(model_state_path: str | Path, *, map_location: str | 
     return state
 
 
-def run_local(args) -> None:
-    ds_dir, md_dir = resolve_irap_paths(dataset_dir=args.dataset_dir, metadata_dir=args.metadata_dir)
-    datasets = make_bih_data(
-        dataset_dir=ds_dir,
-        metadata_dir=md_dir,
+def run(args) -> None:
+    datasets = make_bh_data(
+        dataset_dir=args.dataset_dir,
+        metadata_dir=args.metadata_dir,
         context_offsets=args.context_offsets,
-        data_types=("rgb",),
-        attribute_value_mapping_path=args.attribute_value_mapping_path,
         use_ncontext_filter=not args.no_ncontext_filter,
-        seg_to_res_path=args.seg_to_res_path,
     )
     ds = datasets[args.split]
-    decoders = AttributeMetadataDecoder.load(
-        metadata_dir=md_dir,
-        attribute_value_mapping_path=args.attribute_value_mapping_path,
-        expected_attribute_names=ds.info.attribute_names,
-    )
+    idx_to_value = build_idx_to_value(ds.info.attr_to_value_to_class_idx)
 
     attrs_to_include = set(get_attrs_to_include())
-    attribute_names = list(ds.info.attribute_names)
+    attribute_names = list(ds.info.attr_to_value_to_class_idx)
     attribute_to_idx = {a: i for i, a in enumerate(attribute_names)}
 
     # Model: match training defaults (sequence_length = len(context_offsets))
@@ -123,7 +108,7 @@ def run_local(args) -> None:
 
     n_done = 0
     with torch.no_grad():
-        for batch in tqdm(dl, desc=f"local:{args.split}"):
+        for batch in tqdm(dl, desc=args.split):
             rgb = batch["rgb"].to(device)
             seg_ids = batch["segment_id"]
 
@@ -137,7 +122,7 @@ def run_local(args) -> None:
                         continue
                     aidx = attribute_to_idx[attr]
                     pred_idx = int(outputs[aidx][i].argmax(dim=-1).item())
-                    lines.append(decoders.to_text(attr=attr, class_idx=pred_idx))
+                    lines.append(f"{attr}: {idx_to_value[attr][pred_idx]} ({pred_idx})")
                 text = "\n".join(lines)
                 out_path = save_inference_visualization(
                     rgb_seq=rgb[i].detach().cpu(),
@@ -157,188 +142,11 @@ def run_local(args) -> None:
         print(f"Saved {n_done} visualizations to {args.output_dir}")
 
 
-def _load_json(path: str | Path):
-    with open(path, "r") as f:
-        return json.load(f)
-
-
-def _build_attribute_to_checkpoint_legacy(config: Mapping, root_dir: str | Path) -> dict[str, Path]:
-    root_dir = Path(root_dir)
-    model_save_name = config.get("model_save_name", None)
-    if model_save_name is None:
-        # Some configs omit this; treat root_dir as the model_save_name directory itself.
-        model_root = root_dir
-    else:
-        model_root = root_dir / model_save_name
-
-    out: dict[str, Path] = {}
-    for attribute in config["attribute_to_n_classes"]:
-        attr_dir = attribute.replace("/", "--").replace(" ", "_")
-        out[attribute] = model_root / attr_dir / "best_model_MF1.pt"
-    return out
-
-
-def _load_feat_sequence(feat_dir: str | Path, context_ids: Sequence[str]) -> torch.Tensor:
-    feat_dir = Path(feat_dir)
-    frames = []
-    for sid in context_ids:
-        p = feat_dir / f"{sid}.npy"
-        arr = np.load(p).reshape(-1).astype(np.float32)
-        frames.append(arr)
-    return torch.from_numpy(np.stack(frames, axis=0))  # (S, D)
-
-
-def run_sequential_legacy(args) -> None:
-    """
-    Sequential mode (legacy checkpoints):
-    - Uses legacy per-attribute LSTM smoothing checkpoints (best_model_MF1.pt).
-    - Uses exported per-segment feature vectors from `--feat_dir` and a long `--context_offsets`.
-    - Still visualizes RGB frames from BiH.
-    """
-    if args.seq_config_path is None:
-        raise ValueError("--seq_config_path is required for mode=sequential_legacy")
-    if args.seq_models_root is None:
-        raise ValueError("--seq_models_root is required for mode=sequential_legacy")
-    if args.feat_dir is None:
-        raise ValueError("--feat_dir is required for mode=sequential_legacy")
-
-    config = _load_json(args.seq_config_path)
-    if "experiment_config" in config and "attribute_to_lstm_hyperparams" not in config:
-        config = config["experiment_config"]
-
-    max_N = int(config.get("max_N", 10))
-    N = int(config["evaluated_Ns"][0] if "evaluated_Ns" in config else 10)
-
-    # Dataset for visualization + context ids (must match max_N layout expected by legacy model)
-    ds_dir, md_dir = resolve_irap_paths(dataset_dir=args.dataset_dir, metadata_dir=args.metadata_dir)
-    datasets = make_bih_data(
-        dataset_dir=ds_dir,
-        metadata_dir=md_dir,
-        context_offsets=args.context_offsets,
-        data_types=("rgb",),
-        attribute_value_mapping_path=args.attribute_value_mapping_path,
-        use_ncontext_filter=not args.no_ncontext_filter,
-        seg_to_res_path=args.seg_to_res_path,
-    )
-    ds = datasets[args.split]
-
-    # Validate legacy context length assumptions: expects full window 2*max_N+1 and 0 offset at index max_N
-    if len(args.context_offsets) != 2 * max_N + 1:
-        raise ValueError(
-            f"Legacy sequential models expect context_offsets length 2*max_N+1.\n"
-            f"Got len(context_offsets)={len(args.context_offsets)} but max_N={max_N} -> expected {2 * max_N + 1}."
-        )
-    if args.context_offsets[max_N] != 0:
-        raise ValueError(
-            "Legacy sequential models expect the center element (index max_N) of context_offsets to be 0.\n"
-            f"Got context_offsets[{max_N}]={args.context_offsets[max_N]}."
-        )
-
-    decoders = AttributeMetadataDecoder.load(
-        metadata_dir=md_dir,
-        attribute_value_mapping_path=args.attribute_value_mapping_path,
-        expected_attribute_names=ds.info.attribute_names,
-    )
-    attrs_to_include = set(get_attrs_to_include())
-
-    device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # Build per-attribute legacy models
-    attribute_to_n_classes = (
-        config["filtered_attribute_to_n_classes"]
-        if "filtered_attribute_to_n_classes" in config
-        else config["attribute_to_n_classes"]
-    )
-    attribute_to_input_type_to_metadata = config["attribute_to_input_type_to_metadata"]
-    attribute_to_lstm_hyperparams = config["attribute_to_lstm_hyperparams"]
-
-    attribute_to_checkpoint = _build_attribute_to_checkpoint_legacy(config, args.seq_models_root)
-
-    models: dict[str, LegacyGeneralLSTMModel] = {}
-    for attribute, n_classes in attribute_to_n_classes.items():
-        input_type_to_metadata = attribute_to_input_type_to_metadata[attribute]
-        lstm_hparams = attribute_to_lstm_hyperparams[attribute]
-        m = LegacyGeneralLSTMModel(
-            max_N=max_N,
-            N=N,
-            n_classes=int(n_classes),
-            input_type_to_metadata=input_type_to_metadata,
-            lstm_hyperparams=lstm_hparams,
-        )
-        ckpt_path = attribute_to_checkpoint.get(attribute)
-        if ckpt_path is None:
-            continue
-        if not ckpt_path.exists():
-            raise FileNotFoundError(f"Sequential checkpoint not found: {ckpt_path}")
-        ckpt = torch.load(ckpt_path, map_location=device)
-        if "model_state_dict" not in ckpt:
-            raise ValueError(f"Expected 'model_state_dict' in sequential checkpoint: {ckpt_path}")
-        m.load_state_dict(ckpt["model_state_dict"], strict=True)
-        m.to(device)
-        m.eval()
-        models[attribute] = m
-
-    # Iterate BiH batches, but run sequential models on feature sequences.
-    dl = DataLoader(
-        ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=(device.type == "cuda"),
-    )
-
-    n_done = 0
-    with torch.no_grad():
-        for batch in tqdm(dl, desc=f"sequential_legacy:{args.split}"):
-            rgb = batch["rgb"]  # keep on CPU for visualization
-            seg_ids = batch["segment_id"]
-
-            for i in range(rgb.shape[0]):
-                sid = str(seg_ids[i])
-                context_ids = list(ds.segment_id_to_context_ids[sid])
-                feats_seq = _load_feat_sequence(args.feat_dir, context_ids).unsqueeze(0).to(device)  # (1, S, D)
-
-                lines: list[str] = []
-                for attribute, m in models.items():
-                    if attribute not in attrs_to_include:
-                        continue
-                    logits = m({"feats": feats_seq})
-                    pred_idx = int(logits.argmax(dim=-1).item())
-                    lines.append(decoders.to_text(attr=attribute, class_idx=pred_idx))
-
-                out_path = save_inference_visualization(
-                    rgb_seq=rgb[i].detach().cpu(),
-                    text="\n".join(lines),
-                    segment_id=sid,
-                    output_dir=args.output_dir,
-                    out_size=(args.out_width, args.out_height),
-                    text_area_ratio=args.text_area_ratio,
-                )
-                n_done += 1
-                if args.limit is not None and n_done >= args.limit:
-                    if args.verbose:
-                        print(f"Reached --limit={args.limit}. Last output: {out_path}")
-                    return
-
-    if args.verbose:
-        print(f"Saved {n_done} visualizations to {args.output_dir}")
-
-
 def parse_args(argv: Sequence[str] | None = None):
-    p = argparse.ArgumentParser(description="IRAP BiH inference + visualization (vidlu_irap_gaim)")
-    p.add_argument("--mode", choices=("local", "sequential_legacy"), default="local")
+    p = argparse.ArgumentParser(description="IRAP BH inference + visualization (vidlu_irap_gaim)")
     p.add_argument("--dataset_dir", type=str, default=None, help="Path to IRAP_BIH (optional; else from IRAP_HOME)")
     p.add_argument(
         "--metadata_dir", type=str, default=None, help="Path to IRAP_BIH_METADATA (optional; else from IRAP_HOME)"
-    )
-    p.add_argument(
-        "--attribute_value_mapping_path",
-        type=str,
-        default=None,
-        help="Optional value mapping JSON (must match dataset build)",
-    )
-    p.add_argument(
-        "--seg_to_res_path", type=str, default=None, help="Optional seg_to_res directory for n-context filtering"
     )
     p.add_argument("--no_ncontext_filter", action="store_true", help="Disable N-context filtering")
     p.add_argument("--split", choices=("train", "val", "test"), default="val")
@@ -360,7 +168,7 @@ def parse_args(argv: Sequence[str] | None = None):
     p.add_argument("--limit", type=int, default=None, help="Stop after writing this many images")
     p.add_argument("--verbose", action="store_true")
 
-    # Local model args
+    # Model args
     p.add_argument(
         "--checkpoint_dir", type=str, default=None, help="Vidlu checkpoint directory containing model_state.pth"
     )
@@ -371,24 +179,11 @@ def parse_args(argv: Sequence[str] | None = None):
     # Normalization is the encoder's own (see models/encoders/base.py), so there is
     # nothing to match here – applying it again would double-normalize.
 
-    # Sequential legacy args
-    p.add_argument("--seq_config_path", type=str, default=None, help="Legacy sequential config.json path")
-    p.add_argument(
-        "--seq_models_root", type=str, default=None, help="Root directory containing sequential model subdirs"
-    )
-    p.add_argument("--feat_dir", type=str, default=None, help="Directory with exported per-segment feature .npy files")
-
     return p.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    args = parse_args(argv)
-    if args.mode == "local":
-        run_local(args)
-    elif args.mode == "sequential_legacy":
-        run_sequential_legacy(args)
-    else:
-        raise ValueError(f"Unknown mode: {args.mode}")
+    run(parse_args(argv))
 
 
 if __name__ == "__main__":

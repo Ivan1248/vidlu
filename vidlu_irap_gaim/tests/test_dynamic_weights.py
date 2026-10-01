@@ -22,9 +22,7 @@ IGNORE = -1
 
 
 class _StubDataset:
-    """A stub carrying just the `info` fields the weighting reads.
-
-    Mirrors the stub in `test_attribute_distribution_report.py`, plus `__len__`: the
+    """A stub carrying just the `info` fields the weighting reads, and `__len__`: the
     extension checks it against `len(info.segment_ids)` to catch joined datasets, whose
     `info` describes only one of the joined parts.
     """
@@ -151,13 +149,13 @@ def test_counts_only_the_examples_the_split_yields():
 
 
 def test_counts_are_pooled_over_every_train_split():
-    bih = _one_attribute_dataset([0, 0, 0], num_classes=2)
+    bh = _one_attribute_dataset([0, 0, 0], num_classes=2)
     vietnam = _one_attribute_dataset([1, 1], num_classes=2)
-    pooled = compute_attr_to_class_occurrence_counts([bih, vietnam], ["Attr"])
+    pooled = compute_attr_to_class_occurrence_counts([bh, vietnam], ["Attr"])
     assert pooled["Attr"].tolist() == [3, 2]
     # Taking only the first split -- the old behaviour -- gives a different, wrong answer.
     assert compute_attr_to_class_occurrence_counts(
-        [bih], ["Attr"])["Attr"].tolist() == [3, 0]
+        [bh], ["Attr"])["Attr"].tolist() == [3, 0]
 
 
 def test_class_index_outside_the_range_raises():
@@ -168,7 +166,7 @@ def test_class_index_outside_the_range_raises():
 
 def test_extension_pools_priors_over_every_train_split():
     extension, _ = _initialized(
-        dict(train_bih=_one_attribute_dataset([0, 0, 0], num_classes=2),
+        dict(train_bh=_one_attribute_dataset([0, 0, 0], num_classes=2),
              train_vn=_one_attribute_dataset([1, 1], num_classes=2),
              val=_one_attribute_dataset([0, 1], num_classes=2)),
         [_StubMetric({"Attr": ([1, 1], [1, 1])})])

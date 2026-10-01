@@ -181,7 +181,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', type=str, required=True,
                        help='Path to pre-trained model checkpoint')
     parser.add_argument('--dataset', type=str, required=True,
-                       help='Dataset specification (e.g., "bih/train_unlabeled")')
+                       help='Dataset specification (e.g., "bh/train_unlabeled")')
     parser.add_argument('--output', type=str, required=True,
                        help='Output path for .npz file')
     parser.add_argument('--conf-thresh', type=float, default=0.0,

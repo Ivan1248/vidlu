@@ -323,7 +323,7 @@ def make_seq_enh_data(
             raise RuntimeError(
                 "make_seq_enh_data: metadata_dir is not set and neither is irap_home or the"
                 " IRAP_HOME environment variable. Pass metadata_dir explicitly (for releases"
-                " other than IRAP-BiH it differs from the default"
+                " other than IRAP-BH it differs from the default"
                 " $IRAP_HOME/IRAP_BIH_METADATA; IRAP-Vietnam colocates metadata with the"
                 " dataset directory).")
         metadata_dir = home / "IRAP_BIH_METADATA"

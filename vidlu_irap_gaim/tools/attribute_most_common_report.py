@@ -11,8 +11,8 @@ import argparse
 import json
 from pathlib import Path
 
-from irap_data.attribute_frequencies import compute_attribute_frequency_stats
-from irap_data import make_bih_data
+from irap_data import make_bh_data
+from vidlu_irap_gaim.class_frequencies import compute_attr_to_most_common_class_idx
 from vidlu_irap_gaim.vlm.response_parser import build_idx_to_value
 
 
@@ -38,20 +38,15 @@ def main():
     args = parser.parse_args()
 
     print("Loading dataset...")
-    datasets = make_bih_data()
+    datasets = make_bh_data()
     dataset = datasets[args.split]
     print(f"Samples: {len(dataset)}")
 
     print("Computing attribute frequencies...")
-    stats = compute_attribute_frequency_stats(dataset)
-
-    attr_to_value_to_class_idx = dataset.info.attr_to_value_to_class_idx
-    attr_names = list(attr_to_value_to_class_idx.keys())
-    idx_to_value = build_idx_to_value(attr_to_value_to_class_idx)
-
+    idx_to_value = build_idx_to_value(dataset.info.attr_to_value_to_class_idx)
     most_common_values = {
-        attr_names[i]: idx_to_value[attr_names[i]][stats.most_common_class_indices[i]]
-        for i in range(len(attr_names))
+        attr: idx_to_value[attr][class_idx]
+        for attr, class_idx in compute_attr_to_most_common_class_idx(dataset.info).items()
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

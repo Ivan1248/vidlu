@@ -60,7 +60,7 @@ def make_semisup_data(
     """Create semi-supervised datasets with a labeled/unlabeled train split.
 
     Operates on an already-built IRAP dataset dict, so it works for any release
-    (IRAP-BiH, IRAP-Vietnam, ...) — the caller picks the dataset by which factory
+    (IRAP-BH, IRAP-Vietnam, ...) — the caller picks the dataset by which factory
     builds ``base_data``.
 
     Two sources for the unlabeled set, in order of preference when
@@ -72,11 +72,11 @@ def make_semisup_data(
        ``labeled_ratio`` / ``labeled_size`` are ignored.
     2. **Synthetic split** of the labeled ``train`` set, sized by
        ``labeled_ratio`` or ``labeled_size``. Used when no real unlabeled
-       split is present (IRAP-BiH today) or when ``prefer_real_unlabeled=False``.
+       split is present (IRAP-BH today) or when ``prefer_real_unlabeled=False``.
 
     Args:
         base_data: Dataset dict from a make_*_data factory (e.g.
-            ``make_bih_data()`` / ``make_vietnam_data()``), providing
+            ``make_bh_data()`` / ``make_vietnam_data()``), providing
             ``train`` / ``val`` / ``test`` (and optionally ``unlabeled_train``).
         labeled_ratio: Fraction of training data to use as labeled (0.0-1.0).
             Required for the synthetic-split path; ignored when a real

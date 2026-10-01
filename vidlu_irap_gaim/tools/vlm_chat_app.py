@@ -39,7 +39,7 @@ import sys
 # `streamlit run <path>` puts the script's own directory on `sys.path`, not the working directory
 # (which is what `python -m` would use), so the repository root has to be added for `vidlu` and
 # `vidlu_irap_gaim` to be importable without installing them. This mirrors `scripts/_context.py`,
-# which does the same for `run.py`; `irap-data` is handled by `vidlu_irap_gaim/__init__.py`.
+# which does the same for `run.py`.
 _REPOSITORY_ROOT = str(Path(__file__).resolve().parents[2])
 if _REPOSITORY_ROOT not in sys.path:
     sys.path.insert(0, _REPOSITORY_ROOT)

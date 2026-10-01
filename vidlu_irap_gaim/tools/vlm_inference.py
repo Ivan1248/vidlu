@@ -7,7 +7,7 @@ is the knob: ``None`` asks for every attribute in one prompt (what fine-tuning
 trains against), ``1`` gives every attribute its own prompt and its own session.
 
 Prompts and scoring come from the dataset's own ``info`` (``vlm_response_scheme``,
-``vlm_attrs_to_include``, set by ``make_vlm_bih_data``), the same source the
+``vlm_attrs_to_include``, set by ``make_vlm_bh_data``), the same source the
 fine-tuning eval step reads, so a zero-shot run and a fine-tuned run cannot end
 up prompting or scoring differently.
 
@@ -107,7 +107,7 @@ class EvaluationResult:
 
 
 def make_eval_data(
-    dataset_name: str = "bih",
+    dataset_name: str = "bh",
     response_scheme: str = "standard",
     detail_level: str | None = None,
     upsampling_factor: int = 1,
@@ -118,10 +118,10 @@ def make_eval_data(
     `run.py` experiment evaluate identical datasets with identical prompts.
     """
     from vidlu_irap_gaim.vlm.finetuning.dataset import (
-        make_vlm_bih_data, make_vlm_vietnam_data)
+        make_vlm_bh_data, make_vlm_vietnam_data)
     from vidlu_irap_gaim.vlm.prompts import DEFAULT_DETAIL_LEVEL
 
-    make = {"bih": make_vlm_bih_data, "vietnam": make_vlm_vietnam_data}[dataset_name]
+    make = {"bh": make_vlm_bh_data, "vietnam": make_vlm_vietnam_data}[dataset_name]
     return make(response_scheme=response_scheme,
                 detail_level=detail_level or DEFAULT_DETAIL_LEVEL,
                 upsampling_factor=upsampling_factor)
@@ -130,7 +130,7 @@ def make_eval_data(
 def _load_dataset(
     split: str,
     image_folder: str | None,
-    dataset_name: str = "bih",
+    dataset_name: str = "bh",
     response_scheme: str = "standard",
     detail_level: str | None = None,
     upsampling_factor: int = 1,
@@ -397,7 +397,7 @@ def run_evaluation(
     dataset: Any = None,
     predictor: Any = None,
     # Standard parameters (used when dataset is not provided)
-    dataset_name: str = "bih",
+    dataset_name: str = "bh",
     split: str = "test",
     image_folder: str | None = None,
     output_dir: str | Path = "vlm_results",
@@ -772,8 +772,8 @@ def main():
     data_group.add_argument("--image-folder", type=str,
                             help="Custom folder of images to evaluate (overrides --split)")
 
-    parser.add_argument("--dataset", choices=["bih", "vietnam"], default="bih",
-                        help="Dataset to evaluate (default: bih)")
+    parser.add_argument("--dataset", choices=["bh", "vietnam"], default="bh",
+                        help="Dataset to evaluate (default: bh)")
     parser.add_argument("--output-dir", type=str, default="vlm_results",
                         help="Output directory for results (default: vlm_results)")
     parser.add_argument(

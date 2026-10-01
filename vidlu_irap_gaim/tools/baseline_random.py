@@ -18,6 +18,7 @@ Usage:
 
 import argparse
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -26,13 +27,32 @@ from tqdm import tqdm
 
 from vidlu.utils.collections import NameDict
 from irap_data.attrs import get_attrs_to_include
-from irap_data.attribute_frequencies import AttributeFrequencyStats, compute_attribute_frequency_stats
-from irap_data import make_bih_data
+from irap_data import make_bh_data
+from vidlu_irap_gaim.class_frequencies import compute_attr_to_class_counts
 from vidlu_irap_gaim.metrics import get_irap_metrics
 
 
 BaselineMode = Literal["uniform", "stratified", "most_common"]
 ALL_MODES: tuple[BaselineMode, ...] = ("uniform", "stratified", "most_common")
+
+
+@dataclass
+class AttributeFrequencyStats:
+    """Per-attribute class frequencies of a split, in schema order."""
+
+    most_common_class_indices: list[int]
+    class_counts: tuple[int, ...]
+    class_priors: list[torch.Tensor]
+
+
+def compute_attribute_frequency_stats(info) -> AttributeFrequencyStats:
+    """Computes the class frequencies from `compute_attr_to_class_counts`."""
+    counts = [torch.from_numpy(c) for c in compute_attr_to_class_counts(info).values()]
+    return AttributeFrequencyStats(
+        most_common_class_indices=[int(c.argmax()) for c in counts],
+        class_counts=tuple(len(c) for c in counts),
+        class_priors=[c.float() / c.sum() for c in counts],
+    )
 
 
 def generate_uniform_predictions(
@@ -159,7 +179,7 @@ def run_baseline_evaluation(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading datasets...")
-    datasets = make_bih_data()
+    datasets = make_bh_data()
     train_ds = datasets["train"]
     eval_ds = datasets[split]
 
@@ -168,7 +188,7 @@ def run_baseline_evaluation(
 
     # Compute training statistics
     print("Computing training statistics...")
-    stats = compute_attribute_frequency_stats(train_ds)
+    stats = compute_attribute_frequency_stats(train_ds.info)
     print(f"Number of attributes: {len(stats.class_counts)}")
 
     # Determine which modes to evaluate
