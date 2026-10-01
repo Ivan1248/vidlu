@@ -220,7 +220,7 @@ def test_thresholds_apply_to_every_confusion_matrix_macro_metric():
     cm = np.array([[8, 1, 1],
                    [1, 8, 1],
                    [0, 0, 0]], dtype=np.int64)
-    names = tuple(f"_{base}_supp1" for base, per_class in MACRO_METRIC_TO_PER_CLASS.items()
+    names = tuple(f"{base}_supp1" for base, per_class in MACRO_METRIC_TO_PER_CLASS.items()
                   if per_class in MultiAttributeClassificationMetrics.CONFUSION_MATRIX_METRICS)
     r = make_metrics({"a": cm}, metrics=names).compute()
     assert set(r) == set(names)

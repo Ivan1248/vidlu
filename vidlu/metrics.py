@@ -43,7 +43,7 @@ class AccumulatingMetric:
         raise NotImplementedError()
 
 
-def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False,
+def multiclass_confusion_matrix(true, pred, class_count, dtype=None, is_batch=False,
                                 use_bincount=False):
     """Computes a multi-class confusion matrix.
 
@@ -62,21 +62,24 @@ def multiclass_confusion_matrix(true, pred, class_count, dtype=None, batch=False
         cm = torch.bincount(indices, minlength=class_count ** 2).reshape(class_count, class_count)
     else:
         cm = soft_pred_multiclass_confusion_matrix(
-            true, one_hot(pred, class_count, dtype=torch.float64), batch=batch)
+            true, one_hot(pred, class_count, dtype=torch.float64), is_batch=is_batch)
     return cm.to(dtype or torch.int64)
 
 
-def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False, loop_version=None):
+def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, is_batch=False,
+                                          loop_version=None):
     """Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
-        true (Tensor): a vector of integers representing true classes.
-        pred (Tensor): an array consisting of vectors representing predicted class
-            probabilities.
+        true (Tensor): (N,) or, with `is_batch`, (B, N) integer true classes, -1 for ignored
+            examples. With `is_batch`, the non-loop version does not support ignored examples.
+        pred (Tensor): (N, C) or, with `is_batch`, (B, N, C) predicted class probabilities.
         dtype (optional): confusion matrix data type.
+        is_batch (bool): Whether the inputs are a batch, giving a confusion matrix per batch
+            element.
 
     Returns:
-        A soft confusion matrix with shape (class_count, class_count)
+        A soft confusion matrix with shape (C, C), or (B, C, C) with `is_batch`.
     """
     if loop_version is None and true.device.type == 'cuda':
         loop_version = "3090" in torch.cuda.get_device_name(true.device.index)
@@ -84,26 +87,27 @@ def soft_pred_multiclass_confusion_matrix(true, pred, dtype=None, batch=False, l
         dtype = dtype or pred.dtype
         class_count = pred.shape[-1]
         non_ignored = true != -1
-        if batch:
+        if is_batch:
             assert torch.all(non_ignored)
+        else:
+            true, pred = true[non_ignored], pred[non_ignored]
         return all_soft_multiclass_confusion_matrix(
-            one_hot(true[non_ignored], class_count, dtype=dtype),
-            pred[non_ignored].to(dtype), batch=batch)
+            one_hot(true, class_count, dtype=dtype), pred.to(dtype), is_batch=is_batch)
     else:  # usually 3 - 4 times slower
         class_count = pred.shape[-1]
-        cm = torch.empty(list(true.shape[:int(batch)]) + [class_count] * 2,
+        cm = torch.empty(list(true.shape[:int(is_batch)]) + [class_count] * 2,
                          dtype=dtype or torch.float64, device=true.device)
-        if batch:
+        if is_batch:
             for c in range(class_count):
-                cm[:, c, :] = pred[:, true == c, :].sum(int(batch))
+                cm[:, c, :] = (pred * (true == c).unsqueeze(-1)).sum(1)
         else:
             for c in range(class_count):
-                cm[c, :] = pred[true == c, :].sum(int(batch))
+                cm[c, :] = pred[true == c, :].sum(0)
         return cm
 
 
 def all_soft_multiclass_confusion_matrix(true: torch.Tensor, pred: torch.Tensor, dtype=None,
-                                         batch=False):
+                                         is_batch=False):
     """Computes a soft multi-class confusion matrix from probabilities.
 
     Args:
@@ -118,7 +122,7 @@ def all_soft_multiclass_confusion_matrix(true: torch.Tensor, pred: torch.Tensor,
     """
     if dtype is not None:
         true, pred = true.to(dtype), pred.to(dtype)
-    return torch.einsum("bni,bnj->bij" if batch else "ni,nj->ij", true, pred)
+    return torch.einsum("bni,bnj->bij" if is_batch else "ni,nj->ij", true, pred)
     # return torch.einsum("ni,nj->ij", true, pred)
 
 
@@ -153,8 +157,9 @@ def classification_metrics_np(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU'), eps=
     return {k: locals_[k] for k in returns}
 
 
-def masked_mean(values, mask):
-    return (values if mask is None else values[mask]).mean()
+def masked_mean(values: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+    """Mean over the last axis of the entries where `mask` is True (all if `mask` is None)."""
+    return values.mean(-1) if mask is None else torch.where(mask, values, 0).sum(-1) / mask.sum(-1)
 
 
 # Metric name grammar ##############################################################################
@@ -198,8 +203,7 @@ def macro_over_supported(per_class_values, support, min_support: int) -> torch.T
     per_class_values = torch.as_tensor(per_class_values)
     if not per_class_values.is_floating_point():
         per_class_values = per_class_values.double()
-    mask = torch.as_tensor(support) >= min_support
-    return torch.where(mask, per_class_values, 0).sum(-1) / mask.sum(-1)
+    return masked_mean(per_class_values, torch.as_tensor(support) >= min_support)
 
 
 def mean_over_defined_attributes(values: T.Iterable[float]) -> float:
@@ -262,13 +266,13 @@ def confusion_matrix_class_stats(cm: torch.Tensor) -> dict[str, torch.Tensor]:
     return dict(tp=cm.diagonal(), pos=cm.sum(0), actual=cm.sum(1))
 
 
-def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), eps=1e-8, ignore_missing_classes=False):
+def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), ignore_missing_classes=False):
     """Computes macro-averaged classification evaluation metrics based on the
     accumulated confusion matrix.
 
-    Supports batches (when `cm` is a batch of matrices).
+    Supports leading batch dimensions: every metric is computed per confusion matrix.
 
-    **Important**: By default, macro-averaged metrics (mP, mR, mF1, mIoU) are 
+    **Important**: By default, macro-averaged metrics (mP, mR, mF1, mIoU) are
     computed over all classes, including classes with no samples (metric=0).
     
     This differs from sklearn's `f1_score(average='macro')`, which only averages
@@ -276,19 +280,18 @@ def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), e
     to match sklearn's behavior.
     
     Args:
-        cm (Tensor): A confusion matrix of shape (C, C) or batch (B, C, C).
+        cm (Tensor): A confusion matrix of shape (..., C, C), rows = ground truth.
         returns (Sequence): A list of metrics that should be returned.
-        eps (float): A number to add to the denominator to avoid division by 0.
-        ignore_missing_classes (bool): If True, compute macro metrics only over classes 
+        ignore_missing_classes (bool): If True, compute macro metrics only over classes
             with samples (matches sklearn). Default False.
 
     Returns:
-        A dictionary with computed classification evaluation metrics.
+        A dictionary with computed classification evaluation metrics, each of shape `...`, or
+        (..., C) for a per-class metric.
     """
-    is_batch = int(cm.dim() == 3)
-    tp = cm.diagonal(dim1=is_batch, dim2=is_batch + 1)
-    actual_pos = cm.sum(dim=is_batch + 1)
-    pos = cm.sum(dim=is_batch)
+    tp = cm.diagonal(dim1=-2, dim2=-1)
+    actual_pos = cm.sum(-1)
+    pos = cm.sum(-2)
     fp = pos - tp
 
     tp = tp.float()
@@ -305,37 +308,37 @@ def classification_metrics(cm, returns=('A', 'mP', 'mR', 'mF1', 'mIoU', 'cm'), e
     mask = (actual_pos + fp) > 0 if ignore_missing_classes else None  
     metrics.update({'m' + k: masked_mean(v, mask) for k, v in metrics.items()})
     metrics['cm'] = cm
-    metrics['A'] = tp.sum(dim=is_batch) / pos.sum(dim=is_batch)
-    metrics['num_correct'] = tp.sum(dim=is_batch)
-    metrics['n'] = pos.sum(dim=is_batch)  # number of (non-ignore) examples
+    metrics['A'] = tp.sum(-1) / pos.sum(-1)
+    metrics['num_correct'] = tp.sum(-1)
+    metrics['n'] = pos.sum(-1)  # number of (non-ignore) examples
 
     # Chance-corrected agreement. MCC is NaN (0/0) when every ground-truth or every predicted
     # label is one class, kappa when both are; sklearn returns 0 there, which is
     # indistinguishable from chance-level performance, so NaN is kept.
-    n = pos.sum(dim=is_batch).double()
-    num_correct = tp.sum(dim=is_batch).double()
+    n = pos.sum(-1).double()
+    num_correct = tp.sum(-1).double()
     pos_d, actual_d = pos.double(), actual_pos.double()
-    s = (pos_d * actual_d).sum(dim=is_batch)  # sum_k pred_k * actual_k
+    s = (pos_d * actual_d).sum(-1)  # sum_k pred_k * actual_k
     numerator = num_correct * n - s
     metrics['kappa'] = (numerator / (n ** 2 - s)).float()
-    metrics['MCC'] = (numerator / torch.sqrt((n ** 2 - (pos_d ** 2).sum(dim=is_batch))
-                                             * (n ** 2 - (actual_d ** 2).sum(dim=is_batch)))
+    metrics['MCC'] = (numerator / torch.sqrt((n ** 2 - (pos_d ** 2).sum(-1))
+                                             * (n ** 2 - (actual_d ** 2).sum(-1)))
                       ).float()
     if isinstance(returns, str):
         return select_metrics(metrics, actual_pos, (returns,))[returns]
     return select_metrics(metrics, actual_pos, returns)
 
 
-def mIoU(cm, eps=1e-8):
-    is_batch = int(cm.dim() == 3)
-    tp = cm.diagonal(dim1=is_batch, dim2=is_batch + 1)
-    actual_pos = cm.sum(dim=is_batch + 1)
-    pos = cm.sum(dim=is_batch)
+def mIoU(cm):
+    """Mean IoU over all classes of a (..., C, C) confusion matrix, rows = ground truth."""
+    tp = cm.diagonal(dim1=-2, dim2=-1)
+    actual_pos = cm.sum(-1)
+    pos = cm.sum(-2)
     fp = pos - tp
     tp = tp.float()
     IoU = tp / (actual_pos + fp)
     IoU[torch.isnan(IoU)] = 0
-    return IoU.mean()
+    return IoU.mean(-1)
 
 
 class ClassificationMetrics(AccumulatingMetric):
@@ -400,10 +403,10 @@ class ClassificationMetrics(AccumulatingMetric):
         self.cm += cm
 
     @torch.no_grad()
-    def compute(self, eps=1e-8, metrics=None):
+    def compute(self, metrics=None):
         """Computes `metrics` (default: the configured ones) from the confusion matrix."""
         computed = classification_metrics(
-            self.cm, returns=self.metrics if metrics is None else metrics, eps=eps,
+            self.cm, returns=self.metrics if metrics is None else metrics,
             ignore_missing_classes=self.ignore_missing_classes)
         return {k: v.item() if v.dim() == 0 else v.cpu().numpy().copy()
                 for k, v in computed.items()}
@@ -913,15 +916,26 @@ class MedianMultiMetric(_MultiMetric):
 
 
 class SoftClassificationMetrics(AccumulatingMetric):
+    """`ClassificationMetrics` of a soft confusion matrix, which sums the predicted class
+    distributions instead of counting the hard predictions.
+
+    Args:
+        get_target, get_probs: Extract the (N, ...) integer targets and the (N, C, ...)
+            predicted distributions from the iteration result.
+        Other arguments: See `ClassificationMetrics`.
+    """
+
     def __init__(self, class_count, get_target=lambda r: r.target,
                  get_probs=lambda r: r.out.softmax(1),
-                 metrics=('A', 'mP', 'mR', 'mIoU')):
+                 metrics=('A', 'mP', 'mR', 'mIoU'), device=None, ignore_missing_classes=False):
         super().__init__()
         self.class_count = class_count
-        self.cm = torch.zeros([class_count] * 2, dtype=torch.float64, requires_grad=False)
+        self.cm = torch.zeros([class_count] * 2, dtype=torch.float64, requires_grad=False,
+                              device=device)
         self.get_target = get_target
         self.get_probs = get_probs
         self.metrics = metrics
+        self.ignore_missing_classes = ignore_missing_classes
 
     @torch.no_grad()
     def reset(self):
@@ -930,9 +944,11 @@ class SoftClassificationMetrics(AccumulatingMetric):
     @torch.no_grad()
     def update(self, iter_result):
         true = self.get_target(iter_result).flatten()
-        pred = self.get_probs(iter_result).permute(0, 2, 3, 1)
-        pred = pred.flatten().view(-1, pred.shape[-1])
-        self.cm += soft_pred_multiclass_confusion_matrix(true, pred, self.class_count)
+        pred = self.get_probs(iter_result).movedim(1, -1).reshape(-1, self.class_count)
+        cm = soft_pred_multiclass_confusion_matrix(true, pred, dtype=self.cm.dtype)
+        if self.cm.device != cm.device:
+            self.cm = self.cm.to(cm.device)
+        self.cm += cm
 
     compute = ClassificationMetrics.compute
 

@@ -336,22 +336,33 @@ def conf_thresh_probs_sqr_l2_dist_ll(logits, target_logits, conf_thresh):
 
 # mIoU #############################################################################################
 
-def neg_soft_mIoU_ll(logits, target_logits, batch=True, weights=None):  # TODO
-    return neg_soft_mIoU_l(logits, target_logits.softmax(1), batch=batch, weights=weights)
+def neg_soft_mIoU_ll(logits, target_logits, is_batch=True, weights=None):  # TODO
+    return neg_soft_mIoU_l(logits, target_logits.softmax(1), is_batch=is_batch, weights=weights)
 
 
-def neg_soft_mIoU_l(logits, target, batch=False, weights=None):  # TODO
-    labels = target.dim() == logits.dim() - 1
-    pred = logits.softmax(1).transpose(1, -1)
-    pred = pred.reshape((pred.shape[0], -1, pred.shape[-1]) if batch else (-1, pred.shape[-1]))
-    if labels:  # target contains labels, not probabilities
-        target = target.view(pred.shape[:-1])
-        cm = metrics.soft_pred_multiclass_confusion_matrix(target, pred)
+def neg_soft_mIoU_l(logits, target, is_batch=False, weights=None):  # TODO
+    """Negative mIoU of a soft confusion matrix, or the negative `weights`-weighted sum of the
+    per-class IoU.
+
+    Args:
+        logits: (N, C, ...) logits.
+        target: (N, ...) class labels or (N, C, ...) probabilities.
+        is_batch: If True, the loss is computed per example and has shape (N,), else it is a
+            scalar.
+        weights: (C,) class weights, or None for the mean over classes.
+    """
+    target_is_labels = target.dim() == logits.dim() - 1
+    pred = logits.softmax(1).movedim(1, -1)
+    pred = pred.reshape((pred.shape[0], -1, pred.shape[-1]) if is_batch
+                        else (-1, pred.shape[-1]))
+    if target_is_labels:
+        target = target.reshape(pred.shape[:-1])
+        cm = metrics.soft_pred_multiclass_confusion_matrix(target, pred, is_batch=is_batch)
     else:
-        target = target.transpose(1, -1).view(pred.shape)
-        cm = metrics.all_soft_multiclass_confusion_matrix(target, pred)
+        target = target.movedim(1, -1).reshape(pred.shape)
+        cm = metrics.all_soft_multiclass_confusion_matrix(target, pred, is_batch=is_batch)
     if weights is not None:
-        return -torch.einsum("...ki,i->...", metrics.classification_metrics(cm, 'IoU'), weights)
+        return -torch.einsum("...i,i->...", metrics.classification_metrics(cm, 'IoU'), weights)
     return -metrics.classification_metrics(cm, 'mIoU')
 
 
