@@ -99,7 +99,7 @@ def merge_computed_metrics(metrics: T.Iterable) -> dict[str, T.Any]:
 
 def print_metrics(scoring_name: str, computed: dict[str, T.Any]) -> None:
     """Prints scalar metrics, and the attribute-average of per-attribute ones."""
-    print(f"\n  [{scoring}]")
+    print(f"\n  [{scoring_name}]")
     for k, v in computed.items():
         if isinstance(v, (int, float)):
             print(f"    {k}: {v:.4f}")
