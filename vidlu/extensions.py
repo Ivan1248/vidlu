@@ -9,32 +9,13 @@ For non-installed packages, add the path of the directory containing extensions 
 ```PYTHONPATH="${PYTHONPATH}:/my/vidlu/extensions/path"```
 """
 
-import sys
 import importlib
-import importlib.util
 import pkgutil
 from functools import partial
-import traceback
 
 from vidlu.utils.collections import NameDict
 
 EXT_PREFIX = "vidlu_"
-
-
-def lazy_import(fullname):
-    """Returns a module that is not imported until used.
-
-    From https://stackoverflow.com/questions/42703908/how-do-i-use-importlib-lazyloader
-    """
-    try:
-        return sys.modules[fullname]
-    except KeyError:
-        spec = importlib.util.find_spec(fullname)
-        module = importlib.util.module_from_spec(spec)
-        loader = importlib.util.LazyLoader(spec.loader)
-        # Make module with proper locking and get it inserted into sys.modules.
-        loader.exec_module(module)
-        return module
 
 
 class ExtensionDict(NameDict):
@@ -68,16 +49,10 @@ class LazyModule(LazyObjectProxy):
         super().__init__(partial(importlib.import_module, name))
 
 
-def _try_import(name):
-    try:
-        return importlib.import_module(name)
-    except Exception as e:
-        traceback.print_exc()
-        sys.stderr.write(f'Failed to load extension {name}.\n')
-        return None
-
-# A lazy object proxy is used to postpone import errors only when there are errors
+# Extensions are imported on first use, so an extension that fails to import breaks only the
+# runs that use it, and importing an extension cannot close a cycle with a partially imported
+# `vidlu` module.
 extensions = ExtensionDict({
-    name[len(EXT_PREFIX):]: m
+    name[len(EXT_PREFIX):]: LazyModule(name)
     for finder, name, ispkg in pkgutil.iter_modules()
-    if name.startswith(EXT_PREFIX) and (m := _try_import(name) or LazyModule(name)) is not None})
+    if name.startswith(EXT_PREFIX)})
