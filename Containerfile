@@ -92,11 +92,13 @@ PY
 # IRAP-Vietnam data preparation: Excel + parquet I/O
 RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir pandas openpyxl xlrd pyarrow
 
-# IRAP datasets, from irap-tools
-RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir     "irap-data[torch] @ git+https://github.com/Ivan1248/irap-tools#subdirectory=packages/irap_data"
-
 # Experiment tracking
 RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir wandb
+
+# IRAP datasets and evaluation of saved predictions, from irap-tools.
+# The ADD fetches the latest commit's metadata, so the pip install below re-runs only when irap-tools changes.
+ADD https://api.github.com/repos/Ivan1248/irap-tools/commits/HEAD /tmp/irap-tools-head.json
+RUN DEBIAN_FRONTEND=noninteractive pip install --no-cache-dir "irap-data[torch] @ git+https://github.com/Ivan1248/irap-tools#subdirectory=packages/irap_data" "irap-evaluation[xlsx] @ git+https://github.com/Ivan1248/irap-tools#subdirectory=packages/irap_evaluation"
 
 #ENV CUDA_HOME=/usr/local/cuda
 #ENV PATH=${CUDA_HOME}/bin:${PATH}
