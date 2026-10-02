@@ -22,6 +22,7 @@ import vidlu.modules.losses as vml
 import vidlu.modules.utils as vmu
 from vidlu.modules.tensor_extra import LogAbsDetJac as Ladj
 from vidlu.data.class_mapping import MultiSoftClassMapping
+from vidlu.metrics import OutputKind
 from vidlu.training.measurement import memory_tracking
 from vidlu.training.robustness import attack_as_perturber
 
@@ -187,6 +188,8 @@ class AmpMixin:
 
 @dc.dataclass
 class SupervisedStep(AmpMixin):
+    output_kind: T.ClassVar[OutputKind] = "logits"  # `out` holds the model's logits
+
     eval: bool = False
 
     def __call__(self, trainer, batch):

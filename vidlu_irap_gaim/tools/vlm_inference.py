@@ -427,8 +427,13 @@ def run_evaluation(
     thinking_budget: int = DEFAULT_THINKING_BUDGET,
     temperature: float = 0.0,
     upsampling_factor: int = 1,
+    method_name: str | None = None,
+    method_seed: int | None = None,
 ) -> EvaluationResult:
     """Runs VLM evaluation on a dataset.
+
+    Unless the dataset is an image folder, the parsed predictions are also written as the
+    `irap_evaluation` prediction file `predictions.parquet`.
 
     Args:
         dataset: Optional pre-loaded VLM-wrapped dataset (skips internal loading).
@@ -465,10 +470,17 @@ def run_evaluation(
         batch_size: Images generated for at once; None sizes it from ``batch_tokens``.
         batch_tokens: Target prompt tokens per batch, used when batch_size is None.
         temperature: Sampling temperature (0.0 = greedy). Ignored if predictor provided.
+        method_name: The method name in the prediction file. Defaults to the model ID.
+        method_seed: The run's seed in the prediction file, e.g. for repeated sampling with
+            temperature > 0.
 
     Returns:
-        EvaluationResult with summary statistics.
+        EvaluationResult with summary statistics. A prediction file is written only for
+        a split of a known iRAP release.
     """
+    from vidlu_irap_gaim.prediction_files import (is_irap_dataset,
+                                                  make_prediction_file_spec,
+                                                  write_parsed_predictions)
     from vidlu_irap_gaim.vlm.predictions import predictions_to_json_serializable
     from vidlu.utils.misc import try_input
 
@@ -563,7 +575,19 @@ def run_evaluation(
         # the dataset scores in another. Raises on a genuine mismatch.
         predictor.response_scheme = response_scheme
 
+    if not is_irap_dataset(dataset.info):
+        prediction_file_spec = None
+        print("No prediction file: the dataset is not a split of a known release.")
+    else:
+        configuration = dict(detail_level=detail_level, attrs_per_session=attrs_per_session,
+                             response_scheme=type(response_scheme).__name__,
+                             enable_thinking=enable_thinking, temperature=temperature)
+        prediction_file_spec = make_prediction_file_spec(
+            dataset.info, method_name or model_id, method_seed, {"configuration": configuration})
+
     all_predictions = {}
+    # segment ID -> parsed predictions, in dataset order, for the prediction file
+    segment_to_predictions: dict[str, dict] = {}
     all_records: list[dict] = []
     num_valid = 0
     num_invalid_responses = 0
@@ -626,6 +650,7 @@ def run_evaluation(
                 ) from e
             for segment_id in batch_segment_ids:
                 all_predictions[segment_id] = {"error": str(e)}
+                segment_to_predictions[segment_id] = {}
             num_samples_completed += len(batch_indices)
             print(f"Error processing batch {batch_start}-{batch_end}: {e}")
             continue
@@ -646,6 +671,7 @@ def run_evaluation(
                 "predictions": predictions_to_json_serializable(predictions),
                 "responses": result.responses,
             }
+            segment_to_predictions[segment_id] = predictions
 
             all_records.extend(_session_records(
                 segment_id, result, attr_to_position,
@@ -748,6 +774,10 @@ def run_evaluation(
     }
     with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
+
+    if prediction_file_spec is not None:
+        write_parsed_predictions(output_dir / "predictions.parquet", prediction_file_spec,
+                                 segment_to_predictions, attrs_to_include)
 
     print(f"\nResults saved to {output_dir}")
     print(f"  - predictions.json: {len(all_predictions)} samples")

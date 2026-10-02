@@ -6,21 +6,28 @@ This module is intended to be used via:
 
 Important: It reuses the trainer's evaluation loop and its configured `eval_step`.
 Predictions are collected by hooking into `trainer.evaluation.iter_completed`.
+
+With `save_predictions`, the predicted distributions are also written as an `irap_evaluation`
+prediction file for `irap-eval`.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import typing as T
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
 from irap_data import IGNORE_LABEL_INDEX
 from vidlu.experiments import TrainingExperiment
+from vidlu.metrics import OutputKind
 from vidlu.utils.misc import RemovableHandle
 from vidlu.utils.collections import NameDict
 
+from vidlu_irap_gaim.prediction_files import (check_output_kind_storable,
+                                              make_prediction_file_spec, write_output_predictions)
 from vidlu_irap_gaim.tools.vis_utils import (
     PredictionRow,
     make_visualization_image,
@@ -32,6 +39,8 @@ from vidlu_irap_gaim.vlm.response_parser import build_idx_to_value
 @dataclass(kw_only=True)
 class _PredictOnlyStep:
     """Prediction-only step that works without labels (no loss/metrics dependency)."""
+
+    output_kind: T.ClassVar[OutputKind] = "logits"
 
     amp: bool = False
 
@@ -53,6 +62,8 @@ class _PredictOnlyStep:
 @dataclass(kw_only=True)
 class _MultiScalePredictOnlyStep:
     """Multi-scale prediction-only step (mirrors MultiScaleSupervisedStep but skips loss)."""
+
+    output_kind: T.ClassVar[OutputKind] = "probs"
 
     scales: tuple[float, ...] = (1.0, 0.75, 1 / 0.75)
     amp: bool = False
@@ -136,12 +147,23 @@ def _extract_segment_ids(batch) -> list[str]:
     return [str(s) for s in seg]
 
 
-def _extract_probs(out: T.Any) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
-    """
-    Extract per-attribute probabilities and argmax predictions from eval_step output.
+def get_output_kind(eval_step) -> OutputKind:
+    """What the evaluation step puts in `result.out`, as declared by its `output_kind`.
 
-    - SupervisedStep returns tuple of logits (B, K_i)
-    - MultiScaleSupervisedStep returns tuple of probabilities (B, K_i)
+    Raises:
+        ValueError: For a step that does not declare it.
+    """
+    if not hasattr(eval_step, "output_kind"):
+        raise ValueError(f"The evaluation step {type(eval_step).__name__} does not declare its"
+                         f" output_kind. Pass output_kind ('logits', 'probs' or 'hard').")
+    return eval_step.output_kind
+
+
+def _extract_probs(out: T.Any, output_kind: OutputKind
+                   ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+    """
+    Extract per-attribute probabilities and argmax predictions from eval_step output, a tuple
+    of (B, K_i) tensors of the given kind.
     """
     if not isinstance(out, (tuple, list)):
         raise TypeError(f"Expected eval_step output to be tuple/list of tensors, got {type(out)}")
@@ -155,13 +177,7 @@ def _extract_probs(out: T.Any) -> tuple[list[torch.Tensor], list[torch.Tensor], 
             raise TypeError(f"Expected tensor in out tuple, got {type(o)}")
         if o.ndim != 2:
             raise ValueError(f"Expected per-attribute tensor shaped (B,K), got {tuple(o.shape)}")
-
-        # Heuristic: if it already looks like probabilities, don't softmax again.
-        # We require non-negative and sums ~ 1.
-        with torch.no_grad():
-            sum_mean = float(o.sum(dim=-1).mean().detach().cpu().item())
-            min_val = float(o.min().detach().cpu().item())
-        p = o if (min_val >= -1e-6 and 0.90 <= sum_mean <= 1.10) else F.softmax(o, dim=-1)
+        p = F.softmax(o, dim=-1) if output_kind == "logits" else o
 
         probs.append(p)
         pred_idx.append(p.argmax(dim=-1))
@@ -171,10 +187,27 @@ def _extract_probs(out: T.Any) -> tuple[list[torch.Tensor], list[torch.Tensor], 
 
 
 @dataclass(kw_only=True)
+class _OutputCollector:
+    """Keeps the segment IDs and the raw per-attribute outputs of all evaluated batches."""
+
+    segment_ids: list[str] = field(default_factory=list)
+    # per-attribute (B, K_i) outputs of each batch
+    output_batches: list[list[np.ndarray]] = field(default_factory=list)
+
+    def on_iter_completed(self, state) -> None:
+        self.segment_ids.extend(_extract_segment_ids(state.batch))
+        self.output_batches.append([o.detach().float().cpu().numpy() for o in state.result.out])
+
+    def get_outputs(self) -> list[np.ndarray]:
+        """The per-attribute (N, K_i) outputs, in the order of `segment_ids`."""
+        return [np.concatenate(attr_batches) for attr_batches in zip(*self.output_batches)]
+
+
+@dataclass(kw_only=True)
 class InferenceVisualizationCollector:
     dataset: T.Any
     output_dir: Path
-    limit: int | None = None
+    output_kind: OutputKind
     save_images: bool = True
     out_size: tuple[int, int] = (1920, 1080)
     text_area_ratio: float = 0.35
@@ -196,32 +229,17 @@ class InferenceVisualizationCollector:
             self.attribute_names = [a for a in self.attribute_names if a in include]
 
         self.predictions: dict[str, dict[str, dict[str, T.Any]]] = {}
-        self.num_written = 0
-
-        # Bound when registered
-        self._evaluation_loop = None
-
-    def bind_evaluation_loop(self, evaluation_loop):
-        self._evaluation_loop = evaluation_loop
 
     def on_iter_completed(self, state) -> None:
-        if self.limit is not None and self.num_written >= self.limit:
-            if self._evaluation_loop is not None:
-                self._evaluation_loop.terminate()
-            return
-
         batch = state.batch
         result = state.result
 
         seg_ids = _extract_segment_ids(batch)
         rgb_b = _extract_rgb_sequence(result.x)
-        probs_list, pred_idx_list, pred_prob_list = _extract_probs(result.out)
+        probs_list, pred_idx_list, pred_prob_list = _extract_probs(result.out, self.output_kind)
         target = getattr(result, "target", None)
 
         for i, sid in enumerate(seg_ids):
-            if self.limit is not None and self.num_written >= self.limit:
-                break
-
             rgb_seq = rgb_b[i].detach().cpu()
 
             has_target = isinstance(target, torch.Tensor) and target.ndim == 2
@@ -271,26 +289,22 @@ class InferenceVisualizationCollector:
                     out_size=self.out_size, text_area_ratio=self.text_area_ratio, gap=self.gap)
                 out_img.save(self.images_dir / f"{sid}_pred.png")
 
-            self.num_written += 1
-
-        if self.limit is not None and self.num_written >= self.limit and self._evaluation_loop is not None:
-            self._evaluation_loop.terminate()
-
     def finalize(
         self,
         *,
         save_json: bool = True,
         metrics: dict[str, T.Any] | None = None,
         split: str | None = None,
+        limit: int | None = None,
     ) -> dict[str, T.Any]:
         summary = {
-            "num_written": int(self.num_written),
+            "num_written": len(self.predictions),
             "output_dir": str(self.output_dir),
             "split": split,
             "out_size": [int(self.out_size[0]), int(self.out_size[1])],
             "text_area_ratio": float(self.text_area_ratio),
             "save_images": bool(self.save_images),
-            "limit": self.limit,
+            "limit": limit,
             "metrics": metrics,
         }
         if save_json:
@@ -318,6 +332,10 @@ def run(
     out_height: int = 1080,
     text_area_ratio: float = 0.35,
     attrs_to_include: tuple[str, ...] | None = None,
+    save_predictions: str | Path | None = None,
+    method_name: str | None = None,
+    method_seed: int | None = None,
+    output_kind: OutputKind | None = None,
 ) -> dict[str, T.Any]:
     """
     Entry point for `scripts/run.py test ... -m irap_gaim.tools.inference`.
@@ -332,12 +350,20 @@ def run(
             The dataset must have `info.attr_to_value_to_class_idx` for decoding predictions.
             Use `InferenceImageDataset.from_folder()` for custom images.
         output_dir: Where to save results. Defaults to experiment_dir/inference_output.
-        limit: Maximum number of samples to process.
+        limit: Maximum number of samples to process, the first ones of the dataset.
         save_images: Whether to save visualization images.
         save_json: Whether to save JSON predictions.
         out_width, out_height: Output image dimensions.
         text_area_ratio: Fraction of width for text panel.
         attrs_to_include: Subset of attributes to visualize.
+        save_predictions: Path of an `irap_evaluation` prediction file with the distributions of
+            all attributes. Needs a split of a known release and logit or probability outputs.
+        method_name: The method name in the prediction file. Defaults to the name of the
+            experiment directory.
+        method_seed: The run's seed in the prediction file, e.g. its training seed
+            (`run.py train -s`), which the experiment does not store.
+        output_kind: What the evaluation step outputs. None takes the step's own declaration
+            (see `get_output_kind`).
 
     Example for custom dataset:
         -m irap_gaim.tools.inference:run,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test)
@@ -347,6 +373,8 @@ def run(
         dataset = _dataset_from_experiment_data(experiment.data, split=split)
     else:
         split = getattr(dataset, "subset", "custom")
+    if limit is not None:
+        dataset = dataset[:limit]
 
     # Detect label-free datasets and switch to prediction-only evaluation.
     #
@@ -381,25 +409,38 @@ def run(
         is_multiscale = "MultiScale" in step_name
         trainer.eval_step = _MultiScalePredictOnlyStep(amp=getattr(trainer.eval_step, "amp", False)) if is_multiscale else _PredictOnlyStep(amp=getattr(trainer.eval_step, "amp", False))
 
-    out_dir = _as_path(output_dir) if output_dir is not None else _as_path(experiment.cpman.experiment_dir) / "inference_output"
+    if output_kind is None:
+        output_kind = get_output_kind(trainer.eval_step)
+    experiment_dir = Path(experiment.cpman.experiment_dir)
+    output_collector = None
+    if save_predictions is not None:
+        check_output_kind_storable(output_kind)
+        prediction_file_spec = make_prediction_file_spec(
+            dataset.info, method_name or experiment_dir.name, method_seed,
+            {"checkpoint": str(experiment_dir)})
+        output_collector = _OutputCollector()
+
+    out_dir = _as_path(output_dir) if output_dir is not None else experiment_dir / "inference_output"
     collector = InferenceVisualizationCollector(
         dataset=dataset,
         output_dir=out_dir,
-        limit=limit,
         save_images=save_images,
         out_size=(out_width, out_height),
         text_area_ratio=text_area_ratio,
         attrs_to_include=attrs_to_include,
+        output_kind=output_kind,
     )
-    collector.bind_evaluation_loop(trainer.evaluation)
 
-    rh: RemovableHandle = trainer.evaluation.iter_completed.add_handler(collector.on_iter_completed)
+    handles: list[RemovableHandle] = [
+        trainer.evaluation.iter_completed.add_handler(c.on_iter_completed)
+        for c in (collector, output_collector) if c is not None]
     try:
         label_note = "" if has_target else " (unlabeled/predict-only)"
         print(f"Evaluating {split} dataset{label_note} and storing results in {out_dir}...")
         trainer.eval(dataset)
     finally:
-        rh.remove()
+        for handle in handles:
+            handle.remove()
         if prev_eval_step is not None:
             trainer.eval_step = prev_eval_step
         if prev_metrics is not None:
@@ -407,6 +448,13 @@ def run(
 
     metrics = getattr(getattr(trainer, "evaluation", None), "state", None)
     metrics = getattr(metrics, "metrics", None) if metrics is not None else None
-    return collector.finalize(save_json=save_json, metrics=metrics, split=split)
+    summary = collector.finalize(save_json=save_json, metrics=metrics, split=split, limit=limit)
+    if output_collector is not None:
+        write_output_predictions(save_predictions, prediction_file_spec,
+                                 output_collector.segment_ids, output_collector.get_outputs(),
+                                 output_kind)
+        print(f"Wrote the predictions of {len(output_collector.segment_ids)} segments to"
+              f" {save_predictions}.")
+    return summary
 
 

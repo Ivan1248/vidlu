@@ -77,9 +77,10 @@ def get_irap_metrics(
             metric; see `irap_metric_names`. Pass `()` for the unrestricted metrics only.
         output_kind: What the evaluation step puts in `iter_result.out`: 'logits'
             (`SupervisedStep`, the default), 'probs' (`MultiScaleSupervisedStep`) or 'hard'
-            (one-hot pseudo-logits: VLM text parsing, random baselines). Metrics come from
-            `--metrics`, not from the trainer, so this cannot be checked against the eval
-            step; a wrong value gives wrong `NLL`/`Brier`, silently for 'logits' vs 'probs'.
+            (one-hot pseudo-logits: VLM text parsing, random baselines). The eval steps
+            declare theirs as `output_kind`, but metrics come from `--metrics`, not from the
+            trainer, so nothing compares the two; a wrong value gives wrong `NLL`/`Brier`,
+            silently for 'logits' vs 'probs'.
             With 'hard' the probabilistic metrics are left out.
     """
     from irap_data.attrs import (

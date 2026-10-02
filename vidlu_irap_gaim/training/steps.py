@@ -5,6 +5,7 @@ import typing as T
 
 import torch
 
+from vidlu.metrics import OutputKind
 from vidlu.training.steps import AmpMixin, SemisupCleanTargetConsStepBase
 from vidlu_irap_gaim.losses import MultiAttributeCrossEntropyLoss
 
@@ -29,6 +30,8 @@ class MultiScaleSupervisedStep(AmpMixin):
     optimization step. Training backpropagates through one forward pass per scale, so it
     costs about `len(scales)` times the time and memory of a single-scale step.
     """
+
+    output_kind: T.ClassVar[OutputKind] = "probs"
 
     scales: T.Sequence[float] = (1.0, 0.75, 1 / 0.75)
     eval: bool = False

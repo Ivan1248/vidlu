@@ -2,12 +2,15 @@
 Tensor and serialization utilities for VLM attribute predictions.
 
 Converts parsed ``AttributePrediction`` dicts into metric-compatible
-tensor tuples or JSON-serializable dicts.
+tensor tuples, class indices or JSON-serializable dicts.
 """
 
 from typing import Sequence
 
+import numpy as np
 import torch
+
+from irap_data import IGNORE_LABEL_INDEX
 
 from .response_parser import AttributePrediction
 
@@ -79,6 +82,30 @@ def attribute_predictions_to_one_hot_outputs(
         out_tensors.append(logits)
 
     return tuple(out_tensors), is_invalid
+
+
+def attribute_predictions_to_class_indices(
+    segment_predictions: Sequence[dict[str, AttributePrediction]],
+    attr_to_num_classes: dict[str, int],
+) -> dict[str, np.ndarray]:
+    """Converts parsed predictions of several segments to class indices per attribute.
+
+    Args:
+        attr_to_num_classes: The attributes to convert and their numbers of classes.
+
+    Returns:
+        Attribute -> (N,) int64 predicted class indices, with `IGNORE_LABEL_INDEX` where the
+        segment has no usable prediction (see `is_usable_prediction`). An empty dict is a
+        segment without any response.
+    """
+    def get_class_index(predictions, attr):
+        pred = predictions.get(attr)
+        is_usable = is_usable_prediction(pred, attr_to_num_classes[attr])
+        return pred.pred_idx if is_usable else IGNORE_LABEL_INDEX
+
+    return {attr: np.array([get_class_index(p, attr) for p in segment_predictions],
+                           dtype=np.int64)
+            for attr in attr_to_num_classes}
 
 
 def predictions_to_json_serializable(

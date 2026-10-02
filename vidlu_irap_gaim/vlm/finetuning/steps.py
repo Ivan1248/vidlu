@@ -15,6 +15,7 @@ import warnings
 
 import torch
 
+from vidlu.metrics import OutputKind
 from vidlu.utils.collections import NameDict
 from vidlu_irap_gaim.vlm.models.generation import bf16_autocast, warn_if_truncated
 from vidlu_irap_gaim.vlm.predictions import (
@@ -219,6 +220,9 @@ class VLMEvalStep:
     evaluation iteration, e.g. ``any(state.result.is_truncated_per_row)`` to check whether
     any response in the batch overran its response budget.
     """
+
+    # `out` holds one-hot pseudo-logits of the parsed responses
+    output_kind: T.ClassVar[OutputKind] = "hard"
 
     amp: bool = True
     # Response-token budget.  None ⇒ derive it from the response scheme, which

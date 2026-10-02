@@ -15,7 +15,8 @@ dataset, parses the predicted values using the same fuzzy-matching parser as
 ``vlm_inference.py``, computes metrics with ``get_irap_metrics``, and saves
 ``predictions.json`` + ``summary.json`` in the same format as
 ``vidlu_irap_gaim.tools.vlm_inference.run_evaluation`` -- including both scorings of an
-unusable response and the invalid rate, so agent runs and VLM runs are comparable.
+unusable response and the invalid rate, so agent runs and VLM runs are comparable -- and the
+same ``predictions.parquet`` prediction file for ``irap-eval``.
 """
 
 import json
@@ -77,6 +78,8 @@ def evaluate_agent_predictions(
     dataset_name: str = "bh",
     split: str = "test",
     output_dir: str | Path = "agent_eval_results",
+    method_name: str = "agent",
+    method_seed: int | None = None,
 ) -> AgentEvaluationResult:
     """Evaluate agent predictions against ground-truth labels.
 
@@ -91,11 +94,15 @@ def evaluate_agent_predictions(
             ``prepare_agent_tasks`` told the agent to write).
         dataset_name: ``"bh"`` or ``"vietnam"``.
         split: Dataset split to evaluate against.
-        output_dir: Where to write ``predictions.json`` and ``summary.json``.
+        output_dir: Where to write ``predictions.json``, ``summary.json`` and
+            ``predictions.parquet``.
+        method_name: The method name in the prediction file.
+        method_seed: The run's seed in the prediction file.
 
     Returns:
         AgentEvaluationResult with evaluation summary.
     """
+    from vidlu_irap_gaim.prediction_files import make_prediction_file_spec, write_parsed_predictions
     from vidlu_irap_gaim.vlm.predictions import predictions_to_json_serializable
     from vidlu_irap_gaim.vlm.scoring import (count_scored_and_invalid_responses,
                                              metrics_to_json_dict, print_metrics,
@@ -118,6 +125,9 @@ def evaluate_agent_predictions(
         dataset_name, split
     )
     print(f"  {len(dataset)} segments in split.")
+    prediction_file_spec = make_prediction_file_spec(
+        dataset.info, method_name, method_seed,
+        {"configuration": {"predictions_source": str(predictions_file)}})
     attrs_order = list(attr_to_value_to_class_idx.keys())
 
     # Two metric sets, one per scoring of an unusable response. Both are reported. Parsed text
@@ -131,6 +141,8 @@ def evaluate_agent_predictions(
 
     # Evaluate
     all_output_predictions: dict[str, Any] = {}
+    # segment ID -> parsed predictions, in dataset order, for the prediction file
+    segment_to_predictions: dict[str, dict] = {}
     num_with_predictions = 0
     num_valid = 0
     num_completed = 0
@@ -183,6 +195,7 @@ def evaluate_agent_predictions(
                 "predictions": predictions_to_json_serializable(predictions),
             }
 
+        segment_to_predictions[segment_id] = predictions
         num_scored, num_invalid = count_scored_and_invalid_responses(predictions, attrs_to_include,
                                                 attr_to_value_to_class_idx)
         num_scored_responses += num_scored
@@ -246,8 +259,12 @@ def evaluate_agent_predictions(
     with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
+    write_parsed_predictions(output_dir / "predictions.parquet", prediction_file_spec,
+                             segment_to_predictions, attrs_to_include)
+
     print(f"\nResults saved to {output_dir}/")
     print(f"  predictions.json: {len(all_output_predictions)} entries")
     print("  summary.json")
+    print("  predictions.parquet (for irap-eval)")
 
     return result

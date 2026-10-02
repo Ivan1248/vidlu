@@ -117,7 +117,7 @@ python scripts/run.py train \
 
 ## Package structure
 
-The datasets and the canonical attribute subset come from [`irap_data`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_data) in irap-tools (see `requirements.txt`).
+The datasets and the canonical attribute subset come from [`irap_data`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_data), and the offline evaluation of saved predictions from [`irap_evaluation`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_evaluation), both in irap-tools (see `requirements.txt`).
 
 ```
 vidlu_irap_gaim/
@@ -125,6 +125,7 @@ vidlu_irap_gaim/
 ├── class_frequencies.py         # Most common classes (sparse VLM defaults, baselines)
 ├── losses.py                    # MultiAttributeCrossEntropyLoss
 ├── metrics.py                   # The iRAP evaluation protocol (get_irap_metrics)
+├── prediction_files.py          # Writes irap_evaluation prediction files
 ├── models/                      # Neural network models and encoders
 │   ├── classification.py        # ImageSequenceClassifier
 │   ├── multiscale.py            # MultiScaleSequenceInference
@@ -1193,6 +1194,26 @@ VIDLU_DETAILED_EVAL=1 IRAP_HOME=/path/to/IRAP_HOME python scripts/run.py test \
 ```
 
 Creates a `visualizations/test` directory with `predictions.json` and PNG images per sample.
+
+### Saving predictions for offline evaluation
+
+`save_predictions` also writes the full predicted distributions as an [`irap_evaluation`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_evaluation) prediction file, which `irap-eval` scores (with bootstrap intervals), ensembles and exports as iRAP coding tables without the model:
+
+```bash
+python scripts/run.py test ... -r best \
+  -m "irap_gaim.tools.inference:run,e,split='val',save_images=False,save_predictions='convnext.predictions.parquet',method_name='convnext'"
+irap-eval evaluate $IRAP_HOME/IRAP_Vietnam convnext.predictions.parquet --out results/ --bootstrap 1000
+```
+
+For several training runs of a method, give each the same `method_name` and its training seed as `method_seed`; the experiment does not store the seed. `irap-eval` then reports the mean over the runs, and its intervals and comparisons include the spread of the runs:
+
+```bash
+python scripts/run.py test ... -r best \
+  -m "irap_gaim.tools.inference:run,e,split='val',save_images=False,save_predictions='convnext_seed1.predictions.parquet',method_name='convnext',method_seed=1"
+irap-eval compare $IRAP_HOME/IRAP_Vietnam convnext_seed*.predictions.parquet vit_seed*.predictions.parquet --a convnext --b vit
+```
+
+`tools/vlm_inference.py` and `agent_classify evaluate` write `predictions.parquet` in their output directory, with an unusable response as an invalid prediction. `save_predictions` does not accept a VLM evaluation step, whose one-hot outputs score an unusable response as class 0.
 
 ### Inference on a custom image folder (unlabeled)
 
