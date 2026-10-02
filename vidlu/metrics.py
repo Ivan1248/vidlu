@@ -592,10 +592,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
         attributes: Ordered mapping from an attribute key (a name or an index; it is the key
             of the per-attribute result dicts) to its `AttributeSpec` (or `(index,
             class_count)` pair).
-        metrics: The metric names to compute, or a mapping from the key each value gets in
-            the result dict to the metric name (for a key the reporting layer treats
-            specially, e.g. `vidlu.experiments.console_hidden("mF1")`); a sequence means
-            each name is its own key.
+        metrics: The names of metrics to compute; each is its own key in the result dict.
         output_kind: What `get_outputs` returns; see `OutputKind`. A probabilistic metric with
             'hard' outputs raises.
         get_target: Extracts the (B, A) targets from the iteration result.
@@ -613,7 +610,7 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
     KNOWN_BASE_METRICS = CONFUSION_MATRIX_METRICS | PROBABILISTIC_METRICS | SUPPORT_ONLY_METRICS
 
     def __init__(self, attributes: T.Mapping[T.Hashable, AttributeSpec | tuple[int, int]],
-                 metrics: T.Sequence[str] | T.Mapping[str, str],
+                 metrics: T.Sequence[str],
                  output_kind: OutputKind = "logits",
                  get_target=lambda r: r.target, get_outputs=lambda r: r.out,
                  ignore_missing_classes: bool = False):
@@ -644,11 +641,9 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
             for a, spec in self.attributes.items()} if prob_names else {}
 
     @classmethod
-    def _parse(cls, metrics: T.Sequence[str] | T.Mapping[str, str]
-               ) -> dict[str, ParsedMetricName]:
-        """Result key -> parsed name; a sequence of names uses each name as its own key."""
-        key_to_name = metrics.items() if isinstance(metrics, T.Mapping) else zip(metrics, metrics)
-        return {key: parse_metric_name(name, cls.KNOWN_BASE_METRICS) for key, name in key_to_name}
+    def _parse(cls, metrics: T.Sequence[str]) -> dict[str, ParsedMetricName]:
+        """Metric name -> parsed name."""
+        return {name: parse_metric_name(name, cls.KNOWN_BASE_METRICS) for name in metrics}
 
     @classmethod
     def _child_metric_names(cls, parsed: T.Iterable[ParsedMetricName]) -> tuple[tuple, tuple]:
@@ -688,11 +683,11 @@ class MultiAttributeClassificationMetrics(AccumulatingMetric):
 
     @torch.no_grad()
     def compute(self, metrics=None):
-        """Computes `metrics` (default: the configured ones; a sequence or a key-to-name
-        mapping as in the constructor).
+        """Computes `metrics` (default: the configured ones; a sequence of names as in the
+        constructor).
 
         Returns:
-            A dict with one entry per requested metric, under its key: a scalar for an
+            A dict with one entry per requested metric, under its name: a scalar for an
             averaged metric (`a{X}`), else a dict mapping each attribute key to its value.
         """
         parsed = self._parsed if metrics is None else self._parse(metrics)

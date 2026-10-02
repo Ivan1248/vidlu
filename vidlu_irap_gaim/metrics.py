@@ -6,7 +6,6 @@ metric names and thresholds and maps iRAP attribute names to output indices and 
 
 from collections.abc import Sequence
 
-from vidlu.experiments import console_hidden
 from vidlu.metrics import (
     SUPPORT_SUFFIX,
     AttributeSpec,
@@ -25,33 +24,31 @@ IRAP_IGNORE_MISSING_CLASSES = True
 IRAP_CLASS_SUPPORT_THRESHOLDS = (5, 10)
 
 
-def irap_metric_names(min_class_supports: Sequence[int] = IRAP_CLASS_SUPPORT_THRESHOLDS,
-                      output_kind: OutputKind = "logits") -> dict[str, str]:
-    """The metrics `get_irap_metrics` requests, as result key -> metric name, console scalars
-    first.
+def get_irap_metric_names(min_class_supports: Sequence[int] = IRAP_CLASS_SUPPORT_THRESHOLDS,
+                          output_kind: OutputKind = "logits") -> tuple[str, ...]:
+    """The metric names `get_irap_metrics` requests: attribute averages, then per-attribute
+    metrics.
 
-    Scalars shown on the console: the attribute averages of the per-attribute metrics (the
-    macro metrics and the chance-corrected `MCC`) and of accuracy, for probabilistic
-    outputs the proper scoring rules
-    `aNLL`, `aBrier` and the class-balanced `amNLL`, and per support threshold the restricted
-    `amF1_suppN` (and `amNLL_suppN`) beside the unrestricted ones, so that the two can be
-    compared directly rather than one replacing the other. The per-attribute metrics get
-    `console_hidden` keys: kept for `MultiAttributeScorePrinter` and the tracker, off the
-    console line; `nc_suppN` is the number of classes entering a restricted mean, without
-    which it cannot be read.
+    The attribute averages are scalars: those of the per-attribute metrics (the macro metrics
+    and the chance-corrected `MCC`) and of accuracy, for probabilistic outputs the proper
+    scoring rules `aNLL`, `aBrier` and the class-balanced `amNLL`, and per support threshold the
+    restricted `amF1_suppN` (and `amNLL_suppN`) beside the unrestricted ones, so that the two
+    can be compared directly rather than one replacing the other. The per-attribute metrics
+    are dicts (attribute -> value); `nc_suppN` is the number of classes entering a restricted
+    mean, without which it cannot be read.
     """
     probabilistic = output_kind != "hard"
-    shown = [*("a" + name for name in IRAP_ATTRIBUTE_METRIC_NAMES), "aA"]
-    hidden = ["mF1", "A", "n", "MCC"]
+    averaged = [*("a" + name for name in IRAP_ATTRIBUTE_METRIC_NAMES), "aA"]
+    per_attribute = ["mF1", "A", "n", "MCC"]
     if probabilistic:
-        shown += ["aNLL", "aBrier", "amNLL"]
-        hidden += ["NLL", "Brier", "mNLL"]
+        averaged += ["aNLL", "aBrier", "amNLL"]
+        per_attribute += ["NLL", "Brier", "mNLL"]
     for n in min_class_supports:
-        shown.append(f"a{IRAP_MAIN_METRIC}{SUPPORT_SUFFIX}{n}")
-        hidden += [f"{IRAP_MAIN_METRIC}{SUPPORT_SUFFIX}{n}", f"nc{SUPPORT_SUFFIX}{n}"]
+        averaged.append(f"a{IRAP_MAIN_METRIC}{SUPPORT_SUFFIX}{n}")
+        per_attribute += [f"{IRAP_MAIN_METRIC}{SUPPORT_SUFFIX}{n}", f"nc{SUPPORT_SUFFIX}{n}"]
         if probabilistic:
-            shown.append(f"amNLL{SUPPORT_SUFFIX}{n}")
-    return {**{name: name for name in shown}, **{console_hidden(name): name for name in hidden}}
+            averaged.append(f"amNLL{SUPPORT_SUFFIX}{n}")
+    return (*averaged, *per_attribute)
 
 
 def get_irap_metrics(
@@ -74,7 +71,7 @@ def get_irap_metrics(
             example in `dataset` (e.g. IRAP-Vietnam's BH-only attributes), which would
             otherwise score NaN from an empty confusion matrix.
         min_class_supports: Support thresholds for the restricted variants of the main
-            metric; see `irap_metric_names`. Pass `()` for the unrestricted metrics only.
+            metric; see `get_irap_metric_names`. Pass `()` for the unrestricted metrics only.
         output_kind: What the evaluation step puts in `iter_result.out`: 'logits'
             (`SupervisedStep`, the default), 'probs' (`MultiScaleSupervisedStep`) or 'hard'
             (one-hot pseudo-logits: VLM text parsing, random baselines). The eval steps
@@ -113,7 +110,7 @@ def get_irap_metrics(
         attributes[name] = AttributeSpec(index=idx, class_count=class_counts[idx])
 
     return MultiAttributeClassificationMetrics(
-        attributes, metrics=irap_metric_names(min_class_supports, output_kind),
+        attributes, metrics=get_irap_metric_names(min_class_supports, output_kind),
         output_kind=output_kind, ignore_missing_classes=IRAP_IGNORE_MISSING_CLASSES)
 
 

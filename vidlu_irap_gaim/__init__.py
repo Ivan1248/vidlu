@@ -26,8 +26,8 @@ from .metrics import (
     IRAP_MAIN_METRIC,
     IRAP_CLASS_SUPPORT_THRESHOLDS,
     get_irap_attribute_metrics,
+    get_irap_metric_names,
     get_irap_metrics,
-    irap_metric_names,
 )
 
 # Models

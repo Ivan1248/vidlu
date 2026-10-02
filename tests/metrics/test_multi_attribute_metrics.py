@@ -49,17 +49,6 @@ def test_integer_keys_work():
     m = MultiAttributeClassificationMetrics({0: (0, 3), 1: (1, 2)}, metrics=("A", "aA"))
     m.update(random_batch())
     assert set(m.compute()["A"]) == {0, 1}
-
-
-def test_a_mapping_gives_each_metric_the_callers_result_key():
-    # The metric knows nothing about how a key is reported; e.g. the reporting layer's
-    # console-hidden keys are just keys that differ from the metric name.
-    m = make_metrics({"per_attribute_A": "A", "aA": "aA"})
-    m.update(random_batch())
-    r = m.compute()
-    assert set(r) == {"per_attribute_A", "aA"}
-    assert r["aA"] == pytest.approx(np.mean(list(r["per_attribute_A"].values())))
-    assert set(m.compute(metrics={"acc": "A"})) == {"acc"}
     assert set(m.compute(metrics=("A",))) == {"A"}
 
 

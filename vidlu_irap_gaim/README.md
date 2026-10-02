@@ -577,8 +577,8 @@ for the reason in the first bullet below.
 | Name | Meaning |
 |---|---|
 | `amF1_suppN` | `amF₁` over classes with support ≥ `N` (scalar, shown on the console) |
-| `_mF1_suppN` | the same per attribute (`mF1_suppN` under a console-hidden key: a printer column, not on the log line) |
-| `_nc_suppN` | how many classes entered that attribute's mean |
+| `mF1_suppN` | the same per attribute (a dict: a `MultiAttributeScorePrinter` column, not on the log line) |
+| `nc_suppN` | how many classes entered that attribute's mean |
 
 Thresholds default to `IRAP_CLASS_SUPPORT_THRESHOLDS = (5, 10)`; pass
 `get_irap_metrics(data.val, min_class_supports=(5, 20))` to change them, or `()` for the
@@ -598,7 +598,7 @@ Three things worth knowing:
   because `DynamicBalancedRecallWeights` (below) actively pushes the model toward
   predicting rare classes.
 - **An attribute with no qualifying class is dropped, not counted as zero.** It contributes
-  NaN per attribute, and the average skips it; `_nc_suppN = 0` marks it. If no attribute
+  NaN per attribute, and the average skips it; `nc_suppN = 0` marks it. If no attribute
   qualifies, `amF1_suppN` is NaN.
 
 Always read `amF1_suppN` next to `nc_suppN`: a higher restricted mean over fewer classes is not by
@@ -627,13 +627,13 @@ attribute and averaged over attributes:
 
 | Name | Meaning | Range |
 |---|---|---|
-| `aNLL` / `_NLL` | negative log-likelihood `-log p[target]`, mean over examples; the value the training loss optimizes, dominated by the tail | [0, ∞) |
-| `aBrier` / `_Brier` | multi-class Brier score `Σ_k (p_k - 1[k = target])²` (Brier 1950; the sum form, not sklearn's binary one) | [0, 2] |
-| `amNLL` / `_mNLL` | class-balanced NLL: per-class mean NLL, averaged over the classes with ground truth; weights every class equally, so a confidently wrong rare class costs as much as a common one | [0, ∞) |
+| `aNLL` / `NLL` | negative log-likelihood `-log p[target]`, mean over examples; the value the training loss optimizes, dominated by the tail | [0, ∞) |
+| `aBrier` / `Brier` | multi-class Brier score `Σ_k (p_k - 1[k = target])²` (Brier 1950; the sum form, not sklearn's binary one) | [0, 2] |
+| `amNLL` / `mNLL` | class-balanced NLL: per-class mean NLL, averaged over the classes with ground truth; weights every class equally, so a confidently wrong rare class costs as much as a common one | [0, ∞) |
 | `amNLL_suppN` | the same restricted to classes with support ≥ `N`, like `amF1_suppN` | [0, ∞) |
-| `aMCC` / `_MCC` | multi-class Matthews correlation coefficient (Gorodkin's R_k): one chance-corrected scalar per attribute, robust to skew | [-1, 1] |
+| `aMCC` / `MCC` | multi-class Matthews correlation coefficient (Gorodkin's R_k): one chance-corrected scalar per attribute, robust to skew | [-1, 1] |
 
-Cohen's kappa is available by name (`akappa`, `_kappa`) but not in the default set. `MCC` is
+Cohen's kappa is available by name (`akappa`, `kappa`) but not in the default set. `MCC` is
 **NaN, not 0**, when every ground-truth or every predicted label is one class (`kappa` when
 both are): sklearn's 0 there is indistinguishable from chance level. A NaN attribute is dropped from the
 attribute average, which is NaN only if no attribute has a defined value; the same rule makes
@@ -1296,7 +1296,7 @@ attribute set, `lstm_trainer=...` / `lstm_metrics=...` / `lstm_main_metric=...` 
 the LSTM experiment configuration, and `lstm_tracker='wandb'` enables tracking for the
 LSTM runs. The metric defaults come from `irap_gaim.metrics`: `DEFAULT_LSTM_METRICS`
 uses `get_irap_attribute_metrics`, the single-attribute restriction of
-`get_irap_metrics`, so `mF1`/`mP`/`mR`/`n` mean exactly what `amF1`/`amP`/`amR`/`_n`
+`get_irap_metrics`, so `mF1`/`mP`/`mR`/`n` mean exactly what `amF1`/`amP`/`amR`/`n`
 mean in the base run; and `IRAP_MAIN_METRIC` (`mF1`) selects each attribute's best
 checkpoint, matching the base run's `amF1`-based selection instead of accuracy.
 
@@ -1415,8 +1415,8 @@ For releases that do not use the default `$IRAP_HOME/IRAP_BIH_METADATA` (e.g. IR
 
 | Symbol | Description |
 |--------|-------------|
-| `get_irap_metrics(dataset, class_counts, attrs_to_include, min_class_supports, output_kind)` | Canonical metric factory: one `MultiAttributeClassificationMetrics` requesting `irap_metric_names(...)` (`amF1`, `amP`, `amR`, `aA`, `aMCC`, plus `amF1_suppN` / `_mF1_suppN` / `_nc_suppN` per threshold; with `output_kind` `'logits'`/`'probs'` also `aNLL`, `aBrier`, `amNLL`, `amNLL_suppN`) |
-| `irap_metric_names(min_class_supports, output_kind)` | The requested metrics as result key → metric name, console scalars first; per-attribute metrics get `vidlu.experiments.console_hidden` keys (`_mF1`, `_n`, ...), which `report_metrics` leaves off its log line and the tracker and `MultiAttributeScorePrinter` show without the prefix. The metric classes themselves do not know the convention. |
+| `get_irap_metrics(dataset, class_counts, attrs_to_include, min_class_supports, output_kind)` | Canonical metric factory: one `MultiAttributeClassificationMetrics` requesting `get_irap_metric_names(...)` (`amF1`, `amP`, `amR`, `aA`, `aMCC`, plus `amF1_suppN` / `mF1_suppN` / `nc_suppN` per threshold; with `output_kind` `'logits'`/`'probs'` also `aNLL`, `aBrier`, `amNLL`, `amNLL_suppN`) |
+| `get_irap_metric_names(min_class_supports, output_kind)` | The requested metric names: attribute averages (scalars), then the per-attribute metrics (`mF1`, `n`, ...), whose values are dicts. `vidlu.experiments.report_metrics` decides by value type what appears on the console line (Mappings are left to the tracker and `MultiAttributeScorePrinter`), so the metrics carry no reporting information. |
 | `get_irap_attribute_metrics(class_count)` | The same protocol for one attribute (`mF1`, `mP`, `mR`, `n`) — used by sequential enhancement; no `_suppN` or probabilistic variants |
 | `IRAP_ATTRIBUTE_METRIC_NAMES`, `IRAP_MAIN_METRIC` | The metric set and the checkpoint-selection metric, defined once for both |
 | `IRAP_CLASS_SUPPORT_THRESHOLDS` | Default support thresholds `(5, 10)` for the `_suppN` variants |
