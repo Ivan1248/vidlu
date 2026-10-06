@@ -5,7 +5,7 @@ per-attribute LSTM training) from one command, on top of a trained base
 classifier experiment:
 
   python scripts/run.py test <data> <input_adapter> <model> <trainer> -e _ -r \\
-    -m "irap_gaim:train_seq_enh,e"
+    -m "irap_gaim:train_seq_enh"
 
 Features are extracted once per (base experiment, checkpoint) into a cache
 directory and reused on reruns. Each attribute's LSTM is trained as a regular
@@ -69,7 +69,7 @@ def make_feat_cache_dir(feat_cache_root, experiment_name: str, checkpoint_name: 
 
 
 def get_restored_checkpoint_name(cpman) -> str:
-    """Retrieve the name of the checkpoint restored by the checkpoint manager.
+    """Retrieves the name of the checkpoint restored by the checkpoint manager.
 
     Args:
         cpman: CheckpointManager instance.
@@ -152,24 +152,23 @@ def make_lstm_experiment_args(*, feat_dir, logit_dir, attribute, metadata_dir, c
 
 def _train_lstm_experiment(args, dirs) -> dict:
     """Builds and trains one LSTM experiment; returns its final val/test metrics."""
-    from vidlu.experiments import (TrainingExperiment, get_experiment_command,
-                                   load_checkpoint_for_resume_mode)
+    from vidlu.experiments import (TrainingExperiment, get_checkpoint_resumption,
+                                   get_experiment_command, load_checkpoint_for_resume)
+    from vidlu.training import get_training_data
 
     print("\nLSTM experiment command (standalone-reproducible):\n"
           + get_experiment_command(args))
     lstm_exp = TrainingExperiment.from_args(args, dirs=dirs)
     exit_code = 1
     try:
-        training_datasets = {k: v for k, v in lstm_exp.data.items() if k.startswith("train")}
-        lstm_exp.trainer.train(*training_datasets.values(), restart=False)
+        lstm_exp.trainer.train(*get_training_data(lstm_exp.data).values(), restart=False)
 
         # Training ends on whichever epoch came last, which need not be a checkpointed one, so
         # the reported numbers are taken from the checkpoint that `resume` designates — the same
         # weights the printed command would restore.
-        checkpoint_state, _, index = load_checkpoint_for_resume_mode(lstm_exp.cpman, args.resume)
+        checkpoint_state, _, index = load_checkpoint_for_resume(lstm_exp.cpman, args.resume)
         lstm_exp.trainer.load_state_dict(checkpoint_state)
-        print(f"Evaluating checkpoint {index}"
-              f" ({'best' if args.resume == 'best' else 'last'}).")
+        print(f"Evaluating checkpoint {index} ({get_checkpoint_resumption(args.resume)}).")
 
         split_to_metrics = {}
         for name, ds in lstm_exp.data.items():
@@ -192,7 +191,7 @@ DEFAULT_LSTM_METRICS = "irap_gaim.get_irap_attribute_metrics(data.train.info.cla
 
 
 def get_evaluated_attribute_indices(base_info) -> list[int]:
-    """Retrieve indices of attributes evaluated by the base multi-attribute experiment.
+    """Retrieves indices of attributes evaluated by the base multi-attribute experiment.
 
     Args:
         base_info: Dataset `info` mapping containing `attr_to_num_labeled` and `attr_to_value_to_class_idx`.
@@ -254,7 +253,7 @@ def train_seq_enh(exp, *, attributes=None, context_offsets=DEFAULT_CONTEXT_OFFSE
                   feat_dtype="float16", lstm_trainer="irap_gaim.seq_enh_lstm_trainer",
                   lstm_metrics=DEFAULT_LSTM_METRICS, lstm_main_metric=IRAP_MAIN_METRIC,
                   lstm_resume="?", lstm_tracker=None, dirs=None):
-    """Execute complete sequential enhancement pipeline over a trained base classifier.
+    """Executes the complete sequential enhancement pipeline over a trained base classifier.
 
     Extracts and caches per-segment feature representations for all dataset splits,
     trains independent `GeneralLSTMModel` temporal smoothing models per attribute,

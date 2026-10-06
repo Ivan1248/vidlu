@@ -56,3 +56,14 @@ extensions = ExtensionDict({
     name[len(EXT_PREFIX):]: LazyModule(name)
     for finder, name, ispkg in pkgutil.iter_modules()
     if name.startswith(EXT_PREFIX)})
+
+
+def import_extension_module(name: str):
+    """Imports a module, in whose name an extension can be named as in `extensions`, without
+    `EXT_PREFIX`, e.g. `irap_gaim.tools.inference` for `vidlu_irap_gaim.tools.inference`.
+
+    Other names, including the full names of extension modules, are imported unchanged.
+    """
+    if name.partition('.')[0] in extensions:
+        name = EXT_PREFIX + name
+    return importlib.import_module(name)

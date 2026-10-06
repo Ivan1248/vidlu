@@ -153,7 +153,7 @@ def run_pipeline(e, output: T.Union[str, Path], conf_thresh: float = 0.0, temper
     """Run pseudo-label generation pipeline from a TrainingExperiment.
 
     Intended to be called as a module hook via run.py:
-        test -r best -m vidlu_irap_gaim.tools.generate_pseudo_labels:run_pipeline,e,output='...',conf_thresh=0.8
+        test -r best -m "vidlu_irap_gaim.tools.generate_pseudo_labels:run_pipeline(e,output='...',conf_thresh=0.8)"
 
     Args:
         e: TrainingExperiment with model already loaded from best checkpoint.

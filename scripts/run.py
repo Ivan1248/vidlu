@@ -28,6 +28,7 @@ from vidlu.experiments import (
     TrainingExperimentFactoryArgs,
     get_experiment_command,
 )
+from vidlu.training import get_training_data
 from vidlu.training.checkpoint_manager import find_checkpoint_dir
 from vidlu.utils import debug
 from vidlu.utils.func import Empty, call_with_assignable_args
@@ -154,7 +155,7 @@ def train(args):
 
             print(('\nContinuing' if args.resume not in (
                 "restart", None) else 'Starting') + ' training...')
-            training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
+            training_datasets = get_training_data(exp.data)
 
             torch.cuda.empty_cache()
             exp.trainer.train(*training_datasets.values(), restart=False)
@@ -163,7 +164,6 @@ def train(args):
                 with vtu.preserve_state(exp.trainer.model):
                     approximate_pop_stats(exp, exp.data.train)
                     print(f'\nEvaluating using approximate population statistics...')
-                    eval_on_test_sets(exp)
                     eval_on_test_sets(exp, prefix="val")
 
             if not args.dry_run:
@@ -223,24 +223,19 @@ def test(args):
         set_up_dry_run(e, args.num_dry_run_iterations)
 
     if (module_arg := args.module) is not None:
-        import importlib
-        module_name, proc_name, *_ = *module_arg.split(':'), None
-        if proc_name is None:
-            proc_name = 'run'
-        from vidlu.factories import extensions
-        if module_name in extensions:
-            module = extensions[module_name]
+        # Only the first ':' separates the module, as the expression can contain ':'.
+        module_name, _, expression = module_arg.partition(':')
+        expression = expression or 'run'
+        from vidlu.extensions import extensions, import_extension_module
+        module = import_extension_module(module_name)
+        if expression.isidentifier():
+            result = getattr(module, expression)(e)
         else:
-            module = importlib.import_module(module_name)
-        if ',' in proc_name:
-            proc_name, args_str = proc_name.split(",", 1)
             eval_globals = {**vars(module), **extensions}
-            result = eval(f"{proc_name}({args_str})", eval_globals, locals())
-        else:
-            result = getattr(module, proc_name)(e)
+            result = eval(expression, eval_globals, locals())
     else:
         print('Starting evaluation (test/val):...')
-        eval_on_test_sets(e)
+        eval_on_test_sets(e, prefix="test")
         print('Starting evaluation (train):...')
         e.trainer.eval(e.data.train)
 
@@ -337,7 +332,11 @@ if __name__ == "__main__":
     parser_test = subparsers.add_parser("test")
     add_standard_arguments(parser_test, test)
     parser_test.add_argument("-m", "--module", type=str, default=None,
-                             help="Path of a module containing a run(Experiment) procedure.")
+                             help="'<module>[:<procedure>]' calls <procedure> (default: run)"
+                                  + " of <module> with the experiment. '<module>:<expression>',"
+                                  + " e.g. 'irap_gaim.tools.inference:run(e, split=\"val\")',"
+                                  + " evaluates <expression> with the names of <module>, the"
+                                  + " extensions and the experiment `e`.")
 
     args = parser.parse_args()
 
