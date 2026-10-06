@@ -16,6 +16,8 @@ import torch
 from PIL import Image
 from torch import nn
 
+from vidlu.torch_utils import map_tensors
+
 from vidlu_irap_gaim.peft_utils import (check_lora_match, make_nf4_quantization_config,
                                         normalize_lora_target_modules)
 from vidlu_irap_gaim.vlm.image_utils import to_pil_image as _to_pil_image
@@ -285,7 +287,8 @@ class _BaseVLMClassifier(nn.Module):
         if (len(images) > 1 and not self._SUPPORTS_LEFT_PADDED_GENERATION
                 and not bool(inputs["attention_mask"].all())):
             return generate_one_by_one()
-        inputs = inputs.to(next(self._model.parameters()).device)
+        device = next(self._model.parameters()).device
+        inputs = map_tensors(inputs, lambda t: t.to(device))
 
         raw_texts, is_truncated = self._generate_within_budget(
             inputs, max_response_tokens, amp, min_new_tokens=min_new_tokens)
