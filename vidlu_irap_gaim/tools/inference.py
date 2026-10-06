@@ -28,7 +28,7 @@ from vidlu.utils.collections import NameDict
 
 from vidlu_irap_gaim.prediction_files import (check_output_kind_storable,
                                               make_model_info_from_experiment,
-                                              make_prediction_file_spec, write_output_predictions)
+                                              make_prediction_file_spec, write_predictions)
 from vidlu_irap_gaim.tools.vis_utils import (
     PredictionRow,
     make_visualization_image,
@@ -455,7 +455,7 @@ def run(
     metrics = getattr(metrics, "metrics", None) if metrics is not None else None
     summary = collector.finalize(save_json=save_json, metrics=metrics, split=split, limit=limit)
     if output_collector is not None:
-        prediction_file_path = write_output_predictions(
+        prediction_file_path = write_predictions(
             out_dir, prediction_file_spec, output_collector.segment_ids,
             output_collector.get_outputs(), output_kind)
         print(f"Wrote the predictions of {len(output_collector.segment_ids)} segments to"

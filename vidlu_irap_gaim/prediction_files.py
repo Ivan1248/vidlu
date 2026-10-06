@@ -165,7 +165,7 @@ def _write_predictions_to_dir(output_dir: str | Path, predictions: ie.Prediction
     return path
 
 
-def write_output_predictions(
+def write_predictions(
     output_dir: str | Path,
     spec: PredictionFileSpec,
     segment_ids: T.Sequence[str],
