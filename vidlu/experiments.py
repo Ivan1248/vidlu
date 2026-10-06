@@ -18,7 +18,7 @@ import vidlu.utils.distributed as vud
 
 # from torch.utils.tensorboard import SummaryWriter
 from vidlu import factories
-from vidlu.training import CheckpointManager, EpochLoop, IterState, Trainer
+from vidlu.training import CheckpointManager, EpochLoop, IterState, Trainer, get_validation_data
 from vidlu.utils.logger import Logger
 from vidlu.utils.misc import Stopwatch, indent_print, query_user, try_input
 from vidlu.utils.path import to_valid_path
@@ -163,7 +163,7 @@ class TrainingCallback:
     """
 
     def attach(self, trainer: Trainer):
-        """Bind handlers by naming convention: on_<loop>_<event> -> trainer.<loop>.<event>."""
+        """Binds handlers by naming convention: on_<loop>_<event> -> trainer.<loop>.<event>."""
         self.detach()
         self.trainer = trainer
         self._handles = []
@@ -320,41 +320,55 @@ def get_main_metric_value(metrics: T.Mapping[str, T.Any], main_metrics: T.Sequen
     return metrics[name]
 
 
+def get_checkpoint_val_data_key(data: T.Mapping[str, T.Any]) -> str | None:
+    """The key of the validation data entry whose main metric ranks the checkpoints in
+    `define_training_loop_actions`: the first key of `get_validation_data(data)`, None if there is
+    none."""
+    return next(iter(get_validation_data(data)), None)
+
+
 class ValidationCheckpointHandler(TrainingCallback):
+    """Evaluates the validation data entries (`get_validation_data`) at the evaluation epochs and
+    saves a checkpoint ranked by the main metric on the entry `checkpoint_val_data_key`, or no
+    checkpoint if it is None.
+
+    Raises:
+        ValueError: If `checkpoint_val_data_key` is not the key of a validation data entry.
+    """
+
     def __init__(self, data, cpman: CheckpointManager, main_metrics: T.Sequence[str],
-                 eval_count, epoch_count, logger: Logger,
-                 checkpoint_split_prefix: str | None = None):
+                 eval_count, epoch_count, logger: Logger, checkpoint_val_data_key: str | None):
+        if checkpoint_val_data_key is not None and (
+                checkpoint_val_data_key not in get_validation_data(data)):
+            raise ValueError(f"The checkpoints cannot be ranked by {checkpoint_val_data_key!r},"
+                             f" which is not among the validation data entries"
+                             f" {list(get_validation_data(data))}.")
         self.data = data
         self.cpman = cpman
         self.main_metrics = main_metrics
         self.eval_epochs = get_report_iters(eval_count, epoch_count)
         self.logger = logger
-        self.checkpoint_split_prefix = checkpoint_split_prefix
+        self.checkpoint_val_data_key = checkpoint_val_data_key
 
     def on_training_epoch_completed(self, state: IterState):
         if state.epoch not in self.eval_epochs:
             return
 
-        checkpoint_saved = False
-        for name, ds in self.data.items():
-            if name.startswith("val"):
-                # Run evaluation on the validation set
-                es_val = self.trainer.eval(ds, split_name=name)
+        for name, ds in get_validation_data(self.data).items():
+            es_val = self.trainer.eval(ds, split_name=name)
 
-                should_checkpoint = (
-                        not checkpoint_saved and (self.checkpoint_split_prefix is None or
-                                                  name.startswith(self.checkpoint_split_prefix)))
-                if should_checkpoint:
-                    perf = get_main_metric_value(es_val.metrics, self.main_metrics, name)
-                    self.cpman.save(self.trainer.state_dict(),
-                                    summary=dict(logger=self.logger.state_dict(),
-                                                 perf=perf,
-                                                 log=self.logger.as_text(),
-                                                 epoch=state.epoch))
-                    checkpoint_saved = True
+            if name == self.checkpoint_val_data_key:
+                perf = get_main_metric_value(es_val.metrics, self.main_metrics, name)
+                self.cpman.save(self.trainer.state_dict(),
+                                summary=dict(logger=self.logger.state_dict(),
+                                             perf=perf,
+                                             log=self.logger.as_text(),
+                                             epoch=state.epoch))
 
     def __repr__(self):
-        return f"ValidationCheckpointHandler({list(self.data.keys())}, cpman={self.cpman}, main_metrics={self.main_metrics}, eval_count={self.eval_count}, epoch_count={self.epoch_count}, checkpoint_split_prefix={self.checkpoint_split_prefix})"
+        return (f"ValidationCheckpointHandler({list(self.data.keys())}, cpman={self.cpman},"
+                f" main_metrics={self.main_metrics}, eval_epochs={sorted(self.eval_epochs)},"
+                f" checkpoint_val_data_key={self.checkpoint_val_data_key!r})")
 
 
 class QuickValidationHandler(TrainingCallback):
@@ -456,15 +470,10 @@ def define_training_loop_actions(
                                                'freq': lambda k, v: f'{v:.1f}/s',
                                                'freq_max': lambda k, v: f'freq_max={k, v:.1f}'},
         line_width: int = 120,
-        checkpoint_split_prefix: str | None = None,
         quick_eval_count: int = 8000,
         tracker: "MetricTracker | None" = None) -> T.Sequence[TrainingCallback]:
     """
     Args:
-        checkpoint_split_prefix: Prefix for split to use for checkpointing (default: None).
-            If None, uses first evaluated split (current behavior).
-            If provided (e.g., 'test'), checkpoints are saved only when evaluating splits
-            starting with that prefix. This ensures checkpoints use metrics from the intended split.
         quick_eval_count: Total number of quick validations for the training run when val_quick is in data.
     """
     if trainer.eval_count is not None:
@@ -484,7 +493,7 @@ def define_training_loop_actions(
         ValidationCheckpointHandler(
             data=data, cpman=cpman, main_metrics=main_metrics, eval_count=eval_count,
             epoch_count=trainer.epoch_count, logger=logger,
-            checkpoint_split_prefix=checkpoint_split_prefix)]
+            checkpoint_val_data_key=get_checkpoint_val_data_key(data))]
     if "val_quick" in data:
         callbacks.append(QuickValidationHandler(
             data=data, quick_eval_count=quick_eval_count,
@@ -548,13 +557,34 @@ def get_experiment_id_parts(training_args):
     return [a.data, a.input_adapter, a.model, a.trainer, a.params or "", a.experiment_suffix or "_"]
 
 
+def get_method_string(training_args, include_model=False, include_input_adapter=False,
+                      include_data=False, include_metrics=False):
+    a = training_args
+    parts = [a.trainer]
+    if include_model:
+        parts.append(a.model)
+    if include_input_adapter:
+        parts.append(a.input_adapter)
+    if include_data:
+        parts.append(a.data)
+    if include_metrics:
+        parts.append(a.metrics)
+    return "_".join(parts)
+
+
 def get_experiment_path(training_args):
     path = "/".join(get_experiment_id_parts(training_args))
     return f'{to_valid_path(path, split_long_names=True)}'
 
 
+def get_checkpoint_resumption(resume) -> T.Literal["best", "last"]:
+    """The checkpoint that `TrainingExperimentFactoryArgs.resume` resumes from."""
+    return "best" if resume == "best" else "last"
+
+
 def load_checkpoint_for_resume(cpman, resume, map_location=None):
-    return (cpman.load_best if resume == "best" else cpman.load_last)(map_location=map_location)
+    load = cpman.load_best if get_checkpoint_resumption(resume) == "best" else cpman.load_last
+    return load(map_location=map_location)
 
 
 def create_checkpoint_manager(training_args: TrainingExperimentFactoryArgs, checkpoints_root):
@@ -675,6 +705,14 @@ class TrainingExperiment:
     attachments: T.Sequence[object]
     logger: Logger
     tracker: "MetricTracker | None" = None
+    checkpoint_resumption: T.Literal["best", "last"] | None = None
+    training_args: TrainingExperimentFactoryArgs | None = None  # what `from_args` was given
+
+    @property
+    def checkpoint_val_data_key(self) -> str | None:
+        """The key of the data entry that ranks the checkpoints (see
+        `ValidationCheckpointHandler`), as `define_training_loop_actions` chooses it."""
+        return get_checkpoint_val_data_key(self.data)
 
     @staticmethod
     def from_args(training_args: TrainingExperimentFactoryArgs, dirs):
@@ -682,17 +720,16 @@ class TrainingExperiment:
         logger = Logger(emit=tqdm.write)
         a = training_args
 
-        experiment = Namespace()
         factory_namespace = factories.make_namespace(training_args.imports, training_args.pre)
+        experiment = Namespace()
         factory_namespace.update(dirs=dirs, experiment=experiment)
 
         with indent_print("\nSetting device and setting up distributed training..."):
             device, distributed = get_device_and_distributed_flag(a.device, a.distributed)
 
-        with indent_print('\nInitializing checkpoint manager...'):
+        with indent_print('\nInitializing checkpoint manager and tracker...'):
             experiment.cpman = cpman = create_checkpoint_manager(a, dirs.saved_states)
-
-        experiment.tracker = tracker = make_tracker(a, cpman)
+            experiment.tracker = tracker = make_tracker(a, cpman)
 
         try:
             with indent_print('\nInitializing data...'):
@@ -717,7 +754,7 @@ class TrainingExperiment:
                 experiment.trainer = trainer
 
             define_training_loop_actions(trainer, cpman, experiment.data, logger,
-                                         main_metrics=main_metrics, tracker=tracker, 
+                                         main_metrics=main_metrics, tracker=tracker,
                                          quick_eval_count=a.quick_eval_count)
         finally:
             resuming_required = cpman.resuming_required
@@ -735,16 +772,7 @@ class TrainingExperiment:
                 print(a.params)
                 load_parameters(model, a.params, dirs.pretrained)
 
-        return TrainingExperiment(**experiment.__dict__, logger=logger)
-
-
-class TrainingExperimentBuilder(Namespace):
-    def build(self) -> TrainingExperiment:
-        required = ["model", "trainer", "data", "cpman", "attachments", "logger", "callbacks"]
-        missing = [key for key in required if not hasattr(self, key)]
-        if missing:
-            raise ValueError(f"Missing required attributes: {', '.join(missing)}")
-        return TrainingExperiment(model=self.model, trainer=self.trainer, data=self.data,
-                                  cpman=self.cpman, attachments=self.attachments,
-                                  logger=self.logger,
-                                  callbacks=self.callbacks)
+        return TrainingExperiment(
+            **experiment.__dict__,
+            checkpoint_resumption=(get_checkpoint_resumption(a.resume) if resuming_required
+                                   else None), logger=logger, training_args=training_args)

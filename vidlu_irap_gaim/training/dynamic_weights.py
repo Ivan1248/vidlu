@@ -20,6 +20,7 @@ from irap_data.attrs import get_attrs_to_include, map_attr_names_to_indices
 from irap_data import compute_class_occurrence_counts
 
 from vidlu.metrics import confusion_matrix_class_stats
+from vidlu.training import get_training_data
 from vidlu.training.extensions import TrainerExtension
 
 log = logging.getLogger(__name__)
@@ -218,7 +219,7 @@ class DynamicBalancedRecallWeights(TrainerExtension):
     def _get_train_datasets(self, trainer) -> dict:
         """The training splits the occurrence counts are taken over, validated."""
         if self.train_split_names is None:
-            names = [name for name in trainer.data if name.startswith("train")]
+            names = list(get_training_data(trainer.data))
             if not names:
                 raise ValueError(
                     "DynamicBalancedRecallWeights found no training split in trainer.data"

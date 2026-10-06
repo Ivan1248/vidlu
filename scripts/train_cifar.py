@@ -18,7 +18,7 @@ from vidlu.utils.logger import Logger
 from vidlu.utils import debug
 import vidlu.utils.func as vuf
 import vidlu.configs.training as vct
-from vidlu.training import CheckpointManager, Trainer
+from vidlu.training import CheckpointManager, Trainer, get_training_data
 from vidlu.optim.lr_schedulers import ConstLR
 import dirs
 from run import log_run
@@ -101,7 +101,7 @@ def train(resume, restart):
     log_run('cont.' if resume else 'start')
 
     print(('Continuing' if resume else 'Starting') + ' training...')
-    training_datasets = {k: v for k, v in exp.data.items() if k.startswith("train")}
+    training_datasets = get_training_data(exp.data)
     exp.trainer.train(*training_datasets.values(), restart=False)
 
     print(f'Evaluating on training data ({", ".join(training_datasets.keys())})...')

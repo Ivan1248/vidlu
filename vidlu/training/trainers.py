@@ -29,7 +29,7 @@ from vidlu.training.extensions import TrainerExtension
 # EpochLoop based on Ignite Engine #################################################################
 
 def _to_hours_mins_secs(t_s):
-    """Convert seconds to hours, minutes, and seconds."""
+    """Converts seconds to hours, minutes, and seconds."""
     m, s = divmod(t_s, 60)
     h, m = divmod(m, 60)
     return h, m, s
@@ -332,6 +332,18 @@ def divide_batch_size_over_processes(batch_size: T.Union[int, T.Sequence[int]]):
 
 # Trainer ##########################################################################################
 
+def get_training_data(data: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
+    """The entries of `data` that `Trainer.train` trains on when given no datasets: those whose
+    names start with "train"."""
+    return {name: ds for name, ds in data.items() if name.startswith("train")}
+
+
+def get_validation_data(data: T.Mapping[str, T.Any]) -> dict[str, T.Any]:
+    """The validation entries of `data`, which `Trainer.eval` evaluates when given no datasets
+    if there are any: those whose names start with "val"."""
+    return {name: ds for name, ds in data.items() if name.startswith("val")}
+
+
 class _RngCheckpoint:
     """state_dict/load_state_dict adapter for reproducible-resume RNG state.
 
@@ -428,7 +440,7 @@ class Trainer(Evaluator):
 
     def get_training_data_loader(self, *datasets, disable_jittering=False, **kwargs):
         if len(datasets) == 0:
-            datasets = tuple(ds for name, ds in self.data.items() if name.startswith("train"))
+            datasets = tuple(get_training_data(self.data).values())
             if len(datasets) == 0:
                 raise ValueError("No datasets provided for training.")
         if not disable_jittering and self.jitter is not None:
@@ -445,7 +457,7 @@ class Trainer(Evaluator):
 
     def eval(self, *datasets, batch_size=None, **kwargs):
         if len(datasets) == 0:
-            val_splits = [ds for name, ds in self.data.items() if name.startswith("val")]
+            val_splits = list(get_validation_data(self.data).values())
             test_splits = [ds for name, ds in self.data.items() if name.startswith("test")]
             datasets = tuple(val_splits or test_splits)
             if len(datasets) == 0:
