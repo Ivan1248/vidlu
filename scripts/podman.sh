@@ -39,17 +39,9 @@ cd $containerdir
 projname=$(basename "$containerdir" | tr '[:upper:]' '[:lower:]')
 image_name="${projname,,}-devel"
 
-containerfile_mtime=$(stat -c %Y Containerfile 2>/dev/null || echo 0)
-timestamp_file=".containerfile_last_build"
-last_build_time=$(cat $timestamp_file 2>/dev/null || echo 0)
-if [[ $containerfile_mtime -gt $last_build_time ]]; then
-  build_cmd="podman build -t $image_name -f Containerfile ."
-  echo "Containerfile changed. Building image with command: $build_cmd"
-  eval $build_cmd
-  echo $containerfile_mtime > $timestamp_file
-else
-  echo "Containerfile unchanged. Skipping build."
-fi
+build_cmd="podman build -t $image_name -f Containerfile ."
+echo "Building image with command: $build_cmd"
+eval $build_cmd
 cd -
 
 echo $(pwd)
