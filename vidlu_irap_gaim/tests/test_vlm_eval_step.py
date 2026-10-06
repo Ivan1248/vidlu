@@ -175,8 +175,8 @@ def _step_with(scheme, attrs=("A", "B"), **kwargs):
     from vidlu_irap_gaim.vlm.finetuning.steps import VLMEvalStep
 
     step = VLMEvalStep(**kwargs)
-    # Normally read off the dataset's `info` by `_ensure_config`.
-    step._config = VLMDatasetConfig(
+    # Normally read off the dataset's `info` by `_ensure_dataset_config`.
+    step._dataset_config = VLMDatasetConfig(
         response_scheme=scheme,
         attrs_to_include=list(attrs),
         detail_level="attr_desc_vals",

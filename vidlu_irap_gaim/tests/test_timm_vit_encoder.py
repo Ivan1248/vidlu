@@ -59,8 +59,8 @@ def test_dinov3_declares_imagenet_normalization(dinov3):
 
 def test_normalization_is_applied_to_inputs(siglip2):
     """Frames arrive in [0, 1]. With mean = std = 0.5 they must be mapped to [-1, 1]."""
-    assert siglip2.normalize(torch.ones(1, 3, 2, 2)).unique().tolist() == [1.0]
-    assert siglip2.normalize(torch.zeros(1, 3, 2, 2)).unique().tolist() == [-1.0]
+    assert siglip2.normalize_input(torch.ones(1, 3, 2, 2)).unique().tolist() == [1.0]
+    assert siglip2.normalize_input(torch.zeros(1, 3, 2, 2)).unique().tolist() == [-1.0]
 
 
 def test_dinov3_register_tokens_are_excluded_from_the_feature_map(dinov3):

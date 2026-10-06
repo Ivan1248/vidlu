@@ -24,6 +24,7 @@ from vidlu_irap_gaim.seq.dataset import (
     SeqEnhDataset,
     make_seq_enh_data,
 )
+from vidlu_irap_gaim.seq import feats as seq_feats
 from vidlu_irap_gaim.seq.feats import extract_features, pack_features, read_attribute_slices
 from vidlu_irap_gaim.seq.models import (
     GeneralLSTMModel,
@@ -323,6 +324,16 @@ def test_a_feature_only_cache_is_completed_rather_than_reused(tmp_path):
 # Packed feature store #############################################################################
 
 
+def _start_a_new_process():
+    """Forgets which packed stores this process has verified.
+
+    `pack_features` trusts a store it verified earlier in the process, since only
+    `extract_features` changes a feature directory within one. Editing the directory
+    directly stands in for a later run, which starts with nothing verified.
+    """
+    seq_feats._verified_pack_dirs.clear()
+
+
 def test_packing_reproduces_the_per_segment_features(tmp_path):
     feat_dir = _write_synthetic_seq_enh_inputs(tmp_path).feat_dir
     source = _feat_source(feat_dir)
@@ -340,6 +351,7 @@ def test_packing_is_redone_when_a_segment_is_added(tmp_path):
     assert _feat_source(feat_dir).has_features("s019")
 
     np.save(feat_dir / "s099.npy", np.zeros(6, dtype=np.float16))
+    _start_a_new_process()
     source = _feat_source(feat_dir)
     assert source.has_features("s099")
     assert torch.equal(source.get_sequence(["s099"])[0], torch.zeros(6))
@@ -352,6 +364,7 @@ def test_packing_is_redone_when_a_segment_is_replaced_by_another(tmp_path):
 
     (feat_dir / "s019.npy").unlink()
     np.save(feat_dir / "s099.npy", np.full(6, 3, dtype=np.float16))
+    _start_a_new_process()
     source = _feat_source(feat_dir)
 
     assert not source.has_features("s019")
@@ -364,6 +377,7 @@ def test_a_truncated_pack_index_is_rebuilt(tmp_path):
     feat_dir = _write_synthetic_seq_enh_inputs(tmp_path).feat_dir
     array_path, index_path = pack_features(feat_dir)
     index_path.write_text(index_path.read_text()[:20])  # interrupted mid-dump
+    _start_a_new_process()
 
     assert pack_features(feat_dir) == (array_path, index_path)
     assert _feat_source(feat_dir).has_features("s019")
