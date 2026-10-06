@@ -20,17 +20,11 @@ Usage (CLI):
     IRAP_HOME=/path/to/data python -m vidlu_irap_gaim.tools.vlm_inference \
         --split test --attrs-per-session 1 --output-dir results/vlm_per_attr
 
-    # Evaluate on custom folder (no labels)
-    python -m vidlu_irap_gaim.tools.vlm_inference \
-        --image-folder /path/to/images --output-dir results/vlm_custom
-
     # Use FP8 model with vLLM backend (auto-selected for FP8 models)
     python -m vidlu_irap_gaim.tools.vlm_inference \
         --split test --model-id "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
 
-Usage (via Vidlu runner):
-    python scripts/run.py test <data> <input_adapter> <model> <trainer> \\
-        -m irap_gaim.tools.vlm_inference:run,e,attrs_per_session=1
+Usage (via Vidlu runner): see `run`.
 
 To evaluate a `_BaseVLMClassifier` (pretrained or fine-tuned) rather than a
 standalone predictor, see ``vidlu_irap_gaim.vlm.finetuning.predictor``.
@@ -40,17 +34,19 @@ Interactive control:
 """
 
 import argparse
+import dataclasses as dc
 import json
 import sys
 import time
+import typing as T
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+import irap_evaluation as ie
 import torch
 from tqdm import tqdm
 
-from vidlu_irap_gaim.vlm.models.base import attribute_sessions
+from vidlu_irap_gaim.vlm.models.base import BaseVLMPredictor, attribute_sessions
 from vidlu_irap_gaim.vlm.models.thinking import DEFAULT_THINKING_BUDGET
 from vidlu_irap_gaim.vlm.predictions import is_usable_prediction
 from vidlu_irap_gaim.vlm.response_scheme import DEFAULT_RESPONSE_TOKEN_MARGIN
@@ -127,34 +123,7 @@ def make_eval_data(
                 upsampling_factor=upsampling_factor)
 
 
-def _load_dataset(
-    split: str,
-    image_folder: str | None,
-    dataset_name: str = "bh",
-    response_scheme: str = "standard",
-    detail_level: str | None = None,
-    upsampling_factor: int = 1,
-):
-    """Loads a dataset for evaluation.
-
-    Returns:
-        The dataset. Labeled splits are VLM-wrapped, so they carry the response
-        scheme and the attribute subset on ``info``; an unlabeled image folder
-        carries only the attribute metadata, and the caller supplies the rest.
-    """
-    if image_folder is None:
-        return make_eval_data(dataset_name, response_scheme, detail_level,
-                              upsampling_factor)[split]
-
-    from irap_data import InferenceImageDataset
-
-    # Custom folder - needs a reference dataset for the attribute metadata.
-    ref_ds = make_eval_data(dataset_name, response_scheme, detail_level,
-                            upsampling_factor)["test"]
-    return InferenceImageDataset.from_folder(image_folder, reference_dataset=ref_ds)
-
-
-def _dataset_has_labels(dataset: Any) -> bool:
+def _dataset_has_labels(dataset: T.Any) -> bool:
     try:
         sample = dataset[0]
     except Exception:
@@ -210,141 +179,136 @@ def _is_vllm_available() -> bool:
         return False
 
 
-def _create_predictor(
-    model_id: str,
-    device: str,
-    torch_dtype: str,
-    use_flash_attention: bool,
-    response_scheme,
-    attrs_per_session: int | None,
-    min_new_tokens: int,
-    max_response_tokens: int | None,
-    response_token_margin: int,
-    debug: bool,
-    backend: str = "auto",
-    gpu_memory_utilization: float = 0.80,
-    tensor_parallel_size: int | None = None,
-    max_model_len: int = 8192,
-    enable_thinking: bool = False,
-    thinking_budget: int = DEFAULT_THINKING_BUDGET,
-    temperature: float = 0.0,
-):
-    """Creates a VLM predictor instance.
+@dataclass(frozen=True)
+class PredictorConfig:
+    """The configuration of a standalone VLM predictor, which `create` loads.
 
-    Handles auto-detection of thinking models from ``model_id``. The reasoning
-    allowance is the predictor's own (``BaseVLMPredictor.single_call_budget``),
-    not something added to ``max_response_tokens`` here, so that it also applies
-    when the response budget is derived per session rather than given.
-
-    Args:
-        model_id: HuggingFace model ID.
-        device: Device for HF backend.
-        torch_dtype: Data type for HF backend.
-        use_flash_attention: Flash attention for HF backend.
-        response_scheme: ResponseScheme governing prompts and parsing. Passed in
-            rather than rebuilt so the predictor cannot disagree with the dataset.
-        attrs_per_session: Attributes per VLM session; None puts them all in one.
-        min_new_tokens: Minimum tokens to generate.
-        max_response_tokens: Maximum response tokens per session; None derives a
-            per-session bound from the response scheme.
+    Attributes:
+        model_id: HuggingFace model ID. A thinking variant (with "thinking" in the ID) needs
+            `enable_thinking`.
+        backend: "auto" (vLLM for FP8 models, HuggingFace Transformers otherwise), "hf" or
+            "vllm" (required for FP8 models).
+        device, torch_dtype, use_flash_attention: Settings of the HF backend.
+        gpu_memory_utilization: GPU memory fraction of the vLLM backend (0.0-1.0).
+        tensor_parallel_size: Number of GPUs for vLLM tensor parallelism, None for all.
+        max_model_len: Maximum sequence length for the vLLM KV cache allocation.
+        attrs_per_session: Attributes per VLM session. None puts them all in one, 1 gives each
+            attribute its own session and its own prompt.
+        min_new_tokens: Minimum tokens to generate per session.
+        max_response_tokens: Maximum response tokens per session. None derives a per-session
+            bound from the response scheme.
         response_token_margin: Absolute tokens added to a derived budget.
-        debug: Enable debug output.
-        backend: Backend to use ("auto", "hf", "vllm").
-            - "auto": Use vLLM for FP8 models, HF otherwise
-            - "hf": Force HuggingFace Transformers
-            - "vllm": Force vLLM (required for FP8 models)
-        gpu_memory_utilization: GPU memory fraction for vLLM (0.0-1.0).
-        tensor_parallel_size: Number of GPUs for vLLM tensor parallelism.
-        enable_thinking: Enable thinking/reasoning mode.  Auto-enabled when
-            the model ID contains "thinking" (case-insensitive).
-        thinking_budget: Tokens reserved for reasoning on top of the response
-            budget, derived or explicit.
-
-    Returns:
-        A predictor instance with a `predict_batch()` method.
+        enable_thinking: Thinking (reasoning) mode.
+        thinking_budget: Tokens reserved for reasoning on top of the response budget, derived
+            or given. The reasoning allowance is the predictor's own
+            (`BaseVLMPredictor.single_call_budget`), so that it also applies to a derived
+            budget.
+        temperature: Sampling temperature, 0.0 for greedy decoding.
+        debug: Print detailed prompt and response debugging information.
     """
-    # Detect thinking model variants used without --enable-thinking
-    if not enable_thinking and "thinking" in model_id.lower():
-        raise ValueError(
-            f"Model '{model_id}' is a thinking variant but --enable-thinking was not set. "
-            "Pass enable_thinking=True (or --enable-thinking on the CLI) to use this model."
-        )
 
-    if enable_thinking:
-        print(f"[INFO] Thinking enabled: {thinking_budget} reasoning tokens on top of the"
-              f" response budget"
-              + (f" of {max_response_tokens}" if max_response_tokens is not None
-                 else ", which is derived per session from the response scheme"))
+    model_id: str
+    backend: T.Literal["auto", "hf", "vllm"] = "auto"
+    device: str = "cuda"
+    torch_dtype: str = "bfloat16"
+    use_flash_attention: bool = True
+    gpu_memory_utilization: float = 0.80
+    tensor_parallel_size: int | None = None
+    max_model_len: int = 8192
+    attrs_per_session: int | None = None
+    min_new_tokens: int = 0
+    max_response_tokens: int | None = None
+    response_token_margin: int = DEFAULT_RESPONSE_TOKEN_MARGIN
+    enable_thinking: bool = False
+    thinking_budget: int = DEFAULT_THINKING_BUDGET
+    temperature: float = 0.0
+    debug: bool = False
 
-    # Determine model family
-    is_fp8_model = "FP8" in model_id or "fp8" in model_id
-    is_qwen3 = "Qwen3" in model_id
-    model_id_lower = model_id.lower()
-    is_gemma4 = "gemma-4" in model_id_lower or "gemma4" in model_id_lower
+    def create(self) -> BaseVLMPredictor:
+        """Creates the predictor. `run_evaluation` gives it the dataset's response scheme.
 
-    if backend == "auto":
-        if is_fp8_model:
-            if _is_vllm_available():
+        Raises:
+            ValueError: If the model is a thinking variant without `enable_thinking`, or of an
+                unsupported family.
+            RuntimeError: If the model is an FP8 model and vLLM is not installed.
+        """
+        model_id = self.model_id
+        if not self.enable_thinking and "thinking" in model_id.lower():
+            raise ValueError(
+                f"Model '{model_id}' is a thinking variant but --enable-thinking was not set. "
+                "Pass enable_thinking=True (or --enable-thinking on the CLI) to use this model."
+            )
+
+        if self.enable_thinking:
+            print(f"[INFO] Thinking enabled: {self.thinking_budget} reasoning tokens on top of"
+                  f" the response budget"
+                  + (f" of {self.max_response_tokens}" if self.max_response_tokens is not None
+                     else ", which is derived per session from the response scheme"))
+
+        is_fp8_model = "FP8" in model_id or "fp8" in model_id
+        is_qwen3 = "Qwen3" in model_id
+        model_id_lower = model_id.lower()
+        is_gemma4 = "gemma-4" in model_id_lower or "gemma4" in model_id_lower
+
+        backend = self.backend
+        if backend == "auto":
+            if is_fp8_model:
+                if not _is_vllm_available():
+                    raise RuntimeError(
+                        f"Model '{model_id}' is an FP8 model which requires vLLM, "
+                        "but vLLM is not installed. Install with: pip install 'vllm>=0.11.0'")
                 backend = "vllm"
                 print(f"[INFO] Auto-selected vLLM backend for FP8 model: {model_id}")
             else:
-                raise RuntimeError(
-                    f"Model '{model_id}' is an FP8 model which requires vLLM, "
-                    "but vLLM is not installed. Install with: pip install 'vllm>=0.11.0'"
-                )
-        else:
-            backend = "hf"
+                backend = "hf"
 
-    shared = dict(
-        model_id=model_id,
-        max_response_tokens=max_response_tokens,
-        response_scheme=response_scheme,
-        attrs_per_session=attrs_per_session,
-        response_token_margin=response_token_margin,
-        min_new_tokens=min_new_tokens,
-        debug=debug,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-        temperature=temperature,
-    )
+        print(f"Initializing VLM predictor (model={model_id}, backend={backend})...")
+        shared = dict(
+            model_id=model_id,
+            max_response_tokens=self.max_response_tokens,
+            attrs_per_session=self.attrs_per_session,
+            response_token_margin=self.response_token_margin,
+            min_new_tokens=self.min_new_tokens,
+            debug=self.debug,
+            enable_thinking=self.enable_thinking,
+            thinking_budget=self.thinking_budget,
+            temperature=self.temperature,
+        )
 
-    if backend == "vllm":
-        vllm_kwargs = dict(
-            gpu_memory_utilization=gpu_memory_utilization,
-            tensor_parallel_size=tensor_parallel_size,
-            max_model_len=max_model_len,
+        if backend == "vllm":
+            vllm_kwargs = dict(
+                gpu_memory_utilization=self.gpu_memory_utilization,
+                tensor_parallel_size=self.tensor_parallel_size,
+                max_model_len=self.max_model_len,
+                **shared,
+            )
+            if is_gemma4:
+                from vidlu_irap_gaim.vlm import Gemma4VLvLLMPredictor
+                return Gemma4VLvLLMPredictor(**vllm_kwargs)
+            from vidlu_irap_gaim.vlm import Qwen3VLvLLMPredictor
+            return Qwen3VLvLLMPredictor(**vllm_kwargs)
+
+        if is_fp8_model:
+            print(f"[WARNING] FP8 model '{model_id}' may not load correctly with HF backend. "
+                  "Consider using --backend vllm")
+
+        hf_kwargs = dict(
+            device=self.device,
+            torch_dtype=self.torch_dtype,
+            use_flash_attention=self.use_flash_attention,
             **shared,
         )
         if is_gemma4:
-            from vidlu_irap_gaim.vlm import Gemma4VLvLLMPredictor
-            return Gemma4VLvLLMPredictor(**vllm_kwargs)
-        from vidlu_irap_gaim.vlm import Qwen3VLvLLMPredictor
-        return Qwen3VLvLLMPredictor(**vllm_kwargs)
-
-    # HuggingFace backend
-    if is_fp8_model:
-        print(
-            f"[WARNING] FP8 model '{model_id}' may not load correctly with HF backend. "
-            "Consider using --backend vllm"
+            from vidlu_irap_gaim.vlm import Gemma4VLPredictor
+            return Gemma4VLPredictor(**hf_kwargs)
+        if is_qwen3:
+            from vidlu_irap_gaim.vlm import Qwen3VLPredictor
+            return Qwen3VLPredictor(**hf_kwargs)
+        raise ValueError(
+            f"Unsupported model: '{model_id}'. "
+            "Supported model families: Qwen3-VL (e.g. Qwen/Qwen3-VL-8B-Instruct), "
+            "Gemma 4 (e.g. google/gemma-4-27b-it, google/gemma-4-31B-it)."
         )
-
-    hf_kwargs = dict(
-        device=device,
-        torch_dtype=torch_dtype,
-        use_flash_attention=use_flash_attention,
-        **shared,
-    )
-    if is_gemma4:
-        from vidlu_irap_gaim.vlm import Gemma4VLPredictor
-        return Gemma4VLPredictor(**hf_kwargs)
-    if is_qwen3:
-        from vidlu_irap_gaim.vlm import Qwen3VLPredictor
-        return Qwen3VLPredictor(**hf_kwargs)
-    raise ValueError(
-        f"Unsupported model: '{model_id}'. "
-        "Supported model families: Qwen3-VL (e.g. Qwen/Qwen3-VL-8B-Instruct), "
-        "Gemma 4 (e.g. google/gemma-4-27b-it, google/gemma-4-31B-it)."
-    )
 
 
 def _session_records(
@@ -392,108 +356,57 @@ def _session_records(
 
 
 def run_evaluation(
+    dataset,
+    predictor: BaseVLMPredictor,
+    output_dir: str | Path,
+    model_info: ie.ModelInfo,
     *,
-    # Dataset injection (optional - if provided, skips internal loading)
-    dataset: Any = None,
-    predictor: Any = None,
-    # Standard parameters (used when dataset is not provided)
-    dataset_name: str = "bh",
-    split: str = "test",
-    image_folder: str | None = None,
-    output_dir: str | Path = "vlm_results",
-    model_id: str = "Qwen/Qwen3-VL-8B-Instruct",
     detail_level: str | None = None,
-    response_scheme_name: str = "standard",
     limit: int | None = None,
-    device: str = "cuda",
-    torch_dtype: str = "bfloat16",
-    use_flash_attention: bool = True,
     fail_fast: bool = True,
-    attrs_per_session: int | None = None,
-    min_new_tokens: int = 0,
-    max_response_tokens: int | None = None,
-    response_token_margin: int = DEFAULT_RESPONSE_TOKEN_MARGIN,
-    debug: bool = False,
     interactive: bool = True,
     print_prompt: bool = True,
-    # Backend selection
-    backend: str = "auto",
-    gpu_memory_utilization: float = 0.80,
-    tensor_parallel_size: int | None = None,
-    max_model_len: int = 8192,
     batch_size: int | None = None,
     batch_tokens: int = DEFAULT_BATCH_TOKENS,
-    enable_thinking: bool = False,
-    thinking_budget: int = DEFAULT_THINKING_BUDGET,
-    temperature: float = 0.0,
-    upsampling_factor: int = 1,
-    method_name: str | None = None,
-    method_seed: int | None = None,
 ) -> EvaluationResult:
-    """Runs VLM evaluation on a dataset.
+    """Runs VLM evaluation of a predictor on a dataset.
 
-    Unless the dataset is an image folder, the parsed predictions are also written as the
-    `irap_evaluation` prediction file `predictions.parquet`.
+    If the dataset is a split of a known iRAP release, the parsed predictions are also written
+    as an `irap_evaluation` prediction file, named by `irap_evaluation.make_prediction_file_name`,
+    e.g.
+    `<method>.<split>.predictions.parquet`.
 
     Args:
-        dataset: Optional pre-loaded VLM-wrapped dataset (skips internal loading).
-            Its ``info`` supplies the response scheme and the attribute subset.
-        predictor: Optional pre-loaded VLM predictor (skips model loading if provided).
-            Useful for reusing the same model across multiple splits. Its
-            ``attrs_per_session`` is left alone -- the caller configured it.
-        split: Dataset split to evaluate ("train", "val", "test"). Ignored if dataset provided.
-        image_folder: Optional custom image folder (overrides split). Ignored if dataset provided.
+        dataset: A VLM-wrapped dataset, e.g. from `make_eval_data`. Its `info` supplies the
+            response scheme and the attribute subset.
+        predictor: The predictor to evaluate, e.g. from `PredictorConfig.create`. It gets the
+            dataset's response scheme. The rest of its configuration, e.g. its
+            `attrs_per_session`, is left as it is.
         output_dir: Directory to save results.
-        model_id: HuggingFace model ID. Ignored if predictor provided.
-        detail_level: Prompt detail level ("attr_desc_vals", "attr_vals", "attr", "none").
-        response_scheme_name: Response scheme for the dataset. Ignored if dataset provided.
+        model_info: The model in the prediction file. The evaluation configuration is added to
+            its details under 'configuration'.
+        detail_level: Prompt detail level ("attr_desc_vals", "attr_vals", "attr", "none"). None
+            takes the dataset's.
         limit: Evaluate only the first N samples. A smoke-test knob, NOT a
             sample of the split: iRAP segments are stored grouped by road, so the
             first N come from a handful of roads.
-        device: Device for inference. Ignored if predictor provided.
-        torch_dtype: Data type for model. Ignored if predictor provided.
-        use_flash_attention: Whether to use Flash Attention 2. Ignored if predictor provided.
         fail_fast: Stop on the first error (default True).
-        attrs_per_session: Attributes per VLM session; None puts them all in one,
-            1 gives each attribute its own prompt and its own session. Ignored if
-            predictor provided.
-        min_new_tokens: Minimum tokens to generate per session. Ignored if predictor provided.
-        max_response_tokens: Maximum response tokens per session; None derives a
-            per-session bound from the response scheme. Ignored if predictor provided.
-        response_token_margin: Absolute tokens added to a derived budget.
-        debug: Print detailed prompt/response debugging information.
         interactive: Enable interactive control (type "skip" to stop early). Default True.
         print_prompt: Print the first prompt sent to the VLM.
-        backend: Backend for inference ("auto", "hf", "vllm"). Default "auto".
-        gpu_memory_utilization: GPU memory fraction for vLLM backend (0.0-1.0).
-        tensor_parallel_size: Number of GPUs for vLLM tensor parallelism.
         batch_size: Images generated for at once; None sizes it from ``batch_tokens``.
         batch_tokens: Target prompt tokens per batch, used when batch_size is None.
-        temperature: Sampling temperature (0.0 = greedy). Ignored if predictor provided.
-        method_name: The method name in the prediction file. Defaults to the model ID.
-        method_seed: The run's seed in the prediction file, e.g. for repeated sampling with
-            temperature > 0.
 
     Returns:
-        EvaluationResult with summary statistics. A prediction file is written only for
-        a split of a known iRAP release.
+        EvaluationResult with summary statistics.
     """
-    from vidlu_irap_gaim.prediction_files import (is_irap_dataset,
-                                                  make_prediction_file_spec,
+    from vidlu_irap_gaim.prediction_files import (is_irap_dataset, make_prediction_file_spec,
                                                   write_parsed_predictions)
     from vidlu_irap_gaim.vlm.predictions import predictions_to_json_serializable
     from vidlu.utils.misc import try_input
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    if dataset is None:
-        print(f"Loading dataset (split={split}, image_folder={image_folder})...")
-        dataset = _load_dataset(split, image_folder, dataset_name, response_scheme_name,
-                                detail_level, upsampling_factor)
-        print(f"Dataset loaded: {len(dataset)} samples")
-    else:
-        print(f"Using provided dataset: {len(dataset)} samples")
+    print(f"Dataset: {len(dataset)} samples")
 
     from vidlu_irap_gaim.vlm.finetuning.dataset import vlm_config_from_dataset
 
@@ -540,50 +453,29 @@ def run_evaluation(
         print("Please check for naming mismatches or typos in attrs.py.")
         sys.exit(1)
 
-    if predictor is None:
-        print(f"Initializing VLM predictor (model={model_id}, backend={backend})...")
-        print(f"  Attributes per session: "
-              f"{'all' if attrs_per_session is None else attrs_per_session}")
-        print(f"  Total attributes to evaluate: {len(attrs_to_include)}")
-        print(f"  VLM sessions per sample: "
-              f"{len(attribute_sessions(attrs_to_include, attrs_per_session))}")
-        predictor = _create_predictor(
-            model_id=model_id,
-            device=device,
-            torch_dtype=torch_dtype,
-            use_flash_attention=use_flash_attention,
-            response_scheme=response_scheme,
-            attrs_per_session=attrs_per_session,
-            min_new_tokens=min_new_tokens,
-            max_response_tokens=max_response_tokens,
-            response_token_margin=response_token_margin,
-            debug=debug,
-            backend=backend,
-            gpu_memory_utilization=gpu_memory_utilization,
-            tensor_parallel_size=tensor_parallel_size,
-            max_model_len=max_model_len,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
-            temperature=temperature,
-        )
-    else:
-        print("Using provided predictor")
-        model_id = getattr(predictor, "model_id", model_id)
-        attrs_per_session = predictor.attrs_per_session
-        # Hand over the dataset's convention rather than letting the predictor
-        # fall back to its own default, which would prompt in one format while
-        # the dataset scores in another. Raises on a genuine mismatch.
-        predictor.response_scheme = response_scheme
+    attrs_per_session = predictor.attrs_per_session
+    print(f"Predictor: {predictor.model_id}")
+    print(f"  Attributes per session: "
+          f"{'all' if attrs_per_session is None else attrs_per_session}")
+    print(f"  Total attributes to evaluate: {len(attrs_to_include)}")
+    print(f"  VLM sessions per sample: "
+          f"{len(attribute_sessions(attrs_to_include, attrs_per_session))}")
+    # Hand over the dataset's convention rather than letting the predictor
+    # fall back to its own default, which would prompt in one format while
+    # the dataset scores in another. Raises on a genuine mismatch.
+    predictor.response_scheme = response_scheme
 
     if not is_irap_dataset(dataset.info):
         prediction_file_spec = None
         print("No prediction file: the dataset is not a split of a known release.")
     else:
-        configuration = dict(detail_level=detail_level, attrs_per_session=attrs_per_session,
+        configuration = dict(model_id=predictor.model_id, detail_level=detail_level,
+                             attrs_per_session=attrs_per_session,
                              response_scheme=type(response_scheme).__name__,
-                             enable_thinking=enable_thinking, temperature=temperature)
-        prediction_file_spec = make_prediction_file_spec(
-            dataset.info, method_name or model_id, method_seed, {"configuration": configuration})
+                             enable_thinking=predictor.enable_thinking,
+                             temperature=predictor.temperature)
+        prediction_file_spec = make_prediction_file_spec(dataset.info, dc.replace(
+            model_info, details={**(model_info.details or {}), "configuration": configuration}))
 
     all_predictions = {}
     # segment ID -> parsed predictions, in dataset order, for the prediction file
@@ -760,10 +652,11 @@ def run_evaluation(
         "truncation_rate": result.truncation_rate,
         "duration_s": duration_s,
         "was_interrupted": was_interrupted,
-        "dataset": dataset_name,
-        "split": split,
-        "image_folder": str(image_folder) if image_folder else None,
-        "model_id": model_id,
+        # Absent for a dataset that is not a split of a known release.
+        "dataset": dataset.info.get("dataset_name"),
+        "split": dataset.info.get("split"),
+        "dataset_identifier": dataset.identifier,
+        "model_id": predictor.model_id,
         "detail_level": detail_level,
         "attrs_per_session": attrs_per_session,
         "num_attrs": len(attrs_to_include),
@@ -775,14 +668,15 @@ def run_evaluation(
     with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    if prediction_file_spec is not None:
-        write_parsed_predictions(output_dir / "predictions.parquet", prediction_file_spec,
-                                 segment_to_predictions, attrs_to_include)
+    prediction_file_path = (None if prediction_file_spec is None else write_parsed_predictions(
+        output_dir, prediction_file_spec, segment_to_predictions, attrs_to_include))
 
     print(f"\nResults saved to {output_dir}")
     print(f"  - predictions.json: {len(all_predictions)} samples")
     print(f"  - records.jsonl: {len(all_records)} (segment, attribute) records")
     print("  - summary.json: evaluation summary")
+    if prediction_file_path is not None:
+        print(f"  - {prediction_file_path.name}: prediction file for irap-eval")
 
     return result
 
@@ -796,11 +690,8 @@ def main():
         allow_abbrev=False,  # Require full argument names (disable prefix matching)
     )
 
-    data_group = parser.add_mutually_exclusive_group()
-    data_group.add_argument("--split", choices=["train", "val", "test"], default="test",
-                            help="Dataset split to evaluate (default: test)")
-    data_group.add_argument("--image-folder", type=str,
-                            help="Custom folder of images to evaluate (overrides --split)")
+    parser.add_argument("--split", choices=["train", "val", "test"], default="test",
+                        help="Dataset split to evaluate (default: test)")
 
     parser.add_argument("--dataset", choices=["bh", "vietnam"], default="bh",
                         help="Dataset to evaluate (default: bh)")
@@ -883,45 +774,50 @@ def main():
         "--enable-thinking", action="store_true",
         help=("Enable thinking/reasoning mode. Adds --thinking-budget tokens on top of "
               "the response budget, whether that budget is derived or given explicitly. "
-              "Auto-enabled when the model ID contains 'thinking' (case-insensitive)."))
+              "Required for a model ID that contains 'thinking' (case-insensitive)."))
     parser.add_argument(
         "--thinking-budget", type=int, default=DEFAULT_THINKING_BUDGET,
         help=(f"Tokens reserved for reasoning on top of the response budget "
               f"(default: {DEFAULT_THINKING_BUDGET})"))
     parser.add_argument("--upsampling-factor", type=int, default=1,
                         help="Upsample images by this integer factor (default: 1)")
+    parser.add_argument(
+        "--training-splits", nargs="*", default=[], metavar="SPLIT",
+        help=("The splits the model was trained on, for the prediction file. Default: none, "
+              "for a pretrained model."))
 
     args = parser.parse_args()
 
-    result = run_evaluation(
-        dataset_name=args.dataset,
-        split=args.split,
-        image_folder=args.image_folder,
-        output_dir=args.output_dir,
+    print(f"Loading dataset (split={args.split})...")
+    dataset = make_eval_data(args.dataset, args.response_scheme_name, args.detail_level,
+                             args.upsampling_factor)[args.split]
+    predictor = PredictorConfig(
         model_id=args.model_id,
-        detail_level=args.detail_level,
-        response_scheme_name=args.response_scheme_name,
-        limit=args.limit,
+        backend=args.backend,
         device=args.device,
         torch_dtype=args.dtype,
         use_flash_attention=not args.no_flash_attention,
-        fail_fast=not args.no_fail_fast,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        tensor_parallel_size=args.tensor_parallel_size,
+        max_model_len=args.max_model_len,
         attrs_per_session=args.attrs_per_session,
         min_new_tokens=args.min_new_tokens,
         max_response_tokens=args.max_response_tokens,
         response_token_margin=args.response_token_margin,
-        debug=args.debug,
-        print_prompt=args.print_prompt,
-        backend=args.backend,
-        gpu_memory_utilization=args.gpu_memory_utilization,
-        tensor_parallel_size=args.tensor_parallel_size,
-        max_model_len=args.max_model_len,
-        batch_size=args.batch_size,
-        batch_tokens=args.batch_tokens,
         enable_thinking=args.enable_thinking,
         thinking_budget=args.thinking_budget,
         temperature=args.temperature,
-        upsampling_factor=args.upsampling_factor,
+        debug=args.debug,
+    ).create()
+    result = run_evaluation(
+        dataset, predictor, args.output_dir,
+        ie.ModelInfo(method_name=args.model_id, training_splits=args.training_splits,
+                     early_stopping_splits=()),
+        limit=args.limit,
+        fail_fast=not args.no_fail_fast,
+        print_prompt=args.print_prompt,
+        batch_size=args.batch_size,
+        batch_tokens=args.batch_tokens,
     )
 
     status = "INTERRUPTED" if result.was_interrupted else "complete"
@@ -939,119 +835,45 @@ def main():
 # =============================================================================
 
 
-def run(
-    e,
-    *,
-    split_prefix: str = "test",
-    output_subdir: str = "vlm_results",
-    model_id: str = "Qwen/Qwen3-VL-8B-Instruct",
-    detail_level: str | None = None,
-    limit: int | None = None,
-    device: str = "cuda",
-    torch_dtype: str = "bfloat16",
-    use_flash_attention: bool = True,
-    fail_fast: bool = True,
-    attrs_per_session: int | None = None,
-    min_new_tokens: int = 0,
-    max_response_tokens: int | None = None,
-    response_token_margin: int = DEFAULT_RESPONSE_TOKEN_MARGIN,
-    debug: bool = False,
-    interactive: bool = True,
-    print_prompt: bool = True,
-    backend: str = "auto",
-    gpu_memory_utilization: float = 0.80,
-    tensor_parallel_size: int | None = None,
-    max_model_len: int = 8192,
-    batch_size: int | None = None,
-    batch_tokens: int = DEFAULT_BATCH_TOKENS,
-    enable_thinking: bool = False,
-    thinking_budget: int = DEFAULT_THINKING_BUDGET,
-    temperature: float = 0.0,
-):
-    """Runs VLM evaluation using a Vidlu TrainingExperiment's datasets.
-
-    The entrypoint for `scripts/run.py test -m irap_gaim.tools.vlm_inference`.
-    It evaluates a *standalone* predictor (loaded from ``model_id``) on the
-    experiment's prepared datasets. To evaluate the experiment's own model, see
-    ``vidlu_irap_gaim.vlm.finetuning.predictor``.
+def run_evaluation_on_data_entries(
+    data: T.Mapping[str, T.Any],
+    key_prefix: str,
+    predictor: BaseVLMPredictor,
+    output_dir: str | Path,
+    model_info: ie.ModelInfo,
+    **kwargs,
+) -> dict[str, EvaluationResult]:
+    """Runs `run_evaluation` on each entry of `data` whose key starts with `key_prefix`, with
+    the results of an entry in `output_dir / key`, and prints a summary.
 
     Args:
-        e: TrainingExperiment instance from Vidlu.
-        split_prefix: Prefix for splits to evaluate (e.g., "test", "val"). Default "test".
-        output_subdir: Subdirectory under experiment dir for VLM results.
-        attrs_per_session: Attributes per VLM session; None puts them all in one.
-        (see ``run_evaluation`` for the rest)
+        **kwargs: Passed to `run_evaluation`.
 
     Returns:
-        Dict mapping split names to EvaluationResult.
+        The results by data entry key.
+
+    Raises:
+        ValueError: If no key starts with `key_prefix`.
     """
-    splits_to_eval = [(name, ds) for name, ds in e.data.items()
-                      if name.startswith(split_prefix)]
-
-    if not splits_to_eval:
-        print(f"[WARNING] No splits found with prefix '{split_prefix}' in e.data")
-        print(f"  Available splits: {list(e.data.keys())}")
-        return {}
-
-    print(f"VLM Evaluation on {len(splits_to_eval)} split(s): "
-          f"{[name for name, _ in splits_to_eval]}")
-
-    output_base = e.cpman.experiment_dir / output_subdir
-
-    # The predictor needs the response scheme, which lives on the datasets.
-    from vidlu_irap_gaim.vlm.finetuning.dataset import vlm_config_from_data
-    response_scheme = vlm_config_from_data(dict(splits_to_eval)).response_scheme
-
-    print(f"\nInitializing VLM predictor (model={model_id}, backend={backend})...")
-    print(f"  Reused across all {len(splits_to_eval)} splits.")
-    predictor = _create_predictor(
-        model_id=model_id,
-        device=device,
-        torch_dtype=torch_dtype,
-        use_flash_attention=use_flash_attention,
-        response_scheme=response_scheme,
-        attrs_per_session=attrs_per_session,
-        min_new_tokens=min_new_tokens,
-        max_response_tokens=max_response_tokens,
-        response_token_margin=response_token_margin,
-        debug=debug,
-        backend=backend,
-        gpu_memory_utilization=gpu_memory_utilization,
-        tensor_parallel_size=tensor_parallel_size,
-        max_model_len=max_model_len,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-        temperature=temperature,
-    )
+    entries = {key: ds for key, ds in data.items() if key.startswith(key_prefix)}
+    if not entries:
+        raise ValueError(f"No data entry key starts with {key_prefix!r}. The keys are"
+                         f" {list(data.keys())}.")
+    output_dir = Path(output_dir)
 
     results = {}
-    for name, ds in splits_to_eval:
+    for key, ds in entries.items():
         print(f"\n{'=' * 60}")
-        print(f"Evaluating split: {name}")
+        print(f"Evaluating data entry: {key}")
         print(f"{'=' * 60}")
-
-        results[name] = run_evaluation(
-            dataset=ds,
-            predictor=predictor,
-            split=name,
-            output_dir=output_base / name,
-            model_id=model_id,
-            detail_level=detail_level,
-            limit=limit,
-            fail_fast=fail_fast,
-            debug=debug,
-            interactive=interactive,
-            print_prompt=print_prompt,
-            batch_size=batch_size,
-            batch_tokens=batch_tokens,
-        )
+        results[key] = run_evaluation(ds, predictor, output_dir / key, model_info, **kwargs)
 
     print(f"\n{'=' * 60}")
     print("VLM Evaluation Summary")
     print(f"{'=' * 60}")
-    for name, result in results.items():
+    for key, result in results.items():
         status = "INTERRUPTED" if result.was_interrupted else "complete"
-        print(f"  {name}: {status}, {result.num_samples_completed}/"
+        print(f"  {key}: {status}, {result.num_samples_completed}/"
               f"{result.num_samples_requested} samples, "
               f"{result.num_valid_predictions} valid, "
               f"invalid_rate={result.invalid_rate:.4f}, "
@@ -1061,9 +883,47 @@ def run(
                            if isinstance(v, (int, float))]
             if metric_strs:
                 print(f"    Metrics: {', '.join(metric_strs)}")
-    print(f"\nResults saved to: {output_base}")
+    print(f"\nResults saved to: {output_dir}")
 
     return results
+
+
+def run(
+    experiment,
+    predictor_config: PredictorConfig,
+    *,
+    split_prefix: str = "test",
+    output_subdir: str = "vlm_results",
+    method_name: str | None = None,
+    seed: int | None = None,
+    **kwargs,
+) -> dict[str, EvaluationResult]:
+    """Runs VLM evaluation of a standalone predictor on a Vidlu experiment's datasets.
+
+    The entrypoint for `scripts/run.py test -m irap_gaim.tools.vlm_inference`::
+
+        python scripts/run.py test ... -m "irap_gaim.tools.vlm_inference:run(e,PredictorConfig('Qwen/Qwen3-VL-8B-Instruct',attrs_per_session=1))"
+
+    To evaluate the experiment's own model, see ``vidlu_irap_gaim.vlm.finetuning.predictor``.
+
+    Args:
+        experiment: TrainingExperiment instance from Vidlu.
+        predictor_config: The predictor, which is not trained on the experiment's data.
+        split_prefix: Prefix of the keys of the data entries to evaluate (e.g. "test", "val").
+        output_subdir: Subdirectory under the experiment directory for the results.
+        method_name: The method name in the prediction files. Defaults to the model ID.
+        seed: The model's seed in the prediction files, e.g. for repeated sampling with
+            temperature > 0. It does not seed the sampling.
+        **kwargs: Passed to `run_evaluation`.
+
+    Returns:
+        The results by data entry key.
+    """
+    model_info = ie.ModelInfo(method_name=method_name or predictor_config.model_id,
+                              training_splits=(), early_stopping_splits=(), seed=seed)
+    return run_evaluation_on_data_entries(
+        experiment.data, split_prefix, predictor_config.create(),
+        experiment.cpman.experiment_dir / output_subdir, model_info, **kwargs)
 
 
 if __name__ == "__main__":

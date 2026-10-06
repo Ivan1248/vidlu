@@ -8,7 +8,7 @@ Important: It reuses the trainer's evaluation loop and its configured `eval_step
 Predictions are collected by hooking into `trainer.evaluation.iter_completed`.
 
 With `save_predictions`, the predicted distributions are also written as an `irap_evaluation`
-prediction file for `irap-eval`.
+prediction file for `irap-eval` in the output directory.
 """
 
 import json
@@ -27,6 +27,7 @@ from vidlu.utils.misc import RemovableHandle
 from vidlu.utils.collections import NameDict
 
 from vidlu_irap_gaim.prediction_files import (check_output_kind_storable,
+                                              make_model_info_from_experiment,
                                               make_prediction_file_spec, write_output_predictions)
 from vidlu_irap_gaim.tools.vis_utils import (
     PredictionRow,
@@ -111,7 +112,7 @@ def _dataset_from_experiment_data(exp_data, split: str):
 
 def _extract_rgb_sequence(x) -> torch.Tensor:
     """
-    Extract an RGB sequence tensor shaped (B, S, 3, H, W) from the eval_step result.x.
+    Extracts an RGB sequence tensor shaped (B, S, 3, H, W) from the eval_step result.x.
 
     Supported x shapes/types:
       - Tensor (B,S,3,H,W) or (B,3,H,W)
@@ -162,7 +163,7 @@ def get_output_kind(eval_step) -> OutputKind:
 def _extract_probs(out: T.Any, output_kind: OutputKind
                    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
     """
-    Extract per-attribute probabilities and argmax predictions from eval_step output, a tuple
+    Extracts per-attribute probabilities and argmax predictions from eval_step output, a tuple
     of (B, K_i) tensors of the given kind.
     """
     if not isinstance(out, (tuple, list)):
@@ -332,9 +333,9 @@ def run(
     out_height: int = 1080,
     text_area_ratio: float = 0.35,
     attrs_to_include: tuple[str, ...] | None = None,
-    save_predictions: str | Path | None = None,
+    save_predictions: bool = False,
     method_name: str | None = None,
-    method_seed: int | None = None,
+    seed: int | None = None,
     output_kind: OutputKind | None = None,
 ) -> dict[str, T.Any]:
     """
@@ -356,17 +357,21 @@ def run(
         out_width, out_height: Output image dimensions.
         text_area_ratio: Fraction of width for text panel.
         attrs_to_include: Subset of attributes to visualize.
-        save_predictions: Path of an `irap_evaluation` prediction file with the distributions of
-            all attributes. Needs a split of a known release and logit or probability outputs.
-        method_name: The method name in the prediction file. Defaults to the name of the
-            experiment directory.
-        method_seed: The run's seed in the prediction file, e.g. its training seed
-            (`run.py train -s`), which the experiment does not store.
+        save_predictions: Whether to write the distributions of all attributes as an
+            `irap_evaluation` prediction file in `output_dir`, named by
+            `irap_evaluation.make_prediction_file_name`, e.g.
+            `<method>[_seed<seed>].<split>.predictions.parquet`.
+            Needs a split of a known release and logit or probability outputs. The model in it is
+            described by `make_model_info_from_experiment`.
+        method_name, seed: See `make_model_info_from_experiment`.
         output_kind: What the evaluation step outputs. None takes the step's own declaration
             (see `get_output_kind`).
 
+    Raises:
+        ValueError: If the dataset (after `limit`) is empty.
+
     Example for custom dataset:
-        -m irap_gaim.tools.inference:run,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test)
+        -m "irap_gaim.tools.inference:run(e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test))"
     """
     trainer = experiment.trainer
     if dataset is None:
@@ -375,6 +380,8 @@ def run(
         split = getattr(dataset, "subset", "custom")
     if limit is not None:
         dataset = dataset[:limit]
+    if len(dataset) == 0:
+        raise ValueError(f"The {split!r} dataset is empty.")
 
     # Detect label-free datasets and switch to prediction-only evaluation.
     #
@@ -386,12 +393,11 @@ def run(
     # - If unlabeled: disable metrics (often require targets) and swap eval_step to avoid loss.
     has_target = False
     try:
-        if len(dataset) > 0:
-            ex0 = dataset[0]
-            if hasattr(type(ex0), "items"):
-                has_target = "target" in ex0.keys()
-            elif isinstance(ex0, (tuple, list)) and len(ex0) >= 2:
-                has_target = True
+        ex0 = dataset[0]
+        if hasattr(type(ex0), "items"):
+            has_target = "target" in ex0.keys()
+        elif isinstance(ex0, (tuple, list)) and len(ex0) >= 2:
+            has_target = True
     except Exception:
         # If detection fails, keep the default (supervised) behavior and let errors surface.
         has_target = True
@@ -413,11 +419,10 @@ def run(
         output_kind = get_output_kind(trainer.eval_step)
     experiment_dir = Path(experiment.cpman.experiment_dir)
     output_collector = None
-    if save_predictions is not None:
+    if save_predictions:
         check_output_kind_storable(output_kind)
         prediction_file_spec = make_prediction_file_spec(
-            dataset.info, method_name or experiment_dir.name, method_seed,
-            {"checkpoint": str(experiment_dir)})
+            dataset.info, make_model_info_from_experiment(experiment, method_name, seed))
         output_collector = _OutputCollector()
 
     out_dir = _as_path(output_dir) if output_dir is not None else experiment_dir / "inference_output"
@@ -437,7 +442,7 @@ def run(
     try:
         label_note = "" if has_target else " (unlabeled/predict-only)"
         print(f"Evaluating {split} dataset{label_note} and storing results in {out_dir}...")
-        trainer.eval(dataset)
+        trainer.eval(dataset, split_name=split)
     finally:
         for handle in handles:
             handle.remove()
@@ -450,11 +455,11 @@ def run(
     metrics = getattr(metrics, "metrics", None) if metrics is not None else None
     summary = collector.finalize(save_json=save_json, metrics=metrics, split=split, limit=limit)
     if output_collector is not None:
-        write_output_predictions(save_predictions, prediction_file_spec,
-                                 output_collector.segment_ids, output_collector.get_outputs(),
-                                 output_kind)
+        prediction_file_path = write_output_predictions(
+            out_dir, prediction_file_spec, output_collector.segment_ids,
+            output_collector.get_outputs(), output_kind)
         print(f"Wrote the predictions of {len(output_collector.segment_ids)} segments to"
-              f" {save_predictions}.")
+              f" {prediction_file_path}.")
     return summary
 
 

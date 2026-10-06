@@ -10,8 +10,9 @@ the LoRA adapter differing.
 """
 
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
+import irap_evaluation as ie
 from PIL import Image
 
 from vidlu_irap_gaim.vlm.models.base import BaseVLMPredictor
@@ -19,7 +20,7 @@ from vidlu_irap_gaim.vlm.models.generation import warn_if_truncated
 from vidlu_irap_gaim.vlm.response_scheme import DEFAULT_RESPONSE_TOKEN_MARGIN
 from .model import _BaseVLMClassifier
 from .loading import load_base_classifier
-from vidlu_irap_gaim.tools.vlm_inference import run_evaluation
+from vidlu_irap_gaim.tools.vlm_inference import run_evaluation_on_data_entries
 
 
 class VLMClassifierPredictor(BaseVLMPredictor):
@@ -31,7 +32,7 @@ class VLMClassifierPredictor(BaseVLMPredictor):
 
     Usage:
         predictor = VLMClassifierPredictor(trainer.model)
-        result = run_evaluation(dataset=test_dataset, predictor=predictor, ...)
+        result = run_evaluation(test_dataset, predictor, output_dir, model_info)
 
     Args:
         model: Loaded classifier (`Qwen3VLClassifier`, `Gemma4VLClassifier`, ...).
@@ -94,7 +95,7 @@ class VLMClassifierPredictor(BaseVLMPredictor):
             prompt: str,
             max_response_tokens: int,
     ) -> list[tuple[str, str | None, bool | None]]:
-        """Responses ``prompt`` for every image, batched by the classifier.
+        """Responds to ``prompt`` for every image, batched by the classifier.
 
         The classifier's own generation path, not a copy of it: it owns the message format,
         the chat-template kwargs and the vision preprocessing (which differ per model family,
@@ -117,9 +118,9 @@ class VLMClassifierPredictor(BaseVLMPredictor):
         return results
 
 
-def run_zero_shot_eval(e, split_prefix: str = "test", *, model_id: str | None = None,
+def run_zero_shot_eval(experiment, split_prefix: str = "test", *, model_id: str | None = None,
                        load_in_4bit: bool | None = None, output_subdir: str = "vlm_zero_shot_eval",
-                       **kwargs):
+                       method_name: str | None = None, seed: int | None = None, **kwargs):
     """Evaluates the *pretrained* model on the experiment's datasets.
 
     The counterpart of `run_full_eval`: same datasets, same prompts, same
@@ -129,17 +130,19 @@ def run_zero_shot_eval(e, split_prefix: str = "test", *, model_id: str | None = 
 
     Called from run.py test with no `-r`, since there is no checkpoint to load::
 
-        python scripts/run.py test ... -m "vidlu_irap_gaim.vlm.finetuning.predictor:run_zero_shot_eval,e,attrs_per_session=1"
+        python scripts/run.py test ... -m "vidlu_irap_gaim.vlm.finetuning.predictor:run_zero_shot_eval(e,attrs_per_session=1)"
 
     Args:
-        e: TrainingExperiment instance from Vidlu.
+        experiment: TrainingExperiment instance from Vidlu.
         split_prefix: Prefix for splits to evaluate ("test", "val").
         model_id: Base model to load. None uses the experiment model's.
         load_in_4bit: None uses the experiment model's setting.
         output_subdir: Subdirectory under the experiment dir for the results.
+        method_name: The method name in the prediction files. Defaults to the model ID.
+        seed: The model's seed in the prediction files.
         **kwargs: Passed to `run_eval` (attrs_per_session, ...).
     """
-    trained = e.trainer.model
+    trained = experiment.trainer.model
     classifier = load_base_classifier(
         model_id if model_id is not None else trained.model_id,
         classifier_class=type(trained),
@@ -147,66 +150,76 @@ def run_zero_shot_eval(e, split_prefix: str = "test", *, model_id: str | None = 
         load_in_4bit=trained.load_in_4bit if load_in_4bit is None else load_in_4bit,
         enable_thinking=trained.enable_thinking,
     )
-    return run_eval(classifier, e, split_prefix=split_prefix, output_subdir=output_subdir,
-                    **kwargs)
+    model_info = ie.ModelInfo(method_name=method_name or classifier.model_id,
+                              training_splits=(), early_stopping_splits=(), seed=seed)
+    return run_eval(classifier, experiment.data, split_prefix,
+                    experiment.cpman.experiment_dir / output_subdir, model_info, **kwargs)
 
 
-def run_full_eval(e, split_prefix: str = "test", *, output_subdir: str = "vlm_full_eval",
-                  **kwargs):
+def run_full_eval(experiment, split_prefix: str = "test", *,
+                  output_subdir: str = "vlm_full_eval", method_name: str | None = None,
+                  seed: int | None = None, **kwargs):
     """Runs full generative evaluation on the experiment's (fine-tuned) model.
 
     Called from run.py test, with `-r best` to load the fine-tuned checkpoint::
 
-        python scripts/run.py test ... -r best -m "vidlu_irap_gaim.vlm.finetuning.predictor:run_full_eval,e,attrs_per_session=1"
+        python scripts/run.py test ... -r best -m "vidlu_irap_gaim.vlm.finetuning.predictor:run_full_eval(e,attrs_per_session=1)"
+
+    The model in the prediction files is described by `make_model_info_from_experiment`.
 
     Args:
-        e: TrainingExperiment instance from Vidlu.
+        experiment: TrainingExperiment instance from Vidlu.
         split_prefix: Prefix for splits to evaluate ("test", "val").
         output_subdir: Subdirectory under the experiment dir for the results.
+        method_name, seed: See `make_model_info_from_experiment`.
         **kwargs: Passed to `run_eval` (attrs_per_session, ...).
     """
-    return run_eval(e.trainer.model, e, split_prefix=split_prefix, output_subdir=output_subdir,
-                    **kwargs)
+    # Imported here so that importing the package does not import `vidlu.experiments`.
+    from vidlu_irap_gaim.prediction_files import make_model_info_from_experiment
+
+    model_info = make_model_info_from_experiment(experiment, method_name, seed)
+    return run_eval(experiment.trainer.model, experiment.data, split_prefix,
+                    experiment.cpman.experiment_dir / output_subdir, model_info, **kwargs)
 
 
 def run_eval(
         classifier: _BaseVLMClassifier,
-        e,
+        data: Mapping[str, Any],
+        split_prefix: str,
+        output_dir: str | Path,
+        model_info: ie.ModelInfo,
         *,
-        split_prefix: str = "test",
-        output_subdir: str = "vlm_full_eval",
         attrs_per_session: int | None = None,
         max_response_tokens: int | None = None,
         response_token_margin: int = DEFAULT_RESPONSE_TOKEN_MARGIN,
-        batch_size: int | None = None,
-        batch_tokens: int = 16384,
         amp: bool = False,
         min_new_tokens: int = 0,
         debug: bool = False,
         **kwargs,
 ):
-    """Generative evaluation of one classifier over the experiment's splits.
+    """Generative evaluation of one classifier on the data entries whose keys start with
+    `split_prefix`, with the results of an entry in `output_dir / key`.
 
     Shared by `run_zero_shot_eval` and `run_full_eval` so that the pretrained and
     the fine-tuned run differ in nothing but the weights.
 
     Args:
         classifier: Loaded classifier to evaluate.
-        e: TrainingExperiment instance from Vidlu.
-        split_prefix: Prefix for splits to evaluate ("test", "val").
-        output_subdir: Subdirectory under the experiment dir for the results.
+        data: The data entries by key, e.g. an experiment's `data`.
+        split_prefix: Prefix of the keys of the data entries to evaluate ("test", "val").
+        output_dir: Directory of the results.
+        model_info: The classifier in the prediction files.
         attrs_per_session: Attributes per VLM session; None puts them all in one,
             1 gives each attribute its own session and its own prompt.
         max_response_tokens: None derives a per-session bound from the response
             scheme, which is what makes the budget scale with the session size.
         response_token_margin: Absolute tokens added to a derived budget.
-        batch_size: Images generated for at once; None sizes it from `batch_tokens`.
-        batch_tokens: Target prompt tokens per batch, used when `batch_size` is None.
         amp: Autocast generation to bfloat16.
-        **kwargs: Further arguments for `run_evaluation`.
+        debug: Print detailed prompt and response debugging information.
+        **kwargs: Passed to `run_evaluation` (batch_size, limit, ...).
 
     Returns:
-        Dictionary mapping split names to evaluation results.
+        The results by data entry key.
     """
     predictor = VLMClassifierPredictor(
         classifier,
@@ -217,29 +230,5 @@ def run_eval(
         amp=amp,
         debug=debug,
     )
-
-    output_base = e.cpman.experiment_dir / output_subdir
-
-    results = {}
-    for name, ds in e.data.items():
-        if name.startswith(split_prefix):
-            print(f"\n{'=' * 60}")
-            print(f"Generative evaluation on: {name}")
-            print(f"{'=' * 60}")
-
-            result = run_evaluation(
-                dataset=ds,
-                predictor=predictor,
-                split=name,
-                output_dir=output_base / name,
-                batch_size=batch_size,
-                batch_tokens=batch_tokens,
-                debug=debug,
-                **kwargs,
-            )
-            results[name] = result
-
-            if result.metrics:
-                print(f"  amF1: {result.metrics.get('amF1', 'N/A'):.4f}")
-
-    return results
+    return run_evaluation_on_data_entries(data, split_prefix, predictor, output_dir, model_info,
+                                          **kwargs)

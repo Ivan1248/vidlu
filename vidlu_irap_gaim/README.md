@@ -850,7 +850,7 @@ whose metrics should also apply to training first. The single-list form
 same metrics to every split.
 
 **Checkpoint selection** uses the first `val*` split in the `data` dict (its
-`amF1`), unless overridden with `checkpoint_split_prefix`. List the Vietnam split
+`amF1`, see `vidlu.experiments.get_checkpoint_val_data_key`). List the Vietnam split
 first (`data = dict(..., val_vn=v.val, val_bh=b.val)`) to checkpoint on Vietnam.
 
 ## Multi-scale inference
@@ -1197,23 +1197,25 @@ Creates a `visualizations/test` directory with `predictions.json` and PNG images
 
 ### Saving predictions for offline evaluation
 
-`save_predictions` also writes the full predicted distributions as an [`irap_evaluation`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_evaluation) prediction file, which `irap-eval` scores (with bootstrap intervals), ensembles and exports as iRAP coding tables without the model:
+`save_predictions=True` also writes the full predicted distributions as an [`irap_evaluation`](https://github.com/Ivan1248/irap-tools/tree/main/packages/irap_evaluation) prediction file, which `irap-eval` scores (with bootstrap intervals), ensembles and exports as iRAP coding tables without the model. The file is written in `output_dir` and named `<method>[_seed<seed>].<split>.predictions.parquet` (`irap_evaluation.make_prediction_file_name`). A method name that would make the file name longer than 255 bytes is cut and followed by a hash. The full name stays in the file:
 
 ```bash
 python scripts/run.py test ... -r best \
-  -m "irap_gaim.tools.inference:run,e,split='val',save_images=False,save_predictions='convnext.predictions.parquet',method_name='convnext'"
-irap-eval evaluate $IRAP_HOME/IRAP_Vietnam convnext.predictions.parquet --out results/ --bootstrap 1000
+  -m "irap_gaim.tools.inference:run(e,split='test',save_images=False,save_predictions=True,method_name='convnext',output_dir='predictions/convnext')"
+irap-eval evaluate $IRAP_HOME/IRAP_Vietnam predictions/convnext/convnext.test.predictions.parquet --out results/ --bootstrap 1000
 ```
 
-For several training runs of a method, give each the same `method_name` and its training seed as `method_seed`; the experiment does not store the seed. `irap-eval` then reports the mean over the runs, and its intervals and comparisons include the spread of the runs:
+Without `method_name`, the method name is the experiment's trainer and model factory strings, joined by `_` (`vidlu.experiments.get_method_string`), followed by `_best` with `-r best`, so that the best and the last checkpoint of a run get differently named files. With `method_name`, give the best and the last checkpoint different names: `irap-eval` rejects a method whose models have different training or early stopping splits. The file also records the splits the model was trained on (the `train*` data entries) and, with `-r best`, the validation split that selected the checkpoint. Both come from the experiment (`prediction_files.make_model_info_from_experiment`). Without `-r`, no split was used for training, or, with `--params`, the training splits are unknown. `irap-eval` notes the scores on such splits.
+
+For several trained models of a method, give each the same method name and its training seed as `seed`; the experiment does not store the seed. `irap-eval` then reports the mean over the models, and its intervals and comparisons include the spread of the models:
 
 ```bash
 python scripts/run.py test ... -r best \
-  -m "irap_gaim.tools.inference:run,e,split='val',save_images=False,save_predictions='convnext_seed1.predictions.parquet',method_name='convnext',method_seed=1"
-irap-eval compare $IRAP_HOME/IRAP_Vietnam convnext_seed*.predictions.parquet vit_seed*.predictions.parquet --a convnext --b vit
+  -m "irap_gaim.tools.inference:run(e,split='test',save_images=False,save_predictions=True,method_name='convnext',seed=1,output_dir='predictions/convnext_seed1')"
+irap-eval compare $IRAP_HOME/IRAP_Vietnam predictions/*/convnext_seed*.test.predictions.parquet predictions/*/vit_seed*.test.predictions.parquet --a convnext --b vit
 ```
 
-`tools/vlm_inference.py` and `agent_classify evaluate` write `predictions.parquet` in their output directory, with an unusable response as an invalid prediction. `save_predictions` does not accept a VLM evaluation step, whose one-hot outputs score an unusable response as class 0.
+`tools/vlm_inference.py` and `agent_classify evaluate` also write a prediction file named this way in their output directory (e.g. `Qwen_Qwen3-VL-8B-Instruct.test.predictions.parquet`, with the `/` of a model ID replaced by `_`), with an unusable response as an invalid prediction. The VLM file records no training splits for a pretrained model (`vlm_inference --training-splits`), and `vlm.finetuning.predictor.run_full_eval` derives them from the experiment for a fine-tuned one. `save_predictions` does not accept a VLM evaluation step, whose one-hot outputs score an unusable response as class 0.
 
 ### Inference on a custom image folder (unlabeled)
 
@@ -1223,7 +1225,7 @@ python scripts/run.py test \
   "irap_gaim.ImageSequenceClassifier,..." \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
-  -m "irap_gaim.tools.inference:run,e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test,context_offsets=(0,-1,-4))"
+  -m "irap_gaim.tools.inference:run(e,dataset=irap_gaim.InferenceImageDataset.from_folder('/path/to/images',reference_dataset=e.data.test,context_offsets=(0,-1,-4)))"
 ```
 
 `InferenceImageDataset.from_folder` detects unlabeled images and skips loss/metrics computation. Use `reference_dataset` to copy attribute metadata and pixel normalization stats.
@@ -1265,7 +1267,7 @@ python scripts/run.py test \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.Qwen3VLVisionEncoder,model_id='Qwen/Qwen3-VL-8B-Instruct',lora_r=16,load_in_4bit=True)" \
   "irap_gaim.irap_vit_lora_nodyn,epoch_count=20,eval_count=20" \
   -e 0 -r \
-  -m "irap_gaim:train_seq_enh,e"
+  -m "irap_gaim:train_seq_enh"
 ```
 
 `-r` restores the last checkpoint; use `-r best` for the best one. A restore is
@@ -1318,7 +1320,7 @@ python scripts/run.py test \
   "irap_gaim.ImageSequenceClassifier,class_counts=data.train.info.class_counts,attention=False,sequence_length=3,encoder_f=partial(irap_gaim.ResNetEncoder,pretrained=False,pixel_stats=data.train.info.pixel_stats)" \
   "irap_gaim.irap_local_rec_trainer" \
   -r best \
-  -m "irap_gaim:export_feats,e,split='val',feat_dir='FEATS/val'"
+  -m "irap_gaim:export_feats(e,split='val',feat_dir='FEATS/val')"
 ```
 
 The model must support `forward(..., return_features=True)` (the provided `ImageSequenceClassifier` does). Files already present in `feat_dir` are not recomputed.
