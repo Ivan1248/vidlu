@@ -190,6 +190,7 @@ def make_vlm_bh_data(
     attr_to_default_class_idx: dict[str, int] | None = None,
     sparse_default_instruction: SparseDefaultInstruction = "per_attribute",
     upsampling_factor: int = 1,
+    **base_data_kwargs,
 ) -> dict[str, VLMIrapDataset]:
     """Factory for VLM-formatted BH datasets.
 
@@ -212,6 +213,8 @@ def make_vlm_bh_data(
         sparse_default_instruction: For sparse schemes, how to describe defaults
             in the prompt: "per_attribute" (Default: X per attr) or "no_none_not"
             (generic instruction for values starting with No/None/Not).
+        **base_data_kwargs: Keyword arguments of the ``irap_data`` factory, e.g. ``frame_fit``
+            or ``input_dim_rgb`` (see ``irap_data.make_irap_data``).
 
     Returns:
         Dictionary with "train", "val", "test" VLMIrapDataset instances.
@@ -222,7 +225,7 @@ def make_vlm_bh_data(
         "irap_gaim.make_vlm_bh_data(response_scheme_name='sparse_indexed')"
         "irap_gaim.make_vlm_bh_data(detail_level='attr_vals', val_quick_size=100)"
     """.format(schemes=", ".join(f'"{k}"' for k in sorted(registry)))
-    base_data = make_bh_data()
+    base_data = make_bh_data(**base_data_kwargs)
     return _make_vlm_data(
         base_data,
         response_scheme=response_scheme,
@@ -241,6 +244,7 @@ def make_vlm_vietnam_data(
     attr_to_default_class_idx: dict[str, int] | None = None,
     sparse_default_instruction: SparseDefaultInstruction = "per_attribute",
     upsampling_factor: int = 1,
+    **base_data_kwargs,
 ) -> dict[str, VLMIrapDataset]:
     """Factory for VLM-formatted IRAP-Vietnam datasets.
 
@@ -251,7 +255,7 @@ def make_vlm_vietnam_data(
     cover scoreable attributes. See :func:`make_vlm_bh_data` for the shared
     arguments.
     """
-    base_data = make_vietnam_data()
+    base_data = make_vietnam_data(**base_data_kwargs)
     return _make_vlm_data(
         base_data,
         response_scheme=response_scheme,
