@@ -125,10 +125,14 @@ def make_model_info_from_experiment(experiment: TrainingExperiment,
         details={"checkpoint": str(experiment.cpman.experiment_dir)})
 
 
+def get_checkpoint_name_suffix(checkpoint_resumption: T.Literal["best", "last"] | None) -> str:
+    return "_best" if checkpoint_resumption == "best" else ""
+
+
 def _get_default_method_name(experiment: TrainingExperiment) -> str:
     """See `make_model_info_from_experiment`."""
     name = get_method_string(experiment.training_args, include_model=True)
-    return f"{name}_best" if experiment.checkpoint_resumption == "best" else name
+    return name + get_checkpoint_name_suffix(experiment.checkpoint_resumption)
 
 
 def _get_training_split_names(

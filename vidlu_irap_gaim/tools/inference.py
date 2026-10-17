@@ -27,6 +27,7 @@ from vidlu.utils.misc import RemovableHandle
 from vidlu.utils.collections import NameDict
 
 from vidlu_irap_gaim.prediction_files import (check_output_kind_storable,
+                                              get_checkpoint_name_suffix,
                                               make_model_info_from_experiment,
                                               make_prediction_file_spec, write_predictions)
 from vidlu_irap_gaim.tools.vis_utils import (
@@ -350,7 +351,8 @@ def run(
         dataset: Optional custom dataset to run inference on. If provided, `split` is ignored.
             The dataset must have `info.attr_to_value_to_class_idx` for decoding predictions.
             Use `InferenceImageDataset.from_folder()` for custom images.
-        output_dir: Where to save results. Defaults to experiment_dir/inference_output.
+        output_dir: Where to save results. Defaults to experiment_dir/inference_output, followed
+            by '_best' if the best checkpoint was loaded (`run.py -r best`).
         limit: Maximum number of samples to process, the first ones of the dataset.
         save_images: Whether to save visualization images.
         save_json: Whether to save JSON predictions.
@@ -425,7 +427,9 @@ def run(
             dataset.info, make_model_info_from_experiment(experiment, method_name, seed))
         output_collector = _OutputCollector()
 
-    out_dir = _as_path(output_dir) if output_dir is not None else experiment_dir / "inference_output"
+    default_out_dir_name = (
+        f"inference_output{get_checkpoint_name_suffix(experiment.checkpoint_resumption)}")
+    out_dir = _as_path(output_dir) if output_dir is not None else experiment_dir / default_out_dir_name
     collector = InferenceVisualizationCollector(
         dataset=dataset,
         output_dir=out_dir,
